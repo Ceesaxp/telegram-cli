@@ -83,7 +83,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             ..
-          cmake --build . --target tdjson --config Release --parallel
+          cmake --build . --target tdjson tdjson_static --config Release --parallel
           cmake --install . --config Release
 
       - name: Build telegram-cli
@@ -103,49 +103,9 @@ jobs:
           name: tele-tui-windows-amd64
           path: bin/tele-tui.exe
 
-  build-termux:
-    name: Termux (aarch64)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: aarch64
-
-      - name: Build in termux-docker
-        run: |
-          docker run --rm --privileged \
-            -v ${{ github.workspace }}:/workspace \
-            termux/termux-docker:aarch64 \
-            bash -c "
-              pkg update -y && \
-              pkg install -yq golang cmake openssl zlib clang gperf git && \
-              git clone --depth 1 https://github.com/tdlib/td.git /root/td-src && \
-              mkdir /root/td-src/build && cd /root/td-src/build && \
-              cmake -DCMAKE_BUILD_TYPE=Release \
-                    -DCMAKE_INSTALL_PREFIX=/root/tdlib \
-                    -DOPENSSL_ROOT_DIR=\$PREFIX \
-                    -DZLIB_ROOT=\$PREFIX .. && \
-              cmake --build . --target tdjson --parallel \$(nproc) && \
-              cmake --install . && \
-              cd /workspace && \
-              CGO_ENABLED=1 \
-              CGO_CFLAGS=\"-I/root/tdlib/include\" \
-              CGO_LDFLAGS=\"-L/root/tdlib/lib -ltdjson\" \
-              go build -trimpath -ldflags=\"-s -w\" -o bin/tele-tui-termux-aarch64 ./cmd/teletui
-            "
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tele-tui-termux-aarch64
-          path: bin/tele-tui-termux-aarch64
-
   release:
     name: Release
-    needs: [build-linux, build-windows, build-termux]
+    needs: [build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -163,8 +123,6 @@ jobs:
             name=$(basename "$dir"); cp "$dir/tele-tui" "release/${name}"; chmod +x "release/${name}"
           done
           cp artifacts/tele-tui-windows-amd64/tele-tui.exe release/tele-tui-windows-amd64.exe
-          cp artifacts/tele-tui-termux-aarch64/tele-tui-termux-aarch64 release/tele-tui-termux-aarch64
-          chmod +x release/tele-tui-termux-aarch64
 
       - uses: softprops/action-gh-release@v2
         with:
