@@ -122,7 +122,7 @@ jobs:
             termux/termux-docker:aarch64 \
             bash -c "
               pkg update -y && \
-              pkg install -yq golang cmake openssl-dev zlib clang gperf git && \
+              pkg install -yq golang cmake openssl zlib clang gperf git && \
               git clone --depth 1 https://github.com/tdlib/td.git /root/td-src && \
               mkdir /root/td-src/build && cd /root/td-src/build && \
               cmake -DCMAKE_BUILD_TYPE=Release \
