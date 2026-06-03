@@ -56,13 +56,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:/td/tdlib
-          key: tdlib-windows-static-v1.8.43
+          key: tdlib-windows-vcpkg-v1.8.43
 
       - name: Install build tools
         if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           choco install cmake gperf -y
+
+      - name: Install zlib and openssl via vcpkg
+        if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          C:\vcpkg\vcpkg install zlib:x64-windows openssl:x64-windows --no-print-usage
 
       - name: Build TDLib
         if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
@@ -71,7 +77,12 @@ jobs:
           git clone --depth 1 https://github.com/tdlib/td.git C:\td\td-src
           New-Item -ItemType Directory -Force -Path C:\td\td-src\build
           Set-Location C:\td\td-src\build
-          cmake -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=C:\td\tdlib ..
+          cmake -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX=C:\td\tdlib `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            ..
           cmake --build . --target tdjson --config Release --parallel
           cmake --install . --config Release
 
