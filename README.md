@@ -19,7 +19,7 @@
 
 ## Features
 
-- **Chat Management** — Private chats, groups, supergroups, channels, secret chats
+- **Chat Management** — Private chats, groups, supergroups, channels
 - **Message Bubbles** — Rounded bordered bubbles, own messages right-aligned, read status indicators
 - **Profile Avatars** — Colored initials or rendered profile photos in chat list
 - **Markdown Rendering** — Code blocks, bold, italic, links via [Glamour](https://github.com/charmbracelet/glamour)
@@ -30,7 +30,7 @@
 - **Search** — Search chats, messages, and global Telegram directory
 - **Contacts** — Contact list with online status indicators
 - **Group Info** — Member list, admin roles, group description
-- **Authentication** — Phone/SMS code, 2FA password, QR code login
+- **Authentication** — Phone/SMS code, 2FA password (QR code login not yet implemented)
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
 - **Notifications** — Desktop notifications via `notify-send` / `osascript`
 - **Responsive Layout** — Dual-panel (wide) or single-panel (narrow terminals)
@@ -65,17 +65,11 @@
 git clone https://github.com/tegal1337/telegram-cli.git
 cd telegram-cli
 
-# Auto-install TDLib + dependencies (one command)
-make setup
-
 # Build & run — first run prompts for API credentials
 make run
 ```
 
-`make setup` automatically handles everything:
-- **Ubuntu/Debian**: `apt install` deps, builds TDLib, registers library path
-- **Fedora**: `dnf install` deps, builds TDLib
-- **Arch**: `pacman -S` deps, builds TDLib
+Pure Go, no CGO, no native dependencies — a plain `go build` works everywhere.
 
 ### Prerequisites
 
@@ -85,21 +79,7 @@ make run
 
 ### Windows
 
-```bash
-# Install build tools
-choco install cmake gperf golang
-
-# Build TDLib
-git clone --depth 1 https://github.com/tdlib/td.git C:\td\td-src
-cd C:\td\td-src && mkdir build && cd build
-cmake -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=C:\td\tdlib ..
-cmake --build . --target tdjson --config Release --parallel
-cmake --install . --config Release
-
-# Build telegram-cli
-set CGO_ENABLED=1
-set CGO_CFLAGS=-IC:\td\tdlib\include
-set CGO_LDFLAGS=-LC:\td\tdlib\lib -ltdjson
+```powershell
 go build -trimpath -ldflags="-s -w" -o tele-tui.exe .\cmd\teletui
 ```
 
@@ -194,8 +174,8 @@ video_player = "mpv"     # "mpv", "vlc", "xdg-open"
 │              Store (thread-safe cache)                │
 │         Chats · Messages · Users · Files              │
 ├──────────────────────────────────────────────────────┤
-│           TDLib via go-tdlib (async bridge)            │
-│      Listener goroutine → p.Send(tea.Msg)             │
+│         gotd/td — pure Go MTProto client               │
+│      Update dispatcher → p.Send(tea.Msg)              │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -206,12 +186,13 @@ cmd/teletui/              Entry point + first-run wizard
 internal/
   app/                    Root bubbletea model, key routing, layout
   config/                 TOML config loader + auto-save
-  telegram/               TDLib client wrapper (async)
-    auth.go               Phone/code/2FA/QR auth flow
-    listener.go           TDLib update → tea.Msg bridge
-    chats.go              Chat list, history, search
-    messages.go           Send/edit/delete/forward
-    media.go              Photo/voice/video download
+  telegram/               gotd/td client wrapper + domain types
+    types.go              Domain types (Chat/Message/User/File...)
+    auth.go               Phone/code/2FA auth flow
+    listener.go           Update dispatcher → tea.Msg bridge
+    chats.go              Dialog list, history, search
+    messages.go           Send/edit/fetch messages
+    files.go              File registry + downloader
   ui/
     theme/                256-color dark/light themes
     layout/               Responsive panel sizing
@@ -236,13 +217,59 @@ pkg/utils/                String/time/sanitize utilities
 ## Building from Source
 
 ```bash
-make setup    # auto-install TDLib (Linux/macOS)
-make build    # compile binary → bin/tele-tui
-make run      # build + run (auto-detects TDLib path)
+make build    # compile binaries → bin/tele-tui + bin/telegram-mcp (CGO_ENABLED=0)
+make run      # build + run
+make test     # run tests
 make clean    # remove build artifacts
 ```
 
-The Makefile auto-detects TDLib in: `~/td/tdlib`, `/usr/local`, `/usr`, `/opt/homebrew/opt/tdlib`.
+## MCP Server
+
+The repo also ships `telegram-mcp`, an [MCP](https://modelcontextprotocol.io) server (stdio transport) that exposes your Telegram account to AI agents. It shares config and session with the TUI.
+
+### Login
+
+If you have already logged in via the TUI, skip this — the session is shared. Otherwise:
+
+```bash
+bin/telegram-mcp login   # phone → code → 2FA, writes ~/.local/share/tele-tui/session.json
+```
+
+### Client configuration
+
+Register the server in your MCP client, e.g.:
+
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "telegram-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+`serve` is the default subcommand; it fails fast with `session not authorized, run 'telegram-mcp login' first` on stderr when the session is missing or expired.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_me` | Authorized user info |
+| `list_chats` | Dialog list (pinned first, then recent) |
+| `get_chat_history` | Messages of a chat, newest first |
+| `search_chats` | Search chats by title/username |
+| `search_messages` | Global message search |
+| `get_contacts` | Contact list |
+| `send_message` | Send a text message (optional reply) |
+| `edit_message` | Edit a message text |
+| `mark_read` | Mark messages as read |
+| `download_media` | Download message media, returns local path |
+
+### Caveat: shared session
+
+The TUI and `telegram-mcp serve` use the same Telegram session. Running both at the same time for extended periods can split updates between the two connections (Telegram delivers each update to one active connection). Short-lived agent calls alongside the TUI are fine; for heavy use, quit the TUI first.
 
 ## Contributing
 
@@ -261,4 +288,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [Bubbletea](https://github.com/charmbracelet/bubbletea) — TUI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) — Terminal styling
 - [Glamour](https://github.com/charmbracelet/glamour) — Markdown rendering
-- [go-tdlib](https://github.com/zelenin/go-tdlib) — TDLib Go bindings
+- [gotd/td](https://github.com/gotd/td) — Pure Go Telegram (MTProto) client
