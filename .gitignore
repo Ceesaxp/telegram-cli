@@ -27,6 +27,10 @@ go.work.sum
 # Config with secrets
 config.toml
 
+# Telegram session data
+session.json
+*.session
+
 # OS
 .DS_Store
 Thumbs.db

@@ -21,22 +21,22 @@ type ListItem struct {
 
 // List is a generic scrollable list widget with vim-style navigation.
 type List struct {
-	Items        []ListItem
-	Cursor       int
-	Offset       int
-	Width        int
-	Height       int
-	Focused      bool
+	Items   []ListItem
+	Cursor  int
+	Offset  int
+	Width   int
+	Height  int
+	Focused bool
 
-	StyleNormal  lipgloss.Style
-	StyleActive  lipgloss.Style
-	StyleTitle   lipgloss.Style
-	StyleSub     lipgloss.Style
-	StyleMeta    lipgloss.Style
-	StyleBadge   lipgloss.Style
-	StyleOnline  lipgloss.Style
+	StyleNormal lipgloss.Style
+	StyleActive lipgloss.Style
+	StyleTitle  lipgloss.Style
+	StyleSub    lipgloss.Style
+	StyleMeta   lipgloss.Style
+	StyleBadge  lipgloss.Style
+	StyleOnline lipgloss.Style
 
-	itemHeight   int
+	itemHeight int
 }
 
 // NewList creates a new list widget.
@@ -44,6 +44,42 @@ func NewList() List {
 	return List{
 		itemHeight: 2, // title + subtitle
 	}
+}
+
+// ItemAtRow returns the index of the item displayed at the given local row
+// (0-based, relative to the top of the list's visible area), or -1.
+func (l *List) ItemAtRow(row int) int {
+	if row < 0 {
+		return -1
+	}
+	idx := l.Offset + row/l.itemHeight
+	if idx < 0 || idx >= len(l.Items) {
+		return -1
+	}
+	return idx
+}
+
+// SelectIndex moves the cursor to the given item index. Returns false if the
+// index is out of bounds.
+func (l *List) SelectIndex(i int) bool {
+	if i < 0 || i >= len(l.Items) {
+		return false
+	}
+	l.Cursor = i
+	l.ensureVisible()
+	return true
+}
+
+// ScrollBy moves the cursor by n items (negative scrolls up).
+func (l *List) ScrollBy(n int) {
+	l.Cursor += n
+	if l.Cursor < 0 {
+		l.Cursor = 0
+	}
+	if len(l.Items) > 0 && l.Cursor > len(l.Items)-1 {
+		l.Cursor = len(l.Items) - 1
+	}
+	l.ensureVisible()
 }
 
 // SelectedItem returns the currently selected item, or nil.

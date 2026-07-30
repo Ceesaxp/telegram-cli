@@ -11,21 +11,20 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
 	"github.com/tegal1337/telegram-cli/internal/ui/widgets"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 // Model is the chat list component.
 type Model struct {
-	list     widgets.List
-	store    *store.Store
-	tg       *telegram.Client
-	theme    *theme.Theme
-	width    int
-	height   int
-	focused  bool
-	filter   string
-	loading  bool
-	spinner  widgets.Spinner
+	list         widgets.List
+	store        *store.Store
+	tg           *telegram.Client
+	theme        *theme.Theme
+	width        int
+	height       int
+	focused      bool
+	filter       string
+	loading      bool
+	spinner      widgets.Spinner
 	activeChatId int64
 	avatarCache  *media.Cache
 	avatarRend   *media.ImageRenderer
@@ -68,7 +67,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) loadChatsCmd() tea.Cmd {
 	return func() tea.Msg {
-		err := m.tg.LoadChats(&client.ChatListMain{}, 50)
+		err := m.tg.LoadChats(50)
 		if err != nil {
 			return chatsLoadedMsg{err: err}
 		}
@@ -86,6 +85,29 @@ func (m *Model) SetSize(width, height int) {
 	m.height = height
 	m.list.Width = width
 	m.list.Height = height
+}
+
+// ClickAt selects the chat shown at the given local row (inside the panel
+// border) and returns its ID. ok is false when the row has no chat.
+func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
+	idx := m.list.ItemAtRow(localY)
+	if idx < 0 || !m.list.SelectIndex(idx) {
+		return 0, false
+	}
+	item := m.list.SelectedItem()
+	if item == nil {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
+		return 0, false
+	}
+	m.activeChatId = chatID
+	return chatID, true
+}
+
+// ScrollBy moves the selection by n items (negative scrolls up).
+func (m *Model) ScrollBy(n int) {
+	m.list.ScrollBy(n)
 }
 
 // SetFocused sets focus state.
@@ -114,11 +136,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refreshList()
 
 	case telegram.ChatLastMessageMsg:
-		m.store.Chats.UpdateLastMessage(msg.ChatId, msg.LastMessage, msg.Positions)
-		m.refreshList()
-
-	case telegram.ChatPositionMsg:
-		m.store.Chats.UpdatePosition(msg.ChatId, msg.Positions)
+		m.store.Chats.UpdateLastMessage(msg.ChatId, msg.LastMessage)
 		m.refreshList()
 
 	case telegram.ChatReadInboxMsg:
@@ -185,21 +203,19 @@ func (m *Model) refreshList() {
 		}
 
 		online := false
-		if entry.Chat.Type != nil {
-			if pt, ok := entry.Chat.Type.(*client.ChatTypePrivate); ok {
-				online = m.store.Users.IsOnline(pt.UserId)
-			}
+		if entry.Chat.Type == telegram.ChatTypePrivate {
+			online = m.store.Users.IsOnline(entry.Chat.ID)
 		}
 
 		// Check avatar cache
 		avatar := ""
-		cacheKey := fmt.Sprintf("av:%d", entry.Chat.Id)
+		cacheKey := fmt.Sprintf("av:%d", entry.Chat.ID)
 		if cached, ok := m.avatarCache.Get(cacheKey); ok {
 			avatar = cached
 		}
 
 		items = append(items, widgets.ListItem{
-			ID:       fmt.Sprintf("%d", entry.Chat.Id),
+			ID:       fmt.Sprintf("%d", entry.Chat.ID),
 			Title:    chatIcon(entry.Chat) + " " + entry.Chat.Title,
 			Subtitle: preview,
 			Badge:    badge,
@@ -212,20 +228,16 @@ func (m *Model) refreshList() {
 	m.list.SetItems(items)
 }
 
-func chatIcon(chat *client.Chat) string {
-	switch chat.Type.(type) {
-	case *client.ChatTypePrivate:
+func chatIcon(chat *telegram.Chat) string {
+	switch chat.Type {
+	case telegram.ChatTypePrivate:
 		return "👤"
-	case *client.ChatTypeBasicGroup:
+	case telegram.ChatTypeBasicGroup:
 		return "👥"
-	case *client.ChatTypeSupergroup:
-		sg := chat.Type.(*client.ChatTypeSupergroup)
-		if sg.IsChannel {
-			return "📢"
-		}
+	case telegram.ChatTypeSupergroup:
 		return "👥"
-	case *client.ChatTypeSecret:
-		return "🔒"
+	case telegram.ChatTypeChannel:
+		return "📢"
 	default:
 		return "💬"
 	}
@@ -240,26 +252,22 @@ func (m Model) downloadAvatarsCmd() tea.Cmd {
 			if entry.Chat == nil || entry.Chat.Photo == nil {
 				continue
 			}
-			small := entry.Chat.Photo.Small
-			if small == nil {
-				continue
-			}
-			cacheKey := fmt.Sprintf("av:%d", entry.Chat.Id)
+			cacheKey := fmt.Sprintf("av:%d", entry.Chat.ID)
 			if _, ok := m.avatarCache.Get(cacheKey); ok {
 				continue // already cached
 			}
 
-			// Download if not complete
-			if small.Local == nil || !small.Local.IsDownloadingCompleted {
-				file, err := m.tg.DownloadFileSync(small.Id)
+			photo := entry.Chat.Photo
+			if !photo.Downloaded || photo.Path == "" {
+				file, err := m.tg.DownloadFileSync(photo.ID)
 				if err != nil || file == nil {
 					continue
 				}
-				small = file
+				photo = file
 			}
 
-			if small.Local != nil && small.Local.IsDownloadingCompleted && small.Local.Path != "" {
-				rendered, err := m.avatarRend.RenderFile(small.Local.Path)
+			if photo.Path != "" {
+				rendered, err := m.avatarRend.RenderFile(photo.Path)
 				if err == nil && rendered != "" {
 					m.avatarCache.Set(cacheKey, rendered)
 				}
@@ -269,39 +277,39 @@ func (m Model) downloadAvatarsCmd() tea.Cmd {
 	}
 }
 
-func messagePreview(msg *client.Message) string {
+func messagePreview(msg *telegram.Message) string {
 	if msg == nil || msg.Content == nil {
 		return ""
 	}
 
 	switch c := msg.Content.(type) {
-	case *client.MessageText:
+	case *telegram.MessageText:
 		text := c.Text.Text
 		if len(text) > 50 {
 			text = text[:50] + "..."
 		}
 		return text
-	case *client.MessagePhoto:
+	case *telegram.MessagePhoto:
 		return "📷 Photo"
-	case *client.MessageVideo:
+	case *telegram.MessageVideo:
 		return "🎥 Video"
-	case *client.MessageDocument:
+	case *telegram.MessageDocument:
 		return "📎 " + c.Document.FileName
-	case *client.MessageVoiceNote:
+	case *telegram.MessageVoiceNote:
 		return "🎤 Voice message"
-	case *client.MessageVideoNote:
+	case *telegram.MessageVideoNote:
 		return "📹 Video message"
-	case *client.MessageSticker:
+	case *telegram.MessageSticker:
 		return "🏷 " + c.Sticker.Emoji + " Sticker"
-	case *client.MessageAnimation:
+	case *telegram.MessageAnimation:
 		return "🎬 GIF"
-	case *client.MessageAudio:
+	case *telegram.MessageAudio:
 		return "🎵 Audio"
-	case *client.MessageLocation:
+	case *telegram.MessageLocation:
 		return "📍 Location"
-	case *client.MessageContact:
+	case *telegram.MessageContact:
 		return "👤 Contact"
-	case *client.MessagePoll:
+	case *telegram.MessagePoll:
 		return "📊 Poll"
 	default:
 		return "💬 Message"

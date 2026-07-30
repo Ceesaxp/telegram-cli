@@ -1,7 +1,6 @@
 package groupinfo
 
 import (
-	
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,7 +9,6 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
 	"github.com/tegal1337/telegram-cli/internal/ui/widgets"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 // Model is the group/channel info panel component.
@@ -75,7 +73,7 @@ type groupInfoLoadedMsg struct {
 	description string
 	memberCount int32
 	isChannel   bool
-	members     []*client.ChatMember
+	members     []*telegram.ChatMember
 }
 
 // OpenGroupInfo loads group/channel info for a chat.
@@ -93,21 +91,21 @@ func (m *Model) OpenGroupInfo(chatID int64) tea.Cmd {
 			title: chat.Title,
 		}
 
-		switch t := chat.Type.(type) {
-		case *client.ChatTypeSupergroup:
-			result.isChannel = t.IsChannel
-			info, err := m.tg.GetSupergroupFullInfo(t.SupergroupId)
+		switch chat.Type {
+		case telegram.ChatTypeSupergroup, telegram.ChatTypeChannel:
+			result.isChannel = chat.Type == telegram.ChatTypeChannel
+			info, err := m.tg.GetSupergroupFullInfo(chatID)
 			if err == nil {
 				result.description = info.Description
 				result.memberCount = info.MemberCount
 			}
-			members, err := m.tg.GetSupergroupMembers(t.SupergroupId, 0, 50)
+			members, err := m.tg.GetSupergroupMembers(chatID, 0, 50)
 			if err == nil {
-				result.members = members.Members
+				result.members = members
 			}
 
-		case *client.ChatTypeBasicGroup:
-			info, err := m.tg.GetBasicGroupFullInfo(t.BasicGroupId)
+		case telegram.ChatTypeBasicGroup:
+			info, err := m.tg.GetBasicGroupFullInfo(chatID)
 			if err == nil {
 				result.description = info.Description
 				result.members = info.Members
@@ -146,16 +144,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) refreshMembers(members []*client.ChatMember) {
+func (m *Model) refreshMembers(members []*telegram.ChatMember) {
 	items := make([]widgets.ListItem, 0, len(members))
 	for _, member := range members {
-		if sender, ok := member.MemberId.(*client.MessageSenderUser); ok {
-			name := m.store.Users.DisplayName(sender.UserId)
+		if sender, ok := member.MemberID.(*telegram.MessageSenderUser); ok {
+			name := m.store.Users.DisplayName(sender.UserID)
 			role := memberRole(member.Status)
-			online := m.store.Users.IsOnline(sender.UserId)
+			online := m.store.Users.IsOnline(sender.UserID)
 
 			items = append(items, widgets.ListItem{
-				ID:       fmt.Sprintf("%d", sender.UserId),
+				ID:       fmt.Sprintf("%d", sender.UserID),
 				Title:    name,
 				Subtitle: role,
 				Online:   online,
@@ -165,19 +163,19 @@ func (m *Model) refreshMembers(members []*client.ChatMember) {
 	m.memberList.SetItems(items)
 }
 
-func memberRole(status client.ChatMemberStatus) string {
+func memberRole(status telegram.ChatMemberStatus) string {
 	switch status.(type) {
-	case *client.ChatMemberStatusCreator:
+	case *telegram.ChatMemberStatusCreator:
 		return "Owner"
-	case *client.ChatMemberStatusAdministrator:
+	case *telegram.ChatMemberStatusAdministrator:
 		return "Admin"
-	case *client.ChatMemberStatusMember:
+	case *telegram.ChatMemberStatusMember:
 		return "Member"
-	case *client.ChatMemberStatusRestricted:
+	case *telegram.ChatMemberStatusRestricted:
 		return "Restricted"
-	case *client.ChatMemberStatusBanned:
+	case *telegram.ChatMemberStatusBanned:
 		return "Banned"
-	case *client.ChatMemberStatusLeft:
+	case *telegram.ChatMemberStatusLeft:
 		return "Left"
 	default:
 		return ""

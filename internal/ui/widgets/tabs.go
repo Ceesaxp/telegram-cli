@@ -9,9 +9,9 @@ import (
 
 // Tabs is a tab bar widget for switching between views.
 type Tabs struct {
-	Labels   []string
-	Active   int
-	Width    int
+	Labels []string
+	Active int
+	Width  int
 
 	StyleTab       lipgloss.Style
 	StyleTabActive lipgloss.Style

@@ -1,7 +1,6 @@
 package contacts
 
 import (
-	
 	"fmt"
 	"sort"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
 	"github.com/tegal1337/telegram-cli/internal/ui/widgets"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 // ContactSelectedMsg is emitted when a contact is selected.
@@ -57,6 +55,28 @@ func (m *Model) SetSize(width, height int) {
 	m.list.Height = height - 2
 }
 
+// ClickAt selects the contact shown at the given local row (inside the panel
+// border) and returns its user ID. ok is false when the row has no contact.
+func (m *Model) ClickAt(localY int) (userID int64, ok bool) {
+	idx := m.list.ItemAtRow(localY)
+	if idx < 0 || !m.list.SelectIndex(idx) {
+		return 0, false
+	}
+	item := m.list.SelectedItem()
+	if item == nil {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(item.ID, "%d", &userID); err != nil {
+		return 0, false
+	}
+	return userID, true
+}
+
+// ScrollBy moves the selection by n items (negative scrolls up).
+func (m *Model) ScrollBy(n int) {
+	m.list.ScrollBy(n)
+}
+
 // SetFocused sets focus state.
 func (m *Model) SetFocused(focused bool) {
 	m.focused = focused
@@ -74,25 +94,19 @@ func (m Model) IsVisible() bool {
 }
 
 type contactsLoadedMsg struct {
-	users []*client.User
+	users []*telegram.User
 	err   error
 }
 
 // LoadContacts fetches the contact list.
 func (m *Model) LoadContacts() tea.Cmd {
 	return func() tea.Msg {
-		contacts, err := m.tg.GetContacts()
+		users, err := m.tg.GetContacts()
 		if err != nil {
 			return contactsLoadedMsg{err: err}
 		}
-
-		var users []*client.User
-		for _, userID := range contacts.UserIds {
-			user, err := m.tg.GetUser(userID)
-			if err == nil {
-				users = append(users, user)
-				m.store.Users.Set(user)
-			}
+		for _, user := range users {
+			m.store.Users.Set(user)
 		}
 		return contactsLoadedMsg{users: users}
 	}
@@ -133,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) refreshList(users []*client.User) {
+func (m *Model) refreshList(users []*telegram.User) {
 	sort.Slice(users, func(i, j int) bool {
 		return users[i].FirstName < users[j].FirstName
 	})
@@ -146,14 +160,14 @@ func (m *Model) refreshList(users []*client.User) {
 		}
 
 		subtitle := ""
-		if user.Usernames != nil && len(user.Usernames.ActiveUsernames) > 0 {
-			subtitle = "@" + user.Usernames.ActiveUsernames[0]
+		if user.Username != "" {
+			subtitle = "@" + user.Username
 		}
 
-		_, online := user.Status.(*client.UserStatusOnline)
+		_, online := user.Status.(*telegram.UserStatusOnline)
 
 		items = append(items, widgets.ListItem{
-			ID:       fmt.Sprintf("%d", user.Id),
+			ID:       fmt.Sprintf("%d", user.ID),
 			Title:    name,
 			Subtitle: subtitle,
 			Online:   online,

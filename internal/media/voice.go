@@ -17,10 +17,10 @@ const (
 
 // VoicePlayer handles voice message playback.
 type VoicePlayer struct {
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	state   PlaybackState
-	player  string
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	state  PlaybackState
+	player string
 }
 
 // NewVoicePlayer creates a new voice player using the specified player binary.

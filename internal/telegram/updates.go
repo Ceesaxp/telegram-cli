@@ -1,20 +1,16 @@
 package telegram
 
-import (
-	"github.com/zelenin/go-tdlib/client"
-)
-
-// Tea messages produced from TDLib updates.
+// Tea messages produced from Telegram updates.
 // These are sent into the bubbletea program via p.Send().
 
 // AuthStateMsg carries authorization state changes.
 type AuthStateMsg struct {
-	State client.AuthorizationState
+	State AuthState
 }
 
 // NewMessageMsg is sent when a new message arrives.
 type NewMessageMsg struct {
-	Message *client.Message
+	Message *Message
 }
 
 // MessageEditedMsg is sent when a message is edited.
@@ -24,68 +20,52 @@ type MessageEditedMsg struct {
 }
 
 // MessageDeletedMsg is sent when messages are deleted.
+// ChatId is 0 for non-channel deletions (the update carries no peer).
 type MessageDeletedMsg struct {
 	ChatId     int64
 	MessageIds []int64
 }
 
-// ChatUpdateMsg is sent when chat metadata changes (title, photo, etc).
+// ChatUpdateMsg is sent when chat metadata changes (title, photo, etc)
+// or when a chat is loaded from the dialog list.
 type ChatUpdateMsg struct {
-	Chat *client.Chat
-}
-
-// ChatPositionMsg is sent when a chat's position in the list changes.
-type ChatPositionMsg struct {
-	ChatId    int64
-	Positions []*client.ChatPosition
+	Chat *Chat
 }
 
 // ChatLastMessageMsg is sent when a chat's last message changes.
 type ChatLastMessageMsg struct {
 	ChatId      int64
-	LastMessage *client.Message
-	Positions   []*client.ChatPosition
+	LastMessage *Message
 }
 
 // ChatReadInboxMsg is sent when the read inbox state changes.
 type ChatReadInboxMsg struct {
-	ChatId                int64
+	ChatId                 int64
 	LastReadInboxMessageId int64
-	UnreadCount           int32
+	UnreadCount            int32
 }
 
 // ChatReadOutboxMsg is sent when the read outbox state changes.
 type ChatReadOutboxMsg struct {
-	ChatId                 int64
+	ChatId                  int64
 	LastReadOutboxMessageId int64
 }
 
-// UserStatusMsg is sent when a user's online status changes.
-type UserStatusMsg struct {
-	UserId int64
-	Status client.UserStatus
-}
-
-// UserUpdateMsg is sent when user info changes.
-type UserUpdateMsg struct {
-	User *client.User
-}
-
-// FileUpdateMsg is sent when a file download/upload progress changes.
+// FileUpdateMsg is sent when a file download completes.
 type FileUpdateMsg struct {
-	File *client.File
+	File *File
 }
 
 // ChatActionMsg is sent when someone is typing or performing an action.
 type ChatActionMsg struct {
 	ChatId int64
 	UserId int64
-	Action client.ChatAction
+	Action ChatAction
 }
 
 // ConnectionStateMsg is sent when the network connection state changes.
 type ConnectionStateMsg struct {
-	State client.ConnectionState
+	State ConnectionState
 }
 
 // UnreadCountMsg is sent when global unread counts change.
@@ -96,30 +76,14 @@ type UnreadCountMsg struct {
 
 // MessageSendSucceededMsg is sent when a message is successfully sent.
 type MessageSendSucceededMsg struct {
-	Message      *client.Message
+	Message      *Message
 	OldMessageId int64
 }
 
 // MessageSendFailedMsg is sent when a message fails to send.
 type MessageSendFailedMsg struct {
-	Message      *client.Message
+	Message      *Message
 	OldMessageId int64
 	ErrorCode    int32
 	ErrorMessage string
-}
-
-// SupergroupUpdateMsg is sent when supergroup info changes.
-type SupergroupUpdateMsg struct {
-	Supergroup *client.Supergroup
-}
-
-// BasicGroupUpdateMsg is sent when basic group info changes.
-type BasicGroupUpdateMsg struct {
-	BasicGroup *client.BasicGroup
-}
-
-// NotificationMsg is sent for new notifications.
-type NotificationMsg struct {
-	GroupId       int32
-	Notifications []*client.Notification
 }

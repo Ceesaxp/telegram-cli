@@ -5,16 +5,16 @@ import (
 )
 
 type Theme struct {
-	Primary     lipgloss.Color
-	Secondary   lipgloss.Color
-	Accent      lipgloss.Color
-	Background  lipgloss.Color
-	Surface     lipgloss.Color
-	Text        lipgloss.Color
-	TextMuted   lipgloss.Color
-	Error       lipgloss.Color
-	Success     lipgloss.Color
-	Warning     lipgloss.Color
+	Primary    lipgloss.Color
+	Secondary  lipgloss.Color
+	Accent     lipgloss.Color
+	Background lipgloss.Color
+	Surface    lipgloss.Color
+	Text       lipgloss.Color
+	TextMuted  lipgloss.Color
+	Error      lipgloss.Color
+	Success    lipgloss.Color
+	Warning    lipgloss.Color
 
 	// Panel styles
 	PanelNormal  lipgloss.Style
@@ -68,25 +68,25 @@ type Theme struct {
 	SearchResultActive lipgloss.Style
 
 	// Generic
-	Spinner        lipgloss.Style
-	Badge          lipgloss.Style
-	Tab            lipgloss.Style
-	TabActive      lipgloss.Style
-	ProgressBar    lipgloss.Style
+	Spinner         lipgloss.Style
+	Badge           lipgloss.Style
+	Tab             lipgloss.Style
+	TabActive       lipgloss.Style
+	ProgressBar     lipgloss.Style
 	ProgressBarFill lipgloss.Style
 }
 
 func DarkTheme() *Theme {
-	primary := lipgloss.Color("39")     // bright blue
-	secondary := lipgloss.Color("42")   // green
-	accent := lipgloss.Color("177")     // purple
-	bg := lipgloss.Color("234")         // dark gray
-	surface := lipgloss.Color("236")    // slightly lighter
-	text := lipgloss.Color("252")       // light gray
-	textMuted := lipgloss.Color("244")  // mid gray
-	errColor := lipgloss.Color("196")   // red
-	success := lipgloss.Color("42")     // green
-	warning := lipgloss.Color("214")    // orange
+	primary := lipgloss.Color("39")    // bright blue
+	secondary := lipgloss.Color("42")  // green
+	accent := lipgloss.Color("177")    // purple
+	bg := lipgloss.Color("234")        // dark gray
+	surface := lipgloss.Color("236")   // slightly lighter
+	text := lipgloss.Color("252")      // light gray
+	textMuted := lipgloss.Color("244") // mid gray
+	errColor := lipgloss.Color("196")  // red
+	success := lipgloss.Color("42")    // green
+	warning := lipgloss.Color("214")   // orange
 
 	return &Theme{
 		Primary:    primary,

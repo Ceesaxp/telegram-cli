@@ -7,9 +7,9 @@ api_id = 0
 api_hash = ""
 phone = ""
 
-# Database and file storage paths
+# Session and file storage paths
 [storage]
-database_dir = "~/.local/share/tele-tui/database"
+session_file = "~/.local/share/tele-tui/session.json"
 files_dir = "~/.local/share/tele-tui/files"
 
 # UI preferences

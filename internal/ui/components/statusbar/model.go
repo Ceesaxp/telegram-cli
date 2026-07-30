@@ -9,19 +9,18 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/store"
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 // Model is the status bar component.
 type Model struct {
-	store          *store.Store
-	theme          *theme.Theme
-	width          int
-	connected      bool
-	userName       string
-	typing         map[int64][]int64 // chatID -> userIDs typing
-	unreadCount    int32
-	activeChatId   int64
+	store        *store.Store
+	theme        *theme.Theme
+	width        int
+	connected    bool
+	userName     string
+	typing       map[int64][]int64 // chatID -> userIDs typing
+	unreadCount  int32
+	activeChatId int64
 }
 
 // New creates a new status bar model.
@@ -53,19 +52,14 @@ func (m *Model) SetActiveChatId(chatID int64) {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case telegram.ConnectionStateMsg:
-		switch msg.State.(type) {
-		case *client.ConnectionStateReady:
-			m.connected = true
-		default:
-			m.connected = false
-		}
+		m.connected = msg.State == telegram.ConnectionStateReady
 
 	case telegram.ChatActionMsg:
 		if msg.UserId != 0 {
 			users := m.typing[msg.ChatId]
 			// Add user if typing, remove if stopped.
 			switch msg.Action.(type) {
-			case *client.ChatActionTyping:
+			case *telegram.ChatActionTyping:
 				found := false
 				for _, uid := range users {
 					if uid == msg.UserId {
@@ -76,7 +70,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if !found {
 					m.typing[msg.ChatId] = append(users, msg.UserId)
 				}
-			case *client.ChatActionCancel:
+			case *telegram.ChatActionCancel:
 				filtered := users[:0]
 				for _, uid := range users {
 					if uid != msg.UserId {

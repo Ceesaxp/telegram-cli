@@ -26,18 +26,18 @@ const (
 
 // Model is a modal dialog component.
 type Model struct {
-	theme       *theme.Theme
-	visible     bool
-	kind        Kind
-	id          string
-	title       string
-	message     string
-	input       string
-	cursor      int
-	buttonIdx   int
-	buttons     []string
-	width       int
-	height      int
+	theme     *theme.Theme
+	visible   bool
+	kind      Kind
+	id        string
+	title     string
+	message   string
+	input     string
+	cursor    int
+	buttonIdx int
+	buttons   []string
+	width     int
+	height    int
 }
 
 // NewConfirm creates a confirmation dialog.

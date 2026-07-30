@@ -1,7 +1,6 @@
 package search
 
 import (
-	
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,7 +9,6 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
 	"github.com/tegal1337/telegram-cli/internal/ui/widgets"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 // SearchResultMsg is emitted when a search result is selected.
@@ -111,29 +109,26 @@ func (m *Model) searchCmd() tea.Cmd {
 		case TabChats:
 			chats, err := m.tg.SearchChats(query, 20)
 			if err == nil {
-				for _, chatID := range chats.ChatIds {
-					chat, err := m.tg.GetChat(chatID)
-					if err == nil {
-						items = append(items, widgets.ListItem{
-							ID:       fmt.Sprintf("%d", chat.Id),
-							Title:    chat.Title,
-							Subtitle: chatTypeLabel(chat),
-						})
-					}
+				for _, chat := range chats {
+					items = append(items, widgets.ListItem{
+						ID:       fmt.Sprintf("%d", chat.ID),
+						Title:    chat.Title,
+						Subtitle: chatTypeLabel(chat),
+					})
 				}
 			}
 
 		case TabMessages:
 			found, err := m.tg.SearchMessages(query, 20)
 			if err == nil {
-				for _, msg := range found.Messages {
-					chat, _ := m.tg.GetChat(msg.ChatId)
-					title := fmt.Sprintf("%d", msg.ChatId)
+				for _, msg := range found {
+					chat, _ := m.tg.GetChat(msg.ChatID)
+					title := fmt.Sprintf("%d", msg.ChatID)
 					if chat != nil {
 						title = chat.Title
 					}
 					items = append(items, widgets.ListItem{
-						ID:       fmt.Sprintf("%d:%d", msg.ChatId, msg.Id),
+						ID:       fmt.Sprintf("%d:%d", msg.ChatID, msg.ID),
 						Title:    title,
 						Subtitle: messagePreview(msg),
 					})
@@ -143,15 +138,12 @@ func (m *Model) searchCmd() tea.Cmd {
 		case TabGlobal:
 			chats, err := m.tg.SearchChats(query, 20)
 			if err == nil {
-				for _, chatID := range chats.ChatIds {
-					chat, err := m.tg.GetChat(chatID)
-					if err == nil {
-						items = append(items, widgets.ListItem{
-							ID:       fmt.Sprintf("%d", chat.Id),
-							Title:    chat.Title,
-							Subtitle: chatTypeLabel(chat),
-						})
-					}
+				for _, chat := range chats {
+					items = append(items, widgets.ListItem{
+						ID:       fmt.Sprintf("%d", chat.ID),
+						Title:    chat.Title,
+						Subtitle: chatTypeLabel(chat),
+					})
 				}
 			}
 		}
@@ -160,30 +152,26 @@ func (m *Model) searchCmd() tea.Cmd {
 	}
 }
 
-func chatTypeLabel(chat *client.Chat) string {
-	switch chat.Type.(type) {
-	case *client.ChatTypePrivate:
+func chatTypeLabel(chat *telegram.Chat) string {
+	switch chat.Type {
+	case telegram.ChatTypePrivate:
 		return "Private chat"
-	case *client.ChatTypeBasicGroup:
+	case telegram.ChatTypeBasicGroup:
 		return "Group"
-	case *client.ChatTypeSupergroup:
-		sg := chat.Type.(*client.ChatTypeSupergroup)
-		if sg.IsChannel {
-			return "Channel"
-		}
+	case telegram.ChatTypeSupergroup:
 		return "Supergroup"
-	case *client.ChatTypeSecret:
-		return "Secret chat"
+	case telegram.ChatTypeChannel:
+		return "Channel"
 	default:
 		return "Chat"
 	}
 }
 
-func messagePreview(msg *client.Message) string {
+func messagePreview(msg *telegram.Message) string {
 	if msg == nil || msg.Content == nil {
 		return ""
 	}
-	if text, ok := msg.Content.(*client.MessageText); ok {
+	if text, ok := msg.Content.(*telegram.MessageText); ok {
 		t := text.Text.Text
 		if len(t) > 60 {
 			t = t[:60] + "..."

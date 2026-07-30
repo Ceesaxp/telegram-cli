@@ -16,6 +16,11 @@ type AuthStateChangedMsg struct {
 	Hint  string
 }
 
+// AuthErrorMsg is sent when the Telegram client fails during authentication.
+type AuthErrorMsg struct {
+	Err error
+}
+
 // AuthenticatedMsg signals that authentication is complete.
 type AuthenticatedMsg struct {
 	UserId    int64

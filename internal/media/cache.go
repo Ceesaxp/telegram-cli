@@ -6,10 +6,10 @@ import (
 
 // Cache is an LRU cache for rendered media (terminal strings).
 type Cache struct {
-	mu       sync.RWMutex
-	entries  map[string]string
-	order    []string
-	maxSize  int
+	mu      sync.RWMutex
+	entries map[string]string
+	order   []string
+	maxSize int
 }
 
 // NewCache creates a new media cache.

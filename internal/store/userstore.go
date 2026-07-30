@@ -3,30 +3,30 @@ package store
 import (
 	"sync"
 
-	"github.com/zelenin/go-tdlib/client"
+	"github.com/tegal1337/telegram-cli/internal/telegram"
 )
 
 // UserStore caches user information.
 type UserStore struct {
 	mu    sync.RWMutex
-	users map[int64]*client.User
+	users map[int64]*telegram.User
 }
 
 func NewUserStore() *UserStore {
 	return &UserStore{
-		users: make(map[int64]*client.User),
+		users: make(map[int64]*telegram.User),
 	}
 }
 
 // Set adds or updates a user in the cache.
-func (s *UserStore) Set(user *client.User) {
+func (s *UserStore) Set(user *telegram.User) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.users[user.Id] = user
+	s.users[user.ID] = user
 }
 
 // Get returns a cached user by ID.
-func (s *UserStore) Get(userID int64) (*client.User, bool) {
+func (s *UserStore) Get(userID int64) (*telegram.User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	user, ok := s.users[userID]
@@ -60,12 +60,12 @@ func (s *UserStore) IsOnline(userID int64) bool {
 		return false
 	}
 
-	_, online := user.Status.(*client.UserStatusOnline)
+	_, online := user.Status.(*telegram.UserStatusOnline)
 	return online
 }
 
 // UpdateStatus updates a user's online status.
-func (s *UserStore) UpdateStatus(userID int64, status client.UserStatus) {
+func (s *UserStore) UpdateStatus(userID int64, status telegram.UserStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -75,11 +75,11 @@ func (s *UserStore) UpdateStatus(userID int64, status client.UserStatus) {
 }
 
 // All returns all cached users.
-func (s *UserStore) All() []*client.User {
+func (s *UserStore) All() []*telegram.User {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	users := make([]*client.User, 0, len(s.users))
+	users := make([]*telegram.User, 0, len(s.users))
 	for _, u := range s.users {
 		users = append(users, u)
 	}

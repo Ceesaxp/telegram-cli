@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tegal1337/telegram-cli/internal/media"
 	"github.com/tegal1337/telegram-cli/internal/store"
+	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 type MessageRenderer struct {
@@ -33,7 +33,7 @@ func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 	}
 }
 
-func (r *MessageRenderer) RenderMessage(msg *client.Message, s *store.Store, isOwn, isSelected bool, maxWidth int) string {
+func (r *MessageRenderer) RenderMessage(msg *telegram.Message, s *store.Store, isOwn, isSelected bool, maxWidth int) string {
 	if msg == nil {
 		return ""
 	}
@@ -51,14 +51,12 @@ func (r *MessageRenderer) RenderMessage(msg *client.Message, s *store.Store, isO
 
 	var lines []string
 
-	if msg.ForwardInfo != nil {
+	if msg.IsForwarded {
 		lines = append(lines, lipgloss.NewStyle().Foreground(r.theme.TextMuted).Italic(true).Render("↪ Forwarded"))
 	}
 
-	if msg.ReplyTo != nil {
-		if rt, ok := msg.ReplyTo.(*client.MessageReplyToMessage); ok {
-			lines = append(lines, lipgloss.NewStyle().Foreground(r.theme.Primary).Italic(true).Render(fmt.Sprintf("┃ reply #%d", rt.MessageId)))
-		}
+	if msg.ReplyToMessageID != 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(r.theme.Primary).Italic(true).Render(fmt.Sprintf("┃ reply #%d", msg.ReplyToMessageID)))
 	}
 
 	if !isOwn && senderName != "" {
@@ -69,7 +67,7 @@ func (r *MessageRenderer) RenderMessage(msg *client.Message, s *store.Store, isO
 
 	footer := lipgloss.NewStyle().Foreground(r.theme.TextMuted).Render(timeStr)
 	if isOwn {
-		if msg.Id < 0 {
+		if msg.ID == 0 {
 			footer += " " + lipgloss.NewStyle().Foreground(r.theme.Warning).Render("⏳")
 		} else {
 			footer += " " + lipgloss.NewStyle().Foreground(r.theme.Success).Render("✓✓")
@@ -122,31 +120,31 @@ func (r *MessageRenderer) RenderMessage(msg *client.Message, s *store.Store, isO
 	return bubble
 }
 
-func (r *MessageRenderer) getSenderName(msg *client.Message, s *store.Store) string {
-	switch sender := msg.SenderId.(type) {
-	case *client.MessageSenderUser:
-		name := s.Users.DisplayName(sender.UserId)
+func (r *MessageRenderer) getSenderName(msg *telegram.Message, s *store.Store) string {
+	switch sender := msg.SenderID.(type) {
+	case *telegram.MessageSenderUser:
+		name := s.Users.DisplayName(sender.UserID)
 		if name != "Unknown" {
 			return name
 		}
 		// Fallback: use first/last from message if available
-		return fmt.Sprintf("User#%d", sender.UserId)
-	case *client.MessageSenderChat:
-		if entry, ok := s.Chats.Get(sender.ChatId); ok && entry.Chat != nil {
+		return fmt.Sprintf("User#%d", sender.UserID)
+	case *telegram.MessageSenderChat:
+		if entry, ok := s.Chats.Get(sender.ChatID); ok && entry.Chat != nil {
 			return entry.Chat.Title
 		}
-		return fmt.Sprintf("Chat#%d", sender.ChatId)
+		return fmt.Sprintf("Chat#%d", sender.ChatID)
 	}
 	return ""
 }
 
-func (r *MessageRenderer) renderContent(content client.MessageContent, s *store.Store, maxWidth int) string {
+func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *store.Store, maxWidth int) string {
 	if content == nil {
 		return "[unsupported]"
 	}
 
 	switch c := content.(type) {
-	case *client.MessageText:
+	case *telegram.MessageText:
 		if c.Text == nil || c.Text.Text == "" {
 			return "[empty]"
 		}
@@ -159,7 +157,7 @@ func (r *MessageRenderer) renderContent(content client.MessageContent, s *store.
 		}
 		return EntitiesToANSI(c.Text)
 
-	case *client.MessagePhoto:
+	case *telegram.MessagePhoto:
 		imgStr := r.renderPhoto(c.Photo, s)
 		caption := ""
 		if c.Caption != nil && c.Caption.Text != "" {
@@ -167,70 +165,72 @@ func (r *MessageRenderer) renderContent(content client.MessageContent, s *store.
 		}
 		return imgStr + caption
 
-	case *client.MessageVideo:
+	case *telegram.MessageVideo:
 		s := fmt.Sprintf("🎥 Video [%s]", fmtDur(c.Video.Duration))
 		if c.Caption != nil && c.Caption.Text != "" {
 			s += "\n" + c.Caption.Text
 		}
 		return s
 
-	case *client.MessageDocument:
-		s := fmt.Sprintf("📎 %s (%s)", c.Document.FileName, fmtSize(c.Document.Document.ExpectedSize))
+	case *telegram.MessageDocument:
+		s := fmt.Sprintf("📎 %s (%s)", c.Document.FileName, fmtSize(c.Document.File.Size))
 		if c.Caption != nil && c.Caption.Text != "" {
 			s += "\n" + c.Caption.Text
 		}
 		return s
 
-	case *client.MessageVoiceNote:
+	case *telegram.MessageVoiceNote:
 		s := fmt.Sprintf("🎤 Voice [%s]", fmtDur(c.VoiceNote.Duration))
 		if c.Caption != nil && c.Caption.Text != "" {
 			s += "\n" + c.Caption.Text
 		}
 		return s
 
-	case *client.MessageVideoNote:
+	case *telegram.MessageVideoNote:
 		return fmt.Sprintf("📹 Video msg [%s]", fmtDur(c.VideoNote.Duration))
 
-	case *client.MessageSticker:
+	case *telegram.MessageSticker:
 		return c.Sticker.Emoji + " Sticker"
 
-	case *client.MessageAnimation:
+	case *telegram.MessageAnimation:
 		return "🎬 GIF"
 
-	case *client.MessageAudio:
+	case *telegram.MessageAudio:
 		title := c.Audio.Title
 		if title == "" {
 			title = c.Audio.FileName
 		}
 		return fmt.Sprintf("🎵 %s [%s]", title, fmtDur(c.Audio.Duration))
 
-	case *client.MessageLocation:
+	case *telegram.MessageLocation:
 		return fmt.Sprintf("📍 %.4f, %.4f", c.Location.Latitude, c.Location.Longitude)
 
-	case *client.MessageContact:
+	case *telegram.MessageContact:
 		return fmt.Sprintf("👤 %s %s", c.Contact.FirstName, c.Contact.LastName)
 
-	case *client.MessagePoll:
-		return fmt.Sprintf("📊 %s", c.Poll.Question.Text)
+	case *telegram.MessagePoll:
+		return fmt.Sprintf("📊 %s", c.Poll.Question)
 
-	case *client.MessagePinMessage:
+	case *telegram.MessagePinMessage:
 		return "📌 Pinned"
-	case *client.MessageChatAddMembers:
+	case *telegram.MessageChatAddMembers:
 		return "➕ Members added"
-	case *client.MessageChatDeleteMember:
+	case *telegram.MessageChatDeleteMember:
 		return "➖ Member left"
-	case *client.MessageChatChangeTitle:
+	case *telegram.MessageChatChangeTitle:
 		return "✏ " + c.Title
-	case *client.MessageChatChangePhoto:
+	case *telegram.MessageChatChangePhoto:
 		return "🖼 Photo changed"
-	case *client.MessageChatJoinByLink:
+	case *telegram.MessageChatJoinByLink:
 		return "🔗 Joined via link"
+	case *telegram.MessageUnsupported:
+		return fmt.Sprintf("[%s]", c.Type)
 	default:
-		return fmt.Sprintf("[%s]", content.MessageContentType())
+		return "[unsupported]"
 	}
 }
 
-func (r *MessageRenderer) renderPhoto(photo *client.Photo, s *store.Store) string {
+func (r *MessageRenderer) renderPhoto(photo *telegram.Photo, s *store.Store) string {
 	if photo == nil || len(photo.Sizes) == 0 {
 		return "🖼  [Photo]"
 	}
@@ -238,35 +238,30 @@ func (r *MessageRenderer) renderPhoto(photo *client.Photo, s *store.Store) strin
 	// Try to find a downloaded file in the photo sizes
 	// Check smallest first (thumbnail), then larger
 	for _, size := range photo.Sizes {
-		if size.Photo == nil {
+		if size.File == nil {
 			continue
 		}
-		fileState, ok := s.Files.Get(size.Photo.Id)
-		if ok && fileState.IsComplete && fileState.LocalPath != "" {
-			// Check cache first
-			cacheKey := fmt.Sprintf("img:%d", size.Photo.Id)
-			if cached, ok := r.imgCache.Get(cacheKey); ok {
-				return cached
-			}
-			// Render image from local file
-			rendered, err := r.imgRend.RenderFile(fileState.LocalPath)
-			if err == nil && rendered != "" {
-				r.imgCache.Set(cacheKey, rendered)
-				return rendered
-			}
+
+		path := ""
+		if fileState, ok := s.Files.Get(size.File.ID); ok && fileState.IsComplete {
+			path = fileState.LocalPath
+		} else if size.File.Downloaded {
+			path = size.File.Path
+		}
+		if path == "" {
+			continue
 		}
 
-		// Check if local path is available directly from TDLib file info
-		if size.Photo.Local != nil && size.Photo.Local.IsDownloadingCompleted && size.Photo.Local.Path != "" {
-			cacheKey := fmt.Sprintf("img:%d", size.Photo.Id)
-			if cached, ok := r.imgCache.Get(cacheKey); ok {
-				return cached
-			}
-			rendered, err := r.imgRend.RenderFile(size.Photo.Local.Path)
-			if err == nil && rendered != "" {
-				r.imgCache.Set(cacheKey, rendered)
-				return rendered
-			}
+		// Check cache first
+		cacheKey := fmt.Sprintf("img:%s", size.File.ID)
+		if cached, ok := r.imgCache.Get(cacheKey); ok {
+			return cached
+		}
+		// Render image from local file
+		rendered, err := r.imgRend.RenderFile(path)
+		if err == nil && rendered != "" {
+			r.imgCache.Set(cacheKey, rendered)
+			return rendered
 		}
 	}
 

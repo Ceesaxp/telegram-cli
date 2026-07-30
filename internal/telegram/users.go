@@ -1,52 +1,47 @@
 package telegram
 
 import (
-	"github.com/zelenin/go-tdlib/client"
+	"context"
+	"fmt"
+
+	"github.com/gotd/td/tg"
 )
 
-func (c *Client) GetUser(userId int64) (*client.User, error) {
-	return c.tdClient.GetUser(&client.GetUserRequest{
-		UserId: userId,
-	})
+// GetUser returns a user by ID.
+func (c *Client) GetUser(userID int64) (*User, error) {
+	ctx := context.Background()
+	peer, err := c.peers.ResolveUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user %d: %w", userID, err)
+	}
+	return userFromTG(peer.Raw()), nil
 }
 
-func (c *Client) GetUserFullInfo(userId int64) (*client.UserFullInfo, error) {
-	return c.tdClient.GetUserFullInfo(&client.GetUserFullInfoRequest{
-		UserId: userId,
-	})
-}
+// GetContacts returns the contact list.
+func (c *Client) GetContacts() ([]*User, error) {
+	ctx := context.Background()
+	res, err := c.api.ContactsGetContacts(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("get contacts: %w", err)
+	}
 
-func (c *Client) GetContacts() (*client.Users, error) {
-	return c.tdClient.GetContacts()
-}
+	contacts, ok := res.(*tg.ContactsContacts)
+	if !ok {
+		return nil, fmt.Errorf("unexpected contacts type %T", res)
+	}
 
-func (c *Client) SearchContacts(query string, limit int32) (*client.Users, error) {
-	return c.tdClient.SearchContacts(&client.SearchContactsRequest{
-		Query: query,
-		Limit: limit,
-	})
-}
+	users := make([]*User, 0, len(contacts.Users))
+	raw := make([]tg.UserClass, 0, len(contacts.Users))
+	for _, uc := range contacts.Users {
+		if u, ok := uc.(*tg.User); ok {
+			raw = append(raw, u)
+			users = append(users, userFromTG(u))
+		}
+	}
 
-func (c *Client) GetUserProfilePhotos(userId int64, offset int32, limit int32) (*client.ChatPhotos, error) {
-	return c.tdClient.GetUserProfilePhotos(&client.GetUserProfilePhotosRequest{
-		UserId: userId,
-		Offset: offset,
-		Limit:  limit,
-	})
-}
-
-func (c *Client) BlockUser(senderId client.MessageSender) error {
-	_, err := c.tdClient.SetMessageSenderBlockList(&client.SetMessageSenderBlockListRequest{
-		SenderId:  senderId,
-		BlockList: &client.BlockListMain{},
-	})
-	return err
-}
-
-func (c *Client) UnblockUser(senderId client.MessageSender) error {
-	_, err := c.tdClient.SetMessageSenderBlockList(&client.SetMessageSenderBlockListRequest{
-		SenderId:  senderId,
-		BlockList: nil,
-	})
-	return err
+	// Seed the peers manager so these users are resolvable later.
+	if err := c.peers.Apply(ctx, raw, nil); err != nil {
+		return nil, fmt.Errorf("apply peers: %w", err)
+	}
+	return users, nil
 }

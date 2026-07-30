@@ -116,7 +116,13 @@ func (m Model) submit() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// SetStep changes the auth step (called when TDLib auth state changes).
+// SetError shows an error message on the auth screen (e.g. a failed
+// login attempt surfaced from the Telegram client).
+func (m *Model) SetError(err string) {
+	m.error = err
+}
+
+// SetStep changes the auth step (called when the auth state changes).
 func (m *Model) SetStep(step Step) {
 	m.step = step
 	m.input.Reset()

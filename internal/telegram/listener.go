@@ -1,189 +1,157 @@
 package telegram
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
-	"github.com/zelenin/go-tdlib/client"
+	"github.com/gotd/td/tg"
 )
 
+// Listener converts Telegram updates into tea messages and forwards
+// them to the bubbletea program.
 type Listener struct {
-	tdClient *client.Client
-	program  *tea.Program
+	client  *Client
+	program *tea.Program
 }
 
-func NewListener(tdClient *client.Client, program *tea.Program) *Listener {
-	return &Listener{
-		tdClient: tdClient,
-		program:  program,
+// NewListener registers update handlers on the client's dispatcher.
+// main.go should now pass the wrapper client: telegram.NewListener(tgClient, p).
+func NewListener(client *Client, program *tea.Program) *Listener {
+	l := &Listener{
+		client:  client,
+		program: program,
 	}
+	client.setMsgSink(program.Send)
+	l.registerHandlers()
+	return l
 }
 
-func (l *Listener) Start() {
-	listener := l.tdClient.GetListener()
+// Start is a no-op kept for API compatibility: handlers are registered
+// eagerly in NewListener and dispatch is driven by client.Run.
+func (l *Listener) Start() {}
 
-	go func() {
-		defer listener.Close()
+func (l *Listener) registerHandlers() {
+	c := l.client
+	d := c.dispatcher
 
-		for update := range listener.Updates {
-			msg := l.convertUpdate(update)
-			if msg != nil {
-				l.program.Send(msg)
-			}
-		}
-	}()
+	d.OnNewMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
+		l.onMessage(u.Message)
+		return nil
+	})
+	d.OnNewChannelMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewChannelMessage) error {
+		l.onMessage(u.Message)
+		return nil
+	})
+	d.OnEditMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateEditMessage) error {
+		l.onEdit(u.Message)
+		return nil
+	})
+	d.OnEditChannelMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateEditChannelMessage) error {
+		l.onEdit(u.Message)
+		return nil
+	})
+	d.OnDeleteMessages(func(ctx context.Context, e tg.Entities, u *tg.UpdateDeleteMessages) error {
+		c.send(MessageDeletedMsg{
+			ChatId:     0, // the update carries no peer
+			MessageIds: intsToInt64s(u.Messages),
+		})
+		return nil
+	})
+	d.OnDeleteChannelMessages(func(ctx context.Context, e tg.Entities, u *tg.UpdateDeleteChannelMessages) error {
+		c.send(MessageDeletedMsg{
+			ChatId:     channelChatID(u.ChannelID),
+			MessageIds: intsToInt64s(u.Messages),
+		})
+		return nil
+	})
+	d.OnReadHistoryInbox(func(ctx context.Context, e tg.Entities, u *tg.UpdateReadHistoryInbox) error {
+		c.send(ChatReadInboxMsg{
+			ChatId:                 chatIDFromPeer(u.Peer),
+			LastReadInboxMessageId: int64(u.MaxID),
+			UnreadCount:            int32(u.StillUnreadCount),
+		})
+		return nil
+	})
+	d.OnReadHistoryOutbox(func(ctx context.Context, e tg.Entities, u *tg.UpdateReadHistoryOutbox) error {
+		c.send(ChatReadOutboxMsg{
+			ChatId:                  chatIDFromPeer(u.Peer),
+			LastReadOutboxMessageId: int64(u.MaxID),
+		})
+		return nil
+	})
+	d.OnReadChannelInbox(func(ctx context.Context, e tg.Entities, u *tg.UpdateReadChannelInbox) error {
+		c.send(ChatReadInboxMsg{
+			ChatId:                 channelChatID(u.ChannelID),
+			LastReadInboxMessageId: int64(u.MaxID),
+			UnreadCount:            int32(u.GetStillUnreadCount()),
+		})
+		return nil
+	})
+	d.OnUserTyping(func(ctx context.Context, e tg.Entities, u *tg.UpdateUserTyping) error {
+		c.send(ChatActionMsg{
+			ChatId: u.UserID,
+			UserId: u.UserID,
+			Action: chatActionFromTG(u.Action),
+		})
+		return nil
+	})
+	d.OnChatUserTyping(func(ctx context.Context, e tg.Entities, u *tg.UpdateChatUserTyping) error {
+		c.send(ChatActionMsg{
+			ChatId: basicGroupChatID(u.ChatID),
+			UserId: senderUserID(u.FromID),
+			Action: chatActionFromTG(u.Action),
+		})
+		return nil
+	})
+	d.OnChannelUserTyping(func(ctx context.Context, e tg.Entities, u *tg.UpdateChannelUserTyping) error {
+		c.send(ChatActionMsg{
+			ChatId: channelChatID(u.ChannelID),
+			UserId: senderUserID(u.FromID),
+			Action: chatActionFromTG(u.Action),
+		})
+		return nil
+	})
 }
 
-func (l *Listener) convertUpdate(update client.Type) tea.Msg {
-	switch u := update.(type) {
-	case *client.UpdateAuthorizationState:
-		return AuthStateMsg{State: u.AuthorizationState}
-
-	case *client.UpdateNewMessage:
-		return NewMessageMsg{Message: u.Message}
-
-	case *client.UpdateMessageEdited:
-		return MessageEditedMsg{
-			ChatId:    u.ChatId,
-			MessageId: u.MessageId,
-		}
-
-	case *client.UpdateDeleteMessages:
-		if !u.FromCache {
-			return MessageDeletedMsg{
-				ChatId:     u.ChatId,
-				MessageIds: u.MessageIds,
-			}
-		}
-
-	case *client.UpdateNewChat:
-		return ChatUpdateMsg{Chat: u.Chat}
-
-	case *client.UpdateChatTitle:
-		return ChatUpdateMsg{Chat: &client.Chat{Id: u.ChatId, Title: u.Title}}
-
-	case *client.UpdateChatPosition:
-		return ChatPositionMsg{
-			ChatId:    u.ChatId,
-			Positions: []*client.ChatPosition{u.Position},
-		}
-
-	case *client.UpdateChatLastMessage:
-		return ChatLastMessageMsg{
-			ChatId:      u.ChatId,
-			LastMessage: u.LastMessage,
-			Positions:   u.Positions,
-		}
-
-	case *client.UpdateChatReadInbox:
-		return ChatReadInboxMsg{
-			ChatId:                 u.ChatId,
-			LastReadInboxMessageId: u.LastReadInboxMessageId,
-			UnreadCount:            u.UnreadCount,
-		}
-
-	case *client.UpdateChatReadOutbox:
-		return ChatReadOutboxMsg{
-			ChatId:                  u.ChatId,
-			LastReadOutboxMessageId: u.LastReadOutboxMessageId,
-		}
-
-	case *client.UpdateUserStatus:
-		return UserStatusMsg{
-			UserId: u.UserId,
-			Status: u.Status,
-		}
-
-	case *client.UpdateUser:
-		return UserUpdateMsg{User: u.User}
-
-	case *client.UpdateFile:
-		return FileUpdateMsg{File: u.File}
-
-	case *client.UpdateChatAction:
-		return ChatActionMsg{
-			ChatId: u.ChatId,
-			UserId: extractSenderUserId(u.SenderId),
-			Action: u.Action,
-		}
-
-	case *client.UpdateConnectionState:
-		return ConnectionStateMsg{State: u.State}
-
-	case *client.UpdateUnreadMessageCount:
-		return UnreadCountMsg{
-			UnreadCount:        u.UnreadCount,
-			UnreadUnmutedCount: u.UnreadUnmutedCount,
-		}
-
-	case *client.UpdateMessageSendSucceeded:
-		return MessageSendSucceededMsg{
-			Message:      u.Message,
-			OldMessageId: u.OldMessageId,
-		}
-
-	case *client.UpdateMessageSendFailed:
-		return MessageSendFailedMsg{
-			Message:      u.Message,
-			OldMessageId: u.OldMessageId,
-			ErrorCode:    u.Error.Code,
-			ErrorMessage: u.Error.Message,
-		}
-
-	case *client.UpdateSupergroup:
-		return SupergroupUpdateMsg{Supergroup: u.Supergroup}
-
-	case *client.UpdateBasicGroup:
-		return BasicGroupUpdateMsg{BasicGroup: u.BasicGroup}
-
-	case *client.UpdateNotificationGroup:
-		return NotificationMsg{
-			GroupId:       u.NotificationGroupId,
-			Notifications: u.AddedNotifications,
-		}
-
-	case *client.UpdateChatAddedToList,
-		*client.UpdateChatRemovedFromList,
-		*client.UpdateUserFullInfo,
-		*client.UpdateSupergroupFullInfo,
-		*client.UpdateBasicGroupFullInfo,
-		*client.UpdateChatActionBar,
-		*client.UpdateChatHasScheduledMessages,
-		*client.UpdateChatIsMarkedAsUnread,
-		*client.UpdateChatNotificationSettings,
-		*client.UpdateChatUnreadMentionCount,
-		*client.UpdateChatUnreadReactionCount,
-		*client.UpdateChatDraftMessage,
-		*client.UpdateChatPhoto,
-		*client.UpdateChatPermissions,
-		*client.UpdateChatTheme,
-		*client.UpdateChatAvailableReactions,
-		*client.UpdateOption,
-		*client.UpdateAnimationSearchParameters,
-		*client.UpdateScopeNotificationSettings,
-		*client.UpdateHavePendingNotifications,
-		*client.UpdateChatFolders,
-		*client.UpdateChatOnlineMemberCount,
-		*client.UpdateAttachmentMenuBots,
-		*client.UpdateActiveEmojiReactions,
-		*client.UpdateDefaultReactionType,
-		*client.UpdateUnreadChatCount,
-		*client.UpdateStoryStealthMode,
-		*client.UpdateChatBlockList,
-		*client.UpdateAccentColors,
-		*client.UpdateProfileAccentColors,
-		*client.UpdateSavedMessagesTags,
-		*client.UpdateOwnedStarCount,
-		*client.UpdateChatPendingJoinRequests:
-	
+// onMessage handles new messages (private/group/channel).
+func (l *Listener) onMessage(mc tg.MessageClass) {
+	m := l.client.messageClassFromTG(mc)
+	if m == nil {
+		return
 	}
-
-	return nil
+	l.client.send(NewMessageMsg{Message: m})
+	l.client.send(ChatLastMessageMsg{ChatId: m.ChatID, LastMessage: m})
 }
 
-func extractSenderUserId(sender client.MessageSender) int64 {
-	switch s := sender.(type) {
-	case *client.MessageSenderUser:
-		return s.UserId
-	default:
-		return 0
+// onEdit handles edited messages.
+func (l *Listener) onEdit(mc tg.MessageClass) {
+	m := l.client.messageClassFromTG(mc)
+	if m == nil {
+		return
 	}
+	l.client.send(MessageEditedMsg{ChatId: m.ChatID, MessageId: m.ID})
+}
+
+func intsToInt64s(ids []int) []int64 {
+	out := make([]int64, len(ids))
+	for i, id := range ids {
+		out[i] = int64(id)
+	}
+	return out
+}
+
+// senderUserID extracts the user ID from a peer, 0 for chats/channels.
+func senderUserID(p tg.PeerClass) int64 {
+	if u, ok := p.(*tg.PeerUser); ok {
+		return u.UserID
+	}
+	return 0
+}
+
+// chatActionFromTG maps a tg action to the domain typing/cancel pair.
+func chatActionFromTG(a tg.SendMessageActionClass) ChatAction {
+	if _, ok := a.(*tg.SendMessageCancelAction); ok {
+		return &ChatActionCancel{}
+	}
+	return &ChatActionTyping{}
 }

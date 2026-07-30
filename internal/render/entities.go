@@ -5,11 +5,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zelenin/go-tdlib/client"
+	"github.com/tegal1337/telegram-cli/internal/telegram"
 )
 
 // EntitiesToMarkdown converts Telegram formatted text entities to markdown.
-func EntitiesToMarkdown(text *client.FormattedText) string {
+func EntitiesToMarkdown(text *telegram.FormattedText) string {
 	if text == nil {
 		return ""
 	}
@@ -21,7 +21,7 @@ func EntitiesToMarkdown(text *client.FormattedText) string {
 	runes := []rune(text.Text)
 
 	// Sort entities by offset.
-	entities := make([]*client.TextEntity, len(text.Entities))
+	entities := make([]*telegram.TextEntity, len(text.Entities))
 	copy(entities, text.Entities)
 	sort.Slice(entities, func(i, j int) bool {
 		return entities[i].Offset < entities[j].Offset
@@ -39,70 +39,70 @@ func EntitiesToMarkdown(text *client.FormattedText) string {
 		entityText := string(runes[e.Offset : e.Offset+e.Length])
 
 		switch t := e.Type.(type) {
-		case *client.TextEntityTypeBold:
+		case *telegram.TextEntityTypeBold:
 			b.WriteString("**")
 			b.WriteString(entityText)
 			b.WriteString("**")
 
-		case *client.TextEntityTypeItalic:
+		case *telegram.TextEntityTypeItalic:
 			b.WriteString("*")
 			b.WriteString(entityText)
 			b.WriteString("*")
 
-		case *client.TextEntityTypeUnderline:
+		case *telegram.TextEntityTypeUnderline:
 			b.WriteString("__")
 			b.WriteString(entityText)
 			b.WriteString("__")
 
-		case *client.TextEntityTypeStrikethrough:
+		case *telegram.TextEntityTypeStrikethrough:
 			b.WriteString("~~")
 			b.WriteString(entityText)
 			b.WriteString("~~")
 
-		case *client.TextEntityTypeCode:
+		case *telegram.TextEntityTypeCode:
 			b.WriteString("`")
 			b.WriteString(entityText)
 			b.WriteString("`")
 
-		case *client.TextEntityTypePre:
+		case *telegram.TextEntityTypePre:
 			b.WriteString("```\n")
 			b.WriteString(entityText)
 			b.WriteString("\n```")
 
-		case *client.TextEntityTypePreCode:
+		case *telegram.TextEntityTypePreCode:
 			b.WriteString(fmt.Sprintf("```%s\n", t.Language))
 			b.WriteString(entityText)
 			b.WriteString("\n```")
 
-		case *client.TextEntityTypeTextUrl:
-			b.WriteString(fmt.Sprintf("[%s](%s)", entityText, t.Url))
+		case *telegram.TextEntityTypeTextURL:
+			b.WriteString(fmt.Sprintf("[%s](%s)", entityText, t.URL))
 
-		case *client.TextEntityTypeUrl:
+		case *telegram.TextEntityTypeURL:
 			b.WriteString(entityText)
 
-		case *client.TextEntityTypeMention:
+		case *telegram.TextEntityTypeMention:
 			b.WriteString(entityText)
 
-		case *client.TextEntityTypeMentionName:
-			b.WriteString(fmt.Sprintf("@[%s](user:%d)", entityText, t.UserId))
+		case *telegram.TextEntityTypeMentionName:
+			b.WriteString(fmt.Sprintf("@[%s](user:%d)", entityText, t.UserID))
 
-		case *client.TextEntityTypeHashtag:
+		case *telegram.TextEntityTypeHashtag:
 			b.WriteString(entityText)
 
-		case *client.TextEntityTypeBotCommand:
+		case *telegram.TextEntityTypeBotCommand:
 			b.WriteString("`")
 			b.WriteString(entityText)
 			b.WriteString("`")
 
-		case *client.TextEntityTypeEmailAddress:
+		case *telegram.TextEntityTypeEmailAddress:
 			b.WriteString(entityText)
 
-		case *client.TextEntityTypeSpoiler:
+		case *telegram.TextEntityTypeSpoiler:
 			b.WriteString("||")
 			b.WriteString(entityText)
 			b.WriteString("||")
 
-		case *client.TextEntityTypeBlockQuote:
+		case *telegram.TextEntityTypeBlockQuote:
 			lines := strings.Split(entityText, "\n")
 			for i, line := range lines {
 				b.WriteString("> ")
@@ -128,7 +128,7 @@ func EntitiesToMarkdown(text *client.FormattedText) string {
 }
 
 // EntitiesToANSI converts Telegram formatted text directly to ANSI escape codes.
-func EntitiesToANSI(text *client.FormattedText) string {
+func EntitiesToANSI(text *telegram.FormattedText) string {
 	if text == nil {
 		return ""
 	}
@@ -138,7 +138,7 @@ func EntitiesToANSI(text *client.FormattedText) string {
 	}
 
 	runes := []rune(text.Text)
-	entities := make([]*client.TextEntity, len(text.Entities))
+	entities := make([]*telegram.TextEntity, len(text.Entities))
 	copy(entities, text.Entities)
 	sort.Slice(entities, func(i, j int) bool {
 		return entities[i].Offset < entities[j].Offset
@@ -155,23 +155,23 @@ func EntitiesToANSI(text *client.FormattedText) string {
 		entityText := string(runes[e.Offset : e.Offset+e.Length])
 
 		switch e.Type.(type) {
-		case *client.TextEntityTypeBold:
+		case *telegram.TextEntityTypeBold:
 			b.WriteString("\033[1m")
 			b.WriteString(entityText)
 			b.WriteString("\033[22m")
-		case *client.TextEntityTypeItalic:
+		case *telegram.TextEntityTypeItalic:
 			b.WriteString("\033[3m")
 			b.WriteString(entityText)
 			b.WriteString("\033[23m")
-		case *client.TextEntityTypeUnderline:
+		case *telegram.TextEntityTypeUnderline:
 			b.WriteString("\033[4m")
 			b.WriteString(entityText)
 			b.WriteString("\033[24m")
-		case *client.TextEntityTypeStrikethrough:
+		case *telegram.TextEntityTypeStrikethrough:
 			b.WriteString("\033[9m")
 			b.WriteString(entityText)
 			b.WriteString("\033[29m")
-		case *client.TextEntityTypeCode, *client.TextEntityTypePre:
+		case *telegram.TextEntityTypeCode, *telegram.TextEntityTypePre:
 			b.WriteString("\033[7m") // inverse
 			b.WriteString(entityText)
 			b.WriteString("\033[27m")

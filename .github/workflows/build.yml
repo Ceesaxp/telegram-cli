@@ -8,104 +8,33 @@ on:
     branches: [main]
 
 jobs:
-  build-linux:
-    name: Linux (${{ matrix.os }})
+  build:
+    name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-22.04]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-
-      - name: Cache TDLib
-        id: cache-tdlib
-        uses: actions/cache@v4
-        with:
-          path: ~/td/tdlib
-          key: tdlib-${{ matrix.os }}-v1.8.43
-
-      - name: Setup TDLib
-        if: steps.cache-tdlib.outputs.cache-hit != 'true'
-        run: ./scripts/setup-tdlib.sh
 
       - name: Build
-        run: make build
+        run: go build -trimpath -ldflags="-s -w" -o ${{ matrix.os == 'windows-latest' && 'bin/tele-tui.exe' || 'bin/tele-tui' }} ./cmd/teletui
+        env:
+          CGO_ENABLED: 0
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tele-tui-linux-amd64-${{ matrix.os }}
-          path: bin/tele-tui
-
-  build-windows:
-    name: Windows (x86_64)
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Cache TDLib
-        id: cache-tdlib-win
-        uses: actions/cache@v4
-        with:
-          path: C:/td/tdlib
-          key: tdlib-windows-vcpkg-v1.8.43
-
-      - name: Install build tools
-        if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          choco install cmake gperf -y
-
-      - name: Install zlib and openssl via vcpkg
-        if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          C:\vcpkg\vcpkg install zlib:x64-windows openssl:x64-windows --no-print-usage
-
-      - name: Build TDLib
-        if: steps.cache-tdlib-win.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          git clone --depth 1 https://github.com/tdlib/td.git C:\td\td-src
-          New-Item -ItemType Directory -Force -Path C:\td\td-src\build
-          Set-Location C:\td\td-src\build
-          cmake -A x64 `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_PREFIX=C:\td\tdlib `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            ..
-          cmake --build . --target tdjson tdjson_static --config Release --parallel
-          cmake --install . --config Release
-
-      - name: Build telegram-cli
-        shell: cmd
-        run: |
-          set CGO_ENABLED=1
-          set CGO_CFLAGS=-IC:\td\tdlib\include
-          set CGO_LDFLAGS=-LC:\td\tdlib\lib -ltdjson
-          go build -trimpath -ldflags="-s -w" -o bin\tele-tui.exe .\cmd\teletui
-
-      - name: Verify
-        shell: cmd
-        run: dir bin\tele-tui.exe
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tele-tui-windows-amd64
-          path: bin/tele-tui.exe
+          name: tele-tui-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'macos' }}-amd64
+          path: bin/
 
   release:
     name: Release
-    needs: [build-linux, build-windows]
+    needs: [build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -119,9 +48,9 @@ jobs:
       - name: Package
         run: |
           mkdir release
-          for dir in artifacts/tele-tui-linux-*; do
-            name=$(basename "$dir"); cp "$dir/tele-tui" "release/${name}"; chmod +x "release/${name}"
-          done
+          cp artifacts/tele-tui-linux-amd64/tele-tui release/tele-tui-linux-amd64
+          cp artifacts/tele-tui-macos-amd64/tele-tui release/tele-tui-macos-amd64
+          chmod +x release/tele-tui-linux-amd64 release/tele-tui-macos-amd64
           cp artifacts/tele-tui-windows-amd64/tele-tui.exe release/tele-tui-windows-amd64.exe
 
       - uses: softprops/action-gh-release@v2

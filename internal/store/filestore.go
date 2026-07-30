@@ -3,52 +3,48 @@ package store
 import (
 	"sync"
 
-	"github.com/zelenin/go-tdlib/client"
+	"github.com/tegal1337/telegram-cli/internal/telegram"
 )
 
-// FileState tracks the download/upload state of a file.
+// FileState tracks the download state of a file.
 type FileState struct {
-	File       *client.File
+	File       *telegram.File
 	LocalPath  string
 	IsComplete bool
 	Progress   float64 // 0.0 to 1.0
 }
 
-// FileStore tracks file download/upload states.
+// FileStore tracks file download states.
 type FileStore struct {
 	mu    sync.RWMutex
-	files map[int32]*FileState // fileID -> state
+	files map[string]*FileState // file key -> state
 }
 
 func NewFileStore() *FileStore {
 	return &FileStore{
-		files: make(map[int32]*FileState),
+		files: make(map[string]*FileState),
 	}
 }
 
-// Update processes a file update from TDLib.
-func (s *FileStore) Update(file *client.File) {
+// Update processes a file update.
+func (s *FileStore) Update(file *telegram.File) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	state := &FileState{
-		File: file,
+		File:      file,
+		LocalPath: file.Path,
+	}
+	if file.Downloaded {
+		state.IsComplete = true
+		state.Progress = 1.0
 	}
 
-	if file.Local != nil {
-		state.LocalPath = file.Local.Path
-		state.IsComplete = file.Local.IsDownloadingCompleted
-
-		if file.ExpectedSize > 0 {
-			state.Progress = float64(file.Local.DownloadedSize) / float64(file.ExpectedSize)
-		}
-	}
-
-	s.files[file.Id] = state
+	s.files[file.ID] = state
 }
 
 // Get returns the state of a file.
-func (s *FileStore) Get(fileID int32) (*FileState, bool) {
+func (s *FileStore) Get(fileID string) (*FileState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state, ok := s.files[fileID]
@@ -56,7 +52,7 @@ func (s *FileStore) Get(fileID int32) (*FileState, bool) {
 }
 
 // IsComplete checks if a file download is complete.
-func (s *FileStore) IsComplete(fileID int32) bool {
+func (s *FileStore) IsComplete(fileID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -68,7 +64,7 @@ func (s *FileStore) IsComplete(fileID int32) bool {
 }
 
 // LocalPath returns the local path of a downloaded file.
-func (s *FileStore) LocalPath(fileID int32) string {
+func (s *FileStore) LocalPath(fileID string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -80,7 +76,7 @@ func (s *FileStore) LocalPath(fileID int32) string {
 }
 
 // Progress returns the download progress of a file (0.0 to 1.0).
-func (s *FileStore) Progress(fileID int32) float64 {
+func (s *FileStore) Progress(fileID string) float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

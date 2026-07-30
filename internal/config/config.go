@@ -10,12 +10,12 @@ import (
 )
 
 type Config struct {
-	Telegram      TelegramConfig      `toml:"telegram"`
-	Storage       StorageConfig       `toml:"storage"`
-	UI            UIConfig            `toml:"ui"`
-	Media         MediaConfig         `toml:"media"`
-	Notifications NotificationConfig  `toml:"notifications"`
-	Keys          KeyConfig           `toml:"keys"`
+	Telegram      TelegramConfig     `toml:"telegram"`
+	Storage       StorageConfig      `toml:"storage"`
+	UI            UIConfig           `toml:"ui"`
+	Media         MediaConfig        `toml:"media"`
+	Notifications NotificationConfig `toml:"notifications"`
+	Keys          KeyConfig          `toml:"keys"`
 }
 
 type TelegramConfig struct {
@@ -25,7 +25,7 @@ type TelegramConfig struct {
 }
 
 type StorageConfig struct {
-	DatabaseDir string `toml:"database_dir"`
+	SessionFile string `toml:"session_file"`
 	FilesDir    string `toml:"files_dir"`
 }
 
@@ -38,14 +38,14 @@ type UIConfig struct {
 }
 
 type MediaConfig struct {
-	ImageProtocol      string `toml:"image_protocol"`
-	MaxImageWidth      int    `toml:"max_image_width"`
-	MaxImageHeight     int    `toml:"max_image_height"`
-	VoicePlayer        string `toml:"voice_player"`
-	VideoPlayer        string `toml:"video_player"`
-	AutoDownloadPhotos bool   `toml:"auto_download_photos"`
-	AutoDownloadVoice  bool   `toml:"auto_download_voice"`
-	AutoDownloadLimitMB int   `toml:"auto_download_limit_mb"`
+	ImageProtocol       string `toml:"image_protocol"`
+	MaxImageWidth       int    `toml:"max_image_width"`
+	MaxImageHeight      int    `toml:"max_image_height"`
+	VoicePlayer         string `toml:"voice_player"`
+	VideoPlayer         string `toml:"video_player"`
+	AutoDownloadPhotos  bool   `toml:"auto_download_photos"`
+	AutoDownloadVoice   bool   `toml:"auto_download_voice"`
+	AutoDownloadLimitMB int    `toml:"auto_download_limit_mb"`
 }
 
 type NotificationConfig struct {
@@ -90,7 +90,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	cfg.Storage.DatabaseDir = expandPath(cfg.Storage.DatabaseDir)
+	cfg.Storage.SessionFile = expandPath(cfg.Storage.SessionFile)
 	cfg.Storage.FilesDir = expandPath(cfg.Storage.FilesDir)
 
 	return cfg, nil
@@ -99,7 +99,7 @@ func Load() (*Config, error) {
 func defaultConfig() *Config {
 	return &Config{
 		Storage: StorageConfig{
-			DatabaseDir: expandPath("~/.local/share/tele-tui/database"),
+			SessionFile: expandPath("~/.local/share/tele-tui/session.json"),
 			FilesDir:    expandPath("~/.local/share/tele-tui/files"),
 		},
 		UI: UIConfig{

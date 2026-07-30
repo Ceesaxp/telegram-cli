@@ -21,7 +21,6 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/ui/components/statusbar"
 	"github.com/tegal1337/telegram-cli/internal/ui/layout"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 type Model struct {
@@ -185,10 +184,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setFocus(PanelComposer)
 				return m, nil
 			}
+
+			// Quick-type: printable characters jump straight to the composer
+			// (when a chat is open), like a desktop chat app.
+			if m.chatList.ActiveChatId() != 0 && quickTypeTarget(m.focus, key) {
+				m.setFocus(PanelComposer)
+				key := msg
+				return m, func() tea.Msg { return key }
+			}
+		}
+
+	case tea.MouseClickMsg:
+		if m.screen == ScreenMain {
+			return m.handleMouseClick(msg)
+		}
+
+	case tea.MouseWheelMsg:
+		if m.screen == ScreenMain {
+			return m.handleMouseWheel(msg)
 		}
 
 	case AuthStateChangedMsg:
 		return m.handleAuthStateChanged(msg)
+
+	case AuthErrorMsg:
+		m.screen = ScreenAuth
+		m.auth.SetStep(auth.StepPhone)
+		m.auth.SetError(msg.Err.Error())
+		return m, nil
 
 	case AuthenticatedMsg:
 		m.screen = ScreenMain
@@ -200,14 +223,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.chatList.Init()
 
 	case telegram.NewMessageMsg:
-		if msg.Message.ChatId != m.chatList.ActiveChatId() {
-			entry, ok := m.store.Chats.Get(msg.Message.ChatId)
+		if msg.Message.ChatID != m.chatList.ActiveChatId() {
+			entry, ok := m.store.Chats.Get(msg.Message.ChatID)
 			title := "New Message"
 			if ok && entry.Chat != nil {
 				title = entry.Chat.Title
 			}
 			body := "New message received"
-			if text, ok := msg.Message.Content.(*client.MessageText); ok {
+			if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
 				body = text.Text.Text
 			}
 			m.notifier.Notify(title, body)
@@ -323,13 +346,112 @@ func (m Model) handleAuthStateChanged(msg AuthStateChangedMsg) (tea.Model, tea.C
 	return m, nil
 }
 
+// quickTypeTarget reports whether a key pressed in the given panel should be
+// forwarded to the composer as text input. Keys already bound to panel
+// navigation/actions are excluded.
+func quickTypeTarget(panel FocusPanel, key string) bool {
+	isPrintable := len([]rune(key)) == 1 || key == "space"
+	if !isPrintable {
+		return false
+	}
+	switch panel {
+	case PanelChatView:
+		switch key {
+		case "k", "j", "g", "G", "r", "e", "d", "o", "s":
+			return false
+		}
+		return true
+	case PanelChatList:
+		switch key {
+		case "k", "j", "g", "G":
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// mouseInLeftPanel reports whether the point is over the left panel
+// (chat list / contacts).
+func (m Model) mouseInLeftPanel(x, y int) bool {
+	if y >= m.layout.ChatListHeight {
+		return false
+	}
+	if m.layout.SinglePanel {
+		return m.focus == PanelChatList || m.focus == PanelContacts
+	}
+	return x < m.layout.ChatListWidth
+}
+
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	x, y := msg.X, msg.Y
+
+	if m.mouseInLeftPanel(x, y) {
+		// Row inside the panel border.
+		row := y - 1
+		if m.contacts.IsVisible() {
+			m.setFocus(PanelContacts)
+			if userID, ok := m.contacts.ClickAt(row); ok {
+				return m, func() tea.Msg { return contacts.ContactSelectedMsg{UserId: userID} }
+			}
+			return m, nil
+		}
+		m.setFocus(PanelChatList)
+		if chatID, ok := m.chatList.ClickAt(row); ok {
+			return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+		}
+		return m, nil
+	}
+
+	if y < m.layout.ChatViewHeight {
+		m.setFocus(PanelChatView)
+	} else if y < m.layout.ChatViewHeight+m.layout.ComposerHeight {
+		m.setFocus(PanelComposer)
+	}
+	return m, nil
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	x, y := msg.X, msg.Y
+	up := msg.Button == tea.MouseWheelUp
+
+	if m.mouseInLeftPanel(x, y) {
+		if m.contacts.IsVisible() {
+			if up {
+				m.contacts.ScrollBy(-1)
+			} else {
+				m.contacts.ScrollBy(1)
+			}
+			return m, nil
+		}
+		if up {
+			m.chatList.ScrollBy(-1)
+		} else {
+			m.chatList.ScrollBy(1)
+		}
+		return m, nil
+	}
+
+	if y < m.layout.ChatViewHeight {
+		if up {
+			m.chatView.ScrollByLines(3)
+		} else {
+			m.chatView.ScrollByLines(-3)
+		}
+	}
+	return m, nil
+}
+
 func (m *Model) openPrivateChat(userID int64) tea.Cmd {
 	return func() tea.Msg {
 		chat, err := m.tg.CreatePrivateChat(userID)
 		if err != nil {
 			return ErrorMsg{Err: err}
 		}
-		return chatlist.ChatSelectedMsg{ChatId: chat.Id}
+		return chatlist.ChatSelectedMsg{ChatId: chat.ID}
 	}
 }
 
@@ -352,8 +474,8 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 		msgs := m.store.Messages.Get(msg.ChatId)
 		preview := ""
 		for _, message := range msgs {
-			if message.Id == msg.MessageId {
-				if text, ok := message.Content.(*client.MessageText); ok {
+			if message.ID == msg.MessageId {
+				if text, ok := message.Content.(*telegram.MessageText); ok {
 					preview = text.Text.Text
 				} else {
 					preview = "[Media]"
@@ -366,8 +488,8 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 	case "edit":
 		msgs := m.store.Messages.Get(msg.ChatId)
 		for _, message := range msgs {
-			if message.Id == msg.MessageId {
-				if text, ok := message.Content.(*client.MessageText); ok {
+			if message.ID == msg.MessageId {
+				if text, ok := message.Content.(*telegram.MessageText); ok {
 					m.composer.EnterEditMode(msg.MessageId, text.Text.Text)
 					m.setFocus(PanelComposer)
 				}
@@ -527,7 +649,7 @@ func (m Model) renderMainScreen() string {
 		fi = 0
 	}
 	help := helpStyle.Render(fmt.Sprintf(
-		" Tab:switch │ Esc:back │ /:search │ Alt+C:contacts │ F1/F2/F3:panels │ i:compose │ %s",
+		" Tab:switch │ Esc:back │ /:search │ Alt+C:contacts │ i/typing:compose │ click+wheel:mouse │ %s",
 		focusName[fi],
 	))
 

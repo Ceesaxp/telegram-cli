@@ -12,7 +12,6 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/store"
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 	"github.com/tegal1337/telegram-cli/internal/ui/theme"
-	"github.com/zelenin/go-tdlib/client"
 )
 
 type Model struct {
@@ -42,9 +41,21 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 	}
 }
 
-func (m *Model) SetSize(w, h int)       { m.width = w; m.height = h }
+func (m *Model) SetSize(w, h int)        { m.width = w; m.height = h }
 func (m *Model) SetFocused(focused bool) { m.focused = focused }
 func (m *Model) SetMyUserId(id int64)    { m.myUserId = id }
+
+// ScrollByLines scrolls the message view by n lines (positive = up/older).
+func (m *Model) ScrollByLines(n int) {
+	m.scrollOffset += n
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	maxOffset := len(m.store.Messages.Get(m.chatID)) * 4
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+}
 
 func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 	m.chatID = chatID
@@ -62,7 +73,7 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 
 type historyLoadedMsg struct {
 	chatID   int64
-	messages []*client.Message
+	messages []*telegram.Message
 	err      error
 }
 
@@ -72,7 +83,7 @@ func (m *Model) loadHistoryCmd(chatID int64, fromMsgId int64) tea.Cmd {
 		if err != nil {
 			return historyLoadedMsg{chatID: chatID, err: err}
 		}
-		return historyLoadedMsg{chatID: chatID, messages: msgs.Messages}
+		return historyLoadedMsg{chatID: chatID, messages: msgs}
 	}
 }
 
@@ -83,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err == nil && len(msg.messages) > 0 {
-			reversed := make([]*client.Message, len(msg.messages))
+			reversed := make([]*telegram.Message, len(msg.messages))
 			for i, v := range msg.messages {
 				reversed[len(msg.messages)-1-i] = v
 			}
@@ -96,10 +107,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.loadProgress = 100
 
 	case telegram.NewMessageMsg:
-		if msg.Message.ChatId == m.chatID {
+		if msg.Message.ChatID == m.chatID {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			return m, func() tea.Msg {
-				m.tg.ViewMessages(m.chatID, []int64{msg.Message.Id})
+				m.tg.ViewMessages(m.chatID, []int64{msg.Message.ID})
 				return nil
 			}
 		}
@@ -116,18 +127,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case telegram.MessageDeletedMsg:
-		if msg.ChatId == m.chatID {
+		if msg.ChatId == 0 {
+			// Non-channel deletions carry no peer — remove from all chats.
+			m.store.Messages.DeleteFromAll(msg.MessageIds)
+		} else if msg.ChatId == m.chatID {
 			m.store.Messages.Delete(m.chatID, msg.MessageIds)
 		}
 
 	case telegram.MessageSendSucceededMsg:
-		if msg.Message.ChatId == m.chatID {
+		if msg.Message.ChatID == m.chatID {
 			m.store.Messages.ReplaceMessageId(m.chatID, msg.OldMessageId, msg.Message)
 		}
 
 	case messageFetchedMsg:
 		if msg.chatID == m.chatID && msg.message != nil {
-			m.store.Messages.UpdateMessage(m.chatID, msg.message.Id, msg.message)
+			m.store.Messages.UpdateMessage(m.chatID, msg.message.ID, msg.message)
 		}
 
 	case telegram.FileUpdateMsg:
@@ -153,7 +167,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 type messageFetchedMsg struct {
 	chatID  int64
-	message *client.Message
+	message *telegram.Message
 }
 
 type metaFetchedMsg struct{}
@@ -163,18 +177,18 @@ type loadProgressMsg struct {
 	progress int
 }
 
-func (m Model) fetchMessageMeta(msgs []*client.Message) tea.Cmd {
+func (m Model) fetchMessageMeta(msgs []*telegram.Message) tea.Cmd {
 	return func() tea.Msg {
 		total := len(msgs)
 		seen := make(map[int64]bool)
 
 		// Phase 1: fetch user info (40% → 70%)
 		for i, msg := range msgs {
-			if sender, ok := msg.SenderId.(*client.MessageSenderUser); ok {
-				if !seen[sender.UserId] {
-					seen[sender.UserId] = true
-					if _, exists := m.store.Users.Get(sender.UserId); !exists {
-						user, err := m.tg.GetUser(sender.UserId)
+			if sender, ok := msg.SenderID.(*telegram.MessageSenderUser); ok {
+				if !seen[sender.UserID] {
+					seen[sender.UserID] = true
+					if _, exists := m.store.Users.Get(sender.UserID); !exists {
+						user, err := m.tg.GetUser(sender.UserID)
 						if err == nil {
 							m.store.Users.Set(user)
 						}
@@ -187,14 +201,14 @@ func (m Model) fetchMessageMeta(msgs []*client.Message) tea.Cmd {
 		// Phase 2: download photos (70% → 100%)
 		photoCount := 0
 		for _, msg := range msgs {
-			if _, ok := msg.Content.(*client.MessagePhoto); ok {
+			if _, ok := msg.Content.(*telegram.MessagePhoto); ok {
 				photoCount++
 			}
 		}
 
 		downloaded := 0
 		for _, msg := range msgs {
-			if photo, ok := msg.Content.(*client.MessagePhoto); ok {
+			if photo, ok := msg.Content.(*telegram.MessagePhoto); ok {
 				if photo.Photo != nil && len(photo.Photo.Sizes) > 0 {
 					target := photo.Photo.Sizes[0]
 					for _, sz := range photo.Photo.Sizes {
@@ -202,12 +216,10 @@ func (m Model) fetchMessageMeta(msgs []*client.Message) tea.Cmd {
 							target = sz
 						}
 					}
-					if target.Photo != nil {
-						if target.Photo.Local == nil || !target.Photo.Local.IsDownloadingCompleted {
-							file, err := m.tg.DownloadFileSync(target.Photo.Id)
-							if err == nil && file != nil {
-								m.store.Files.Update(file)
-							}
+					if target.File != nil && !target.File.Downloaded {
+						file, err := m.tg.DownloadFileSync(target.File.ID)
+						if err == nil && file != nil {
+							m.store.Files.Update(file)
 						}
 					}
 				}
@@ -271,7 +283,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) getTargetMessage() *client.Message {
+func (m Model) getTargetMessage() *telegram.Message {
 	msgs := m.store.Messages.Get(m.chatID)
 	if len(msgs) == 0 {
 		return nil
@@ -296,7 +308,7 @@ func (m Model) messageAction(action string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		return MessageActionMsg{Action: action, ChatId: m.chatID, MessageId: msg.Id}
+		return MessageActionMsg{Action: action, ChatId: m.chatID, MessageId: msg.ID}
 	}
 }
 
@@ -308,32 +320,32 @@ func (m Model) playMedia() tea.Cmd {
 	}
 
 	switch c := msg.Content.(type) {
-	case *client.MessageVoiceNote:
-		return m.downloadAndPlay(c.VoiceNote.Voice.Id, "voice", "🎤 Playing voice...")
+	case *telegram.MessageVoiceNote:
+		return m.downloadAndPlay(c.VoiceNote.File.ID, "voice", "🎤 Playing voice...")
 
-	case *client.MessageAudio:
-		return m.downloadAndPlay(c.Audio.Audio.Id, "audio", fmt.Sprintf("🎵 Playing %s...", c.Audio.Title))
+	case *telegram.MessageAudio:
+		return m.downloadAndPlay(c.Audio.File.ID, "audio", fmt.Sprintf("🎵 Playing %s...", c.Audio.Title))
 
-	case *client.MessageVideoNote:
-		return m.downloadAndPlay(c.VideoNote.Video.Id, "video", "📹 Playing video note...")
+	case *telegram.MessageVideoNote:
+		return m.downloadAndPlay(c.VideoNote.File.ID, "video", "📹 Playing video note...")
 
-	case *client.MessageVideo:
-		return m.downloadAndPlay(c.Video.Video.Id, "video", "🎥 Opening video...")
+	case *telegram.MessageVideo:
+		return m.downloadAndPlay(c.Video.File.ID, "video", "🎥 Opening video...")
 
-	case *client.MessageAnimation:
-		return m.downloadAndPlay(c.Animation.Animation.Id, "video", "🎬 Opening GIF...")
+	case *telegram.MessageAnimation:
+		return m.downloadAndPlay(c.Animation.File.ID, "video", "🎬 Opening GIF...")
 
-	case *client.MessageDocument:
-		return m.downloadAndOpen(c.Document.Document.Id, fmt.Sprintf("📎 Opening %s...", c.Document.FileName))
+	case *telegram.MessageDocument:
+		return m.downloadAndOpen(c.Document.File.ID, fmt.Sprintf("📎 Opening %s...", c.Document.FileName))
 
-	case *client.MessagePhoto:
+	case *telegram.MessagePhoto:
 		if c.Photo != nil && len(c.Photo.Sizes) > 0 {
 			best := c.Photo.Sizes[len(c.Photo.Sizes)-1]
-			return m.downloadAndOpen(best.Photo.Id, "🖼 Opening photo...")
+			return m.downloadAndOpen(best.File.ID, "🖼 Opening photo...")
 		}
 
-	case *client.MessageSticker:
-		return m.downloadAndOpen(c.Sticker.Sticker.Id, "Opening sticker...")
+	case *telegram.MessageSticker:
+		return m.downloadAndOpen(c.Sticker.File.ID, "Opening sticker...")
 	}
 
 	return nil
@@ -346,50 +358,50 @@ func (m Model) downloadFile() tea.Cmd {
 		return nil
 	}
 
-	var fileId int32
+	var fileKey string
 	var name string
 
 	switch c := msg.Content.(type) {
-	case *client.MessageDocument:
-		fileId = c.Document.Document.Id
+	case *telegram.MessageDocument:
+		fileKey = c.Document.File.ID
 		name = c.Document.FileName
-	case *client.MessagePhoto:
+	case *telegram.MessagePhoto:
 		if c.Photo != nil && len(c.Photo.Sizes) > 0 {
 			best := c.Photo.Sizes[len(c.Photo.Sizes)-1]
-			fileId = best.Photo.Id
+			fileKey = best.File.ID
 			name = "photo"
 		}
-	case *client.MessageVideo:
-		fileId = c.Video.Video.Id
+	case *telegram.MessageVideo:
+		fileKey = c.Video.File.ID
 		name = c.Video.FileName
-	case *client.MessageAudio:
-		fileId = c.Audio.Audio.Id
+	case *telegram.MessageAudio:
+		fileKey = c.Audio.File.ID
 		name = c.Audio.FileName
-	case *client.MessageVoiceNote:
-		fileId = c.VoiceNote.Voice.Id
+	case *telegram.MessageVoiceNote:
+		fileKey = c.VoiceNote.File.ID
 		name = "voice"
 	default:
 		return nil
 	}
 
 	return func() tea.Msg {
-		file, err := m.tg.DownloadFileSync(fileId)
+		file, err := m.tg.DownloadFileSync(fileKey)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download failed: %v", err)}
 		}
-		return MediaPlayMsg{Status: "downloaded", Info: fmt.Sprintf("💾 Saved %s → %s", name, file.Local.Path)}
+		return MediaPlayMsg{Status: "downloaded", Info: fmt.Sprintf("💾 Saved %s → %s", name, file.Path)}
 	}
 }
 
-func (m Model) downloadAndPlay(fileId int32, mediaType string, statusMsg string) tea.Cmd {
+func (m Model) downloadAndPlay(fileKey string, mediaType string, statusMsg string) tea.Cmd {
 	return func() tea.Msg {
 		// Download
-		file, err := m.tg.DownloadFileSync(fileId)
+		file, err := m.tg.DownloadFileSync(fileKey)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
 
-		path := file.Local.Path
+		path := file.Path
 
 		// Play based on type
 		var cmd *exec.Cmd
@@ -421,14 +433,14 @@ func (m Model) downloadAndPlay(fileId int32, mediaType string, statusMsg string)
 	}
 }
 
-func (m Model) downloadAndOpen(fileId int32, statusMsg string) tea.Cmd {
+func (m Model) downloadAndOpen(fileKey string, statusMsg string) tea.Cmd {
 	return func() tea.Msg {
-		file, err := m.tg.DownloadFileSync(fileId)
+		file, err := m.tg.DownloadFileSync(fileKey)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
 
-		cmd := defaultOpenCmd(file.Local.Path)
+		cmd := defaultOpenCmd(file.Path)
 		if cmd != nil {
 			cmd.Start()
 			go cmd.Wait()
@@ -449,9 +461,9 @@ func defaultOpenCmd(path string) *exec.Cmd {
 	}
 }
 
-func isOwnMessage(msg *client.Message, myUserId int64) bool {
-	if s, ok := msg.SenderId.(*client.MessageSenderUser); ok {
-		return s.UserId == myUserId
+func isOwnMessage(msg *telegram.Message, myUserId int64) bool {
+	if s, ok := msg.SenderID.(*telegram.MessageSenderUser); ok {
+		return s.UserID == myUserId
 	}
 	return false
 }

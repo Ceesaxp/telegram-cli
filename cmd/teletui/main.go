@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/tegal1337/telegram-cli/internal/app"
@@ -18,6 +19,14 @@ import (
 )
 
 func main() {
+	// Optional debug log: TELETUI_DEBUG=/tmp/teletui.log make run
+	if dbg := os.Getenv("TELETUI_DEBUG"); dbg != "" {
+		if f, err := os.OpenFile(dbg, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err == nil {
+			log.SetOutput(f)
+			defer f.Close()
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -32,7 +41,7 @@ func main() {
 	s := store.NewStore()
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 
-	// Start TDLib client in background — it blocks on auth.
+	// Start Telegram client in background — it blocks on auth.
 	tgClient := telegram.NewClientAsync(cfg, authorizer)
 
 	// Create root model.
@@ -45,24 +54,36 @@ func main() {
 	authorizer.SetStateCallback(func(state telegram.AuthState, hint string) {
 		p.Send(app.AuthStateChangedMsg{State: int(state), Hint: hint})
 	})
+	authorizer.SetErrorCallback(func(err error) {
+		p.Send(app.AuthErrorMsg{Err: err})
+	})
 
 	// Once client is ready, start the update listener.
 	go func() {
 		tgClient.WaitReady()
-		td := tgClient.TD()
-		if td != nil {
-			listener := telegram.NewListener(td, p)
-			listener.Start()
+		// Registers update handlers on the client's dispatcher.
+		telegram.NewListener(tgClient, p)
+		// Notify TUI that we're authenticated. Retry a few times — the
+		// connection may still be settling right after auth.
+		var me *telegram.User
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			me, err = tgClient.GetMe()
+			if err == nil && me != nil {
+				break
+			}
+			log.Printf("get me attempt %d failed: %v", attempt+1, err)
+			time.Sleep(time.Second)
 		}
-		// Notify TUI that we're authenticated.
-		me, err := tgClient.GetMe()
-		if err == nil && me != nil {
-			p.Send(app.AuthenticatedMsg{
-				UserId:    me.Id,
-				FirstName: me.FirstName,
-				LastName:  me.LastName,
-			})
+		if me == nil {
+			p.Send(app.AuthErrorMsg{Err: fmt.Errorf("failed to load account info: %w", err)})
+			return
 		}
+		p.Send(app.AuthenticatedMsg{
+			UserId:    me.ID,
+			FirstName: me.FirstName,
+			LastName:  me.LastName,
+		})
 	}()
 
 	// Graceful shutdown.
