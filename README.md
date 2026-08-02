@@ -225,14 +225,14 @@ make clean    # remove build artifacts
 
 ## MCP Server
 
-The repo also ships `telegram-mcp`, an [MCP](https://modelcontextprotocol.io) server (stdio transport) that exposes your Telegram account to AI agents. It shares config and session with the TUI.
+The repo also ships `telegram-mcp`, an [MCP](https://modelcontextprotocol.io) server (stdio transport) that exposes your Telegram account to AI agents. It shares the config with the TUI but uses its own session file.
 
 ### Login
 
-If you have already logged in via the TUI, skip this — the session is shared. Otherwise:
+The MCP server uses a separate session (`session-mcp.json`), so log in once even if the TUI is already logged in:
 
 ```bash
-bin/telegram-mcp login   # phone → code → 2FA, writes ~/.local/share/tele-tui/session.json
+bin/telegram-mcp login   # phone → code → 2FA, writes ~/.local/share/tele-tui/session-mcp.json
 ```
 
 ### Client configuration
@@ -267,9 +267,9 @@ Register the server in your MCP client, e.g.:
 | `mark_read` | Mark messages as read |
 | `download_media` | Download message media, returns local path |
 
-### Caveat: shared session
+### Sessions
 
-The TUI and `telegram-mcp serve` use the same Telegram session. Running both at the same time for extended periods can split updates between the two connections (Telegram delivers each update to one active connection). Short-lived agent calls alongside the TUI are fine; for heavy use, quit the TUI first.
+`telegram-mcp` uses its own session file (`session-mcp.json`) so the TUI and any number of MCP server processes each get their own Telegram connection with full realtime updates — like running Telegram on multiple devices. Set `TELETUI_SESSION=/path/to/session.json` to override the session path if you ever need to share one explicitly.
 
 ## Contributing
 

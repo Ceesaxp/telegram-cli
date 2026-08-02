@@ -35,12 +35,29 @@ type Client struct {
 	// sendMsg forwards domain events into the bubbletea program.
 	// Set by the listener; nil-safe.
 	sendMsg func(tea.Msg)
+
+	// lastConnState is replayed to the sink when it registers — the
+	// connection typically reaches Ready before the listener exists.
+	lastConnState ConnectionState
+	hasConnState  bool
 }
 
 // NewClientAsync starts the gotd client in the background.
 // The client blocks on authorization — call this before starting the TUI
 // so the auth UI can feed credentials via the authorizer channels.
 func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	return newClientAsync(cfg, authorizer, false)
+}
+
+// NewRPCClientAsync is like NewClientAsync but runs the client in
+// no-updates mode: the connection never subscribes to the update stream,
+// so it does not compete with the TUI (or other processes sharing the
+// same session) for realtime updates. Used by telegram-mcp serve.
+func NewRPCClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	return newClientAsync(cfg, authorizer, true)
+}
+
+func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *Client {
 	os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o755)
 	os.MkdirAll(cfg.Storage.FilesDir, 0o755)
 
@@ -57,6 +74,7 @@ func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
 	// manager needs the client's API handle.
 	var handler telegram.UpdateHandler
 	opts := telegram.Options{
+		NoUpdates: noUpdates,
 		SessionStorage: &session.FileStorage{
 			Path: cfg.Storage.SessionFile,
 		},
@@ -74,11 +92,16 @@ func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
 			LangCode:       "en",
 		},
 		OnConnectionState: func(state telegram.ConnectionState) {
+			log.Printf("connection state: %s", state)
+			c.mu.Lock()
 			if state == telegram.ConnectionStateReady {
-				c.send(ConnectionStateMsg{State: ConnectionStateReady})
+				c.lastConnState = ConnectionStateReady
 			} else {
-				c.send(ConnectionStateMsg{State: ConnectionStateConnecting})
+				c.lastConnState = ConnectionStateConnecting
 			}
+			c.hasConnState = true
+			c.mu.Unlock()
+			c.send(ConnectionStateMsg{State: c.lastConnState})
 		},
 	}
 
@@ -134,6 +157,22 @@ func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
 
 			authorizer.notifyState(AuthStateReady, "")
 			close(c.ready)
+
+			// The connection is up and we are authorized — this is the
+			// strongest "connected" signal there is, so report it
+			// ourselves instead of relying solely on OnConnectionState.
+			c.mu.Lock()
+			c.lastConnState = ConnectionStateReady
+			c.hasConnState = true
+			c.mu.Unlock()
+			c.send(ConnectionStateMsg{State: ConnectionStateReady})
+
+			if noUpdates {
+				// RPC-only mode: nothing to synchronize, just keep the
+				// connection alive until shutdown.
+				<-ctx.Done()
+				return ctx.Err()
+			}
 
 			self, err := c.peers.Self(ctx)
 			if err != nil {
@@ -215,6 +254,12 @@ func (c *Client) send(msg tea.Msg) {
 // setMsgSink registers the event sink (called by the listener).
 func (c *Client) setMsgSink(send func(tea.Msg)) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.sendMsg = send
+	state, has := c.lastConnState, c.hasConnState
+	c.mu.Unlock()
+	// Replay the connection state — it is usually set before the sink
+	// registers, and without this the UI would stay "Disconnected".
+	if has && send != nil {
+		send(ConnectionStateMsg{State: state})
+	}
 }

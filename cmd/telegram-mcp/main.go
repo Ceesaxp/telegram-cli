@@ -3,7 +3,8 @@
 // Subcommands:
 //
 //	serve  (default) run the MCP server on stdin/stdout
-//	login  interactive login, writes the shared session file
+//	login  interactive login, writes the MCP session file
+//	       (~/.local/share/tele-tui/session-mcp.json by default)
 package main
 
 import (
@@ -44,6 +45,16 @@ func main() {
 		log.Fatalf("missing Telegram API credentials in config (run tele-tui once first, or edit ~/.config/tele-tui/config.toml)")
 	}
 
+	// The MCP server uses its own session file by default: sharing one
+	// Telegram session between the TUI and (possibly several) MCP server
+	// processes splits updates between the connections and breaks
+	// realtime delivery. Override with TELETUI_SESSION if ever needed.
+	if s := os.Getenv("TELETUI_SESSION"); s != "" {
+		cfg.Storage.SessionFile = s
+	} else {
+		cfg.Storage.SessionFile = strings.TrimSuffix(cfg.Storage.SessionFile, ".json") + "-mcp.json"
+	}
+
 	switch cmd {
 	case "login":
 		runLogin(cfg)
@@ -56,7 +67,7 @@ func main() {
 }
 
 // runLogin performs interactive authentication in the terminal and
-// writes the session file shared with the TUI.
+// writes the MCP server's own session file.
 func runLogin(cfg *config.Config) {
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 	client := telegram.NewClientAsync(cfg, authorizer)
@@ -138,12 +149,14 @@ func runLogin(cfg *config.Config) {
 }
 
 // runServe runs the MCP server over stdio. The session must already be
-// authorized (via the TUI or `telegram-mcp login`).
+// authorized (via the TUI or `telegram-mcp login`). The client runs in
+// RPC-only mode (no update subscription) so it never competes with the
+// TUI for realtime updates.
 func runServe(cfg *config.Config) {
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 	authorizer.NonInteractive = true
 
-	client := telegram.NewClientAsync(cfg, authorizer)
+	client := telegram.NewRPCClientAsync(cfg, authorizer)
 	defer client.Close()
 
 	errCh := make(chan error, 1)

@@ -218,6 +218,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.myUserId = msg.UserId
 		m.chatView.SetMyUserId(msg.UserId)
 		m.statusBar.SetUserName(fmt.Sprintf("%s %s", msg.FirstName, msg.LastName))
+		// We are authorized and the client works — show Connected
+		// directly instead of relying on connection-state event timing.
+		m.statusBar.SetConnected(true)
 		m.setFocus(PanelChatList)
 		m.updateLayout()
 		return m, m.chatList.Init()

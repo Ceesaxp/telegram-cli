@@ -43,6 +43,11 @@ func (m *Model) SetUserName(name string) {
 	m.userName = name
 }
 
+// SetConnected sets the connection indicator directly.
+func (m *Model) SetConnected(connected bool) {
+	m.connected = connected
+}
+
 // SetActiveChatId sets the currently viewed chat.
 func (m *Model) SetActiveChatId(chatID int64) {
 	m.activeChatId = chatID

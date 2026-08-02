@@ -136,7 +136,10 @@ func contentSummary(m *telegram.Message) (typ, text string) {
 		return "unsupported", c.Type
 	default:
 		// Service messages (pin, joins, title changes, …).
-		return "service", messagePreview(m)
+		// Jangan panggil messagePreview di sini: messagePreview balik manggil
+		// contentSummary → rekursi tak berujung → stack overflow (server crash)
+		// tiap ada service message (mis. bot/member baru join grup).
+		return "service", ""
 	}
 }
 

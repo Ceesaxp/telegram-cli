@@ -33,12 +33,19 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int
 
 	msg := messageFromUpdates(c, updates)
 	if msg == nil {
-		// The update will also arrive via the update dispatcher.
-		return &Message{
-			ChatID:     chatID,
-			IsOutgoing: true,
-			Content:    &MessageText{Text: &FormattedText{Text: text}},
-		}, nil
+		// UpdateShortSentMessage carries no full message — build one from
+		// what we know. It DOES carry the real message ID, so the copy
+		// arriving later via the update dispatcher dedups correctly.
+		msg = &Message{
+			ChatID:           chatID,
+			IsOutgoing:       true,
+			ReplyToMessageID: replyToMessageID,
+			Content:          &MessageText{Text: &FormattedText{Text: text}},
+		}
+		if s, ok := updates.(*tg.UpdateShortSentMessage); ok {
+			msg.ID = int64(s.ID)
+			msg.Date = int32(s.Date)
+		}
 	}
 	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: 0})
 	return msg, nil
