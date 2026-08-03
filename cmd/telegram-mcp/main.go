@@ -3,15 +3,18 @@
 // Subcommands:
 //
 //	serve  (default) run the MCP server on stdin/stdout
-//	login  interactive login, writes the MCP session file
-//	       (~/.local/share/tele-tui/session-mcp.json by default)
+//	login        interactive phone login, writes the MCP session file
+//	login --qr   QR login via an already authorized Telegram app
+//	              (~/.local/share/tele-tui/session-mcp.json by default)
 package main
 
 import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -20,9 +23,12 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/mcpserver"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 const loginHint = "session not authorized, run 'telegram-mcp login' first"
@@ -32,9 +38,15 @@ func main() {
 	log.SetOutput(os.Stderr)
 	log.SetPrefix("telegram-mcp: ")
 
-	cmd := "serve"
-	if len(os.Args) > 1 {
-		cmd = os.Args[1]
+	opts, err := parseCommand(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		printUsage(os.Stdout)
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "telegram-mcp: %v\n", err)
+		printUsage(os.Stderr)
+		os.Exit(2)
 	}
 
 	cfg, err := config.Load()
@@ -55,15 +67,53 @@ func main() {
 		cfg.Storage.SessionFile = strings.TrimSuffix(cfg.Storage.SessionFile, ".json") + "-mcp.json"
 	}
 
-	switch cmd {
+	switch opts.command {
 	case "login":
-		runLogin(cfg)
+		if opts.qr {
+			runQRLogin(cfg)
+		} else {
+			runLogin(cfg)
+		}
 	case "serve":
 		runServe(cfg)
-	default:
-		fmt.Fprintf(os.Stderr, "usage: telegram-mcp [login|serve]\n")
-		os.Exit(2)
 	}
+}
+
+type commandOptions struct {
+	command string
+	qr      bool
+}
+
+func parseCommand(args []string) (commandOptions, error) {
+	opts := commandOptions{command: "serve"}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		opts.command = args[0]
+		args = args[1:]
+	}
+
+	switch opts.command {
+	case "login", "serve":
+	default:
+		return commandOptions{}, fmt.Errorf("unknown command %q", opts.command)
+	}
+
+	fs := flag.NewFlagSet("telegram-mcp "+opts.command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&opts.qr, "qr", false, "log in by scanning a QR code")
+	if err := fs.Parse(args); err != nil {
+		return commandOptions{}, err
+	}
+	if fs.NArg() != 0 {
+		return commandOptions{}, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if opts.qr && opts.command != "login" {
+		return commandOptions{}, errors.New("--qr is only valid with the login command")
+	}
+	return opts, nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: telegram-mcp [login [--qr]|serve]")
 }
 
 // runLogin performs interactive authentication in the terminal and
@@ -140,6 +190,47 @@ func runLogin(cfg *config.Config) {
 		log.Fatalf("login succeeded but GetMe failed: %v", err)
 	}
 
+	printLoggedIn(me)
+}
+
+func runQRLogin(cfg *config.Config) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	me, err := telegram.LoginWithQR(ctx, cfg, telegram.QRLoginOptions{
+		ShowQRCode: func(_ context.Context, token telegram.QRLoginToken) error {
+			fmt.Fprint(os.Stderr, "\x1b[2J\x1b[H")
+			fmt.Fprintln(os.Stderr, "Telegram QR Login")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "On your logged-in Telegram phone:")
+			fmt.Fprintln(os.Stderr, "Settings -> Devices -> Link Desktop Device")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, widgets.RenderQRCode(token.URL, 256))
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "QR expires at %s and will refresh automatically.\n", token.ExpiresAt.Format("15:04:05"))
+			return nil
+		},
+		PasswordPrompt: func(_ context.Context, retry bool) ([]byte, error) {
+			if retry {
+				fmt.Fprintln(os.Stderr, "The password was empty or invalid. Try again.")
+			}
+			fmt.Fprint(os.Stderr, "Enter your Telegram 2FA password (input is hidden): ")
+			password, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+			return password, err
+		},
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		log.Fatalf("QR login failed: %v", err)
+	}
+
+	printLoggedIn(me)
+}
+
+func printLoggedIn(me *telegram.User) {
 	name := strings.TrimSpace(me.FirstName + " " + me.LastName)
 	if me.Username != "" {
 		fmt.Fprintf(os.Stderr, "Logged in as %s (@%s, id %d)\n", name, me.Username, me.ID)
