@@ -147,6 +147,7 @@ func completeQRPassword(
 	for {
 		secret, err := prompt(ctx, retry)
 		if err != nil {
+			wipeBytes(secret)
 			return fmt.Errorf("read 2FA password: %w", err)
 		}
 		if len(secret) == 0 {

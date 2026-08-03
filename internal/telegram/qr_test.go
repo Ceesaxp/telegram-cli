@@ -79,6 +79,24 @@ func TestCompleteQRPasswordRetriesAndWipesSecrets(t *testing.T) {
 	assertZeroed(t, second)
 }
 
+func TestCompleteQRPasswordWipesSecretWhenPromptFails(t *testing.T) {
+	secret := []byte("partial password")
+	wantErr := errors.New("interrupted read")
+	client := &fakeQRPasswordClient{}
+
+	err := completeQRPassword(context.Background(), client, func(context.Context, bool) ([]byte, error) {
+		return secret, wantErr
+	})
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected prompt error %v, got %v", wantErr, err)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected no password verification calls, got %d", client.calls)
+	}
+	assertZeroed(t, secret)
+}
+
 func assertZeroed(t *testing.T, secret []byte) {
 	t.Helper()
 	for i, b := range secret {

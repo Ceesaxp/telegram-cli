@@ -1,6 +1,14 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+const helpTestProcessEnv = "TELEGRAM_MCP_HELP_TEST_PROCESS"
 
 func TestParseCommand(t *testing.T) {
 	tests := []struct {
@@ -33,6 +41,45 @@ func TestParseCommand(t *testing.T) {
 			}
 			if got.command != tt.command || got.qr != tt.qr {
 				t.Fatalf("expected command=%q qr=%t, got command=%q qr=%t", tt.command, tt.qr, got.command, got.qr)
+			}
+		})
+	}
+}
+
+func TestMainHelpExitsSuccessfully(t *testing.T) {
+	if args, ok := os.LookupEnv(helpTestProcessEnv); ok {
+		os.Args = append([]string{"telegram-mcp"}, strings.Fields(args)...)
+		main()
+		return
+	}
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "long flag", args: []string{"--help"}},
+		{name: "short flag", args: []string{"-h"}},
+		{name: "login help", args: []string{"login", "--help"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestMainHelpExitsSuccessfully$")
+			cmd.Env = append(os.Environ(), helpTestProcessEnv+"="+strings.Join(tt.args, " "))
+
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("telegram-mcp %s failed: %v\nstderr:\n%s", strings.Join(tt.args, " "), err, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "usage: telegram-mcp [login [--qr]|serve]") {
+				t.Fatalf("expected usage on stdout, got %q", stdout.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("expected empty stderr, got %q", stderr.String())
 			}
 		})
 	}

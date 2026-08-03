@@ -39,6 +39,10 @@ func main() {
 	log.SetPrefix("telegram-mcp: ")
 
 	opts, err := parseCommand(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		printUsage(os.Stdout)
+		return
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "telegram-mcp: %v\n", err)
 		printUsage(os.Stderr)
