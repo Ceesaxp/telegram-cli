@@ -60,6 +60,12 @@
 
 ## Quick Start
 
+### Prebuilt binaries
+
+Download the latest release for your platform from [Releases](https://github.com/imtaqin/telegram-cli/releases) — Linux, macOS, Windows, and Android/Termux (arm64). Each archive contains all three binaries: `tele-tui`, `telegram-mcp`, `telegram-api`. Releases are built automatically from tags (`v*`).
+
+### Build from source
+
 ```bash
 # Clone
 git clone https://github.com/imtaqin/telegram-cli.git
