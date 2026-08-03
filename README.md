@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/imtaqin/telegram-cli/actions"><img src="https://github.com/imtaqin/telegram-cli/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/imtaqin/telegram-cli/actions"><img src="https://github.com/imtaqin/telegram-cli/actions/workflows/ci.yml/badge.svg" alt="Build"></a>
   <a href="https://github.com/imtaqin/telegram-cli/releases"><img src="https://img.shields.io/github/v/release/imtaqin/telegram-cli?include_prereleases" alt="Release"></a>
   <a href="https://github.com/imtaqin/telegram-cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/imtaqin/telegram-cli" alt="License"></a>
   <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" alt="Go">
