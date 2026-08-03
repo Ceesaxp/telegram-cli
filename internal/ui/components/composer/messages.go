@@ -6,10 +6,8 @@ type MessageSubmittedMsg struct {
 	Text          string
 	ReplyToId     int64
 	EditMessageId int64
+	Attachment    string // local file path, empty if none
 }
 
-// AttachmentAddedMsg is emitted when a file is attached.
-type AttachmentAddedMsg struct {
-	FilePath string
-	FileType string // "photo", "document", "video", "voice"
-}
+// AttachRequestedMsg is emitted when the user asks to attach a file (Ctrl+T).
+type AttachRequestedMsg struct{}

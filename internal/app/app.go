@@ -270,11 +270,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case composer.MessageSubmittedMsg:
 		cmds = append(cmds, m.handleMessageSubmit(msg))
 
+	case composer.AttachRequestedMsg:
+		d := dialog.NewPrompt(m.theme, "attach-file", "Attach File", "Path to file:")
+		m.dialog = &d
+
 	case chatview.MessageActionMsg:
 		return m.handleMessageAction(msg)
 
 	case dialog.DialogResultMsg:
 		m.dialog = nil
+		if msg.ID == "attach-file" && msg.Confirmed && strings.TrimSpace(msg.Input) != "" {
+			m.composer.SetAttachment(strings.TrimSpace(msg.Input))
+		}
 	}
 
 	// Dispatch to sub-models
@@ -290,28 +297,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, isKey := msg.(tea.KeyPressMsg)
 		_, isPaste := msg.(tea.PasteMsg)
 		isInputEvent := isKey || isPaste
+		// While a dialog is open it owns all key/paste input exclusively —
+		// otherwise typing into the prompt also leaks into the panel behind it.
+		dialogOpen := m.dialog != nil && m.dialog.IsVisible()
 
-		if !isInputEvent || m.focus == PanelChatList {
+		blockedByDialog := dialogOpen && isInputEvent
+
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelChatList) {
 			m.chatList, cmd = m.chatList.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !isInputEvent || m.focus == PanelChatView {
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelChatView) {
 			m.chatView, cmd = m.chatView.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !isInputEvent || m.focus == PanelComposer {
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelComposer) {
 			m.composer, cmd = m.composer.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !isInputEvent || m.focus == PanelContacts {
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelContacts) {
 			m.contacts, cmd = m.contacts.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !isInputEvent || m.focus == PanelSearch {
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelSearch) {
 			m.search, cmd = m.search.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !isInputEvent || m.focus == PanelGroupInfo {
+		if !blockedByDialog && (!isInputEvent || m.focus == PanelGroupInfo) {
 			m.groupInfo, cmd = m.groupInfo.Update(msg)
 			cmds = append(cmds, cmd)
 		}
@@ -462,6 +474,14 @@ func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
 			m.tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text)
+			return nil
+		}
+	}
+	if msg.Attachment != "" {
+		return func() tea.Msg {
+			if _, err := m.tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId); err != nil {
+				return ErrorMsg{Err: err}
+			}
 			return nil
 		}
 	}

@@ -69,6 +69,13 @@ type messageOut struct {
 	Message messageInfo `json:"message"`
 }
 
+type sendFileIn struct {
+	ChatID           int64  `json:"chat_id" jsonschema:"canonical chat ID from list_chats"`
+	Path             string `json:"path" jsonschema:"local filesystem path of the file to send (already-existing file, e.g. a downloaded/generated document)"`
+	Caption          string `json:"caption,omitempty" jsonschema:"optional caption text sent with the file"`
+	ReplyToMessageID int64  `json:"reply_to_message_id,omitempty" jsonschema:"reply to this message ID"`
+}
+
 type editMessageIn struct {
 	ChatID    int64  `json:"chat_id" jsonschema:"canonical chat ID"`
 	MessageID int64  `json:"message_id" jsonschema:"ID of the message to edit"`
@@ -133,6 +140,10 @@ func New(client *telegram.Client) *Server {
 		Name:        "send_message",
 		Description: "Send a text message to a chat",
 	}, h.sendMessage)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "send_file",
+		Description: "Upload a local file and send it as a document to a chat, with an optional caption",
+	}, h.sendFile)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "edit_message",
 		Description: "Edit the text of a message",
@@ -230,6 +241,14 @@ func (h *handlers) getContacts(ctx context.Context, _ *mcp.CallToolRequest, _ ge
 
 func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in sendMessageIn) (*mcp.CallToolResult, messageOut, error) {
 	msg, err := h.tg.SendTextMessage(in.ChatID, in.Text, in.ReplyToMessageID)
+	if err != nil {
+		return nil, messageOut{}, err
+	}
+	return nil, messageOut{Message: toMessageInfo(msg)}, nil
+}
+
+func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in sendFileIn) (*mcp.CallToolResult, messageOut, error) {
+	msg, err := h.tg.SendFileMessage(in.ChatID, in.Path, in.Caption, in.ReplyToMessageID)
 	if err != nil {
 		return nil, messageOut{}, err
 	}

@@ -105,12 +105,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.Reset()
 				return m, nil
 			}
+		case "ctrl+t":
+			return m, func() tea.Msg { return AttachRequestedMsg{} }
 		case "enter":
-			if m.textarea.Value != "" {
+			if m.textarea.Value != "" || m.attachment != "" {
 				text := m.textarea.Value
 				submitted := MessageSubmittedMsg{
-					ChatId: m.chatID,
-					Text:   text,
+					ChatId:     m.chatID,
+					Text:       text,
+					Attachment: m.attachment,
 				}
 
 				switch m.mode {
@@ -126,9 +129,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		default:
 			m.textarea.Update(msg)
 		}
+	case tea.PasteMsg:
+		m.textarea.Update(msg)
 	}
 
 	return m, nil
+}
+
+// SetAttachment sets the pending attachment path shown above the composer.
+func (m *Model) SetAttachment(path string) {
+	m.attachment = path
 }
 
 // View renders the composer.
@@ -160,7 +170,7 @@ func (m Model) View() string {
 	parts = append(parts, input)
 
 	// Hint.
-	hint := m.theme.ComposerHint.Render("Enter: send | Esc: cancel | Ctrl+A: attach")
+	hint := m.theme.ComposerHint.Render("Enter: send | Esc: cancel | Ctrl+T: attach")
 	parts = append(parts, hint)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
