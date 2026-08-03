@@ -40,14 +40,14 @@
 
 ```
 ╭─ Chat List ─────────────╮╭─ Messages ──────────────────────────────────╮
-│ DA  Dadang Jordan  08:15 ││                                             │
-│     tes lim              ││                      ╭─────────────────────╮ │
-│ SK  SKY API        13:24 ││                      │ naon we             │ │
-│     sudah aman        2  ││                      │ 15:20 ✓✓            │ │
+│ AL  Alice          08:15 ││                                             │
+│     see you tomorrow     ││                      ╭─────────────────────╮ │
+│ DT  Dev Team       13:24 ││                      │ sounds good 👍      │ │
+│     deploy is green   2  ││                      │ 15:20 ✓✓            │ │
 │ TG  Telegram       08:03 ││                      ╰─────────────────────╯ │
-│     Login code: 90969... ││ ╭──────────────────╮                        │
-│ AP  Api MX         14:38 ││ │ Dadang Jordan    │                        │
-│     okesiap koo      81  ││ │ tah              │                        │
+│     Login code: 12345    ││ ╭──────────────────╮                        │
+│ BO  BotFather      14:38 ││ │ Alice            │                        │
+│     /newbot          81  ││ │ deal!            │                        │
 │                          ││ │ 15:22            │                        │
 │                          ││ ╰──────────────────╯                        │
 ╰──────────────────────────╯╰─────────────────────────────────────────────╯
@@ -55,7 +55,7 @@
 │ █                                                                       │
 │ Enter: send | Esc: cancel                                               │
 ╰─────────────────────────────────────────────────────────────────────────╯
-● Connected  IMTAQIN    Tab:switch │ Esc:back │ /:search │ Alt+C:contacts
+● Connected  alice    Tab:switch │ Esc:back │ /:search │ Alt+C:contacts
 ```
 
 ## Quick Start
