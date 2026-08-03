@@ -1,4 +1,6 @@
-package mcpserver
+// Package tgjson holds the flat JSON DTOs shared by the MCP server and
+// the REST API, plus converters from the telegram domain types.
+package tgjson
 
 import (
 	"fmt"
@@ -6,8 +8,8 @@ import (
 	"github.com/tegal1337/telegram-cli/internal/telegram"
 )
 
-// chatInfo is the flat chat representation returned by tools.
-type chatInfo struct {
+// ChatInfo is the flat chat representation returned to clients.
+type ChatInfo struct {
 	ID          int64  `json:"id" jsonschema:"canonical chat ID (user ID, negative group ID, or -100channelID)"`
 	Type        string `json:"type" jsonschema:"private, group, supergroup or channel"`
 	Title       string `json:"title"`
@@ -17,8 +19,8 @@ type chatInfo struct {
 	LastMessage string `json:"last_message,omitempty" jsonschema:"preview of the last message"`
 }
 
-// messageInfo is the flat message representation returned by tools.
-type messageInfo struct {
+// MessageInfo is the flat message representation returned to clients.
+type MessageInfo struct {
 	ID               int64  `json:"id"`
 	ChatID           int64  `json:"chat_id"`
 	Date             int32  `json:"date" jsonschema:"unix timestamp"`
@@ -33,8 +35,8 @@ type messageInfo struct {
 	MediaSize        int64  `json:"media_size,omitempty"`
 }
 
-// contactInfo is the flat user representation returned by tools.
-type contactInfo struct {
+// ContactInfo is the flat user representation returned to clients.
+type ContactInfo struct {
 	ID        int64  `json:"id"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name,omitempty"`
@@ -43,8 +45,9 @@ type contactInfo struct {
 	IsBot     bool   `json:"is_bot"`
 }
 
-func toChatInfo(chat *telegram.Chat) chatInfo {
-	info := chatInfo{
+// ToChatInfo converts a domain chat to its JSON DTO.
+func ToChatInfo(chat *telegram.Chat) ChatInfo {
+	info := ChatInfo{
 		ID:          chat.ID,
 		Type:        chatTypeString(chat.Type),
 		Title:       chat.Title,
@@ -53,7 +56,7 @@ func toChatInfo(chat *telegram.Chat) chatInfo {
 		Pinned:      chat.Pinned,
 	}
 	if chat.LastMessage != nil {
-		info.LastMessage = messagePreview(chat.LastMessage)
+		info.LastMessage = MessagePreview(chat.LastMessage)
 	}
 	return info
 }
@@ -73,8 +76,9 @@ func chatTypeString(t telegram.ChatType) string {
 	}
 }
 
-func toMessageInfo(m *telegram.Message) messageInfo {
-	info := messageInfo{
+// ToMessageInfo converts a domain message to its JSON DTO.
+func ToMessageInfo(m *telegram.Message) MessageInfo {
+	info := MessageInfo{
 		ID:               m.ID,
 		ChatID:           m.ChatID,
 		Date:             m.Date,
@@ -90,12 +94,24 @@ func toMessageInfo(m *telegram.Message) messageInfo {
 	}
 
 	info.Type, info.Text = contentSummary(m)
-	if key, name, size := mediaFile(m); key != "" {
+	if key, name, size := MediaFile(m); key != "" {
 		info.MediaFileKey = key
 		info.MediaFileName = name
 		info.MediaSize = size
 	}
 	return info
+}
+
+// ToContactInfo converts a domain user to its JSON DTO.
+func ToContactInfo(u *telegram.User) ContactInfo {
+	return ContactInfo{
+		ID:        u.ID,
+		FirstName: u.FirstName,
+		LastName:  u.LastName,
+		Username:  u.Username,
+		Phone:     u.PhoneNumber,
+		IsBot:     u.IsBot,
+	}
 }
 
 // contentSummary returns the type label and the text/caption of a message.
@@ -136,16 +152,16 @@ func contentSummary(m *telegram.Message) (typ, text string) {
 		return "unsupported", c.Type
 	default:
 		// Service messages (pin, joins, title changes, …).
-		// Jangan panggil messagePreview di sini: messagePreview balik manggil
+		// Jangan panggil MessagePreview di sini: MessagePreview balik manggil
 		// contentSummary → rekursi tak berujung → stack overflow (server crash)
 		// tiap ada service message (mis. bot/member baru join grup).
 		return "service", ""
 	}
 }
 
-// mediaFile extracts the best downloadable file from a message:
+// MediaFile extracts the best downloadable file from a message:
 // key, display name, size. Empty key when there is none.
-func mediaFile(m *telegram.Message) (key, name string, size int64) {
+func MediaFile(m *telegram.Message) (key, name string, size int64) {
 	fileInfo := func(f *telegram.File, fallback string) (string, string, int64) {
 		if f == nil {
 			return "", "", 0
@@ -180,8 +196,8 @@ func mediaFile(m *telegram.Message) (key, name string, size int64) {
 	}
 }
 
-// messagePreview renders a short one-line preview of a message.
-func messagePreview(m *telegram.Message) string {
+// MessagePreview renders a short one-line preview of a message.
+func MessagePreview(m *telegram.Message) string {
 	typ, text := contentSummary(m)
 	if text != "" {
 		const maxLen = 80

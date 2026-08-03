@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/tegal1337/telegram-cli/internal/tgjson"
 )
 
 // Server wraps an MCP server bound to a Telegram client.
@@ -21,7 +22,7 @@ type Server struct {
 type getMeIn struct{}
 
 type getMeOut struct {
-	User contactInfo `json:"user"`
+	User tgjson.ContactInfo `json:"user"`
 }
 
 type listChatsIn struct {
@@ -29,7 +30,7 @@ type listChatsIn struct {
 }
 
 type listChatsOut struct {
-	Chats []chatInfo `json:"chats"`
+	Chats []tgjson.ChatInfo `json:"chats"`
 }
 
 type getChatHistoryIn struct {
@@ -40,7 +41,7 @@ type getChatHistoryIn struct {
 }
 
 type messagesOut struct {
-	Messages []messageInfo `json:"messages"`
+	Messages []tgjson.MessageInfo `json:"messages"`
 }
 
 type searchChatsIn struct {
@@ -56,7 +57,7 @@ type searchMessagesIn struct {
 type getContactsIn struct{}
 
 type getContactsOut struct {
-	Contacts []contactInfo `json:"contacts"`
+	Contacts []tgjson.ContactInfo `json:"contacts"`
 }
 
 type sendMessageIn struct {
@@ -66,7 +67,7 @@ type sendMessageIn struct {
 }
 
 type messageOut struct {
-	Message messageInfo `json:"message"`
+	Message tgjson.MessageInfo `json:"message"`
 }
 
 type sendFileIn struct {
@@ -176,7 +177,7 @@ func (h *handlers) getMe(ctx context.Context, _ *mcp.CallToolRequest, _ getMeIn)
 	if err != nil {
 		return nil, getMeOut{}, err
 	}
-	return nil, getMeOut{User: toContactInfo(me)}, nil
+	return nil, getMeOut{User: tgjson.ToContactInfo(me)}, nil
 }
 
 func (h *handlers) listChats(ctx context.Context, _ *mcp.CallToolRequest, in listChatsIn) (*mcp.CallToolResult, listChatsOut, error) {
@@ -188,9 +189,9 @@ func (h *handlers) listChats(ctx context.Context, _ *mcp.CallToolRequest, in lis
 	if err != nil {
 		return nil, listChatsOut{}, err
 	}
-	out := listChatsOut{Chats: make([]chatInfo, 0, len(chats))}
+	out := listChatsOut{Chats: make([]tgjson.ChatInfo, 0, len(chats))}
 	for _, chat := range chats {
-		out.Chats = append(out.Chats, toChatInfo(chat))
+		out.Chats = append(out.Chats, tgjson.ToChatInfo(chat))
 	}
 	return nil, out, nil
 }
@@ -212,9 +213,9 @@ func (h *handlers) searchChats(ctx context.Context, _ *mcp.CallToolRequest, in s
 	if err != nil {
 		return nil, listChatsOut{}, err
 	}
-	out := listChatsOut{Chats: make([]chatInfo, 0, len(chats))}
+	out := listChatsOut{Chats: make([]tgjson.ChatInfo, 0, len(chats))}
 	for _, chat := range chats {
-		out.Chats = append(out.Chats, toChatInfo(chat))
+		out.Chats = append(out.Chats, tgjson.ToChatInfo(chat))
 	}
 	return nil, out, nil
 }
@@ -232,9 +233,9 @@ func (h *handlers) getContacts(ctx context.Context, _ *mcp.CallToolRequest, _ ge
 	if err != nil {
 		return nil, getContactsOut{}, err
 	}
-	out := getContactsOut{Contacts: make([]contactInfo, 0, len(users))}
+	out := getContactsOut{Contacts: make([]tgjson.ContactInfo, 0, len(users))}
 	for _, u := range users {
-		out.Contacts = append(out.Contacts, toContactInfo(u))
+		out.Contacts = append(out.Contacts, tgjson.ToContactInfo(u))
 	}
 	return nil, out, nil
 }
@@ -244,7 +245,7 @@ func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in s
 	if err != nil {
 		return nil, messageOut{}, err
 	}
-	return nil, messageOut{Message: toMessageInfo(msg)}, nil
+	return nil, messageOut{Message: tgjson.ToMessageInfo(msg)}, nil
 }
 
 func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in sendFileIn) (*mcp.CallToolResult, messageOut, error) {
@@ -252,7 +253,7 @@ func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in send
 	if err != nil {
 		return nil, messageOut{}, err
 	}
-	return nil, messageOut{Message: toMessageInfo(msg)}, nil
+	return nil, messageOut{Message: tgjson.ToMessageInfo(msg)}, nil
 }
 
 func (h *handlers) editMessage(ctx context.Context, _ *mcp.CallToolRequest, in editMessageIn) (*mcp.CallToolResult, messageOut, error) {
@@ -260,7 +261,7 @@ func (h *handlers) editMessage(ctx context.Context, _ *mcp.CallToolRequest, in e
 	if err != nil {
 		return nil, messageOut{}, err
 	}
-	return nil, messageOut{Message: toMessageInfo(msg)}, nil
+	return nil, messageOut{Message: tgjson.ToMessageInfo(msg)}, nil
 }
 
 func (h *handlers) markRead(ctx context.Context, _ *mcp.CallToolRequest, in markReadIn) (*mcp.CallToolResult, statusOut, error) {
@@ -276,7 +277,7 @@ func (h *handlers) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, downloadMediaOut{}, err
 	}
 
-	key, name, _ := mediaFile(msg)
+	key, name, _ := tgjson.MediaFile(msg)
 	if key == "" {
 		return nil, downloadMediaOut{}, errors.New("message has no downloadable media")
 	}
@@ -288,21 +289,10 @@ func (h *handlers) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 	return nil, downloadMediaOut{Path: file.Path, Size: file.Size, Name: name}, nil
 }
 
-func toContactInfo(u *telegram.User) contactInfo {
-	return contactInfo{
-		ID:        u.ID,
-		FirstName: u.FirstName,
-		LastName:  u.LastName,
-		Username:  u.Username,
-		Phone:     u.PhoneNumber,
-		IsBot:     u.IsBot,
-	}
-}
-
 func toMessagesOut(msgs []*telegram.Message) messagesOut {
-	out := messagesOut{Messages: make([]messageInfo, 0, len(msgs))}
+	out := messagesOut{Messages: make([]tgjson.MessageInfo, 0, len(msgs))}
 	for _, m := range msgs {
-		out.Messages = append(out.Messages, toMessageInfo(m))
+		out.Messages = append(out.Messages, tgjson.ToMessageInfo(m))
 	}
 	return out
 }

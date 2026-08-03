@@ -263,6 +263,7 @@ Register the server in your MCP client, e.g.:
 | `search_messages` | Global message search |
 | `get_contacts` | Contact list |
 | `send_message` | Send a text message (optional reply) |
+| `send_file` | Upload a local file as a document (optional caption) |
 | `edit_message` | Edit a message text |
 | `mark_read` | Mark messages as read |
 | `download_media` | Download message media, returns local path |
@@ -270,6 +271,58 @@ Register the server in your MCP client, e.g.:
 ### Sessions
 
 `telegram-mcp` uses its own session file (`session-mcp.json`) so the TUI and any number of MCP server processes each get their own Telegram connection with full realtime updates — like running Telegram on multiple devices. Set `TELETUI_SESSION=/path/to/session.json` to override the session path if you ever need to share one explicitly.
+
+## REST API
+
+`telegram-api` is a plain HTTP/JSON companion to the MCP server — same Telegram layer, same endpoints as the MCP tools, standard library only.
+
+### Run
+
+```bash
+bin/telegram-api login &  # if not already logged in via tele-tui or telegram-mcp
+bin/telegram-api serve    # listens on 127.0.0.1:8080
+```
+
+It binds **127.0.0.1 only** by default (no auth token needed). Change the address with `-addr` or the `TELETUI_API_ADDR` env var:
+
+```bash
+bin/telegram-api serve -addr 127.0.0.1:9090
+# or
+TELETUI_API_ADDR=127.0.0.1:9090 bin/telegram-api serve
+```
+
+Precedence: `-addr` flag > `TELETUI_API_ADDR` > `127.0.0.1:8080`. It shares the MCP session file (`session-mcp.json`) — login via `telegram-api login` or `telegram-mcp login` once, both work. `TELETUI_SESSION` overrides the session path.
+
+### Examples
+
+```bash
+# List chats
+curl -s http://127.0.0.1:8080/api/chats?limit=10
+
+# Send a message
+curl -s -X POST http://127.0.0.1:8080/api/send \
+  -H 'Content-Type: application/json' \
+  -d '{"chat_id": 123456789, "text": "hello from the API"}'
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check (no Telegram call) |
+| GET | `/api/me` | Authorized user info |
+| GET | `/api/chats?limit=` | Dialog list |
+| GET | `/api/chats/{id}/history?limit=&from_message_id=&offset=` | Chat messages, newest first |
+| GET | `/api/search/chats?q=&limit=` | Search chats |
+| GET | `/api/search/messages?q=&limit=` | Global message search |
+| GET | `/api/contacts` | Contact list |
+| POST | `/api/send` | Send text `{chat_id, text, reply_to_message_id?}` |
+| POST | `/api/send-file` | Send file `{chat_id, path, caption?, reply_to_message_id?}` |
+| POST | `/api/edit` | Edit message `{chat_id, message_id, text}` |
+| POST | `/api/mark-read` | Mark read `{chat_id, message_ids[]}` |
+| GET | `/api/media?chat_id=&message_id=` | Download message media, returns local path |
+
+Errors are JSON (`{"error": "..."}`) with status 400 (bad params), 404 (unknown route/chat), or 502 (upstream Telegram error).
 
 ## Contributing
 
