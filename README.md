@@ -30,7 +30,7 @@
 - **Search** — Search chats, messages, and global Telegram directory
 - **Contacts** — Contact list with online status indicators
 - **Group Info** — Member list, admin roles, group description
-- **Authentication** — Phone/SMS code, 2FA password (QR code login not yet implemented)
+- **Authentication** — Phone/SMS code and 2FA password, plus QR login for `telegram-mcp`
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
 - **Notifications** — Desktop notifications via `notify-send` / `osascript`
 - **Responsive Layout** — Dual-panel (wide) or single-panel (narrow terminals)
@@ -232,8 +232,14 @@ The repo also ships `telegram-mcp`, an [MCP](https://modelcontextprotocol.io) se
 The MCP server uses a separate session (`session-mcp.json`), so log in once even if the TUI is already logged in:
 
 ```bash
-bin/telegram-mcp login   # phone → code → 2FA, writes ~/.local/share/tele-tui/session-mcp.json
+bin/telegram-mcp login        # phone → code → 2FA
+bin/telegram-mcp login --qr   # scan in Telegram → Settings → Devices
 ```
+
+QR tokens refresh automatically until the login is accepted or cancelled. If
+the account has two-step verification enabled, the password is read without
+echoing it to the terminal. Both login modes write
+`~/.local/share/tele-tui/session-mcp.json` by default.
 
 ### Client configuration
 
