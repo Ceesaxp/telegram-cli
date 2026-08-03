@@ -7,8 +7,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tegal1337/telegram-cli/internal/telegram"
-	"github.com/tegal1337/telegram-cli/internal/tgjson"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/tgjson"
 )
 
 // Server wraps an MCP server bound to a Telegram client.

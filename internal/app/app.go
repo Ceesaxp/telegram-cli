@@ -6,21 +6,21 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tegal1337/telegram-cli/internal/config"
-	"github.com/tegal1337/telegram-cli/internal/notification"
-	"github.com/tegal1337/telegram-cli/internal/store"
-	"github.com/tegal1337/telegram-cli/internal/telegram"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/auth"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/chatlist"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/chatview"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/composer"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/contacts"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/dialog"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/groupinfo"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/search"
-	"github.com/tegal1337/telegram-cli/internal/ui/components/statusbar"
-	"github.com/tegal1337/telegram-cli/internal/ui/layout"
-	"github.com/tegal1337/telegram-cli/internal/ui/theme"
+	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/notification"
+	"github.com/imtaqin/telegram-cli/internal/store"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/contacts"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/groupinfo"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/statusbar"
+	"github.com/imtaqin/telegram-cli/internal/ui/layout"
+	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 type Model struct {
@@ -575,7 +575,7 @@ func (m Model) View() tea.View {
 
 		title := blue.Render("  T E L E G R A M   C L I")
 		sub := dim.Render("  Terminal Client for Telegram")
-		author := dim.Render("  github.com/tegal1337")
+		author := dim.Render("  github.com/imtaqin/telegram-cli")
 
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).

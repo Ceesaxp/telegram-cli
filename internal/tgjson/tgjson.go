@@ -5,7 +5,7 @@ package tgjson
 import (
 	"fmt"
 
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // ChatInfo is the flat chat representation returned to clients.

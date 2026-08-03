@@ -12,10 +12,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/tegal1337/telegram-cli/internal/app"
-	"github.com/tegal1337/telegram-cli/internal/config"
-	"github.com/tegal1337/telegram-cli/internal/store"
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/app"
+	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/store"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 func main() {

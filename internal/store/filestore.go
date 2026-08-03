@@ -3,7 +3,7 @@ package store
 import (
 	"sync"
 
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // FileState tracks the download state of a file.

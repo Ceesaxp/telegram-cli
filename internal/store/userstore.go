@@ -3,7 +3,7 @@ package store
 import (
 	"sync"
 
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // UserStore caches user information.

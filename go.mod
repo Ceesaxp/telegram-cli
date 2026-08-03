@@ -1,4 +1,4 @@
-module github.com/tegal1337/telegram-cli
+module github.com/imtaqin/telegram-cli
 
 go 1.25.0
 

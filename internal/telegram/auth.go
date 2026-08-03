@@ -7,7 +7,7 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
 
-	"github.com/tegal1337/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/config"
 )
 
 // AuthState is the authorization state reported to the TUI.

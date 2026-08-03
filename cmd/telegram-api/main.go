@@ -22,9 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tegal1337/telegram-cli/internal/config"
-	"github.com/tegal1337/telegram-cli/internal/restapi"
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/restapi"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 const loginHint = "session not authorized, run 'telegram-api login' first"

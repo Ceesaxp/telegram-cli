@@ -6,10 +6,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tegal1337/telegram-cli/internal/store"
-	"github.com/tegal1337/telegram-cli/internal/telegram"
-	"github.com/tegal1337/telegram-cli/internal/ui/theme"
-	"github.com/tegal1337/telegram-cli/internal/ui/widgets"
+	"github.com/imtaqin/telegram-cli/internal/store"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 // ContactSelectedMsg is emitted when a contact is selected.

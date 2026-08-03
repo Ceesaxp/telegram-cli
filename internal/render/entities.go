@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tegal1337/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // EntitiesToMarkdown converts Telegram formatted text entities to markdown.
