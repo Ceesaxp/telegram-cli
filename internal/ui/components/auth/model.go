@@ -95,10 +95,9 @@ func (m Model) submit() (Model, tea.Cmd) {
 	switch m.step {
 	case StepPhone:
 		m.authorizer.SubmitPhone(value)
-		m.step = StepCode
+		m.step = StepLoading
 		m.input.Reset()
-		m.input.Placeholder = "12345"
-		m.hint = "Enter the verification code sent to your phone"
+		m.hint = "Requesting verification code..."
 
 	case StepCode:
 		m.authorizer.SubmitCode(value)
@@ -162,7 +161,11 @@ func (m Model) View() string {
 			m.theme.AuthLabel.Render(m.hint),
 		)
 	case StepLoading:
-		sp := widgets.NewSpinner("Authenticating...")
+		label := m.hint
+		if label == "" {
+			label = "Authenticating..."
+		}
+		sp := widgets.NewSpinner(label)
 		sp.Style = m.theme.Spinner
 		content = sp.View()
 	case StepDone:
