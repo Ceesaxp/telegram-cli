@@ -1,0 +1,142 @@
+name: Release
+
+# Fully automatic: every push to main bumps the patch version, creates a
+# tag, builds all platforms, and publishes a GitHub release.
+# Put "#minor" or "#major" in the commit message to bump those instead.
+# Pushing a v* tag manually also works (uses that tag as-is).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: ver
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -e
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            LATEST=${LATEST:-v0.0.0}
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+            if grep -qi '#major' <<< "$COMMIT_MSG"; then
+              MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
+            elif grep -qi '#minor' <<< "$COMMIT_MSG"; then
+              MINOR=$((MINOR+1)); PATCH=0
+            else
+              PATCH=$((PATCH+1))
+            fi
+            TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+              PATCH=$((PATCH+1))
+              TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            fi
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${TAG}"
+
+  build:
+    name: Build ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
+    needs: [version]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: android, goarch: arm64 }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build all binaries
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          set -e
+          EXT=""; [ "$GOOS" = "windows" ] && EXT=".exe"
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/tele-tui${EXT}" ./cmd/teletui
+          go build -trimpath -ldflags="-s -w" -o "dist/telegram-mcp${EXT}" ./cmd/telegram-mcp
+          go build -trimpath -ldflags="-s -w" -o "dist/telegram-api${EXT}" ./cmd/telegram-api
+
+      - name: Package
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          set -e
+          PKG="telegram-cli_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "stage/${PKG}"
+          cp dist/* "stage/${PKG}/"
+          cp README.md LICENSE "stage/${PKG}/"
+          mkdir -p release
+          cd stage
+          if [ "$GOOS" = "windows" ]; then
+            zip -r "../release/${PKG}.zip" "${PKG}"
+          else
+            tar -czf "../release/${PKG}.tar.gz" "${PKG}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
+          path: release/
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd packages
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      # softprops/action-gh-release creates the tag (pointing at this
+      # commit) when it does not exist yet — this is what makes the
+      # whole flow tagless on the pusher's side.
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          files: packages/*
+          generate_release_notes: true
