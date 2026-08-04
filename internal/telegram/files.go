@@ -160,8 +160,8 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 	}
 
 	name := fmt.Sprintf("%s_%s",
-		strings.NewReplacer(":", "_", "/", "_").Replace(key),
-		filepath.Base(entry.name))
+		sanitizeDownloadFileName(key),
+		sanitizeDownloadFileName(entry.name))
 	path := filepath.Join(c.config.Storage.FilesDir, name)
 
 	ctx := context.Background()
@@ -173,6 +173,24 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 	file := &File{ID: key, Path: path, Size: entry.size, Downloaded: true}
 	c.send(FileUpdateMsg{File: file})
 	return file, nil
+}
+
+// sanitizeDownloadFileName makes Telegram-provided names safe on Windows too.
+// Photo registry names contain ':' by design, and document names are remote
+// input, so both halves of the generated local name must be sanitized.
+func sanitizeDownloadFileName(name string) string {
+	name = filepath.Base(name)
+	name = strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return '_'
+		}
+		return r
+	}, name)
+	name = strings.TrimRight(name, " .")
+	if name == "" {
+		return "download"
+	}
+	return name
 }
 
 // inputPeer resolves a canonical chat ID to a tg InputPeer
