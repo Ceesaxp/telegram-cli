@@ -6,10 +6,14 @@ require (
 	charm.land/bubbletea/v2 v2.0.0
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/charmbracelet/lipgloss v0.12.1
+	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8
+	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/gotd/contrib v0.25.0
 	github.com/gotd/td v0.161.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	go.etcd.io/bbolt v1.5.0
 	golang.org/x/image v0.38.0
 	golang.org/x/term v0.45.0
 )
@@ -22,8 +26,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
-	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
