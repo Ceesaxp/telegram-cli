@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"log"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gotd/td/tg"
@@ -87,6 +89,32 @@ func (l *Listener) registerHandlers() {
 		})
 		return nil
 	})
+	d.OnNotifySettings(func(ctx context.Context, e tg.Entities, u *tg.UpdateNotifySettings) error {
+		// Only per-peer settings map to a chat; the class-wide variants
+		// (notifyUsers/notifyChats/notifyBroadcasts/…) change defaults,
+		// which we do not model.
+		p, ok := u.Peer.(*tg.NotifyPeer)
+		if !ok {
+			return nil
+		}
+		chatID := chatIDFromPeer(p.Peer)
+		if chatID == 0 {
+			return nil
+		}
+		c.send(ChatMuteChangedMsg{
+			ChatId: chatID,
+			Muted:  mutedFromNotifySettings(u.NotifySettings, time.Now().Unix()),
+		})
+		return nil
+	})
+	d.OnDialogFilter(func(ctx context.Context, e tg.Entities, u *tg.UpdateDialogFilter) error {
+		l.refreshFolders()
+		return nil
+	})
+	d.OnDialogFilterOrder(func(ctx context.Context, e tg.Entities, u *tg.UpdateDialogFilterOrder) error {
+		l.refreshFolders()
+		return nil
+	})
 	d.OnUserTyping(func(ctx context.Context, e tg.Entities, u *tg.UpdateUserTyping) error {
 		c.send(ChatActionMsg{
 			ChatId: u.UserID,
@@ -111,6 +139,20 @@ func (l *Listener) registerHandlers() {
 		})
 		return nil
 	})
+}
+
+// refreshFolders re-reads the folder list off the update goroutine.
+// The updates themselves carry only a partial view, so a refetch is both
+// simpler and more correct; it must not block dispatch.
+func (l *Listener) refreshFolders() {
+	go func() {
+		folders, err := l.client.GetChatFolders()
+		if err != nil {
+			log.Printf("refresh chat folders: %s", err)
+			return
+		}
+		l.client.send(ChatFoldersMsg{Folders: folders})
+	}()
 }
 
 // onMessage handles new messages (private/group/channel).

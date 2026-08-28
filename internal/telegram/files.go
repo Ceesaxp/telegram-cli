@@ -144,9 +144,12 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 		}
 	}
 
+	ctx, cancel := transferCtx()
+	defer cancel()
+
 	location := entry.location
 	if location == nil && entry.avatar != nil {
-		peer, err := c.inputPeer(context.Background(), entry.avatar.chatID)
+		peer, err := c.inputPeer(ctx, entry.avatar.chatID)
 		if err != nil {
 			return nil, fmt.Errorf("download %s: %w", key, err)
 		}
@@ -164,7 +167,6 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 		sanitizeDownloadFileName(entry.name))
 	path := filepath.Join(c.config.Storage.FilesDir, name)
 
-	ctx := context.Background()
 	if _, err := downloader.NewDownloader().Download(c.api, location).ToPath(ctx, path); err != nil {
 		return nil, fmt.Errorf("download %s: %w", key, err)
 	}

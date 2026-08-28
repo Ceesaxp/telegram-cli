@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/gotd/td/tg"
@@ -9,7 +8,8 @@ import (
 
 // GetUser returns a user by ID.
 func (c *Client) GetUser(userID int64) (*User, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.peers.ResolveUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user %d: %w", userID, err)
@@ -19,7 +19,8 @@ func (c *Client) GetUser(userID int64) (*User, error) {
 
 // GetContacts returns the contact list.
 func (c *Client) GetContacts() ([]*User, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	res, err := c.api.ContactsGetContacts(ctx, 0)
 	if err != nil {
 		return nil, fmt.Errorf("get contacts: %w", err)

@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/gotd/td/tg"
@@ -22,7 +21,8 @@ type BasicGroupFullInfo struct {
 
 // GetSupergroupFullInfo returns full info for a supergroup/channel chat.
 func (c *Client) GetSupergroupFullInfo(chatID int64) (*SupergroupFullInfo, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup full info: %w", err)
@@ -43,7 +43,7 @@ func (c *Client) GetSupergroupFullInfo(chatID int64) (*SupergroupFullInfo, error
 	}
 
 	info := &SupergroupFullInfo{}
-	info.Description = full.GetAbout()
+	info.Description = sanitizeTerminal(full.GetAbout())
 	if count, ok := full.GetParticipantsCount(); ok {
 		info.MemberCount = int32(count)
 	}
@@ -52,7 +52,8 @@ func (c *Client) GetSupergroupFullInfo(chatID int64) (*SupergroupFullInfo, error
 
 // GetSupergroupMembers returns members of a supergroup/channel.
 func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*ChatMember, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup members: %w", err)
@@ -94,7 +95,8 @@ func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*Cha
 
 // GetBasicGroupFullInfo returns full info (incl. members) for a basic group.
 func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	plain := plainChatID(chatID)
 
 	res, err := c.api.MessagesGetFullChat(ctx, plain)
@@ -113,7 +115,7 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 	}
 
 	info := &BasicGroupFullInfo{}
-	info.Description = full.GetAbout()
+	info.Description = sanitizeTerminal(full.GetAbout())
 
 	if participants, ok := full.Participants.(*tg.ChatParticipants); ok {
 		info.MemberCount = int32(len(participants.Participants))
@@ -144,7 +146,8 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 // No RPC is needed beyond resolving the user — the real chat is created
 // server-side when the first message is sent.
 func (c *Client) CreatePrivateChat(userID int64) (*Chat, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.peers.ResolveUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("create private chat: %w", err)

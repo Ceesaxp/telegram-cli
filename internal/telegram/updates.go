@@ -51,6 +51,17 @@ type ChatReadOutboxMsg struct {
 	LastReadOutboxMessageId int64
 }
 
+// ChatMuteChangedMsg is sent when a chat's notification settings change.
+type ChatMuteChangedMsg struct {
+	ChatId int64
+	Muted  bool
+}
+
+// ChatFoldersMsg carries the current chat folder list, in server order.
+type ChatFoldersMsg struct {
+	Folders []*ChatFolder
+}
+
 // FileUpdateMsg is sent when a file download completes.
 type FileUpdateMsg struct {
 	File *File

@@ -27,6 +27,11 @@ type TelegramConfig struct {
 type StorageConfig struct {
 	SessionFile string `toml:"session_file"`
 	FilesDir    string `toml:"files_dir"`
+	// StateFile is the bbolt database holding the update-sequence state
+	// (pts/qts/seq/date) and the peer access-hash cache, so updates that
+	// arrived while the app was offline can be recovered on the next start.
+	// Empty (the default) means "state.db" next to SessionFile.
+	StateFile string `toml:"state_file"`
 }
 
 type UIConfig struct {
@@ -35,6 +40,57 @@ type UIConfig struct {
 	ShowAvatars     bool   `toml:"show_avatars"`
 	TimestampFormat string `toml:"timestamp_format"`
 	DateFormat      string `toml:"date_format"`
+	// ComposeEditing selects the composer's line-editing keymap:
+	// [ComposeEditingEmacs], [ComposeEditingVi], or [ComposeEditingAuto]
+	// (the default) to infer it from $VISUAL/$EDITOR. Resolve it with
+	// [ResolveComposeEditing]; never read the raw value.
+	ComposeEditing string `toml:"compose_editing"`
+}
+
+// Line-editing keymaps for [UIConfig.ComposeEditing].
+const (
+	// ComposeEditingEmacs is the readline keymap (ctrl+a/e/b/f/k/u/w/d).
+	ComposeEditingEmacs = "emacs"
+	// ComposeEditingVi is the modal vi keymap.
+	ComposeEditingVi = "vi"
+	// ComposeEditingAuto infers the keymap from the user's $EDITOR.
+	ComposeEditingAuto = "auto"
+)
+
+// ResolveComposeEditing turns a configured [UIConfig.ComposeEditing] value
+// into a concrete [ComposeEditingEmacs] or [ComposeEditingVi].
+//
+// An explicit "emacs" or "vi" wins. Everything else — "auto", empty (an
+// older config.toml predating the field), or an unrecognized value — infers
+// the keymap from $VISUAL, falling back to $EDITOR: if the editor's command
+// name contains "vi" (vi, vim, nvim, gvim, view) the answer is vi, otherwise
+// emacs. That also makes emacs the answer when no editor is set, matching
+// the shell convention that readline bindings are the default.
+//
+// An unrecognized value is treated as "auto" rather than rejected, so a typo
+// in config.toml degrades to a sensible keymap instead of breaking startup.
+func ResolveComposeEditing(setting string) string {
+	switch strings.ToLower(strings.TrimSpace(setting)) {
+	case ComposeEditingEmacs:
+		return ComposeEditingEmacs
+	case ComposeEditingVi:
+		return ComposeEditingVi
+	}
+
+	editor := os.Getenv("VISUAL")
+	if strings.TrimSpace(editor) == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	// $EDITOR often carries arguments ("nvim -u NONE") and a path
+	// ("/usr/local/bin/vim"); only the command name is meaningful here.
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		return ComposeEditingEmacs
+	}
+	if strings.Contains(strings.ToLower(filepath.Base(fields[0])), "vi") {
+		return ComposeEditingVi
+	}
+	return ComposeEditingEmacs
 }
 
 type MediaConfig struct {
@@ -54,6 +110,55 @@ type NotificationConfig struct {
 	ShowPreview bool `toml:"show_preview"`
 }
 
+// KeyConfig lists user-configurable key bindings. Not every field is
+// currently consulted:
+//
+//   - Wired (read by internal/app, which normalizes the value via
+//     [NormalizeKey] and falls back to its built-in default when empty):
+//     Quit, FocusChatList, FocusChatView, FocusComposer, Search,
+//     GlobalSearch, Contacts, ContactsAlt, NextFolder, PrevFolder,
+//     NextChat, PrevChat. Note FocusChatList/View/Composer are wired *in
+//     addition to* their hardcoded alt+1/2/3 shortcuts, which always work
+//     regardless of configuration.
+//   - Unwired (parsed and preserved on save, but not consulted anywhere —
+//     kept so existing config.toml files round-trip cleanly; a user's
+//     values here are silently inert): Reply, EditMessage, DeleteMessage,
+//     Forward, ScrollUp, ScrollDown, PageUp, PageDown. These map to
+//     behavior owned by the chatlist/chatview components, not dispatched
+//     from app.go — see the keymap table in internal/app/keymap.go for the
+//     vi motions those components implement (j/k, g/G, ctrl+u/ctrl+d,
+//     n/N, ctrl+f, and the readline keys in the composer).
+//
+// Wired bindings are checked before quick-type's fallthrough to the
+// composer, so configuring a bare single printable character (e.g.
+// quit = "q" or next_folder = "l") shadows that character everywhere —
+// it becomes untypeable as message text whenever a chat is open. Prefer
+// modifier-based bindings (alt+, ctrl+, a function key) to avoid this.
+//
+// # macOS: Alt bindings and the Option key
+//
+// The default alt+… bindings only reach the app if the terminal reports
+// Option as a modifier. Terminals differ:
+//
+//   - Ghostty: macos-option-as-alt = true (default "false" on macOS —
+//     confirmed in field testing to be why alt bindings work in kitty but
+//     not in a stock Ghostty).
+//   - Terminal.app: Settings → Profiles → Keyboard → "Use Option as Meta
+//     key" (off by default).
+//   - iTerm2: Settings → Profiles → Keys → Left/Right Option key → "Esc+".
+//   - kitty/WezTerm/Alacritty report Option as Alt by default.
+//
+// While Option is not reported as a modifier, macOS composes the character
+// itself and the terminal sends only that: Option+1 arrives as a bare "¡"
+// with no modifier bit, indistinguishable from the user typing "¡". This is
+// not something the Kitty keyboard protocol fixes — the composition happens
+// before the terminal builds the key event — and no amount of key matching
+// can recover the binding.
+//
+// So every alt binding has an alt-free alternative: f1/f2/f3 for panel
+// focus, f4 for contacts (ContactsAlt), ctrl+g for global search
+// (GlobalSearch), and bare h/l for the folder tabs while the chat list is
+// focused. Rebinding here works too — prefer ctrl+… or a function key.
 type KeyConfig struct {
 	Quit          string `toml:"quit"`
 	FocusChatList string `toml:"focus_chat_list"`
@@ -61,6 +166,15 @@ type KeyConfig struct {
 	FocusComposer string `toml:"focus_composer"`
 	Search        string `toml:"search"`
 	Contacts      string `toml:"contacts"`
+	// ContactsAlt is a second, alt-free binding for the contacts overlay,
+	// so the overlay stays reachable on terminals that cannot report Alt
+	// (see the macOS notes below). Default f4.
+	ContactsAlt string `toml:"contacts_alt"`
+	// GlobalSearch searches every chat. Search ("/") does the same from
+	// every panel except the chat view, where vi convention makes "/" mean
+	// "find in this buffer"; GlobalSearch is the panel-independent binding.
+	// Default ctrl+g.
+	GlobalSearch  string `toml:"global_search"`
 	NextChat      string `toml:"next_chat"`
 	PrevChat      string `toml:"prev_chat"`
 	Reply         string `toml:"reply"`
@@ -71,6 +185,95 @@ type KeyConfig struct {
 	ScrollDown    string `toml:"scroll_down"`
 	PageUp        string `toml:"page_up"`
 	PageDown      string `toml:"page_down"`
+	// NextFolder/PrevFolder cycle the chat list's folder tabs.
+	NextFolder string `toml:"next_folder"`
+	PrevFolder string `toml:"prev_folder"`
+}
+
+// keyModAliases maps the modifier spellings a user might write in
+// config.toml to the canonical spelling bubbletea's Key.Keystroke() emits.
+// Notably "option"/"opt" (the macOS name for Alt) normalize to "alt".
+var keyModAliases = map[string]string{
+	"ctrl":    "ctrl",
+	"control": "ctrl",
+	"ctl":     "ctrl",
+	"alt":     "alt",
+	"opt":     "alt",
+	"option":  "alt",
+	"shift":   "shift",
+	"meta":    "meta",
+	"hyper":   "hyper",
+	"super":   "super",
+	"win":     "super",
+	"cmd":     "super",
+	"command": "super",
+}
+
+// keyModOrder is the order Key.Keystroke() prints modifiers in. A configured
+// binding is re-sorted into this order so that e.g. "shift+alt+a" matches the
+// "alt+shift+a" a real key event produces.
+var keyModOrder = []string{"ctrl", "alt", "shift", "meta", "hyper", "super"}
+
+// keyNameAliases maps common spellings of non-printable keys to the names
+// bubbletea uses.
+var keyNameAliases = map[string]string{
+	"escape":    "esc",
+	"return":    "enter",
+	"ret":       "enter",
+	"del":       "delete",
+	"ins":       "insert",
+	"pageup":    "pgup",
+	"page_up":   "pgup",
+	"pgdn":      "pgdown",
+	"pagedown":  "pgdown",
+	"page_down": "pgdown",
+	"spacebar":  "space",
+	"bs":        "backspace",
+}
+
+// NormalizeKey canonicalizes a user-configured key string to the form
+// produced by bubbletea's Key.Keystroke(): lowercased, with modifier and key
+// aliases resolved and modifiers emitted in Keystroke's fixed order
+// (ctrl, alt, shift, meta, hyper, super). An empty input returns empty, so
+// callers can detect "not configured" and fall back to a built-in default.
+//
+// Examples: "ALT+L" -> "alt+l", "Option+1" -> "alt+1", "shift+ctrl+a" ->
+// "ctrl+shift+a", "Escape" -> "esc", "ctrl++" -> "ctrl++".
+//
+// Anything that is not a recognized modifier terminates the modifier prefix
+// and is taken (together with the rest of the string) as the key name, so a
+// literal "+" binding survives intact.
+func NormalizeKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+
+	parts := strings.Split(s, "+")
+	seen := map[string]bool{}
+	i := 0
+	for ; i < len(parts)-1; i++ {
+		mod, ok := keyModAliases[strings.TrimSpace(parts[i])]
+		if !ok {
+			break
+		}
+		seen[mod] = true
+	}
+
+	key := strings.Join(parts[i:], "+")
+	if alias, ok := keyNameAliases[key]; ok {
+		key = alias
+	}
+
+	var sb strings.Builder
+	for _, mod := range keyModOrder {
+		if seen[mod] {
+			sb.WriteString(mod)
+			sb.WriteByte('+')
+		}
+	}
+	sb.WriteString(key)
+	return sb.String()
 }
 
 func Load() (*Config, error) {
@@ -92,6 +295,7 @@ func Load() (*Config, error) {
 
 	cfg.Storage.SessionFile = expandPath(cfg.Storage.SessionFile)
 	cfg.Storage.FilesDir = expandPath(cfg.Storage.FilesDir)
+	cfg.Storage.StateFile = expandPath(cfg.Storage.StateFile)
 
 	return cfg, nil
 }
@@ -103,6 +307,7 @@ func defaultConfig() *Config {
 			FilesDir:    expandPath("~/.local/share/tele-tui/files"),
 		},
 		UI: UIConfig{
+			ComposeEditing:  ComposeEditingAuto,
 			Theme:           "dark",
 			ChatListWidth:   30,
 			ShowAvatars:     true,
@@ -126,11 +331,13 @@ func defaultConfig() *Config {
 		},
 		Keys: KeyConfig{
 			Quit:          "ctrl+c",
-			FocusChatList: "F1",
-			FocusChatView: "F2",
-			FocusComposer: "F3",
+			FocusChatList: "f1",
+			FocusChatView: "f2",
+			FocusComposer: "f3",
 			Search:        "/",
 			Contacts:      "alt+c",
+			ContactsAlt:   "f4",
+			GlobalSearch:  "ctrl+g",
 			NextChat:      "alt+j",
 			PrevChat:      "alt+k",
 			Reply:         "r",
@@ -141,6 +348,8 @@ func defaultConfig() *Config {
 			ScrollDown:    "j",
 			PageUp:        "pgup",
 			PageDown:      "pgdown",
+			NextFolder:    "alt+l",
+			PrevFolder:    "alt+h",
 		},
 	}
 }

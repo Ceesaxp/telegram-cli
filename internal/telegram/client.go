@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gotd/td/session"
@@ -31,6 +32,11 @@ type Client struct {
 	ready      chan struct{}
 	cancel     context.CancelFunc
 	files      *fileRegistry
+
+	// stores holds the persistent update state and peer cache. Nil when
+	// the state database could not be opened (or must not be opened, see
+	// stateDBTarget) — gotd then falls back to in-memory storage.
+	stores *stateStores
 
 	// sendMsg forwards domain events into the bubbletea program.
 	// Set by the listener; nil-safe.
@@ -63,11 +69,27 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 
 	dispatcher := tg.NewUpdateDispatcher()
 
+	// Persistent update state must never be shared: bbolt takes an
+	// exclusive file lock, and RPC-only clients run concurrently with the
+	// TUI over the same data directory. Failing to open it is not fatal —
+	// we simply lose gap recovery for this run.
+	var stores *stateStores
+	if path, want := stateDBTarget(cfg, noUpdates); want {
+		s, err := openStateStores(path, stateIdentity(cfg, path))
+		if err != nil {
+			log.Printf("state db unavailable, continuing with in-memory update state "+
+				"(offline messages will not be gap-recovered this run): %s", err)
+		} else {
+			stores = s
+		}
+	}
+
 	c := &Client{
 		config:     cfg,
 		ready:      make(chan struct{}),
 		files:      newFileRegistry(),
 		dispatcher: dispatcher,
+		stores:     stores,
 	}
 
 	// The update handler is wired after construction because the peers
@@ -100,18 +122,25 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 				c.lastConnState = ConnectionStateConnecting
 			}
 			c.hasConnState = true
+			// Snapshot under the lock: reading c.lastConnState after
+			// the unlock races with the next state change.
+			current := c.lastConnState
 			c.mu.Unlock()
-			c.send(ConnectionStateMsg{State: c.lastConnState})
+			c.send(ConnectionStateMsg{State: current})
 		},
 	}
 
 	c.client = telegram.NewClient(int(cfg.Telegram.APIID), cfg.Telegram.APIHash, opts)
 	c.api = c.client.API()
-	c.peers = peers.Options{}.Build(c.api)
+	c.peers = peers.Options{Storage: stores.peerStorage()}.Build(c.api)
 
 	gaps := updates.New(updates.Config{
 		Handler:      dispatcher,
 		AccessHasher: c.peers,
+		// Nil storage means in-memory: the manager then has no state to
+		// restore, fetches the current one via updates.getState and
+		// starts from there, exactly as before this was persisted.
+		Storage: stores.stateStorage(),
 	})
 	handler = c.peers.UpdateHook(gaps)
 
@@ -129,6 +158,14 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 	c.cancel = cancel
 
 	go func() {
+		// The state database outlives every gotd write, so close it only
+		// once Run has returned (i.e. after Close cancelled the context).
+		defer func() {
+			if err := c.stores.Close(); err != nil {
+				log.Printf("closing state db: %s", err)
+			}
+		}()
+
 		err := c.client.Run(ctx, func(ctx context.Context) error {
 			// Retry the auth flow on failure (bad code, wrong phone, …)
 			// so a typo does not kill the whole client.
@@ -153,6 +190,22 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 			// AUTH_KEY_UNREGISTERED.
 			if err := c.peers.Init(ctx); err != nil {
 				return fmt.Errorf("peers init: %w", err)
+			}
+
+			// The peer namespace is keyed by session file, but the same
+			// session file can be re-authorized as a different account.
+			// Now that the self ID is known, confirm the namespace really
+			// belongs to it — access hashes are per-account and serving
+			// stale ones yields PEER_ID_INVALID. Never fatal: a failed
+			// check only costs us the cache.
+			if c.stores != nil {
+				if self, err := c.peers.Self(ctx); err != nil {
+					log.Printf("state db: cannot confirm account identity: %s", err)
+				} else if dropped, err := c.stores.bindOwner(ctx, self.ID()); err != nil {
+					log.Printf("state db: owner check failed: %s", err)
+				} else if dropped {
+					log.Printf("state db: peer cache belonged to a different account, dropped")
+				}
 			}
 
 			authorizer.notifyState(AuthStateReady, "")
@@ -218,9 +271,31 @@ func (c *Client) Close() {
 	}
 }
 
+// opTimeout bounds a single RPC round-trip. Without it a hung network
+// call wedges its caller (and the UI command that waits on it) forever.
+const opTimeout = 30 * time.Second
+
+// transferTimeout bounds uploads and downloads, which are chunked and
+// legitimately slow for large files.
+const transferTimeout = 10 * time.Minute
+
+// opCtx returns a deadline-bound context for a short RPC.
+// The caller must always defer the returned cancel.
+func opCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), opTimeout)
+}
+
+// transferCtx returns a deadline-bound context for a file transfer.
+// The caller must always defer the returned cancel.
+func transferCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), transferTimeout)
+}
+
 // GetMe returns the authorized user.
 func (c *Client) GetMe() (*User, error) {
-	users, err := c.api.UsersGetUsers(context.Background(), []tg.InputUserClass{
+	ctx, cancel := opCtx()
+	defer cancel()
+	users, err := c.api.UsersGetUsers(ctx, []tg.InputUserClass{
 		&tg.InputUserSelf{},
 	})
 	if err != nil {

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gotd/td/constant"
 	"github.com/gotd/td/tg"
@@ -37,6 +38,10 @@ type Chat struct {
 	// then by Order descending (unix time of the last message).
 	Pinned bool
 	Order  int64
+
+	// Muted mirrors the peer's notification settings: an explicit
+	// silent flag or a mute-until date in the future.
+	Muted bool
 }
 
 // MessageSender identifies who sent a message.
@@ -283,8 +288,10 @@ type FormattedText struct {
 	Entities []*TextEntity
 }
 
-// TextEntity is a formatting span (offset/length in UTF-16 code units,
-// as returned by Telegram; render converts as before).
+// TextEntity is a formatting span. Offset and Length are RUNE indices
+// into the owning FormattedText.Text, already converted from the UTF-16
+// code units Telegram sends — see formattedTextFromTG. Consumers may
+// slice []rune with them directly.
 type TextEntity struct {
 	Offset int32
 	Length int32
@@ -432,6 +439,44 @@ const (
 
 // --- Conversion helpers ---
 
+// sanitizeTerminal neutralises terminal control sequences in text that
+// originates from a remote peer. Message text, captions, chat titles,
+// user names and file names are eventually written raw to the terminal,
+// where an embedded ESC/OSC sequence could retitle the window, move the
+// cursor, or write the user's clipboard via OSC 52.
+//
+// Every rune below 0x20 except '\n' and '\t', plus DEL (0x7F) and the C1
+// range 0x80–0x9F, is REPLACED (never deleted) with U+FFFD. Replacement
+// is mandatory: FormattedText entity offsets are computed against the
+// original string, so the rune — and UTF-16 code unit — count must not
+// change. All replaced code points are one UTF-16 unit wide, as is
+// U+FFFD, so entity offsets stay valid.
+func sanitizeTerminal(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20, r == 0x7F, r >= 0x80 && r <= 0x9F:
+			return '\uFFFD'
+		default:
+			return r
+		}
+	}, s)
+}
+
+// mutedFromNotifySettings reports whether notification settings mean the
+// peer is muted: an explicit silent flag, or a mute-until date that has
+// not passed yet. now is a unix timestamp.
+func mutedFromNotifySettings(s tg.PeerNotifySettings, now int64) bool {
+	if silent, ok := s.GetSilent(); ok && silent {
+		return true
+	}
+	if until, ok := s.GetMuteUntil(); ok && int64(until) > now {
+		return true
+	}
+	return false
+}
+
 // chatIDFromPeer converts a tg peer to the canonical TDLib-style chat ID
 // (user → userID, chat → −chatID, channel → −100·channelID).
 func chatIDFromPeer(p tg.PeerClass) int64 {
@@ -492,10 +537,10 @@ func userFromTG(u *tg.User) *User {
 	phone, _ := u.GetPhone()
 	return &User{
 		ID:          u.ID,
-		FirstName:   u.FirstName,
-		LastName:    lastName,
-		Username:    username,
-		PhoneNumber: phone,
+		FirstName:   sanitizeTerminal(u.FirstName),
+		LastName:    sanitizeTerminal(lastName),
+		Username:    sanitizeTerminal(username),
+		PhoneNumber: sanitizeTerminal(phone),
 		IsBot:       u.Bot,
 		Status:      userStatusFromTG(u.Status),
 	}
@@ -520,16 +565,69 @@ func userStatusFromTG(s tg.UserStatusClass) UserStatus {
 }
 
 // formattedTextFromTG converts text + tg entities to FormattedText.
+//
+// Telegram measures entity offsets and lengths in UTF-16 code units, but
+// every consumer in this codebase indexes []rune with them. The two
+// disagree as soon as the text contains a non-BMP character: in
+// "\U0001F600 bold" the emoji is one rune but two UTF-16 units, so the
+// bold span arrives as offset 3 length 4 — runes[3:7] over six runes,
+// which panics. Convert here, at the boundary, so nothing downstream
+// ever sees a UTF-16 index.
 func formattedTextFromTG(text string, entities []tg.MessageEntityClass) *FormattedText {
-	ft := &FormattedText{Text: text}
+	// Remote text reaches the terminal verbatim; neutralise control
+	// sequences here. sanitizeTerminal preserves both the rune count and
+	// the UTF-16 length, so it commutes with the conversion below.
+	ft := &FormattedText{Text: sanitizeTerminal(text)}
+	if len(entities) == 0 {
+		return ft
+	}
+
+	runeAt := utf16RuneIndex(ft.Text)
+	lastUnit := len(runeAt) - 1
+
 	for _, e := range entities {
+		// Offsets are attacker-controlled: clamp instead of trusting
+		// them to be in range. Arithmetic stays in int to avoid an
+		// int32 overflow on a hostile length.
+		start := clampOffset(e.GetOffset(), 0, lastUnit)
+		end := clampOffset(e.GetOffset()+e.GetLength(), start, lastUnit)
 		ft.Entities = append(ft.Entities, &TextEntity{
-			Offset: int32(e.GetOffset()),
-			Length: int32(e.GetLength()),
+			Offset: runeAt[start],
+			Length: runeAt[end] - runeAt[start],
 			Type:   entityTypeFromTG(e),
 		})
 	}
 	return ft
+}
+
+// utf16RuneIndex builds a lookup from UTF-16 code unit offset in s to the
+// corresponding rune index. The table has one entry per code unit plus a
+// terminator holding the total rune count, so both an entity's start and
+// its end offset can be translated. An offset that lands on the low half
+// of a surrogate pair resolves to the start of that rune.
+func utf16RuneIndex(s string) []int32 {
+	table := make([]int32, 0, len(s)+1)
+	var idx int32
+	for _, r := range s {
+		table = append(table, idx)
+		if r > 0xFFFF {
+			// Non-BMP: encoded as a surrogate pair, two code units.
+			table = append(table, idx)
+		}
+		idx++
+	}
+	return append(table, idx)
+}
+
+// clampOffset bounds v to [lo, hi].
+func clampOffset(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // entityTypeFromTG maps a tg entity class to the domain type.
@@ -547,11 +645,11 @@ func entityTypeFromTG(e tg.MessageEntityClass) TextEntityType {
 		return &TextEntityTypeCode{}
 	case *tg.MessageEntityPre:
 		if v.Language != "" {
-			return &TextEntityTypePreCode{Language: v.Language}
+			return &TextEntityTypePreCode{Language: sanitizeTerminal(v.Language)}
 		}
 		return &TextEntityTypePre{}
 	case *tg.MessageEntityTextURL:
-		return &TextEntityTypeTextURL{URL: v.URL}
+		return &TextEntityTypeTextURL{URL: sanitizeTerminal(v.URL)}
 	case *tg.MessageEntityURL:
 		return &TextEntityTypeURL{}
 	case *tg.MessageEntityMention:
@@ -647,7 +745,7 @@ func (c *Client) messageFromTGService(m *tg.MessageService) *Message {
 	case *tg.MessageActionChatDeleteUser:
 		msg.Content = &MessageChatDeleteMember{}
 	case *tg.MessageActionChatEditTitle:
-		msg.Content = &MessageChatChangeTitle{Title: a.Title}
+		msg.Content = &MessageChatChangeTitle{Title: sanitizeTerminal(a.Title)}
 	case *tg.MessageActionChatEditPhoto:
 		msg.Content = &MessageChatChangePhoto{}
 	case *tg.MessageActionChatJoinedByLink:
@@ -701,13 +799,13 @@ func (c *Client) contentFromMedia(media tg.MessageMediaClass, caption *Formatted
 
 	case *tg.MessageMediaContact:
 		return &MessageContact{Contact: &Contact{
-			FirstName:   m.FirstName,
-			LastName:    m.LastName,
-			PhoneNumber: m.PhoneNumber,
+			FirstName:   sanitizeTerminal(m.FirstName),
+			LastName:    sanitizeTerminal(m.LastName),
+			PhoneNumber: sanitizeTerminal(m.PhoneNumber),
 		}}
 
 	case *tg.MessageMediaPoll:
-		return &MessagePoll{Poll: &Poll{Question: m.Poll.Question.Text}}
+		return &MessagePoll{Poll: &Poll{Question: sanitizeTerminal(m.Poll.Question.Text)}}
 
 	case *tg.MessageMediaWebPage:
 		return nil // fall back to the message text
@@ -738,7 +836,7 @@ func (c *Client) contentFromDocument(doc *tg.Document, caption *FormattedText) M
 	for _, attr := range doc.Attributes {
 		switch a := attr.(type) {
 		case *tg.DocumentAttributeFilename:
-			fileName = a.FileName
+			fileName = sanitizeTerminal(a.FileName)
 		case *tg.DocumentAttributeVideo:
 			isVideo = true
 			isRound = a.RoundMessage
@@ -751,9 +849,11 @@ func (c *Client) contentFromDocument(doc *tg.Document, caption *FormattedText) M
 			duration = int(a.Duration)
 			title, _ = a.GetTitle()
 			performer, _ = a.GetPerformer()
+			title = sanitizeTerminal(title)
+			performer = sanitizeTerminal(performer)
 		case *tg.DocumentAttributeSticker:
 			isSticker = true
-			sticker = a.Alt
+			sticker = sanitizeTerminal(a.Alt)
 		case *tg.DocumentAttributeAnimated:
 			animated = true
 		}
@@ -853,8 +953,8 @@ func (c *Client) chatFromUser(u *tg.User) *Chat {
 	chat := &Chat{
 		ID:       int64(id),
 		Type:     ChatTypePrivate,
-		Title:    name,
-		Username: username,
+		Title:    sanitizeTerminal(name),
+		Username: sanitizeTerminal(username),
 	}
 	if photo, ok := u.GetPhoto(); ok {
 		if p, ok := photo.(*tg.UserProfilePhoto); ok {
@@ -871,7 +971,7 @@ func (c *Client) chatFromBasicGroup(ch *tg.Chat) *Chat {
 	chat := &Chat{
 		ID:    int64(id),
 		Type:  ChatTypeBasicGroup,
-		Title: ch.Title,
+		Title: sanitizeTerminal(ch.Title),
 	}
 	if p, ok := ch.GetPhoto().(*tg.ChatPhoto); ok {
 		chat.Photo = c.registerAvatar(chat.ID, p.PhotoID)
@@ -891,8 +991,8 @@ func (c *Client) chatFromChannel(ch *tg.Channel) *Chat {
 	chat := &Chat{
 		ID:       int64(id),
 		Type:     chatType,
-		Title:    ch.Title,
-		Username: username,
+		Title:    sanitizeTerminal(ch.Title),
+		Username: sanitizeTerminal(username),
 	}
 	if p, ok := ch.GetPhoto().(*tg.ChatPhoto); ok {
 		chat.Photo = c.registerAvatar(chat.ID, p.PhotoID)

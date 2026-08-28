@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 
@@ -11,7 +10,8 @@ import (
 
 // SendTextMessage sends a plain text message, optionally as a reply.
 func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int64) (*Message, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("send message: %w", err)
@@ -53,7 +53,8 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int
 
 // EditTextMessage edits a text message.
 func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*Message, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("edit message: %w", err)
@@ -74,9 +75,83 @@ func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*M
 	return c.GetMessage(chatID, messageID)
 }
 
+// DeleteMessages deletes messages from a chat.
+//
+// revoke asks Telegram to delete the messages for everyone rather than
+// only for the current user. It is IGNORED for channels and supergroups:
+// channels.deleteMessages has no such flag because channel deletions are
+// always for everyone.
+//
+// On success the deletion is published immediately so the UI does not
+// wait for the server echo. The server sends its own update shortly
+// after; the message store deletes by filtering on an ID set, so
+// applying the same deletion twice is a no-op.
+func (c *Client) DeleteMessages(chatID int64, messageIDs []int64, revoke bool) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	ids := int64sToInts(messageIDs)
+
+	if constant.TDLibPeerID(chatID).IsChannel() {
+		peer, err := c.inputPeer(ctx, chatID)
+		if err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+		inputChannel, ok := peerAsInputChannel(peer)
+		if !ok {
+			return fmt.Errorf("delete messages: peer %d is not a channel", chatID)
+		}
+		if _, err := c.api.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+			Channel: inputChannel,
+			ID:      ids,
+		}); err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+	} else {
+		// messages.deleteMessages takes no peer: for users and basic
+		// groups message IDs are unique account-wide.
+		if _, err := c.api.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
+			Revoke: revoke,
+			ID:     ids,
+		}); err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+	}
+
+	c.send(deletedMsgFor(chatID, messageIDs))
+	return nil
+}
+
+// deletedMsgFor builds the deletion event for a chat, matching the shape
+// the update listener emits so consumers need only one code path.
+// Channel deletions name their chat; non-channel ones carry ChatId 0,
+// because the corresponding server update has no peer and the store
+// resolves them via DeleteFromAll.
+func deletedMsgFor(chatID int64, messageIDs []int64) MessageDeletedMsg {
+	msg := MessageDeletedMsg{MessageIds: messageIDs}
+	if constant.TDLibPeerID(chatID).IsChannel() {
+		msg.ChatId = chatID
+	}
+	return msg
+}
+
+// int64sToInts narrows message IDs for the tg request types.
+func int64sToInts(ids []int64) []int {
+	out := make([]int, len(ids))
+	for i, id := range ids {
+		out[i] = int(id)
+	}
+	return out
+}
+
 // GetMessage fetches a single message.
 func (c *Client) GetMessage(chatID, messageID int64) (*Message, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 
 	var messages []tg.MessageClass
 	if constant.TDLibPeerID(chatID).IsChannel() {

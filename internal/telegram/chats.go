@@ -1,8 +1,8 @@
 package telegram
 
 import (
-	"context"
 	"fmt"
+	"time"
 
 	"github.com/gotd/td/constant"
 	"github.com/gotd/td/telegram/peers"
@@ -17,32 +17,105 @@ func (c *Client) LoadChats(limit int) error {
 		return err
 	}
 
-	var totalUnread int32
+	var totalUnread, unmutedUnread int32
 	for _, chat := range chats {
 		totalUnread += chat.UnreadCount
+		if !chat.Muted {
+			unmutedUnread += chat.UnreadCount
+		}
 		c.send(ChatUpdateMsg{Chat: chat})
 	}
 
 	c.send(UnreadCountMsg{
 		UnreadCount:        totalUnread,
-		UnreadUnmutedCount: totalUnread,
+		UnreadUnmutedCount: unmutedUnread,
 	})
 	return nil
 }
 
+// dialogsPageSize is the largest dialog page Telegram will return.
+const dialogsPageSize = 100
+
+// maxDialogsLimit caps ListChats so a bad limit cannot walk the whole
+// dialog list.
+const maxDialogsLimit = 500
+
+// dialogCursor is the pagination state of MessagesGetDialogs: the date
+// and ID of the last dialog's top message plus that dialog's peer.
+type dialogCursor struct {
+	date int
+	id   int
+	peer tg.InputPeerClass
+}
+
 // ListChats fetches the dialog list without emitting any UI events.
+// Telegram returns at most 100 dialogs per request, so larger limits are
+// served by paginating until limit is reached or a short page arrives.
 func (c *Client) ListChats(limit int) ([]*Chat, error) {
-	ctx := context.Background()
-	if limit <= 0 || limit > 100 {
-		limit = 100
+	if limit <= 0 {
+		limit = dialogsPageSize
 	}
+	if limit > maxDialogsLimit {
+		limit = maxDialogsLimit
+	}
+
+	var (
+		out    []*Chat
+		seen   = make(map[int64]bool, limit)
+		cursor = dialogCursor{peer: &tg.InputPeerEmpty{}}
+	)
+
+	for len(out) < limit {
+		pageLimit := limit - len(out)
+		if pageLimit > dialogsPageSize {
+			pageLimit = dialogsPageSize
+		}
+
+		page, next, raw, err := c.listChatsPage(cursor, pageLimit)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, chat := range page {
+			if seen[chat.ID] {
+				continue
+			}
+			seen[chat.ID] = true
+			out = append(out, chat)
+			if len(out) == limit {
+				break
+			}
+		}
+
+		// A short page is the end of the list. next.peer is nil when the
+		// page held no usable dialog to continue from, and an unchanged
+		// cursor would loop forever.
+		if raw < pageLimit || next.peer == nil ||
+			(next.date == cursor.date && next.id == cursor.id) {
+			break
+		}
+		cursor = next
+	}
+	return out, nil
+}
+
+// listChatsPage fetches one page of dialogs. It returns the converted
+// chats, the cursor for the next page, and the number of raw dialogs the
+// server sent (which is what tells a short — i.e. final — page apart).
+func (c *Client) listChatsPage(cursor dialogCursor, limit int) ([]*Chat, dialogCursor, int, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	var next dialogCursor
 
 	res, err := c.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
 		Limit:      limit,
-		OffsetPeer: &tg.InputPeerEmpty{},
+		OffsetDate: cursor.date,
+		OffsetID:   cursor.id,
+		OffsetPeer: cursor.peer,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get dialogs: %w", err)
+		return nil, next, 0, fmt.Errorf("get dialogs: %w", err)
 	}
 
 	var (
@@ -50,19 +123,22 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 		messages []tg.MessageClass
 		chats    []tg.ChatClass
 		users    []tg.UserClass
+		complete bool
 	)
 	switch d := res.(type) {
 	case *tg.MessagesDialogs:
 		dialogs, messages, chats, users = d.Dialogs, d.Messages, d.Chats, d.Users
+		complete = true // the server returned the entire list
 	case *tg.MessagesDialogsSlice:
 		dialogs, messages, chats, users = d.Dialogs, d.Messages, d.Chats, d.Users
 	default:
-		return nil, fmt.Errorf("unexpected dialogs type %T", res)
+		return nil, next, 0, fmt.Errorf("unexpected dialogs type %T", res)
 	}
 
-	// Seed the peers manager so access hashes are known.
+	// Seed the peers manager so access hashes are known. This must happen
+	// for every page, not just the first.
 	if err := c.peers.Apply(ctx, users, chats); err != nil {
-		return nil, fmt.Errorf("apply peers: %w", err)
+		return nil, next, 0, fmt.Errorf("apply peers: %w", err)
 	}
 
 	entities := tg.Entities{
@@ -91,11 +167,32 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 		}
 	}
 
+	now := time.Now().Unix()
 	out := make([]*Chat, 0, len(dialogs))
 	for _, dc := range dialogs {
 		d, ok := dc.(*tg.Dialog)
 		if !ok {
 			continue
+		}
+
+		// Advance the cursor even for dialogs we cannot convert into a
+		// Chat, otherwise one unknown peer would stall pagination. All
+		// three fields must come from the SAME dialog — a cursor mixing
+		// this page's ID with the previous page's date re-requests
+		// dialogs we already have. Dialogs whose top message is missing
+		// from the response are skipped for cursor purposes; the last
+		// one that does have a date wins, and if none does, next.peer
+		// stays nil and the caller stops.
+		if !complete {
+			if lm, ok := lastMessages[chatIDFromPeer(d.Peer)]; ok {
+				if peer, ok := inputPeerFromEntities(d.Peer, entities); ok {
+					next = dialogCursor{
+						date: int(lm.Date),
+						id:   d.TopMessage,
+						peer: peer,
+					}
+				}
+			}
 		}
 
 		chat, err := c.chatFromPeer(d.Peer, entities)
@@ -107,6 +204,7 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 		chat.UnreadCount = int32(d.UnreadCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
 		chat.LastReadOutboxMessageID = int64(d.ReadOutboxMaxID)
+		chat.Muted = mutedFromNotifySettings(d.NotifySettings, now)
 		if lm, ok := lastMessages[chat.ID]; ok {
 			chat.LastMessage = lm
 			chat.Order = int64(lm.Date)
@@ -114,12 +212,38 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 
 		out = append(out, chat)
 	}
-	return out, nil
+
+	if complete {
+		// Nothing left to page through: report a short page.
+		return out, dialogCursor{}, 0, nil
+	}
+	return out, next, len(dialogs), nil
+}
+
+// inputPeerFromEntities builds an InputPeer (access hash included) from a
+// peer already present in the response entities.
+func inputPeerFromEntities(p tg.PeerClass, e tg.Entities) (tg.InputPeerClass, bool) {
+	switch v := p.(type) {
+	case *tg.PeerUser:
+		if u, ok := e.Users[v.UserID]; ok {
+			return &tg.InputPeerUser{UserID: u.ID, AccessHash: u.AccessHash}, true
+		}
+	case *tg.PeerChat:
+		if ch, ok := e.Chats[v.ChatID]; ok {
+			return &tg.InputPeerChat{ChatID: ch.ID}, true
+		}
+	case *tg.PeerChannel:
+		if ch, ok := e.Channels[v.ChannelID]; ok {
+			return &tg.InputPeerChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}, true
+		}
+	}
+	return nil, false
 }
 
 // GetChat returns a single chat by canonical chat ID.
 func (c *Client) GetChat(chatID int64) (*Chat, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
 	if err != nil {
 		return nil, fmt.Errorf("get chat %d: %w", chatID, err)
@@ -140,7 +264,8 @@ func (c *Client) GetChat(chatID int64) (*Chat, error) {
 // GetChatHistory returns messages of a chat, newest first.
 // fromMessageID paginates backwards (offsetID); offset skips messages.
 func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32) ([]*Message, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)
@@ -183,7 +308,8 @@ func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32
 
 // SearchChats searches chat titles by query (server-side).
 func (c *Client) SearchChats(query string, limit int32) ([]*Chat, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	if limit <= 0 {
 		limit = 20
 	}
@@ -228,7 +354,8 @@ func (c *Client) SearchChats(query string, limit int32) ([]*Chat, error) {
 
 // SearchMessages searches messages globally by query.
 func (c *Client) SearchMessages(query string, limit int32) ([]*Message, error) {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -264,6 +391,67 @@ func (c *Client) SearchMessages(query string, limit int32) ([]*Message, error) {
 	return out, nil
 }
 
+// SearchChatMessages searches messages within a single chat, newest
+// first, like GetChatHistory.
+//
+// fromMessageID is the pagination offset: 0 starts from the latest
+// message, and paging back means passing the ID of the oldest message
+// already seen. limit is clamped to 1..100 (0 or negative means 100,
+// matching the sibling search and history methods).
+//
+// One RPC covers every chat kind — messages.search takes the peer, so
+// users, basic groups, supergroups and channels all route through
+// c.inputPeer with no channel-specific variant.
+//
+// An empty query returns an error rather than a guaranteed server-side
+// SEARCH_QUERY_EMPTY round trip.
+func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID int64, limit int32) ([]*Message, error) {
+	if query == "" {
+		return nil, fmt.Errorf("search chat messages: empty query")
+	}
+
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("search chat messages: %w", err)
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+
+	res, err := c.api.MessagesSearch(ctx, &tg.MessagesSearchRequest{
+		Peer:     peer,
+		Q:        query,
+		Filter:   &tg.InputMessagesFilterEmpty{},
+		OffsetID: int(fromMessageID),
+		Limit:    int(limit),
+		// The remaining bounds are deliberately zero: no date range, no
+		// extra offset, no min/max ID clamp, and no result hash. These
+		// are plain (non-flag) fields, so zero reaches the wire as
+		// "unbounded" rather than "absent".
+		MinDate:   0,
+		MaxDate:   0,
+		AddOffset: 0,
+		MaxID:     0,
+		MinID:     0,
+		Hash:      0,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search chat messages: %w", err)
+	}
+
+	messages := messagesFromMessagesClass(res)
+	out := make([]*Message, 0, len(messages))
+	for _, mc := range messages {
+		if m := c.messageClassFromTG(mc); m != nil {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 // OpenChat is a light-weight placeholder kept for API compatibility:
 // gotd needs no open/close chat lifecycle. It emits the chat so the
 // store has it even for chats outside the loaded dialogs.
@@ -278,7 +466,8 @@ func (c *Client) OpenChat(chatID int64) error {
 
 // ViewMessages marks messages as read.
 func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
-	ctx := context.Background()
+	ctx, cancel := opCtx()
+	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
 		return fmt.Errorf("view messages: %w", err)
