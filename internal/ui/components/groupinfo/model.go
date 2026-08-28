@@ -133,7 +133,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.focused {
 			switch msg.String() {
-			case "escape":
+			case "esc":
 				m.visible = false
 			default:
 				m.memberList.Update(msg)

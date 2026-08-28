@@ -68,7 +68,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			return m.submit()
-		case "escape":
+		case "esc":
 			m.error = ""
 		default:
 			m.input.Update(msg)

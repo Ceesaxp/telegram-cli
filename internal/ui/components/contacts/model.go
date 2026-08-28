@@ -138,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 
-			if msg.String() == "escape" {
+			if msg.String() == "esc" {
 				m.visible = false
 			}
 		}

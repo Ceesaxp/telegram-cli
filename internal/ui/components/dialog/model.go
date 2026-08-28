@@ -93,7 +93,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "escape":
+		case "esc":
 			m.visible = false
 			return m, func() tea.Msg {
 				return DialogResultMsg{ID: m.id, Confirmed: false}
