@@ -46,6 +46,13 @@ type Client struct {
 	// connection typically reaches Ready before the listener exists.
 	lastConnState ConnectionState
 	hasConnState  bool
+
+	// pendingNotices buffers warnings and errors raised before the
+	// listener registered a sink. Startup degradations are all detected
+	// during construction, so without this the nil-safe send would drop
+	// exactly the messages the user most needs to see. Replayed by
+	// setMsgSink.
+	pendingNotices []tea.Msg
 }
 
 // NewClientAsync starts the gotd client in the background.
@@ -74,11 +81,17 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 	// TUI over the same data directory. Failing to open it is not fatal —
 	// we simply lose gap recovery for this run.
 	var stores *stateStores
+	var stateDBWarning string
 	if path, want := stateDBTarget(cfg, noUpdates); want {
 		s, err := openStateStores(path, stateIdentity(cfg, path))
 		if err != nil {
 			log.Printf("state db unavailable, continuing with in-memory update state "+
 				"(offline messages will not be gap-recovered this run): %s", err)
+			// Reported to the UI below, once the client exists. bbolt
+			// takes an exclusive lock, so a second instance is much the
+			// likeliest cause.
+			stateDBWarning = "update state DB unavailable, likely locked by another " +
+				"process — offline gap recovery disabled this run"
 		} else {
 			stores = s
 		}
@@ -90,6 +103,10 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 		files:      newFileRegistry(),
 		dispatcher: dispatcher,
 		stores:     stores,
+	}
+
+	if stateDBWarning != "" {
+		c.notify(ClientWarningMsg{Text: stateDBWarning})
 	}
 
 	// The update handler is wired after construction because the peers
@@ -205,6 +222,9 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 					log.Printf("state db: owner check failed: %s", err)
 				} else if dropped {
 					log.Printf("state db: peer cache belonged to a different account, dropped")
+					c.notify(ClientWarningMsg{
+						Text: "peer cache belonged to a different account — rebuilt",
+					})
 				}
 			}
 
@@ -241,6 +261,30 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 				log.Printf("telegram client run error: %s", err)
 			}
 		}
+
+		// Run has returned, so the client is dead whatever the reason.
+		// Say so: previously this path only logged, and with the TUI
+		// discarding logs a client that died AFTER connecting left the
+		// status bar reading "connected" while nothing arrived. Record
+		// the state too, so a sink registering later replays the truth.
+		c.mu.Lock()
+		c.lastConnState = ConnectionStateDisconnected
+		c.hasConnState = true
+		c.mu.Unlock()
+		c.send(ConnectionStateMsg{State: ConnectionStateDisconnected})
+
+		// ctx.Err() != nil means our own Close() brought it down, which
+		// needs no error report. Anything else is the client dying on us
+		// — session revoked from another device, a network failure gotd
+		// gave up on, and so on.
+		if ctx.Err() == nil {
+			runErr := err
+			if runErr == nil {
+				runErr = errors.New("telegram client stopped unexpectedly")
+			}
+			c.notify(ClientErrorMsg{Err: runErr, Terminal: true})
+		}
+
 		authorizer.notifyState(AuthStateClosed, "")
 	}()
 
@@ -326,15 +370,45 @@ func (c *Client) send(msg tea.Msg) {
 	}
 }
 
+// notify forwards a warning or error to the bubbletea program, buffering
+// it when no sink has registered yet. Unlike send, which drops events
+// that predate the listener, notices are kept and replayed: they are
+// one-shot and mostly occur during startup.
+func (c *Client) notify(msg tea.Msg) {
+	c.mu.Lock()
+	send := c.sendMsg
+	if send == nil {
+		c.pendingNotices = append(c.pendingNotices, msg)
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	send(msg)
+}
+
 // setMsgSink registers the event sink (called by the listener).
 func (c *Client) setMsgSink(send func(tea.Msg)) {
 	c.mu.Lock()
 	c.sendMsg = send
 	state, has := c.lastConnState, c.hasConnState
+	// Only drain the buffer if there is somewhere to drain it to.
+	var pending []tea.Msg
+	if send != nil {
+		pending, c.pendingNotices = c.pendingNotices, nil
+	}
 	c.mu.Unlock()
+
+	if send == nil {
+		return
+	}
 	// Replay the connection state — it is usually set before the sink
 	// registers, and without this the UI would stay "Disconnected".
-	if has && send != nil {
+	if has {
 		send(ConnectionStateMsg{State: state})
+	}
+	// Replay notices raised before the TUI existed (state db
+	// unavailable, peer cache rebuilt, an early client death).
+	for _, msg := range pending {
+		send(msg)
 	}
 }

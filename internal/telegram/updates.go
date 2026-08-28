@@ -62,6 +62,22 @@ type ChatFoldersMsg struct {
 	Folders []*ChatFolder
 }
 
+// ClientErrorMsg reports that the Telegram client itself failed, as
+// opposed to a single RPC. Terminal is true when the run loop has exited
+// for good, meaning nothing will arrive until the app reconnects — the
+// session being terminated from another device looks like this.
+type ClientErrorMsg struct {
+	Err      error
+	Terminal bool
+}
+
+// ClientWarningMsg reports a permanent, non-fatal degradation of the
+// current run. The client keeps working, but with less than its usual
+// capability, and the user may want to know why.
+type ClientWarningMsg struct {
+	Text string
+}
+
 // FileUpdateMsg is sent when a file download completes.
 type FileUpdateMsg struct {
 	File *File

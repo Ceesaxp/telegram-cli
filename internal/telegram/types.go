@@ -435,6 +435,11 @@ type ConnectionState int
 const (
 	ConnectionStateConnecting ConnectionState = iota
 	ConnectionStateReady
+	// ConnectionStateDisconnected means the client run loop has exited:
+	// the connection is gone for good and will not recover on its own.
+	// Appended last on purpose — the existing values keep their numbers,
+	// so consumers comparing against them are unaffected.
+	ConnectionStateDisconnected
 )
 
 // --- Conversion helpers ---
