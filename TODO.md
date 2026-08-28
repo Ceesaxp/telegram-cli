@@ -68,3 +68,6 @@ remains.
 - [ ] K: vi-convention keymap pass; non-alt contacts binding; log silencing in TUI; Ghostty guidance
 - [ ] D: README refresh (after code)
 - [ ] E (wave 6, concurrent): composer editing — newline chords (decoder-verified), emacs/vi modes (config compose_editing=emacs|vi|auto from $EDITOR), ctrl+o external $EDITOR full-screen editing
+- [ ] M (wave 7, after V5/6): teletui -migrate-config flag (upgrade old-default keys, add new fields, .bak backup, summary); README + config.example.toml keymap refresh incl. the flag
+- [ ] MD (wave 7): outgoing markdown → entities on send/edit/captions (Desktop subset, rune→UTF-16 offsets, round-trip tested vs incoming converter, parse_markdown toggle)
+- [ ] H (wave 7): '?' context-sensitive help overlay from a bindings registry (single source of truth); lazygit-flavored additive aliases ([/] folder tabs); keys.help config
