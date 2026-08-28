@@ -7,7 +7,18 @@ type MessageSubmittedMsg struct {
 	ReplyToId     int64
 	EditMessageId int64
 	Attachment    string // local file path, empty if none
+	AsPhoto       bool   // send the attachment as an inline photo, not a document
 }
 
 // AttachRequestedMsg is emitted when the user asks to attach a file (Ctrl+T).
 type AttachRequestedMsg struct{}
+
+// PasteRequestedMsg is emitted when the user asks to attach whatever image is
+// on the system clipboard (Ctrl+V).
+type PasteRequestedMsg struct{}
+
+// AttachmentDiscardedMsg is emitted when a pending attachment is dropped
+// without being sent (Escape), so the owner can delete the spooled file.
+type AttachmentDiscardedMsg struct {
+	Path string
+}
