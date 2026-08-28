@@ -10,6 +10,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +46,18 @@ func main() {
 	fs := flag.NewFlagSet("telegram-api", flag.ExitOnError)
 	fs.SetOutput(os.Stderr)
 	addr := fs.String("addr", "", "listen address (default 127.0.0.1:8080, or TELETUI_API_ADDR)")
+	tokenFile := fs.String("token-file", "", "path to a file containing the API bearer token (overrides TELETUI_API_TOKEN and the default token file)")
+	insecureNoAuth := fs.Bool("insecure-no-auth", false, "DANGEROUS: disable bearer token authentication entirely")
+	var allowedHosts []string
+	fs.Func("allowed-host", "additional Host/Origin hostname to accept, e.g. a LAN IP (repeatable, or comma-separated); "+
+		"required to accept anything but localhost/127.0.0.1/[::1] when binding to a non-loopback address like 0.0.0.0", func(v string) error {
+		for _, h := range strings.Split(v, ",") {
+			if h = strings.TrimSpace(h); h != "" {
+				allowedHosts = append(allowedHosts, h)
+			}
+		}
+		return nil
+	})
 	_ = fs.Parse(args)
 
 	cfg, err := config.Load()
@@ -66,15 +81,17 @@ func main() {
 	case "login":
 		runLogin(cfg)
 	case "serve":
-		runServe(cfg, listenAddr(*addr))
+		resolvedAddr := listenAddr(*addr)
+		token := resolveToken(cfg, *tokenFile, *insecureNoAuth)
+		runServe(cfg, resolvedAddr, token, allowedHosts)
 	default:
-		fmt.Fprintf(os.Stderr, "usage: telegram-api [login|serve] [-addr host:port]\n")
+		fmt.Fprintf(os.Stderr, "usage: telegram-api [login|serve] [-addr host:port] [-token-file path] [-allowed-host host] [-insecure-no-auth]\n")
 		os.Exit(2)
 	}
 }
 
 // listenAddr resolves the listen address: -addr flag > TELETUI_API_ADDR
-// env > default. Localhost only by default, so no auth token is needed.
+// env > default.
 func listenAddr(flagAddr string) string {
 	if flagAddr != "" {
 		return flagAddr
@@ -83,6 +100,99 @@ func listenAddr(flagAddr string) string {
 		return env
 	}
 	return "127.0.0.1:8080"
+}
+
+// resolveToken determines the bearer token the REST API requires, or logs
+// a loud warning and returns "" (auth disabled) when --insecure-no-auth is
+// set. Otherwise it loads the token in priority order: --token-file flag,
+// TELETUI_API_TOKEN env var, then the default token file next to the
+// session file — generating and persisting a new random token there if it
+// doesn't yet exist. It is fatal for the resolved token to be empty or
+// all-whitespace unless --insecure-no-auth was given: an empty token
+// reaching restapi.New disables authentication entirely, so a truncated
+// token file, a blank env var, or /dev/null as --token-file must never
+// silently fall through to serving the account unauthenticated. The
+// token value itself is never logged, only where it came from.
+func resolveToken(cfg *config.Config, tokenFileFlag string, insecureNoAuth bool) string {
+	if insecureNoAuth {
+		log.Println("WARNING: --insecure-no-auth is set. The REST API has NO AUTHENTICATION: " +
+			"anyone who can reach this address can read your Telegram messages and send " +
+			"messages as you. Only use this on a fully trusted, isolated network.")
+		return ""
+	}
+
+	token, source := loadToken(cfg, tokenFileFlag)
+	if err := validateToken(token, source); err != nil {
+		log.Fatal(err)
+	}
+	return token
+}
+
+// validateToken reports an error if token is empty or all-whitespace,
+// naming source in the message for a clear diagnostic. It performs no
+// I/O and never terminates the process itself, so it's testable in
+// isolation from resolveToken's log.Fatal call.
+func validateToken(token, source string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("API token from %s is empty or blank; the REST API refuses to start "+
+			"unauthenticated. Provide a non-empty token, or pass --insecure-no-auth to "+
+			"explicitly disable authentication", source)
+	}
+	return nil
+}
+
+// loadToken loads the raw token value and a human-readable description of
+// where it came from, in priority order: --token-file flag,
+// TELETUI_API_TOKEN env var, then the default token file next to the
+// session file (generating and persisting a new random token there if it
+// doesn't yet exist). It does not validate non-emptiness — the caller
+// does, via validateToken — but it is fatal on any I/O error, since those
+// indicate misconfiguration (unreadable file, unwritable directory) that
+// the operator needs to see immediately rather than silently falling
+// back to an unauthenticated server.
+func loadToken(cfg *config.Config, tokenFileFlag string) (token, source string) {
+	if tokenFileFlag != "" {
+		data, err := os.ReadFile(tokenFileFlag)
+		if err != nil {
+			log.Fatalf("failed to read --token-file %s: %v", tokenFileFlag, err)
+		}
+		log.Printf("API token loaded from %s", tokenFileFlag)
+		return strings.TrimSpace(string(data)), tokenFileFlag
+	}
+
+	if env := os.Getenv("TELETUI_API_TOKEN"); env != "" {
+		log.Println("API token loaded from TELETUI_API_TOKEN")
+		return strings.TrimSpace(env), "TELETUI_API_TOKEN"
+	}
+
+	path := defaultTokenPath(cfg)
+	if data, err := os.ReadFile(path); err == nil {
+		log.Printf("API token loaded from %s", path)
+		return strings.TrimSpace(string(data)), path
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Fatalf("failed to read token file %s: %v", path, err)
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		log.Fatalf("failed to generate API token: %v", err)
+	}
+	token = hex.EncodeToString(buf)
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		log.Fatalf("failed to create directory for token file %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		log.Fatalf("failed to write token file %s: %v", path, err)
+	}
+	log.Printf("generated new API token, written to %s", path)
+	return token, path
+}
+
+// defaultTokenPath returns the default location of the API bearer token
+// file: next to the (already-resolved) session file.
+func defaultTokenPath(cfg *config.Config) string {
+	return filepath.Join(filepath.Dir(cfg.Storage.SessionFile), "api-token")
 }
 
 // runLogin performs interactive authentication in the terminal and
@@ -171,7 +281,7 @@ func runLogin(cfg *config.Config) {
 // authorized (via `telegram-api login` or `telegram-mcp login`). The
 // client runs in RPC-only mode (no update subscription) so it never
 // competes with the TUI for realtime updates.
-func runServe(cfg *config.Config, addr string) {
+func runServe(cfg *config.Config, addr string, token string, allowedHosts []string) {
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 	authorizer.NonInteractive = true
 
@@ -206,7 +316,12 @@ func runServe(cfg *config.Config, addr string) {
 		os.Exit(1)
 	}
 
-	api := restapi.New(client)
+	api := restapi.New(client, token)
+	api.SetListenHost(addr)
+	for _, h := range allowedHosts {
+		api.AddAllowedHost(h)
+	}
+	log.Printf("allowed Host/Origin values: %s", strings.Join(api.AllowedHosts(), ", "))
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: api.Handler(),
