@@ -85,6 +85,19 @@ func (s *ChatStore) UpdateReadInbox(chatID int64, unreadCount int32) {
 	}
 }
 
+// SetMuted updates a chat's muted flag. It is a no-op if the chat is not
+// yet known to the store.
+func (s *ChatStore) SetMuted(chatID int64, muted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.chats[chatID]
+	if !ok || entry.Chat == nil {
+		return
+	}
+	entry.Chat.Muted = muted
+}
+
 // OrderedChats returns all chats: pinned first, then by last message
 // date (descending).
 func (s *ChatStore) OrderedChats() []*ChatEntry {
