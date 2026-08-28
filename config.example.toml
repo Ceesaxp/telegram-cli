@@ -11,6 +11,7 @@ phone = ""
 [storage]
 session_file = "~/.local/share/tele-tui/session.json"
 files_dir = "~/.local/share/tele-tui/files"
+# state_file = "~/.local/share/tele-tui/state.db"  # update/peer state DB (default: state.db next to session_file)
 
 # UI preferences
 [ui]
@@ -37,21 +38,27 @@ enabled = true
 sound = false
 show_preview = true
 
-# Keybindings (vim-style defaults)
+# Keybindings — values below are the built-in defaults (see defaultConfig()
+# in internal/config/config.go); only listed fields are actually consulted,
+# see the KeyConfig doc comment there for which. A bare single printable
+# character (e.g. quit = "q") shadows quick-type, making that character
+# untypeable as message text — prefer alt+/ctrl+/function-key bindings.
 [keys]
 quit = "ctrl+c"
-focus_chat_list = "ctrl+1"
-focus_chat_view = "ctrl+2"
-focus_composer = "ctrl+3"
+focus_chat_list = "f1"
+focus_chat_view = "f2"
+focus_composer = "f3"
 search = "/"
-contacts = "ctrl+k"
-next_chat = "ctrl+j"
-prev_chat = "ctrl+k"
+contacts = "alt+c"
+next_chat = "alt+j"
+prev_chat = "alt+k"
 reply = "r"
 edit_message = "e"
 delete_message = "d"
 forward = "f"
 scroll_up = "k"
 scroll_down = "j"
-page_up = "ctrl+u"
-page_down = "ctrl+d"
+page_up = "pgup"
+page_down = "pgdown"
+next_folder = "alt+l"
+prev_folder = "alt+h"
