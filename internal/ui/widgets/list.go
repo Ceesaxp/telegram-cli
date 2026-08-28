@@ -1,11 +1,11 @@
 package widgets
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ListItem represents a single item in a scrollable list.
@@ -17,6 +17,7 @@ type ListItem struct {
 	Meta     string
 	Online   bool
 	Avatar   string // 2-line rendered avatar (half-block image or initials)
+	Muted    bool   // chat notifications are muted; render dimmed
 }
 
 // List is a generic scrollable list widget with vim-style navigation.
@@ -172,8 +173,26 @@ func (l *List) View() string {
 	var b strings.Builder
 
 	end := min(l.Offset+visibleItems, len(l.Items))
-	avatarW := 5 // avatar column width (4 chars + 1 space)
-	textW := l.Width - avatarW
+	const avatarColW = 4 // avatar column content width, in display cells
+	const avatarSep = 1  // separator cell between the avatar and text columns
+	avatarW := avatarColW + avatarSep
+
+	// The row style (StyleNormal/StyleActive) carries its own padding —
+	// PaddingLeft(1)+PaddingRight(1) in the shipped theme — so the text
+	// column budget must leave room for it too, on top of the avatar
+	// column: content is handed to that style's Width(l.Width) through
+	// FitLine below, and FitLine's contract is content-plus-frame fits
+	// totalWidth, not content-equals-totalWidth (see FitLine's doc
+	// comment for why the latter silently word-wraps instead of
+	// rendering as one line). Both styles are assumed to share the same
+	// frame size, as they do in the shipped theme; take the larger of
+	// the two defensively so a future asymmetric theme can't reintroduce
+	// the overflow.
+	rowFrame := max(l.StyleNormal.GetHorizontalFrameSize(), l.StyleActive.GetHorizontalFrameSize())
+	textW := l.Width - avatarW - rowFrame
+	if textW < 0 {
+		textW = 0
+	}
 
 	for i := l.Offset; i < end; i++ {
 		item := l.Items[i]
@@ -190,57 +209,98 @@ func (l *List) View() string {
 			avatar = renderInitials(item.Title, isActive)
 		}
 
-		// Title line with meta
-		titleText := item.Title
+		titleStyle := l.StyleTitle
+		badgeStyle := l.StyleBadge
+		if item.Muted {
+			// Dim muted chats: faint title, faint (de-emphasized) badge
+			// instead of the loud unread style.
+			titleStyle = titleStyle.Faint(true)
+			badgeStyle = badgeStyle.Faint(true)
+		}
+
+		// Title line: prefix + title + right-aligned meta. Every width
+		// computed below is in display cells (ansi.StringWidth), never
+		// runes: emoji (🔕 📢 👥), flag sequences, and CJK/Cyrillic text
+		// all commonly differ from their rune count.
+		//
+		// 8 cells are reserved for the meta/timestamp column up front —
+		// restored from the pre-cell-accurate budgeting this package
+		// shipped with before — so a long title cannot consume the
+		// entire column and starve the timestamp out. The title is what
+		// truncates to make room; the timestamp must render whenever the
+		// item has one.
+		prefix := ""
 		if item.Online {
-			titleText = "● " + titleText
+			prefix += "● "
 		}
-		titleLine := l.StyleTitle.Render(truncate(titleText, textW-8))
+		if item.Muted {
+			prefix += "🔕 "
+		}
+		prefixW := ansi.StringWidth(prefix)
+		titleBudget := textW - prefixW - 8
+		if titleBudget < 0 {
+			titleBudget = 0
+		}
+		plainTitle := prefix + truncate(item.Title, titleBudget)
+		titleLine := titleStyle.Render(plainTitle)
 		if item.Meta != "" {
-			metaW := textW - lipgloss.Width(titleLine) - 2
+			metaW := textW - ansi.StringWidth(plainTitle) - 2
 			if metaW > 0 {
-				meta := l.StyleMeta.Copy().Width(metaW).Align(lipgloss.Right).Render(item.Meta)
-				titleLine = titleLine + meta
+				meta := FitLine(l.StyleMeta.Align(lipgloss.Right), truncate(item.Meta, metaW), metaW)
+				titleLine += meta
 			}
 		}
 
-		// Subtitle line with badge
-		subLine := l.StyleSub.Render(truncate(item.Subtitle, textW-6))
+		// Subtitle line: subtitle + badge. 6 cells reserved for the
+		// badge up front, restored from the pre-cell-accurate budgeting,
+		// so a long subtitle can't starve it out (mirrors the title/meta
+		// reservation above). The badge itself is rendered at its
+		// natural width (content plus its own padding) rather than
+		// stretched to fill a slot: badgeStyle carries a background
+		// color, and stretching it via Width()+Align would paint a wide
+		// colored bar instead of a tight badge. Rendering it with no
+		// Width() call at all also means there is no wrap risk here
+		// regardless of badgeStyle's padding (see FitLine's doc comment
+		// for why Width() is the thing that wraps) — the gap is instead
+		// computed from the badge's actual rendered width and only
+		// appended if it fits.
+		subBudget := textW - 6
+		if subBudget < 0 {
+			subBudget = 0
+		}
+		plainSub := truncate(item.Subtitle, subBudget)
+		subLine := l.StyleSub.Render(plainSub)
 		if item.Badge != "" {
-			badge := l.StyleBadge.Render(item.Badge)
-			padW := textW - lipgloss.Width(subLine) - lipgloss.Width(badge) - 2
-			if padW > 0 {
-				subLine = subLine + strings.Repeat(" ", padW) + badge
+			badge := badgeStyle.Render(truncate(item.Badge, 6))
+			gap := textW - ansi.StringWidth(subLine) - ansi.StringWidth(badge)
+			if gap >= 1 {
+				subLine = subLine + strings.Repeat(" ", gap) + badge
 			}
 		}
 
-		// Join avatar + text side by side
-		textContent := fmt.Sprintf("%s\n%s", titleLine, subLine)
-
-		// Split avatar into lines (should be 2 lines for half-block)
+		// Join avatar + text side by side, one output line at a time,
+		// each rendered through the row style via FitLine — never
+		// through a bare style.Width() call on already-full-width
+		// content (see FitLine's doc comment for why that wraps instead
+		// of clamping). The avatar column, which isn't governed by a
+		// lipgloss style at this join point, is still clamped manually:
+		// item.Avatar is an externally rendered image (or the initials
+		// block below) whose actual cell width isn't guaranteed to match
+		// the reserved column.
 		avatarLines := strings.Split(avatar, "\n")
-		textLines := strings.Split(textContent, "\n")
-
-		// Pad to same height
 		for len(avatarLines) < 2 {
-			avatarLines = append(avatarLines, strings.Repeat(" ", 4))
+			avatarLines = append(avatarLines, "")
 		}
-		for len(textLines) < 2 {
-			textLines = append(textLines, "")
-		}
+		textLines := [2]string{titleLine, subLine}
 
 		var rowLines []string
 		for ri := 0; ri < 2; ri++ {
-			av := avatarLines[ri]
-			tx := ""
-			if ri < len(textLines) {
-				tx = textLines[ri]
-			}
-			rowLines = append(rowLines, av+" "+tx)
+			av := fitCell(avatarLines[ri], avatarColW)
+			content := av + " " + textLines[ri]
+			rowLines = append(rowLines, FitLine(style, content, l.Width))
 		}
 
-		row := style.Width(l.Width).Render(strings.Join(rowLines, "\n"))
-		b.WriteString(row)
+		b.WriteString(strings.Join(rowLines, "\n"))
 		if i < end-1 {
 			b.WriteString("\n")
 		}
@@ -294,18 +354,43 @@ func renderInitials(title string, active bool) string {
 	return line1 + "\n" + line2
 }
 
+// truncate truncates s to at most maxWidth display cells (ansi.StringWidth),
+// not runes, appending an ellipsis when it actually had to cut something.
+// Counting runes instead of cells would under-truncate any string
+// containing double-width glyphs (emoji, CJK, flag sequences) — common in
+// real chat titles and subtitles — rendering the row wider than intended.
 func truncate(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= maxWidth {
+	if ansi.StringWidth(s) <= maxWidth {
 		return s
 	}
-	if maxWidth <= 3 {
-		return string(runes[:maxWidth])
+	return ansi.Truncate(s, maxWidth, "…")
+}
+
+// fitCell clamps s to exactly width display cells: truncating (ANSI-escape
+// safe, so already-styled/colored strings are not corrupted — see
+// ansi.Truncate) if wider, padding with spaces if narrower. It is the final
+// guarantee that an assembled row line — after avatar/title/meta/badge
+// composition, whose individual budgets are each best-effort — can never
+// end up wider than the column it was budgeted for.
+func fitCell(s string, width int) string {
+	if width <= 0 {
+		return ""
 	}
-	return string(runes[:maxWidth-3]) + "..."
+	w := ansi.StringWidth(s)
+	if w > width {
+		// No extra "…" here: truncate() above already added one where it
+		// matters (title/subtitle text); this is a rare-case safety net,
+		// not the primary truncation UX.
+		s = ansi.Truncate(s, width, "")
+		w = ansi.StringWidth(s)
+	}
+	if w < width {
+		s += strings.Repeat(" ", width-w)
+	}
+	return s
 }
 
 func min(a, b int) int {

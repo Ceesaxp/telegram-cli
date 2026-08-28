@@ -9,6 +9,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 // Model is the status bar component.
@@ -20,6 +21,7 @@ type Model struct {
 	userName     string
 	typing       map[int64][]int64 // chatID -> userIDs typing
 	unreadCount  int32
+	unmutedCount int32
 	activeChatId int64
 }
 
@@ -88,6 +90,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case telegram.UnreadCountMsg:
 		m.unreadCount = msg.UnreadCount
+		m.unmutedCount = msg.UnreadUnmutedCount
 	}
 
 	return m, nil
@@ -128,26 +131,98 @@ func (m Model) View() string {
 	// User name
 	userName := m.theme.StatusBar.Render(m.userName)
 
-	// Unread count
-	unread := ""
+	// Unread count. The headline number prefers the unmuted count (what
+	// actually warrants attention); when muted chats contribute
+	// additional unread messages, the true total is shown in parens.
+	// Two renderings are kept so the layout below can fall back to the
+	// shorter form (or drop it entirely) at narrow widths.
+	unreadShort := ""
+	unreadLong := ""
 	if m.unreadCount > 0 {
-		unread = m.theme.StatusBar.Foreground(m.theme.Primary).
+		unreadShort = m.theme.StatusBar.Foreground(m.theme.Primary).
 			Render(fmt.Sprintf(" [%d unread]", m.unreadCount))
+		if m.unmutedCount != m.unreadCount {
+			unreadLong = m.theme.StatusBar.Foreground(m.theme.Primary).
+				Render(fmt.Sprintf(" [%d unread (%d total)]", m.unmutedCount, m.unreadCount))
+		} else {
+			unreadLong = unreadShort
+		}
 	}
 
-	// Keybind hints
-	hints := m.theme.StatusBar.Foreground(m.theme.TextMuted).
-		Render("Ctrl+1:Chats  Ctrl+2:View  Ctrl+3:Compose  /:Search  Ctrl+K:Contacts")
+	// Keybind hints — kept in sync with the actual bindings in
+	// internal/app/app.go (focusChatList/focusChatView/focusComposer
+	// default to alt+1/2/3, search defaults to "/", contacts to alt+c)
+	// and chatlist.Update (folder cycling also works as plain ←→ or a
+	// 1-9 jump while the chat list is focused, alongside the app-level
+	// alt+h/alt+l — the terminal-independent path for terminals that
+	// can't report alt as a distinguishable modifier).
+	hintsText := m.theme.StatusBar.Foreground(m.theme.TextMuted).
+		Render("Alt+1/2/3:Focus  /:Search  Alt+C:Contacts  ←→/1-9:Folders")
 
-	left := fmt.Sprintf("%s  %s%s", connStatus, userName, unread)
 	center := typingText
-	right := hints
+	centerW := lipgloss.Width(center)
+
+	// Every width computed and fitted below targets innerWidth — m.width
+	// minus StatusBar's own horizontal padding — never m.width itself.
+	// StatusBar carries PaddingLeft(1)+PaddingRight(1); content built to
+	// fill m.width exactly and then handed to THAT style's Width(m.width)
+	// silently word-wraps instead of rendering as one line (see
+	// widgets.FitLine's doc comment for the lipgloss behavior behind
+	// this). Piling MaxHeight(1) on top of that wrap, as this function
+	// used to, is what produced the actual visible bug: it kept only the
+	// wrapped line's first fragment, chopping the hints off mid-token
+	// ("←→/1-") rather than showing the full string or a clean
+	// truncation of it.
+	innerWidth := m.width - m.theme.StatusBar.GetHorizontalFrameSize()
+	if innerWidth < 0 {
+		innerWidth = 0
+	}
+
+	fits := func(left, right string) bool {
+		if innerWidth <= 0 {
+			return true
+		}
+		return lipgloss.Width(left)+centerW+lipgloss.Width(right) <= innerWidth
+	}
+
+	// Assemble the bar at decreasing levels of detail — full, then with
+	// the unread badge progressively shortened, then with the hints
+	// block dropped entirely — using the first combination that fits the
+	// available width. This mirrors the fallback order "full -> drop
+	// unread -> drop hints": the hints block (~57 cells) alone can
+	// exceed a narrow terminal, and unlike a fixed-width truncation this
+	// keeps whichever piece still fits legible rather than clipping it
+	// mid-word.
+	unreadCandidates := []string{unreadLong, unreadShort, ""}
+	hintsCandidates := []string{hintsText, ""}
+
+	var left, right string
+	found := false
+	for _, h := range hintsCandidates {
+		for _, u := range unreadCandidates {
+			candidateLeft := fmt.Sprintf("%s  %s%s", connStatus, userName, u)
+			if fits(candidateLeft, h) {
+				left, right = candidateLeft, h
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		// Nothing fit even at minimum detail; fall through to the
+		// narrowest form and let FitLine's own truncation below do the
+		// rest.
+		left = fmt.Sprintf("%s  %s", connStatus, userName)
+		right = ""
+	}
 
 	// Calculate padding
 	leftW := lipgloss.Width(left)
-	centerW := lipgloss.Width(center)
 	rightW := lipgloss.Width(right)
-	padding := m.width - leftW - centerW - rightW
+	padding := innerWidth - leftW - centerW - rightW
 	if padding < 0 {
 		padding = 0
 	}
@@ -155,7 +230,13 @@ func (m Model) View() string {
 	pad1 := padding / 2
 	pad2 := padding - pad1
 
-	return m.theme.StatusBar.
-		Width(m.width).
-		Render(left + strings.Repeat(" ", pad1) + center + strings.Repeat(" ", pad2) + right)
+	bar := left + strings.Repeat(" ", pad1) + center + strings.Repeat(" ", pad2) + right
+
+	// FitLine is both the final truncation safety net (in case some
+	// future change to the pieces above doesn't land exactly on
+	// innerWidth) and the only place in this function allowed to call
+	// StatusBar.Width, since it budgets against the style's own frame
+	// size first — the same shared helper list.go's rows and the folder
+	// tab bar use to avoid this exact class of bug.
+	return widgets.FitLine(m.theme.StatusBar, bar, m.width)
 }
