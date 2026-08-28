@@ -1,11 +1,13 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/imtaqin/telegram-cli/internal/clipboard"
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/notification"
 	"github.com/imtaqin/telegram-cli/internal/store"
@@ -47,11 +49,87 @@ type Model struct {
 	width      int
 	height     int
 	myUserId   int64
+
+	// pasteInFlight is set while a clipboard paste command is running, so a
+	// second Ctrl+V cannot start a racing paste.
+	pasteInFlight bool
+
+	// fatalError holds the reason the Telegram client died for good — a
+	// telegram.ClientErrorMsg with Terminal set, or the authorizer
+	// reporting telegram.AuthStateClosed. While it is set the whole UI is
+	// replaced by an error panel.
+	//
+	// It has to be that loud. The failure it reports is silent by nature:
+	// the run loop exits, no further updates arrive, and every panel keeps
+	// rendering the last data it had. The app looks perfectly alive while
+	// messages typed into it go nowhere. A notice in the composer would be
+	// missed, and leaving the panels on screen would keep inviting input
+	// that cannot be delivered.
+	//
+	// Never cleared: the run loop does not come back, so only restarting
+	// the process recovers.
+	fatalError string
+
+	// keys holds the resolved (config-normalized, defaulted) key bindings
+	// app.go itself dispatches on. See resolveKeys.
+	keys resolvedKeys
+
+	// pendingDeleteChatId/pendingDeleteMessageId capture the message
+	// targeted by handleMessageAction's "delete" case for the duration of
+	// the confirm dialog, since dialog.DialogResultMsg carries no payload
+	// of its own to identify what was being confirmed.
+	pendingDeleteChatId    int64
+	pendingDeleteMessageId int64
+}
+
+// resolvedKeys holds the subset of config.KeyConfig that app.go dispatches
+// on directly, after normalization and defaulting. See the doc comment on
+// config.KeyConfig for which keys are wired here versus left inert.
+type resolvedKeys struct {
+	quit          string
+	focusChatList string
+	focusChatView string
+	focusComposer string
+	search        string
+	globalSearch  string
+	contacts      string
+	contactsAlt   string
+	nextFolder    string
+	prevFolder    string
+	nextChat      string
+	prevChat      string
+}
+
+// resolveKeys normalizes the configured key bindings app.go consults,
+// falling back to the given hardcoded default whenever a field is empty
+// (e.g. an older config.toml predating a field, or a zero-value Config in
+// tests).
+func resolveKeys(kc config.KeyConfig) resolvedKeys {
+	resolve := func(configured, def string) string {
+		if configured == "" {
+			return def
+		}
+		return config.NormalizeKey(configured)
+	}
+	return resolvedKeys{
+		quit:          resolve(kc.Quit, "ctrl+c"),
+		focusChatList: resolve(kc.FocusChatList, "f1"),
+		focusChatView: resolve(kc.FocusChatView, "f2"),
+		focusComposer: resolve(kc.FocusComposer, "f3"),
+		search:        resolve(kc.Search, "/"),
+		globalSearch:  resolve(kc.GlobalSearch, "ctrl+g"),
+		contacts:      resolve(kc.Contacts, "alt+c"),
+		contactsAlt:   resolve(kc.ContactsAlt, "f4"),
+		nextFolder:    resolve(kc.NextFolder, "alt+l"),
+		prevFolder:    resolve(kc.PrevFolder, "alt+h"),
+		nextChat:      resolve(kc.NextChat, "alt+j"),
+		prevChat:      resolve(kc.PrevChat, "alt+k"),
+	}
 }
 
 func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer) Model {
 	th := theme.ForName(cfg.UI.Theme)
-	return Model{
+	m := Model{
 		auth:       auth.New(th, authorizer),
 		chatList:   chatlist.New(s, tg, th),
 		chatView:   chatview.New(s, tg, th),
@@ -69,8 +147,34 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
+		keys:       resolveKeys(cfg.Keys),
 	}
+	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
+	return m
 }
+
+// composerEditingMode maps the resolved ui.compose_editing setting onto the
+// composer's editing mode. config owns the resolution (including the "auto"
+// inference from $VISUAL/$EDITOR) so it can be tested without a composer;
+// this is only the translation into the composer's own type.
+func composerEditingMode(setting string) composer.EditingMode {
+	if config.ResolveComposeEditing(setting) == config.ComposeEditingVi {
+		return composer.ModeVi
+	}
+	return composer.ModeEmacs
+}
+
+var (
+	// errNoChatOpen backs the submit guard: nothing can be sent before a
+	// chat is selected.
+	errNoChatOpen = errors.New("open a chat first")
+	// errEditDroppedAttachment reports an attachment that reached an edit,
+	// which can only carry text.
+	errEditDroppedAttachment = errors.New("edits cannot carry an attachment — it was discarded")
+)
+
+// noticeEditAttach is shown when an attach action is refused during an edit.
+const noticeEditAttach = "⚠ cannot attach while editing"
 
 func (m Model) Init() tea.Cmd { return nil }
 
@@ -85,16 +189,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		key := msg.String()
+		// Bindings are matched through keyPress, not a bare msg.String():
+		// see the type's doc comment for why String() alone misses
+		// alt-modified keys on macOS.
+		key := newKeyPress(msg)
 
 		// Quit
-		if key == "ctrl+c" || key == "ctrl+q" {
+		if key.matches("ctrl+c", "ctrl+q", m.keys.quit) {
 			return m, tea.Quit
 		}
 
+		// A dead client makes every other binding a lie: the panels behind
+		// the error panel are not even visible, so acting on their keys
+		// would only mutate state the user cannot see.
+		if m.fatalError != "" {
+			return m, nil
+		}
+
 		if m.screen == ScreenMain {
+			// In-chat search (chatview's ctrl+f) owns the keyboard while
+			// its input line is open: esc closes the search rather than
+			// moving focus, and printables are query text, not quick-type.
+			// Break out of the key switch so the focused-panel dispatch
+			// below hands the event to chatview untouched — the same yield
+			// the composer performs for esc while composing.
+			if m.focus == PanelChatView && m.chatView.SearchActive() {
+				break
+			}
+			// After the input closes, n/N cycle the surviving hits. They
+			// are plain printables, so this must precede quick-type (and
+			// chatview's own "n"-less default handling) to reach chatview.
+			// Only the unmodified keys yield; alt+n and friends stay
+			// available to app-level bindings.
+			if m.focus == PanelChatView && m.chatView.HasSearchResults() &&
+				key.matches("n", "N") {
+				break
+			}
+
 			// Tab / Shift+Tab cycle panels
-			if key == "tab" && m.focus != PanelSearch && m.focus != PanelComposer {
+			if key.matches("tab") && m.focus != PanelSearch && m.focus != PanelComposer {
 				switch m.focus {
 				case PanelChatList:
 					m.setFocus(PanelChatView)
@@ -105,7 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if key == "shift+tab" && m.focus != PanelSearch {
+			if key.matches("shift+tab") && m.focus != PanelSearch {
 				switch m.focus {
 				case PanelComposer:
 					m.setFocus(PanelChatView)
@@ -118,7 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Escape: close overlay or go back
-			if key == "escape" {
+			if key.matches("esc") {
 				if m.search.IsVisible() {
 					m.search.SetVisible(false)
 					m.setFocus(PanelChatList)
@@ -130,8 +263,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.focus == PanelComposer {
-					m.setFocus(PanelChatView)
-					return m, nil
+					// A composer in reply/edit mode, or holding a pending
+					// attachment, clears that first — it handles the key
+					// itself below instead of losing focus.
+					if !m.composer.IsComposing() {
+						m.setFocus(PanelChatView)
+						return m, nil
+					}
+					break
 				}
 				if m.focus != PanelChatList {
 					m.setFocus(PanelChatList)
@@ -139,37 +278,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Alt+1/2/3 for panel focus (works in all terminals)
-			if key == "alt+1" || key == "F1" {
+			// Alt+1/2/3 for panel focus, plus whatever F-key the config
+			// assigns (config.KeyConfig.FocusXxx). The F-keys are the escape
+			// hatch for terminals that cannot be made to report Option/Alt as
+			// a modifier at all — see the macOS notes on config.KeyConfig.
+			if key.matches("alt+1", m.keys.focusChatList) {
 				m.setFocus(PanelChatList)
 				return m, nil
 			}
-			if key == "alt+2" || key == "F2" {
+			if key.matches("alt+2", m.keys.focusChatView) {
 				m.setFocus(PanelChatView)
 				return m, nil
 			}
-			if key == "alt+3" || key == "F3" {
+			if key.matches("alt+3", m.keys.focusComposer) {
 				m.setFocus(PanelComposer)
 				return m, nil
 			}
 
-			// Alt+j / Alt+k: next/prev chat (works when not typing)
-			if key == "alt+j" && m.focus != PanelComposer {
-				// next chat handled by chatlist
+			// Alt+j / Alt+k: next/prev chat (config.KeyConfig.NextChat/PrevChat,
+			// default alt+j/alt+k) — gated like folder cycling below, since
+			// both walk the same chat list.
+			chatNav := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
+			if key.matches(m.keys.nextChat) && chatNav {
+				if chatID, ok := m.chatList.SelectDelta(1); ok {
+					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+				}
+				return m, nil
 			}
-			if key == "alt+k" && m.focus != PanelComposer {
-				// prev chat handled by chatlist
+			if key.matches(m.keys.prevChat) && chatNav {
+				if chatID, ok := m.chatList.SelectDelta(-1); ok {
+					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+				}
+				return m, nil
 			}
 
-			// Search (not when typing in composer)
-			if key == "/" && m.focus != PanelComposer {
+			// Folder cycling (config.KeyConfig.NextFolder/PrevFolder,
+			// default alt+l/alt+h) — only while no overlay or dialog is
+			// stealing input.
+			noOverlay := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
+			// Bare h/l cycle folders too, but only while the chat list is
+			// focused — the vi "move left/right" motion, and the alt-free
+			// way to reach the folder tabs. The cost is that h and l are no
+			// longer quick-typed from the chat list panel (quickTypeTarget
+			// excludes them there); composing from the list is the secondary
+			// path, and every other panel still types them normally.
+			viFolder := noOverlay && m.focus == PanelChatList
+			if (key.matches(m.keys.prevFolder) && noOverlay) || (key.matches("h") && viFolder) {
+				m.chatList.CycleFolder(-1)
+				return m, nil
+			}
+			if (key.matches(m.keys.nextFolder) && noOverlay) || (key.matches("l") && viFolder) {
+				m.chatList.CycleFolder(1)
+				return m, nil
+			}
+
+			// Search. Vi convention makes "/" mean "find in the buffer I am
+			// looking at", so from the chat view "/" opens chatview's own
+			// in-chat search rather than the global overlay. Everywhere
+			// else "/" is the global message search, and GlobalSearch
+			// (ctrl+g) reaches the global overlay from any panel including
+			// the chat view.
+			//
+			// OpenFind is called directly rather than re-emitting a
+			// synthetic ctrl+f key event. Re-emission livelocks the command
+			// loop the moment a user configures keys.search = "ctrl+f": the
+			// forwarded key re-matches this very binding and is forwarded
+			// again, forever.
+			//
+			// Both are gated on noOverlay: an open overlay owns its own
+			// text input, and without the gate "/" could never be typed
+			// into the global search query or the contacts filter.
+			if key.matches(m.keys.search) && m.focus == PanelChatView && noOverlay {
+				m.chatView.OpenFind()
+				return m, nil
+			}
+			if key.matches(m.keys.search, m.keys.globalSearch) &&
+				m.focus != PanelComposer && noOverlay {
 				m.search.SetVisible(true)
 				m.setFocus(PanelSearch)
 				return m, nil
 			}
 
-			// Contacts toggle
-			if key == "alt+c" {
+			// Contacts toggle. ContactsAlt (f4) is the alt-free alternative
+			// for terminals that cannot report Option/Alt. ctrl+k was
+			// considered and rejected: the composer's textarea widget binds
+			// it to readline kill-to-end-of-line, and app-level bindings are
+			// checked before the focused panel sees the key.
+			if key.matches(m.keys.contacts, m.keys.contactsAlt) {
 				m.contacts.SetVisible(!m.contacts.IsVisible())
 				if m.contacts.IsVisible() {
 					m.setFocus(PanelContacts)
@@ -179,8 +374,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Ctrl+V: attach the clipboard image to the open chat, from
+			// whichever panel has focus.
+			if key.matches("ctrl+v") && m.dialog == nil && !m.search.IsVisible() &&
+				!m.contacts.IsVisible() && m.chatList.ActiveChatId() != 0 {
+				// An edit cannot carry an attachment — pasting one would be
+				// silently dropped at submit time.
+				if m.composer.IsEditing() {
+					m.composer.SetNotice(noticeEditAttach)
+					return m, nil
+				}
+				// One paste at a time: concurrent pastes race to set the
+				// attachment and leak the losing spool file.
+				if m.pasteInFlight {
+					return m, nil
+				}
+				m.pasteInFlight = true
+				m.setFocus(PanelComposer)
+				m.composer.SetNotice("pasting from clipboard...")
+				// Capture the active chat now — the paste runs async, and
+				// the user may switch chats before it lands.
+				return m, pasteFromClipboard(m.composer.ChatId())
+			}
+
 			// Quick compose: just start typing from chatview
-			if key == "i" && m.focus == PanelChatView {
+			if key.matches("i") && m.focus == PanelChatView {
 				m.setFocus(PanelComposer)
 				return m, nil
 			}
@@ -189,8 +407,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (when a chat is open), like a desktop chat app.
 			if m.chatList.ActiveChatId() != 0 && quickTypeTarget(m.focus, key) {
 				m.setFocus(PanelComposer)
-				key := msg
-				return m, func() tea.Msg { return key }
+				forward := msg
+				return m, func() tea.Msg { return forward }
 			}
 		}
 
@@ -225,19 +443,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateLayout()
 		return m, m.chatList.Init()
 
+	case telegram.ClientErrorMsg:
+		// Terminal means the run loop has exited: nothing will arrive
+		// again and nothing sent will leave. Anything else is a failure
+		// the client survived, so it gets the same transient notice as any
+		// other recoverable error.
+		if msg.Terminal {
+			return m.enterFatalError(clientErrorReason(msg.Err)), nil
+		}
+		m.composer.SetNotice(fmt.Sprintf("⚠ telegram: %v", msg.Err))
+
+	case telegram.ClientWarningMsg:
+		// A permanent but non-fatal degradation — the client works, just
+		// with less capability. Worth telling the user once.
+		m.composer.SetNotice(fmt.Sprintf("⚠ %s", msg.Text))
+
 	case telegram.NewMessageMsg:
-		if msg.Message.ChatID != m.chatList.ActiveChatId() {
+		// Never notify for our own messages — they arrive as updates too
+		// when sent from another device.
+		if !msg.Message.IsOutgoing && msg.Message.ChatID != m.chatList.ActiveChatId() {
 			entry, ok := m.store.Chats.Get(msg.Message.ChatID)
 			title := "New Message"
 			if ok && entry.Chat != nil {
 				title = entry.Chat.Title
 			}
-			body := "New message received"
-			if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
-				body = text.Text.Text
+			// Muted chats stay silent. A chat not yet in the store is an
+			// unknown quantity, so this fails open and still notifies.
+			muted := ok && entry.Chat != nil && entry.Chat.Muted
+			if !muted {
+				body := "New message received"
+				if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
+					body = text.Text.Text
+				}
+				m.notifier.Notify(title, body)
+				m.sound.Play()
 			}
-			m.notifier.Notify(title, body)
-			m.sound.Play()
 		}
 
 	case chatlist.ChatSelectedMsg:
@@ -247,7 +487,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			title = entry.Chat.Title
 		}
 		cmd := m.chatView.OpenChat(msg.ChatId, title)
-		m.composer.SetChatId(msg.ChatId)
+		// Switching chats drops the draft, attachment included.
+		clipboard.Remove(m.composer.SetChatId(msg.ChatId))
 		m.statusBar.SetActiveChatId(msg.ChatId)
 		m.setFocus(PanelChatView)
 		cmds = append(cmds, cmd)
@@ -262,15 +503,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ok && entry.Chat != nil {
 			title = entry.Chat.Title
 		}
-		cmd := m.chatView.OpenChat(msg.ChatId, title)
-		m.composer.SetChatId(msg.ChatId)
+		// Jump straight to the matched message rather than the bottom of
+		// the chat.
+		cmd := m.chatView.OpenChatAt(msg.ChatId, title, msg.MessageId)
+		clipboard.Remove(m.composer.SetChatId(msg.ChatId))
 		m.setFocus(PanelChatView)
 		cmds = append(cmds, cmd)
 
 	case composer.MessageSubmittedMsg:
 		cmds = append(cmds, m.handleMessageSubmit(msg))
 
+	case composer.PasteRequestedMsg:
+		if !m.pasteInFlight {
+			m.pasteInFlight = true
+			cmds = append(cmds, pasteFromClipboard(m.composer.ChatId()))
+		}
+
+	case ClipboardPastedMsg:
+		m.pasteInFlight = false
+		// The active chat may have changed while the paste was in flight
+		// (M-1): installing into whatever chat now happens to be open would
+		// silently misattach the file, so discard it instead.
+		if m.composer.ChatId() != msg.ChatId {
+			clipboard.Remove(msg.Path)
+			m.composer.SetNotice("⚠ paste discarded — chat changed")
+			break
+		}
+		if m.composer.IsEditing() {
+			// Edit mode was entered while the paste was running; the file
+			// can never be sent, so drop it now.
+			clipboard.Remove(msg.Path)
+			m.composer.SetNotice(noticeEditAttach)
+			break
+		}
+		m.replaceAttachment(msg.Path, msg.IsImage)
+		m.setFocus(PanelComposer)
+
+	case ClipboardPasteFailedMsg:
+		m.pasteInFlight = false
+		m.composer.SetNotice(fmt.Sprintf("⚠ %s", msg.Err))
+
+	case composer.AttachmentDiscardedMsg:
+		clipboard.Remove(msg.Path)
+
+	case SendFailedMsg:
+		// The composer was reset at submit time, so put the attachment back
+		// rather than losing a pasted image to a transient send failure —
+		// but only into the composer it came from, and only while nothing
+		// newer holds the slot. Otherwise the newer file would be deleted
+		// and the old one restored into the wrong chat.
+		if msg.Attachment != "" {
+			if m.composer.ChatId() == msg.ChatId && m.composer.Attachment() == "" && !m.composer.IsEditing() {
+				m.replaceAttachment(msg.Attachment, msg.AsPhoto)
+				m.composer.SetNotice(fmt.Sprintf("⚠ send failed — attachment restored: %v", msg.Err))
+				break
+			}
+			clipboard.Remove(msg.Attachment)
+		}
+		m.composer.SetNotice(fmt.Sprintf("⚠ send failed: %v", msg.Err))
+
+	case ErrorMsg:
+		m.composer.SetNotice(fmt.Sprintf("⚠ %v", msg.Err))
+
 	case composer.AttachRequestedMsg:
+		if m.composer.IsEditing() {
+			// An edit cannot carry media; do not let the dialog recreate
+			// the state the Ctrl+V guard rejects.
+			m.composer.SetNotice(noticeEditAttach)
+			break
+		}
 		d := dialog.NewPrompt(m.theme, "attach-file", "Attach File", "Path to file:")
 		m.dialog = &d
 
@@ -279,8 +580,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dialog.DialogResultMsg:
 		m.dialog = nil
-		if msg.ID == "attach-file" && msg.Confirmed && strings.TrimSpace(msg.Input) != "" {
-			m.composer.SetAttachment(strings.TrimSpace(msg.Input))
+		// Cleared unconditionally, regardless of which dialog this result
+		// came from, so a stale target can never leak into some later
+		// delete confirm.
+		deleteChatID, deleteMsgID := m.pendingDeleteChatId, m.pendingDeleteMessageId
+		m.pendingDeleteChatId = 0
+		m.pendingDeleteMessageId = 0
+
+		switch msg.ID {
+		case "attach-file":
+			if msg.Confirmed && strings.TrimSpace(msg.Input) != "" {
+				m.replaceAttachment(strings.TrimSpace(msg.Input), false)
+			}
+		case "delete":
+			// A cancelled confirm does nothing.
+			if msg.Confirmed {
+				tg := m.tg
+				cmds = append(cmds, func() tea.Msg {
+					// revoke=true deletes for everyone, not just locally.
+					// That's the more expected behavior for a delete
+					// confirm; a for-me/for-everyone choice dialog is
+					// future work.
+					if err := tg.DeleteMessages(deleteChatID, []int64{deleteMsgID}, true); err != nil {
+						return ErrorMsg{Err: err}
+					}
+					return nil
+				})
+			}
 		}
 	}
 
@@ -357,33 +683,100 @@ func (m Model) handleAuthStateChanged(msg AuthStateChangedMsg) (tea.Model, tea.C
 	case telegram.AuthStateReady:
 		m.screen = ScreenAuth
 		m.auth.SetStep(auth.StepDone)
+	case telegram.AuthStateClosed:
+		// The authorizer only reports this once the client is gone, so it
+		// is as terminal as a ClientErrorMsg and is surfaced the same way.
+		// Without this case the state change was swallowed entirely and
+		// the UI sat on whatever screen it happened to be showing.
+		reason := "the Telegram session was closed"
+		if msg.Hint != "" {
+			reason = msg.Hint
+		}
+		return m.enterFatalError(reason), nil
 	}
 	return m, nil
+}
+
+// clientErrorReason renders a client failure for the error panel, guarding
+// against a nil Err — Terminal is the meaningful field, and a caller that
+// sets it without an error still has to produce something readable.
+func clientErrorReason(err error) string {
+	if err == nil {
+		return "the Telegram client stopped unexpectedly"
+	}
+	return err.Error()
+}
+
+// enterFatalError puts the UI into the terminal-failure state described on
+// Model.fatalError. The status bar is corrected on the way in so that
+// nothing left on screen keeps claiming the app is connected.
+func (m Model) enterFatalError(reason string) Model {
+	if reason == "" {
+		reason = "the Telegram client stopped unexpectedly"
+	}
+	// First failure wins: a run loop unwinding tends to report several
+	// errors, and the first one is the cause rather than a consequence.
+	if m.fatalError == "" {
+		m.fatalError = reason
+	}
+	m.statusBar.SetConnected(false)
+	return m
 }
 
 // quickTypeTarget reports whether a key pressed in the given panel should be
 // forwarded to the composer as text input. Keys already bound to panel
 // navigation/actions are excluded.
-func quickTypeTarget(panel FocusPanel, key string) bool {
-	isPrintable := len([]rune(key)) == 1 || key == "space"
+//
+// A key held with a modifier other than shift is never text, however it was
+// spelled: a Kitty-protocol alt+1 carries Text "¡" on a macOS layout, and
+// rune-counting that would swallow the alt+1 focus binding. keyPress.modified
+// is checked instead of the rune count alone.
+func quickTypeTarget(panel FocusPanel, key keyPress) bool {
+	if key.modified {
+		return false
+	}
+	text := key.text
+	isPrintable := len([]rune(text)) == 1 || text == "space"
 	if !isPrintable {
 		return false
 	}
 	switch panel {
 	case PanelChatView:
-		switch key {
+		switch text {
 		case "k", "j", "g", "G", "r", "e", "d", "o", "s":
 			return false
 		}
 		return true
 	case PanelChatList:
-		switch key {
-		case "k", "j", "g", "G":
+		switch text {
+		// j/k/g/G are the list's own vi motions; h/l cycle the folder tabs
+		// (see the folder-cycling branch in Update); 1-9 jump straight to
+		// folder N inside chatlist. All three groups are alt-free ways to
+		// work the chat list on terminals that cannot report Option/Alt,
+		// and all three cost the ability to start a message with those
+		// characters from this panel only — composing from the chat view
+		// (or after Tab/alt+3) is unaffected.
+		case "k", "j", "g", "G", "h", "l",
+			"1", "2", "3", "4", "5", "6", "7", "8", "9":
 			return false
 		}
 		return true
 	}
 	return false
+}
+
+// helpLine returns the format string for the bottom help bar. The composer
+// gets its own line: none of the navigation keys apply while typing, and its
+// line-editing keys are what the user needs reminding of. The composer's own
+// hint line carries the rest of the detail.
+func helpLine(focus FocusPanel) string {
+	if focus == PanelComposer {
+		return " Enter:send │ Ctrl+J:newline │ Ctrl+O:editor │ Ctrl+T:attach │ " +
+			"Ctrl+V:paste │ Esc:cancel │ Tab:switch │ %s"
+	}
+	return " Tab:switch │ Esc:back │ j/k:move │ h/l:folder │ /:find │ n/N:match │ " +
+		"Ctrl+G:search all │ Ctrl+U/D:half-page │ Enter:open · s:save │ " +
+		"Alt+C or F4:contacts │ i:compose │ %s"
 }
 
 // mouseInLeftPanel reports whether the point is over the left panel
@@ -405,8 +798,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 
 	if m.mouseInLeftPanel(x, y) {
-		// Row inside the panel border.
-		row := y - 1
+		// Row and column inside the panel border — the coordinate space
+		// chatlist.ClickAtXY and contacts.ClickAt expect.
+		row, col := y-1, x-1
 		if m.contacts.IsVisible() {
 			m.setFocus(PanelContacts)
 			if userID, ok := m.contacts.ClickAt(row); ok {
@@ -415,7 +809,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setFocus(PanelChatList)
-		if chatID, ok := m.chatList.ClickAt(row); ok {
+		// ClickAtXY, not ClickAt: the column is what lets a click on the
+		// folder tab bar hit-test which tab was pressed instead of being
+		// swallowed as a click on a row that holds no chat.
+		if chatID, ok := m.chatList.ClickAtXY(col, row); ok {
 			return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
 		}
 		return m, nil
@@ -456,8 +853,35 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.chatView.ScrollByLines(-3)
 		}
+		// Wheel scrolling reveals the same off-screen media keyboard
+		// scrolling does, so it has to kick off the same lazy loads.
+		return m, m.chatView.LazyMediaCmd()
 	}
 	return m, nil
+}
+
+// replaceAttachment hands a new pending attachment to the composer and
+// deletes the spool file it displaces, so at most one spooled paste is alive
+// at a time.
+func (m *Model) replaceAttachment(path string, asPhoto bool) {
+	previous := m.composer.SetAttachment(path, asPhoto)
+	if previous != "" && previous != path {
+		clipboard.Remove(previous)
+	}
+}
+
+// pasteFromClipboard spools the system clipboard image to a temp file and
+// hands it to the composer as a pending attachment. chatID is the chat that
+// was active when the paste was requested; it rides along on the result so
+// the caller can detect the chat having changed underneath the async paste.
+func pasteFromClipboard(chatID int64) tea.Cmd {
+	return func() tea.Msg {
+		res, err := clipboard.Paste()
+		if err != nil {
+			return ClipboardPasteFailedMsg{Err: err}
+		}
+		return ClipboardPastedMsg{ChatId: chatID, Path: res.Path, IsImage: res.IsImage}
+	}
 }
 
 func (m *Model) openPrivateChat(userID int64) tea.Cmd {
@@ -471,22 +895,54 @@ func (m *Model) openPrivateChat(userID int64) tea.Cmd {
 }
 
 func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
+	if msg.ChatId == 0 {
+		return func() tea.Msg { return ErrorMsg{Err: errNoChatOpen} }
+	}
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
-			m.tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text)
+			// Edits carry text only. Nothing upstream should let an
+			// attachment reach here, but if one does, drop the file rather
+			// than leak it — and say so instead of failing silently.
+			dropped := msg.Attachment != ""
+			if dropped {
+				clipboard.Remove(msg.Attachment)
+			}
+			if _, err := m.tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text); err != nil {
+				return ErrorMsg{Err: err}
+			}
+			if dropped {
+				return ErrorMsg{Err: errEditDroppedAttachment}
+			}
 			return nil
 		}
 	}
 	if msg.Attachment != "" {
 		return func() tea.Msg {
-			if _, err := m.tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId); err != nil {
-				return ErrorMsg{Err: err}
+			var err error
+			if msg.AsPhoto {
+				_, err = m.tg.SendPhotoMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId)
+			} else {
+				_, err = m.tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId)
 			}
+			if err != nil {
+				// Keep the file: the composer is already reset, so the app
+				// re-attaches it from this message.
+				return SendFailedMsg{
+					Err:        err,
+					ChatId:     msg.ChatId,
+					Attachment: msg.Attachment,
+					AsPhoto:    msg.AsPhoto,
+				}
+			}
+			// Drop the spool file once it is on its way to Telegram.
+			clipboard.Remove(msg.Attachment)
 			return nil
 		}
 	}
 	return func() tea.Msg {
-		m.tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId)
+		if _, err := m.tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId); err != nil {
+			return ErrorMsg{Err: err}
+		}
 		return nil
 	}
 }
@@ -513,13 +969,19 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 		for _, message := range msgs {
 			if message.ID == msg.MessageId {
 				if text, ok := message.Content.(*telegram.MessageText); ok {
-					m.composer.EnterEditMode(msg.MessageId, text.Text.Text)
+					// An edit cannot carry media — the composer drops any
+					// pending attachment and hands back its path.
+					clipboard.Remove(m.composer.EnterEditMode(msg.MessageId, text.Text.Text))
 					m.setFocus(PanelComposer)
 				}
 				break
 			}
 		}
 	case "delete":
+		// Captured here so DialogResultMsg — which carries no payload of
+		// its own — knows what to delete once the user confirms.
+		m.pendingDeleteChatId = msg.ChatId
+		m.pendingDeleteMessageId = msg.MessageId
 		d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
 		m.dialog = &d
 	}
@@ -544,7 +1006,8 @@ func (m *Model) updateLayout() {
 	m.chatView.SetSize(l.ChatViewWidth-2, l.ChatViewHeight-2)
 	m.composer.SetSize(l.ComposerWidth-2, l.ComposerHeight-2)
 	m.contacts.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
-	m.search.SetSize(m.width/2, m.height/2)
+	// The search overlay sizes its own box from the full window dimensions.
+	m.search.SetSize(m.width, m.height)
 	m.groupInfo.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
 	m.statusBar.SetSize(l.StatusBarWidth)
 }
@@ -589,6 +1052,15 @@ func (m Model) View() tea.View {
 		content = m.renderMainScreen()
 	}
 
+	// A dead client replaces every screen, and outranks the overlays below
+	// — a dialog or search box floating over a UI that cannot act is worse
+	// than useless.
+	if m.fatalError != "" {
+		v := tea.NewView(m.renderFatalError())
+		v.AltScreen = true
+		return v
+	}
+
 	if m.dialog != nil && m.dialog.IsVisible() {
 		content = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
@@ -604,13 +1076,54 @@ func (m Model) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	// Terminal focus/blur reporting (tea.FocusMsg/tea.BlurMsg) — chatview
+	// gates read receipts on it. Support is terminal/multiplexer-dependent
+	// (tmux needs `set -g focus-events on`); unsupported terminals simply
+	// never send the messages.
+	v.ReportFocus = true
 	return v
+}
+
+// renderFatalError draws the panel that replaces the UI once the Telegram
+// client has died. It says what happened, that it will not fix itself, and
+// what to do about it — a bare error string would leave the user waiting
+// for a reconnect that is never coming.
+func (m Model) renderFatalError() string {
+	errStyle := lipgloss.NewStyle().Foreground(m.theme.Error).Bold(true)
+	textStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	dimStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+
+	// The reason comes from the network layer and can be arbitrarily long;
+	// wrapping keeps it inside the box instead of blowing the layout out.
+	reason := lipgloss.NewStyle().Foreground(m.theme.Error).Width(56).Render(m.fatalError)
+
+	body := errStyle.Render("Disconnected from Telegram") + "\n\n" +
+		reason + "\n\n" +
+		textStyle.Render("The connection has ended and will not recover on") + "\n" +
+		textStyle.Render("its own. Restart teletui to reconnect.") + "\n\n" +
+		dimStyle.Render("If this repeats, the session may have been ended") + "\n" +
+		dimStyle.Render("from another device — you will be asked to sign in") + "\n" +
+		dimStyle.Render("again on the next start.") + "\n\n" +
+		dimStyle.Render("Run with TELETUI_DEBUG=/tmp/teletui.log for details.") + "\n\n" +
+		textStyle.Render("Press Ctrl+C to quit.")
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Error).
+		Padding(1, 4).
+		Render(body)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m Model) renderMainScreen() string {
 	// Build left panel with rounded border
 	var leftContent string
 	if m.contacts.IsVisible() {
+		// m.chatList.View() is intentionally skipped here: its dirty flag
+		// just accumulates while contacts is shown and gets cleared the
+		// next time the chat list actually renders. Self-healing, verified
+		// harmless — do not "fix" by rendering it unseen just to clear it.
 		leftContent = m.contacts.View()
 	} else {
 		leftContent = m.chatList.View()
@@ -672,8 +1185,7 @@ func (m Model) renderMainScreen() string {
 		fi = 0
 	}
 	help := helpStyle.Render(fmt.Sprintf(
-		" Tab:switch │ Esc:back │ /:search │ Alt+C:contacts │ i/typing:compose │ click+wheel:mouse │ %s",
-		focusName[fi],
+		helpLine(m.focus), focusName[fi],
 	))
 
 	// Pad help to full width

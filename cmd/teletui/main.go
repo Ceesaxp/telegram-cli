@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -19,22 +20,46 @@ import (
 )
 
 func main() {
-	// Optional debug log: TELETUI_DEBUG=/tmp/teletui.log make run
+	// The TUI owns the terminal in raw mode, so any stray write to stderr
+	// lands in the middle of a rendered frame — the Telegram client logs
+	// "connection state: connecting" from goroutines its constructor starts,
+	// which littered the screen whenever the network was down. Logging is
+	// therefore discarded by default and this must run before anything that
+	// logs is constructed.
+	//
+	// Set TELETUI_DEBUG=/tmp/teletui.log to redirect the log to a file
+	// instead. Only this binary is silenced; the telegram-api and MCP
+	// binaries keep logging to stderr.
+	log.SetOutput(io.Discard)
 	if dbg := os.Getenv("TELETUI_DEBUG"); dbg != "" {
-		if f, err := os.OpenFile(dbg, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err == nil {
+		// O_APPEND, not O_TRUNC: debugging this app usually means running
+		// it repeatedly, and truncating on every start destroys the log of
+		// the run that actually reproduced the problem. A session banner
+		// keeps successive runs tellable apart.
+		f, err := os.OpenFile(dbg, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			// Loud, because the user explicitly asked for a debug log and
+			// would otherwise sit waiting for output that never arrives.
+			// Safe to print: this runs before the alt screen is entered.
+			fmt.Fprintf(os.Stderr,
+				"teletui: cannot open TELETUI_DEBUG log %q: %v\n"+
+					"teletui: continuing with logging disabled\n", dbg, err)
+		} else {
 			log.SetOutput(f)
 			defer f.Close()
+			fmt.Fprintf(f, "\n=== teletui session started %s (pid %d) ===\n",
+				time.Now().Format(time.RFC3339), os.Getpid())
 		}
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		fatalf("Failed to load config: %v", err)
 	}
 
 	if cfg.Telegram.APIID == 0 || cfg.Telegram.APIHash == "" {
 		if err := setupWizard(cfg); err != nil {
-			log.Fatalf("Setup failed: %v", err)
+			fatalf("Setup failed: %v", err)
 		}
 	}
 
@@ -87,6 +112,12 @@ func main() {
 	}()
 
 	// Graceful shutdown.
+	//
+	// Note: clipboard spool files are intentionally not cleaned up here.
+	// Bubble Tea v2 never waits for in-flight tea.Cmd goroutines on quit, so
+	// deleting the spool dir at exit could race an upload still reading from
+	// it. The next process to run sweeps up this one's spool directory
+	// instead (see internal/clipboard).
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -97,10 +128,18 @@ func main() {
 
 	if _, err := p.Run(); err != nil {
 		tgClient.Close()
-		log.Fatalf("Error running TUI: %v", err)
+		fatalf("Error running TUI: %v", err)
 	}
 
 	tgClient.Close()
+}
+
+// fatalf reports a fatal startup or shutdown error and exits. It writes to
+// stderr directly because the log package's output is discarded (see main),
+// which would otherwise turn every failure into a silent exit(1).
+func fatalf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
 }
 
 func setupWizard(cfg *config.Config) error {
