@@ -1,6 +1,7 @@
 package chatlist
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -939,5 +940,643 @@ func TestActiveFolderID(t *testing.T) {
 	m.folders = nil
 	if got := m.ActiveFolderID(); got != telegram.AllChatsFolderID {
 		t.Fatalf("ActiveFolderID() with no folders = %d, want AllChatsFolderID (%d)", got, telegram.AllChatsFolderID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Local filter (`/` in the chat list)
+// ---------------------------------------------------------------------------
+
+// newLoadedModel returns a chat list that has finished its initial load,
+// is focused, has a real size, and holds the named chats (in the given
+// order, most recent first). Chat IDs are the 1-based position in names.
+func newLoadedModel(t *testing.T, names ...string) Model {
+	t.Helper()
+	m := newTestModel()
+	m.loading = false
+	m.SetSize(40, 20)
+	m.SetFocused(true)
+
+	for i, name := range names {
+		m.store.Chats.Set(&telegram.Chat{
+			ID:    int64(i + 1),
+			Title: name,
+			Type:  telegram.ChatTypePrivate,
+			Order: int64(len(names) - i), // preserve the argument order
+		})
+	}
+	m.refreshList()
+	return m
+}
+
+// listTitles returns the currently visible chat titles, icon prefix
+// stripped, so assertions read as the chats a user would see.
+func listTitles(m Model) []string {
+	out := make([]string, 0, len(m.list.Items))
+	for _, it := range m.list.Items {
+		if _, rest, ok := strings.Cut(it.Title, " "); ok {
+			out = append(out, rest)
+			continue
+		}
+		out = append(out, it.Title)
+	}
+	return out
+}
+
+func typeFilter(m Model, s string) Model {
+	for _, r := range s {
+		m, _ = m.Update(key(r))
+	}
+	return m
+}
+
+func TestOpenFilterActivatesInput(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob")
+	if m.FilterActive() {
+		t.Fatal("FilterActive() is true before OpenFilter")
+	}
+
+	m.OpenFilter()
+	if !m.FilterActive() {
+		t.Fatal("FilterActive() is false after OpenFilter")
+	}
+	if m.FilterQuery() != "" {
+		t.Fatalf("FilterQuery() = %q on a fresh filter, want empty", m.FilterQuery())
+	}
+}
+
+// TestOpenFilterWorksWhileLoading: OpenFilter resolves no row into a
+// chat, so unlike ClickAt it does not carry a loading guard — a Model
+// that never leaves the loading state (internal/app's key tests build
+// one with a nil telegram client) must still be able to open the filter,
+// or FilterActive() is unreachable and the "an open filter swallows
+// h/l/q" negative cases cannot be written at all. Filtering an empty
+// list is a no-op, not a panic.
+func TestOpenFilterWorksWhileLoading(t *testing.T) {
+	m := newTestModel() // New() always starts with loading == true
+	m.SetSize(40, 20)
+	m.SetFocused(true)
+
+	m.OpenFilter()
+	if !m.FilterActive() {
+		t.Fatal("OpenFilter must work while the initial load is in flight")
+	}
+
+	m = typeFilter(m, "ali")
+	if m.FilterQuery() != "ali" {
+		t.Fatalf("FilterQuery() = %q while loading, want %q", m.FilterQuery(), "ali")
+	}
+	if len(m.list.Items) != 0 {
+		t.Fatalf("filtering the not-yet-loaded list produced %d items, want 0", len(m.list.Items))
+	}
+	if m.list.SelectedItem() != nil {
+		t.Fatal("SelectedItem() should be nil while the list is empty")
+	}
+	// View still shows only the spinner; it must not index into the
+	// empty list or paint a chip on a tab bar that isn't there.
+	if lipgloss.Height(m.View()) != 20 {
+		t.Fatalf("View() while loading is not the full-height spinner panel: %q", m.View())
+	}
+}
+
+// TestFilterTypedWhileLoadingAppliesOnceChatsArrive: the query survives
+// the loading -> loaded transition and is applied by the refreshList in
+// the chatsLoadedMsg branch, so the user gets the list they asked for
+// rather than one that ignores what they typed.
+func TestFilterTypedWhileLoadingAppliesOnceChatsArrive(t *testing.T) {
+	m := newTestModel() // loading == true
+	m.SetSize(40, 20)
+	m.SetFocused(true)
+
+	m.OpenFilter()
+	m = typeFilter(m, "al")
+
+	for i, name := range []string{"Alice", "Bob", "Carol Alpha"} {
+		m.store.Chats.Set(&telegram.Chat{
+			ID:    int64(i + 1),
+			Title: name,
+			Type:  telegram.ChatTypePrivate,
+			Order: int64(3 - i),
+		})
+	}
+
+	m, _ = m.Update(chatsLoadedMsg{})
+	if m.loading {
+		t.Fatal("chatsLoadedMsg did not clear the loading state")
+	}
+	if !m.FilterActive() {
+		t.Fatal("the filter input should survive the loading -> loaded transition")
+	}
+	if got := listTitles(m); len(got) != 2 || got[0] != "Alice" || got[1] != "Carol Alpha" {
+		t.Fatalf("the query typed while loading was not applied: list = %v, want [Alice, Carol Alpha]", got)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "/al") {
+		t.Fatalf("the filter chip is missing once the chats arrived: %q", ansi.Strip(m.View()))
+	}
+}
+
+// TestFilterTypingRefiltersLive is the core of review item 3: every
+// keystroke narrows the visible list immediately, and backspace widens
+// it again.
+func TestFilterTypingRefiltersLive(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha")
+	if got := len(m.list.Items); got != 3 {
+		t.Fatalf("unfiltered list has %d items, want 3", got)
+	}
+
+	m.OpenFilter()
+
+	m = typeFilter(m, "al")
+	if m.FilterQuery() != "al" {
+		t.Fatalf("FilterQuery() = %q, want %q", m.FilterQuery(), "al")
+	}
+	if got := listTitles(m); len(got) != 2 || got[0] != "Alice" || got[1] != "Carol Alpha" {
+		t.Fatalf("filter \"al\" shows %v, want [Alice, Carol Alpha]", got)
+	}
+
+	// Case-insensitive: an upper-case query matches the same chats.
+	m, _ = m.Update(specialKey(tea.KeyBackspace))
+	m, _ = m.Update(specialKey(tea.KeyBackspace))
+	if m.FilterQuery() != "" {
+		t.Fatalf("after two backspaces FilterQuery() = %q, want empty", m.FilterQuery())
+	}
+	if got := len(m.list.Items); got != 3 {
+		t.Fatalf("after clearing the query the list has %d items, want 3", got)
+	}
+
+	m = typeFilter(m, "ALPHA")
+	if got := listTitles(m); len(got) != 1 || got[0] != "Carol Alpha" {
+		t.Fatalf("filter \"ALPHA\" shows %v, want [Carol Alpha]", got)
+	}
+}
+
+// TestFilterEscClearsAndCloses: esc is the advertised way out — it drops
+// the filter AND closes the input, restoring the full list.
+func TestFilterEscClearsAndCloses(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha")
+	m.OpenFilter()
+	m = typeFilter(m, "al")
+
+	m, cmd := m.Update(specialKey(tea.KeyEscape))
+	if m.FilterActive() {
+		t.Fatal("esc should close the filter input")
+	}
+	if m.FilterQuery() != "" {
+		t.Fatalf("esc left FilterQuery() = %q, want empty", m.FilterQuery())
+	}
+	if got := len(m.list.Items); got != 3 {
+		t.Fatalf("after esc the list has %d items, want the full 3", got)
+	}
+	if cmd == nil {
+		t.Fatal("esc should emit a ChatListFilteredMsg command")
+	}
+	if msg, ok := cmd().(ChatListFilteredMsg); !ok || msg.Query != "" {
+		t.Fatalf("esc emitted %#v, want ChatListFilteredMsg{Query: \"\"}", cmd())
+	}
+}
+
+// TestFilterEnterKeepsFilterApplied: enter closes the input but leaves
+// the list filtered — the state the chip's "esc:clear" hint exists for.
+func TestFilterEnterKeepsFilterApplied(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha")
+	m.OpenFilter()
+	m = typeFilter(m, "al")
+
+	m, _ = m.Update(specialKey(tea.KeyEnter))
+	if m.FilterActive() {
+		t.Fatal("enter should close the filter input")
+	}
+	if m.FilterQuery() != "al" {
+		t.Fatalf("enter left FilterQuery() = %q, want it to keep %q", m.FilterQuery(), "al")
+	}
+	if got := len(m.list.Items); got != 2 {
+		t.Fatalf("after enter the list has %d items, want the filtered 2", got)
+	}
+
+	// The applied-but-closed filter is still clearable, and reopening
+	// keeps the query so `/` doubles as "edit the filter".
+	m.OpenFilter()
+	if m.FilterQuery() != "al" || m.filterInput.Value != "al" {
+		t.Fatalf("reopening dropped the query: FilterQuery()=%q input=%q", m.FilterQuery(), m.filterInput.Value)
+	}
+	m, _ = m.Update(specialKey(tea.KeyEscape))
+	if m.FilterQuery() != "" || len(m.list.Items) != 3 {
+		t.Fatalf("esc after reopening did not clear: query=%q items=%d", m.FilterQuery(), len(m.list.Items))
+	}
+}
+
+// TestFilterAppliesWithinActiveFolder: the filter narrows the ACTIVE
+// FOLDER's chats, never reaching across the folder tab — refreshList
+// applies the folder membership test first and the filter second.
+func TestFilterAppliesWithinActiveFolder(t *testing.T) {
+	m := newTestModel()
+	m.loading = false
+	m.SetSize(40, 20)
+	m.SetFocused(true)
+
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Title: "Alpha Group", Type: telegram.ChatTypeSupergroup, Order: 3})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Title: "Alpha Person", Type: telegram.ChatTypePrivate, Order: 2})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Title: "Beta Group", Type: telegram.ChatTypeSupergroup, Order: 1})
+
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 7, Title: "Groups", Groups: true},
+	}
+
+	// In "All", the filter matches both Alpha chats.
+	m.activeFolder = 0
+	m.refreshList()
+	m.OpenFilter()
+	m = typeFilter(m, "alpha")
+	if got := listTitles(m); len(got) != 2 {
+		t.Fatalf("filter \"alpha\" in All shows %v, want both Alpha chats", got)
+	}
+
+	// Switching to the Groups folder keeps the filter and intersects
+	// with it: the private Alpha chat is out, the Alpha group stays.
+	m, _ = m.Update(specialKey(tea.KeyEnter)) // close the input, keep the filter
+	m.CycleFolder(1)
+	if got := listTitles(m); len(got) != 1 || got[0] != "Alpha Group" {
+		t.Fatalf("filter \"alpha\" in the Groups folder shows %v, want [Alpha Group]", got)
+	}
+
+	// And clearing the filter inside that folder restores the folder's
+	// chats only — never the whole account.
+	m.ClearFilter()
+	if got := listTitles(m); len(got) != 2 {
+		t.Fatalf("after clearing the filter the Groups folder shows %v, want both groups", got)
+	}
+}
+
+// TestFilterKeepsSelectionInBounds: the cursor is an index into a list
+// that shrinks under it on every keystroke. It must never dangle past
+// the end, and it should follow the selected chat while that chat still
+// matches.
+func TestFilterKeepsSelectionInBounds(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha", "Dave")
+	m.list.SelectIndex(3) // "Dave", the last row
+	if got := m.list.SelectedID(); got != "4" {
+		t.Fatalf("setup: SelectedID() = %q, want \"4\"", got)
+	}
+
+	m.OpenFilter()
+	m = typeFilter(m, "a")
+	// "Alice", "Carol Alpha" and "Dave" all match: the cursor follows
+	// Dave rather than staying on index 3, which no longer exists.
+	if got := m.list.SelectedID(); got != "4" {
+		t.Fatalf("cursor lost its chat: SelectedID() = %q, want \"4\"", got)
+	}
+
+	m = typeFilter(m, "l")
+	// "al" drops Dave; the cursor must land on a real row, not past the
+	// end of the shrunken list.
+	if m.list.Cursor < 0 || m.list.Cursor >= len(m.list.Items) {
+		t.Fatalf("cursor %d out of bounds for %d items", m.list.Cursor, len(m.list.Items))
+	}
+	if m.list.SelectedItem() == nil {
+		t.Fatal("SelectedItem() is nil after the list shrank under the cursor")
+	}
+
+	// Filtering down to nothing must not panic or dangle either.
+	m = typeFilter(m, "zzz")
+	if len(m.list.Items) != 0 {
+		t.Fatalf("filter \"alzzz\" matched %d chats, want none", len(m.list.Items))
+	}
+	if m.list.SelectedItem() != nil {
+		t.Fatal("SelectedItem() should be nil for an empty filtered list")
+	}
+}
+
+// TestEnterOpensAVisibleChatAfterFiltering: Enter resolves the chat from
+// the list's own selection, so a stale activeChatId (a chat the filter
+// hid) can never be what Enter opens.
+func TestEnterOpensAVisibleChatAfterFiltering(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha")
+	m.activeChatId = 2 // "Bob" is open in the chat view
+
+	m.OpenFilter()
+	m = typeFilter(m, "carol")
+	m, _ = m.Update(specialKey(tea.KeyEnter)) // close input, keep filter
+
+	if got := listTitles(m); len(got) != 1 || got[0] != "Carol Alpha" {
+		t.Fatalf("setup: filtered list is %v, want [Carol Alpha]", got)
+	}
+
+	m2, cmd := m.Update(specialKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("enter on the filtered list emitted no ChatSelectedMsg")
+	}
+	msg, ok := cmd().(ChatSelectedMsg)
+	if !ok {
+		t.Fatalf("enter emitted %#v, want ChatSelectedMsg", cmd())
+	}
+	if msg.ChatId != 3 {
+		t.Fatalf("enter opened chat %d, want the visible chat 3", msg.ChatId)
+	}
+	if m2.ActiveChatId() != 3 {
+		t.Fatalf("ActiveChatId() = %d after enter, want 3", m2.ActiveChatId())
+	}
+}
+
+// TestFilterConsumesNavigationAndFolderKeys: an open input is an
+// explicit typing mode — j/k, the digits and '['/']' are text there, not
+// motions.
+func TestFilterConsumesNavigationAndFolderKeys(t *testing.T) {
+	m := newLoadedModel(t, "j2 chat", "Bob")
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 7, Title: "Work"},
+	}
+	m.refreshList()
+
+	startFolder := m.activeFolder
+	m.OpenFilter()
+	m = typeFilter(m, "j2")
+
+	if m.FilterQuery() != "j2" {
+		t.Fatalf("FilterQuery() = %q, want %q — j/2 must be text, not motions", m.FilterQuery(), "j2")
+	}
+	if m.activeFolder != startFolder {
+		t.Fatalf("digit key switched folders while filtering: activeFolder = %d, want %d", m.activeFolder, startFolder)
+	}
+	if got := listTitles(m); len(got) != 1 || got[0] != "j2 chat" {
+		t.Fatalf("list shows %v, want [j2 chat]", got)
+	}
+}
+
+// TestFilterSwallowsTheKeyThatOpenedIt: a caller that both calls
+// OpenFilter and forwards the '/' key press must not end up with "/" as
+// the first character of the query. A later '/' is ordinary text.
+func TestFilterSwallowsTheKeyThatOpenedIt(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "a/b")
+	m.OpenFilter()
+
+	m, _ = m.Update(key('/'))
+	if m.FilterQuery() != "" {
+		t.Fatalf("a re-delivered '/' was typed into the query: %q", m.FilterQuery())
+	}
+
+	m = typeFilter(m, "a/")
+	if m.FilterQuery() != "a/" {
+		t.Fatalf("FilterQuery() = %q, want %q — only the opening '/' is swallowed", m.FilterQuery(), "a/")
+	}
+	if got := listTitles(m); len(got) != 1 || got[0] != "a/b" {
+		t.Fatalf("filter %q shows %v, want [a/b]", "a/", got)
+	}
+}
+
+// TestSlashOpensFilterFromTheChatList keeps the component usable
+// standalone: '/' reaching Update directly opens the filter rather than
+// falling through to the list widget.
+func TestSlashOpensFilterFromTheChatList(t *testing.T) {
+	m := newLoadedModel(t, "Alice")
+	m, _ = m.Update(key('/'))
+	if !m.FilterActive() {
+		t.Fatal("'/' from the chat list did not open the filter input")
+	}
+	m = typeFilter(m, "ali")
+	if m.FilterQuery() != "ali" {
+		t.Fatalf("FilterQuery() = %q, want %q", m.FilterQuery(), "ali")
+	}
+}
+
+// TestEscClearsAnAppliedFilterFromTheChatList covers the
+// applied-but-closed state: esc still means "give me my chats back".
+func TestEscClearsAnAppliedFilterFromTheChatList(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob")
+	m.OpenFilter()
+	m = typeFilter(m, "ali")
+	m, _ = m.Update(specialKey(tea.KeyEnter))
+
+	m, _ = m.Update(specialKey(tea.KeyEscape))
+	if m.FilterQuery() != "" {
+		t.Fatalf("esc in the applied-but-closed state left FilterQuery() = %q", m.FilterQuery())
+	}
+	if len(m.list.Items) != 2 {
+		t.Fatalf("esc did not restore the full list: %d items", len(m.list.Items))
+	}
+}
+
+// TestSetFocusedClosesTheFilterInput: a panel switch must not strand
+// FilterActive() true while the keys go elsewhere. The applied filter
+// survives (as with enter); only the input closes.
+func TestSetFocusedClosesTheFilterInput(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob")
+	m.OpenFilter()
+	m = typeFilter(m, "ali")
+
+	m.SetFocused(false)
+	if m.FilterActive() {
+		t.Fatal("losing focus should close the filter input")
+	}
+	if m.FilterQuery() != "ali" {
+		t.Fatalf("losing focus dropped the applied filter: %q", m.FilterQuery())
+	}
+}
+
+// TestFilterIndicatorVisibleWhileFiltered: a user must never wonder why
+// chats are missing, and the indicator itself has to name the key that
+// brings them back.
+func TestFilterIndicatorVisibleWhileFiltered(t *testing.T) {
+	m := newLoadedModel(t, "Alice", "Bob", "Carol Alpha")
+
+	if strings.Contains(ansi.Strip(m.View()), "/al") {
+		t.Fatal("unfiltered View() shows a filter chip")
+	}
+
+	m.OpenFilter()
+	m = typeFilter(m, "al")
+
+	open := ansi.Strip(m.View())
+	if !strings.Contains(open, "/al") {
+		t.Fatalf("View() while typing does not show the query: %q", open)
+	}
+	if !strings.Contains(open, strings.TrimSpace(filterClearHint)) {
+		t.Fatalf("View() while typing does not advertise how to clear the filter: %q", open)
+	}
+
+	// The chip must survive `enter` — that is the state in which the
+	// user has no input line to remind them a filter is on.
+	m, _ = m.Update(specialKey(tea.KeyEnter))
+	closed := ansi.Strip(m.View())
+	if !strings.Contains(closed, "/al") {
+		t.Fatalf("View() with the input closed does not show the applied filter: %q", closed)
+	}
+	if !strings.Contains(closed, strings.TrimSpace(filterClearHint)) {
+		t.Fatalf("View() with the input closed does not advertise how to clear: %q", closed)
+	}
+
+	// And it must disappear once the filter is gone.
+	m.ClearFilter()
+	if strings.Contains(ansi.Strip(m.View()), "/al") {
+		t.Fatal("the filter chip outlived the filter")
+	}
+}
+
+// TestFilterChipIsCellAccurate: the chip shares the tab bar row, so its
+// width is what the folder tabs are budgeted against. A query of wide
+// (CJK) or emoji graphemes must not shear that one-line row at any
+// width.
+func TestFilterChipIsCellAccurate(t *testing.T) {
+	for _, query := range []string{"al", "日本語のチャット", "🎉🎉🎉", "Ünïcödé"} {
+		for _, width := range []int{80, 40, 20, 12, 6, 1} {
+			m := newLoadedModel(t, "Alice", "日本語のチャット", "🎉 party")
+			m.folders = []*telegram.ChatFolder{
+				defaultAllFolder(),
+				{ID: 7, Title: "Work", Emoticon: "💼"},
+				{ID: 8, Title: "日本語", Emoticon: "🗾"},
+			}
+			m.SetSize(width, 20)
+			m.OpenFilter()
+			m = typeFilter(m, query)
+
+			row := m.renderFolderTabs()
+			if h := lipgloss.Height(row); h != 1 {
+				t.Fatalf("query=%q width=%d: tab bar row is %d lines, want 1: %q", query, width, h, row)
+			}
+			if w := ansi.StringWidth(row); w != width {
+				t.Fatalf("query=%q width=%d: tab bar row is %d cells, want exactly %d: %q",
+					query, width, w, width, row)
+			}
+
+			for _, line := range strings.Split(m.View(), "\n") {
+				if w := ansi.StringWidth(line); w > width {
+					t.Fatalf("query=%q width=%d: View() line is %d cells: %q", query, width, w, line)
+				}
+			}
+		}
+	}
+}
+
+// tabTestFolders is a folder set with the shapes that break naive width
+// math: a plain ASCII title, an emoji emoticon, a CJK title, and a long
+// title that has to be truncated at every width tested below.
+func tabTestFolders() []*telegram.ChatFolder {
+	return []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 1, Title: "Work", Emoticon: "💼"},
+		{ID: 2, Title: "Family", Emoticon: "👨‍👩‍👧"},
+		{ID: 3, Title: "日本語のグループ", Emoticon: "🗾"},
+	}
+}
+
+// TestFolderTabHitTestMatchesPaintedRow is the invariant behind this
+// component's third layout-vs-hit-test bug: visibleFolderTabs is the
+// single source of truth for BOTH what renderFolderTabs paints and what
+// clickFolderTabAt resolves a click to, so every column it reports as
+// belonging to a tab must actually be painted with that tab's text, and
+// every column the filter chip occupies must belong to no tab at all.
+//
+// The bug this pins down: the loop admitted the first tab even when it
+// alone exceeded the budget, the renderer then truncated it away, and
+// the invisible tab's columns — which the filter query was painted over
+// — still switched folders when clicked.
+func TestFolderTabHitTestMatchesPaintedRow(t *testing.T) {
+	queries := []struct{ name, query string }{
+		{"none", ""},
+		{"short", "al"},
+		{"long", "project-kickoff"},
+		{"cjk", "日本語のチャット"},
+		{"emoji", "🎉🎉🎉"},
+	}
+
+	for _, q := range queries {
+		for _, width := range []int{20, 26, 28, 30, 40, 80} {
+			for _, active := range []int{0, 2, 3} {
+				name := fmt.Sprintf("%s/w%d/folder%d", q.name, width, active)
+				t.Run(name, func(t *testing.T) {
+					m := newLoadedModel(t, "Alice", "Bob")
+					m.folders = tabTestFolders()
+					m.activeFolder = active
+					m.SetSize(width, 20)
+					m.refreshList()
+					if q.query != "" {
+						m.OpenFilter()
+						m = typeFilter(m, q.query)
+					}
+
+					row := m.renderFolderTabs()
+					if h := lipgloss.Height(row); h != 1 {
+						t.Fatalf("tab bar row is %d lines, want 1: %q", h, row)
+					}
+					if w := ansi.StringWidth(row); w != width {
+						t.Fatalf("tab bar row is %d cells, want exactly %d: %q", w, width, row)
+					}
+
+					tabs := m.visibleFolderTabs()
+					for _, tb := range tabs {
+						// The columns the hit-test hands out must hold
+						// this tab's painted text — not the chip's, and
+						// not nothing.
+						got := ansi.Strip(ansi.Cut(row, tb.start, tb.end))
+						want := ansi.Strip(tb.rendered)
+						if got != want {
+							t.Fatalf("tab %d claims columns [%d,%d) but the row paints %q there, want %q\nrow: %q",
+								tb.index, tb.start, tb.end, got, want, ansi.Strip(row))
+						}
+						// And a click anywhere in that range resolves to
+						// this tab.
+						for x := tb.start; x < tb.end; x++ {
+							c := m
+							if !c.clickFolderTabAt(x) {
+								t.Fatalf("click at x=%d inside tab %d's range [%d,%d) hit nothing",
+									x, tb.index, tb.start, tb.end)
+							}
+							if c.activeFolder != tb.index {
+								t.Fatalf("click at x=%d selected folder %d, want %d",
+									x, c.activeFolder, tb.index)
+							}
+						}
+					}
+
+					// Every column the chip occupies belongs to no tab:
+					// clicking one's own filter query must never switch
+					// folders.
+					chipW := ansi.StringWidth(m.renderFilterChip())
+					for x := width - chipW; x < width; x++ {
+						c := m
+						if c.clickFolderTabAt(x) {
+							t.Fatalf("click at x=%d (filter chip territory, chip is %d cells of %d) hit a folder tab",
+								x, chipW, width)
+						}
+						if c.activeFolder != active {
+							t.Fatalf("click at x=%d changed the folder from %d to %d",
+								x, active, c.activeFolder)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestClickingTheFilterQueryDoesNotSwitchFolders is the reviewer's exact
+// repro: the default 30-column chat list, the "Family" folder, and a
+// query wide enough that no tab text is visible at all.
+func TestClickingTheFilterQueryDoesNotSwitchFolders(t *testing.T) {
+	m := newLoadedModel(t, "Alice")
+	m.folders = tabTestFolders()
+	m.activeFolder = 2 // "Family"
+	m.SetSize(30, 20)
+	m.refreshList()
+	m.OpenFilter()
+	m = typeFilter(m, "project-kickoff")
+
+	row := ansi.Strip(m.renderFolderTabs())
+	if !strings.Contains(row, "/project-kickoff") {
+		t.Fatalf("setup: the query is not painted across the row: %q", row)
+	}
+	if got := m.visibleFolderTabs(); len(got) != 0 {
+		t.Fatalf("with the chip filling the row, %d tabs claim columns, want none: %+v", len(got), got)
+	}
+
+	for x := 0; x < 30; x++ {
+		c := m
+		if c.clickFolderTabAt(x) {
+			t.Fatalf("click at x=%d hit a folder tab that is not painted anywhere", x)
+		}
+		if c.activeFolder != 2 {
+			t.Fatalf("click at x=%d moved the folder from Family(2) to %d", x, c.activeFolder)
+		}
 	}
 }

@@ -23,14 +23,30 @@ type Model struct {
 	// value) and View (a read-only render pass on its own local copy):
 	// mutating through the pointer is visible from every copy of Model,
 	// value-receiver or not.
-	list         *widgets.List
-	store        *store.Store
-	tg           *telegram.Client
-	theme        *theme.Theme
-	width        int
-	height       int
-	focused      bool
-	filter       string
+	list    *widgets.List
+	store   *store.Store
+	tg      *telegram.Client
+	theme   *theme.Theme
+	width   int
+	height  int
+	focused bool
+
+	// filter is the applied local filter — a case-insensitive substring
+	// match on the chat title, applied by refreshList within the active
+	// folder; "" means no filter. It deliberately outlives the input:
+	// `enter` closes filterInput but keeps filter applied, so the two are
+	// separate pieces of state.
+	//
+	// filtering reports that the one-line filter input is open and
+	// consuming key presses (see FilterActive); filterInput holds the
+	// text being edited. filterJustOpened absorbs the keystroke that
+	// opened the input, in case a caller both calls OpenFilter and
+	// forwards that same key press here (see OpenFilter).
+	filter           string
+	filtering        bool
+	filterInput      widgets.TextArea
+	filterJustOpened bool
+
 	loading      bool
 	spinner      widgets.Spinner
 	activeChatId int64
@@ -65,8 +81,18 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 
 	protocol := media.DetectProtocol()
 	dirty := false
+
+	// The filter input reuses the shared single-line TextArea so the
+	// filter query gets the same rune-safe editing (printable-key
+	// detection, backspace, ctrl+u/w, home/end) as every other text
+	// surface in the app. It is rendered by renderFilterChip, not by
+	// TextArea.View, because it shares one row with the folder tabs.
+	fi := widgets.NewTextArea()
+	fi.MultiLine = false
+
 	return Model{
 		list:        &l,
+		filterInput: fi,
 		store:       s,
 		tg:          tg,
 		theme:       th,
@@ -263,9 +289,133 @@ func (m *Model) SelectDelta(delta int) (chatID int64, ok bool) {
 }
 
 // SetFocused sets focus state.
+//
+// Losing focus while the filter input is open closes the input but keeps
+// the filter applied — the same thing `enter` does. Without this, a panel
+// switch (or an overlay taking focus) would leave FilterActive() true
+// while the keys that reach this component do not, stranding the input
+// open with no way to close it.
 func (m *Model) SetFocused(focused bool) {
 	m.focused = focused
 	m.list.Focused = focused
+	if !focused && m.filtering {
+		m.closeFilterInput()
+	}
+}
+
+// OpenFilter opens the local chat-list filter input: `/` in the chat
+// list, matching vi's "search the buffer in front of you" (the global
+// cross-chat search stays on ctrl+g). While it is open FilterActive
+// reports true and the app is expected to route key presses straight to
+// Update, which consumes them all (see updateFilterKey).
+//
+// Reopening an already-applied filter keeps the existing query and puts
+// the cursor at its end, so `/` is also "edit the current filter".
+//
+// Unlike ClickAt/ClickAtXY/SelectDelta, this deliberately does NOT bail
+// out while the initial chat load is still in flight. Those three resolve
+// a screen row (or a cursor delta) into a chat and so must refuse to
+// answer while View shows nothing but the spinner; opening a filter
+// resolves nothing. A query typed during the load narrows an empty list
+// — harmlessly, since refreshList rebuilds from an empty store — and is
+// applied to the first real list by the refreshList in Update's
+// chatsLoadedMsg branch. That is strictly better than swallowing the
+// keystroke and leaving the user wondering why "/" did nothing, and it
+// keeps FilterActive() reachable for callers that cannot leave the
+// loading state (internal/app's key tests drive a Model whose telegram
+// client is nil, so no chatsLoadedMsg ever arrives there).
+//
+// The caller should treat the key that opened the filter as consumed and
+// NOT also forward it to Update. If it does anyway, that first key press
+// is swallowed rather than typed into the query (filterJustOpened).
+func (m *Model) OpenFilter() {
+	m.filtering = true
+	m.filterJustOpened = true
+	m.filterInput.Value = m.filter
+	m.filterInput.Cursor = m.filterInput.Len()
+	m.filterInput.Focused = true
+}
+
+// FilterActive reports whether the filter input is open and consuming
+// keys. It is false once the input is closed, INCLUDING when a filter is
+// still applied (`enter`) — the applied-but-closed state is a normal
+// browsing state in which j/k/enter/folder keys work as usual, and is
+// advertised by the filter chip in the tab bar row.
+func (m Model) FilterActive() bool {
+	return m.filtering
+}
+
+// FilterQuery returns the currently applied filter ("" when none). It
+// reflects what the list is actually filtered by, not what is being
+// typed — although while the input is open the two are the same, since
+// the filter is applied live on every keystroke.
+func (m Model) FilterQuery() string {
+	return m.filter
+}
+
+// ClearFilter drops the filter and closes the input, restoring the full
+// (folder-filtered) chat list. This is what `esc` does, and what the
+// "esc:clear" hint in the filter chip advertises.
+func (m *Model) ClearFilter() {
+	m.filter = ""
+	m.filterInput.Reset()
+	m.closeFilterInput()
+	m.refreshList()
+}
+
+// closeFilterInput closes the input without touching the applied filter.
+func (m *Model) closeFilterInput() {
+	m.filtering = false
+	m.filterJustOpened = false
+	m.filterInput.Focused = false
+}
+
+// updateFilterKey handles one key press while the filter input is open.
+// EVERY key is consumed here: the list's own vi motions, the folder
+// switches and the digit jumps below all become literal text while
+// typing a query, which is the whole point of an explicit input mode.
+//
+//   - esc     clears the filter and closes the input
+//   - enter   closes the input, KEEPING the filter applied
+//   - other   is handed to the shared TextArea (printables append,
+//     backspace deletes, ctrl+u/ctrl+w kill) and the list is
+//     re-filtered live from the new value
+func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	// Swallow a re-delivery of the key that opened the input (see
+	// OpenFilter). Any other key clears the latch, so a query can still
+	// contain a literal "/" anywhere.
+	justOpened := m.filterJustOpened
+	m.filterJustOpened = false
+
+	switch msg.String() {
+	case "esc":
+		m.ClearFilter()
+		return m, filteredCmd("")
+	case "enter":
+		m.closeFilterInput()
+		return m, nil
+	case "/":
+		if justOpened && m.filterInput.Len() == 0 {
+			return m, nil
+		}
+	}
+
+	before := m.filterInput.Value
+	m.filterInput.Update(msg)
+	if m.filterInput.Value == before {
+		return m, nil
+	}
+
+	m.filter = m.filterInput.Value
+	m.refreshList()
+	return m, filteredCmd(m.filter)
+}
+
+// filteredCmd announces a filter change to the app layer.
+func filteredCmd(query string) tea.Cmd {
+	return func() tea.Msg {
+		return ChatListFilteredMsg{Query: query}
+	}
 }
 
 // ActiveChatId returns the currently selected chat ID.
@@ -378,24 +528,53 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case tea.KeyPressMsg:
+		// The filter input, while open, owns every key (including the
+		// folder and motion keys below) — see updateFilterKey. It is
+		// checked before m.focused because the app hands keys to this
+		// component precisely because FilterActive() is true.
+		if m.filtering {
+			return m.updateFilterKey(msg)
+		}
+
 		if m.focused {
 			// Terminal-independent folder switching: left/right arrows
 			// and the lazygit-style '['/']' cycle folders, digits 1-9
 			// jump straight to folder N (1 = All, always at index 0).
 			// chatlist is the sole owner of the '['/']' aliases — the
-			// app-level copy was removed this wave. Bare/alt h/l remain
-			// app-level (internal/app/app.go's viFolder gate), the
-			// terminal-independent alternative for terminals (e.g.
-			// Ghostty's default "option acts as input") that can't
-			// report alt as a distinguishable modifier at all.
+			// app-level copy was removed in an earlier wave. Alt+h/alt+l
+			// remain app-level (internal/app/app.go), for hands that
+			// reach for vi directions; BARE h/l are NOT folder keys any
+			// more — this wave rebinds them to lazygit-style panel
+			// movement in app.go — so '['/']', the arrows and the digits
+			// here are the alt-free, terminal-independent fallback for
+			// terminals (e.g. Ghostty's default "option acts as input")
+			// that can't report alt as a distinguishable modifier at all.
 			//
 			// None of these collide with the list widget's own vi
 			// motions (up/down/j/k/g/G/enter, handled below). Quick-type
 			// (which used to intercept printable keys like these digits
-			// before they reached this panel) was removed this wave, so
-			// there's no longer anything upstream in app.go to keep in
-			// sync with here.
+			// before they reached this panel) was removed in an earlier
+			// wave, so there's no longer anything upstream in app.go to
+			// keep in sync with here.
 			switch msg.String() {
+			case "/":
+				// The app normally binds '/' and calls OpenFilter
+				// itself; handling it here too keeps the component
+				// self-contained standalone (and under test), and is
+				// harmless either way because OpenFilter is idempotent
+				// and swallows a re-delivered '/'.
+				m.OpenFilter()
+				return m, nil
+			case "esc":
+				// Only meaningful in the applied-but-closed state, the
+				// one the filter chip's "esc:clear" hint advertises. The
+				// app's own Esc ladder normally intercepts this key
+				// first; when it does, '/' then esc still clears.
+				if m.filter != "" {
+					m.ClearFilter()
+					return m, filteredCmd("")
+				}
+				return m, nil
 			case "left", "[":
 				m.CycleFolder(-1)
 				return m, m.FolderLoadCmd()
@@ -516,6 +695,15 @@ func normalizeFolders(folders []*telegram.ChatFolder) []*telegram.ChatFolder {
 func (m *Model) refreshList() {
 	*m.dirty = false
 
+	// The cursor is an index into the list that is about to be rebuilt,
+	// so remember which CHAT it points at. SetItems only clamps the index
+	// into range, which keeps the selection in bounds but slides it onto
+	// a different chat whenever the list shrinks (a folder switch, or a
+	// filter keystroke removing rows above the cursor). Re-selecting by
+	// ID below keeps the highlighted chat under the cursor for as long as
+	// it survives the filter; when it doesn't, the clamped index stands.
+	prevID := m.list.SelectedID()
+
 	var folder *telegram.ChatFolder
 	if m.activeFolder >= 0 && m.activeFolder < len(m.folders) {
 		folder = m.folders[m.activeFolder]
@@ -576,6 +764,15 @@ func (m *Model) refreshList() {
 	}
 
 	m.list.SetItems(items)
+
+	if prevID != "" && prevID != m.list.SelectedID() {
+		for i := range items {
+			if items[i].ID == prevID {
+				m.list.SelectIndex(i)
+				break
+			}
+		}
+	}
 }
 
 // chatInFolder reports whether entry belongs in folder, applying
@@ -852,17 +1049,58 @@ func (m Model) View() string {
 
 // renderFolderTabs renders a one-line tab bar of folder emoticon+title
 // pairs, highlighting the active tab. Tabs that do not fit the available
-// width are dropped from the end; a single tab wider than the whole bar
-// is truncated with an ellipsis.
+// width are dropped from the end; a tab whose label alone is too wide has
+// the label truncated with an ellipsis, and a tab that cannot fit even
+// then (its style's padding already exceeds what is left) is dropped
+// too — including the first one, so that no tab ever claims columns it
+// is not painted in.
+//
+// When a filter is applied (or being typed) the filter chip is pinned to
+// the right end of this same row — the chat list panel budgets its rows
+// once, in SetSize, so the filter cannot claim a row of its own without
+// desynchronizing the list height and ClickAt's row math (see
+// tabBarHeight). The tabs get whatever width the chip leaves them.
 func (m Model) renderFolderTabs() string {
-	tabs := m.visibleFolderTabs()
-	if len(tabs) == 0 {
+	// The row is painted whenever tabBarHeight() reserves one, even when
+	// nothing fits in it. Returning "" while tabBarHeight() still says 1
+	// would shift every list row up by one against the height budget
+	// SetSize computed and against ClickAt's row math — the same
+	// off-by-one-row bug the tabBarHeight comment exists to prevent — and
+	// a wide filter chip can now legitimately squeeze every tab out.
+	if m.tabBarHeight() == 0 || m.width <= 0 {
 		return ""
 	}
+
+	tabs := m.visibleFolderTabs()
+	chip := m.renderFilterChip()
 
 	var b strings.Builder
 	for _, t := range tabs {
 		b.WriteString(t.rendered)
+	}
+
+	if chip != "" {
+		// visibleFolderTabs budgets against tabsAvailWidth and now drops
+		// every tab that does not fit within it, so this truncation is a
+		// no-op safety net: it must never actually cut, because a cut
+		// here would paint fewer columns than the hit-test believes are
+		// clickable. It stays only to keep the CHIP — the one thing on
+		// this row explaining why chats are missing — from being the
+		// piece FitLine drops if some future change reintroduces an
+		// overflow.
+		tabsBudget := m.tabsAvailWidth()
+		tabsText := b.String()
+		if ansi.StringWidth(tabsText) > tabsBudget {
+			tabsText = ansi.Truncate(tabsText, tabsBudget, "")
+		}
+		pad := m.width - ansi.StringWidth(tabsText) - ansi.StringWidth(chip)
+		if pad < 0 {
+			pad = 0
+		}
+		b.Reset()
+		b.WriteString(tabsText)
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(chip)
 	}
 
 	// visibleFolderTabs's own per-tab budgeting (below) already
@@ -876,6 +1114,66 @@ func (m Model) renderFolderTabs() string {
 	// for why Width() on padded content is exactly what wrapped this bar
 	// onto an invisible second line in the first place.
 	return widgets.FitLine(lipgloss.NewStyle(), b.String(), m.width)
+}
+
+// filterClearHint is the text that makes clearing the filter
+// discoverable from the indicator itself: whatever else gets dropped at
+// narrow widths, a user who can see the chip can read how to get their
+// chats back.
+const filterClearHint = " esc:clear"
+
+// renderFilterChip renders the filter indicator — "/query" as a badge,
+// with a trailing cursor block while the input is open and the
+// esc-clears hint whenever the row can afford it. It returns "" when no
+// filter is applied and the input is closed, which is what keeps the tab
+// bar unchanged in the common case.
+//
+// Everything here is measured in display cells (ansi.StringWidth) and cut
+// with ansi.Truncate, never by rune or byte count, so an emoji or CJK
+// query cannot shear the row: the chip's own width is what
+// tabsAvailWidth hands to the folder tabs, and a wrong number there would
+// overflow the one-line bar exactly the way FitLine exists to prevent.
+func (m Model) renderFilterChip() string {
+	if !m.filtering && m.filter == "" {
+		return ""
+	}
+
+	query := m.filter
+	if m.filtering {
+		query = m.filterInput.Value
+	}
+
+	body := "/" + query
+	if m.filtering {
+		body += "█"
+	}
+
+	chip := m.theme.Badge.Render(body)
+	hint := lipgloss.NewStyle().Foreground(m.theme.TextMuted).Render(filterClearHint)
+
+	if m.width <= 0 {
+		return chip
+	}
+	if ansi.StringWidth(chip)+ansi.StringWidth(hint) <= m.width {
+		return chip + hint
+	}
+	if ansi.StringWidth(chip) > m.width {
+		return ansi.Truncate(chip, m.width, "")
+	}
+	return chip
+}
+
+// tabsAvailWidth is the width the folder tabs may occupy: the whole bar,
+// less whatever the filter chip has pinned to its right end. Both
+// visibleFolderTabs (layout AND click hit-testing) and renderFolderTabs
+// budget against this single number so the painted row and the column
+// ranges clicks are resolved against can never disagree.
+func (m Model) tabsAvailWidth() int {
+	avail := m.width - ansi.StringWidth(m.renderFilterChip())
+	if avail < 0 {
+		avail = 0
+	}
+	return avail
 }
 
 // folderTab is one rendered folder tab: its folder index, the fully
@@ -914,6 +1212,10 @@ func (m Model) visibleFolderTabs() []folderTab {
 		return nil
 	}
 
+	// The tabs get the row less the filter chip, not the whole row (see
+	// tabsAvailWidth).
+	avail := m.tabsAvailWidth()
+
 	var tabs []folderTab
 	used := 0
 	for i, f := range m.folders {
@@ -923,7 +1225,7 @@ func (m Model) visibleFolderTabs() []folderTab {
 		}
 
 		label := folderLabel(f)
-		budget := m.width - used - style.GetHorizontalFrameSize()
+		budget := avail - used - style.GetHorizontalFrameSize()
 		if budget < 0 {
 			budget = 0
 		}
@@ -933,7 +1235,20 @@ func (m Model) visibleFolderTabs() []folderTab {
 
 		rendered := style.Render(label)
 		w := ansi.StringWidth(rendered)
-		if used+w > m.width && used > 0 {
+		// A tab that does not fit is DROPPED, including the first one.
+		// This used to admit the first tab unconditionally ("&& used >
+		// 0"), on the theory that showing one truncated tab beats
+		// showing none. But the label truncation above can only shrink
+		// the label, never the style's own frame (Padding(0,2) = 4
+		// cells), so at a narrow width — or with a wide filter chip
+		// holding the right end of the row — that first tab claimed
+		// columns the renderer then truncated away. The hit-test reads
+		// these ranges (clickFolderTabAt) and the renderer paints from
+		// them, so the two disagreed exactly where the tab was invisible:
+		// clicking the filter query itself switched folders. Dropping
+		// the tab keeps every reported range painted, and leaves the
+		// chip's columns belonging to nobody.
+		if used+w > avail {
 			break
 		}
 
