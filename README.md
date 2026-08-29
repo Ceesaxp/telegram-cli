@@ -738,10 +738,21 @@ and the peer cache in `state.db` having belonged to a different account
 
 ## TUI 2.0 design
 
-The proposed terminal-native redesign, repository reconciliation, open product
+The terminal-native redesign, repository reconciliation, resolved product
 decisions, phased delivery plan, and verification matrix are recorded in
-[docs/tui-2.0.md](docs/tui-2.0.md). The document is intentionally a plan:
-implementation starts after its data-scope and keymap decisions are resolved.
+[docs/tui-2.0.md](docs/tui-2.0.md). All thirteen design decisions are now
+closed, so the document is a contract rather than a proposal — but it is still
+only a document: **nothing described there is implemented yet**, and the
+sections above document the client as it actually behaves today.
+
+Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
+golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a
+CJK/emoji/RTL/ZWJ fixture and a block gallery; every line is exactly its stated
+display width. They are the acceptance artifact for frame integrity and column
+alignment, and they are what the rendering tests will assert against. The
+original design handoff is archived unmodified in
+[docs/handoff/](docs/handoff/) — read it as history, not as instructions, since
+review has since overturned several of its points.
 
 ## Architecture
 
