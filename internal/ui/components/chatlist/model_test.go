@@ -552,6 +552,44 @@ func TestUpdateArrowKeysCycleFoldersWhenFocused(t *testing.T) {
 	}
 }
 
+// TestUpdateBracketKeysCycleFoldersWhenFocused checks the lazygit-style
+// '['/']' aliases cycle folders exactly like the left/right arrows
+// (including wraparound), gated on focus the same way.
+func TestUpdateBracketKeysCycleFoldersWhenFocused(t *testing.T) {
+	m := newTestModel()
+	m.loading = false
+	m.focused = true
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 1, Title: "Work"},
+		{ID: 2, Title: "Family"},
+	}
+	m.activeFolder = 0
+
+	m, _ = m.Update(key(']'))
+	if m.activeFolder != 1 {
+		t.Fatalf("after ']': activeFolder = %d, want 1", m.activeFolder)
+	}
+	m, _ = m.Update(key(']'))
+	if m.activeFolder != 2 {
+		t.Fatalf("after ']': activeFolder = %d, want 2", m.activeFolder)
+	}
+	m, _ = m.Update(key(']'))
+	if m.activeFolder != 0 {
+		t.Fatalf("']' should wrap around: activeFolder = %d, want 0", m.activeFolder)
+	}
+	m, _ = m.Update(key('['))
+	if m.activeFolder != 2 {
+		t.Fatalf("'[' should wrap backward: activeFolder = %d, want 2", m.activeFolder)
+	}
+
+	m.focused = false
+	m, _ = m.Update(key(']'))
+	if m.activeFolder != 2 {
+		t.Fatalf("']' should be a no-op while unfocused, got activeFolder=%d", m.activeFolder)
+	}
+}
+
 // TestUpdateArrowKeysIgnoredWhenNotFocused checks the folder-switching
 // keys are only live while the chat list panel itself has focus, matching
 // how the rest of Update's key handling is gated on m.focused.
@@ -784,5 +822,35 @@ func TestRenderFolderTabsNeverWraps(t *testing.T) {
 			t.Errorf("folder %d (%q) is reported visible but not present in the rendered tab bar: %q",
 				tb.index, label, plain)
 		}
+	}
+}
+
+// TestActiveFolderID covers the read-only accessor: the default All
+// folder's ID when unset/empty, and the active folder's actual ID once
+// folders are populated and CycleFolder has moved off the default.
+func TestActiveFolderID(t *testing.T) {
+	m := newTestModel()
+	if got := m.ActiveFolderID(); got != telegram.AllChatsFolderID {
+		t.Fatalf("ActiveFolderID() on a fresh model = %d, want AllChatsFolderID (%d)", got, telegram.AllChatsFolderID)
+	}
+
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 7, Title: "Work"},
+		{ID: 9, Title: "Family"},
+	}
+	m.activeFolder = 0
+	if got := m.ActiveFolderID(); got != telegram.AllChatsFolderID {
+		t.Fatalf("ActiveFolderID() at index 0 = %d, want AllChatsFolderID (%d)", got, telegram.AllChatsFolderID)
+	}
+
+	m.CycleFolder(1)
+	if got := m.ActiveFolderID(); got != 7 {
+		t.Fatalf("ActiveFolderID() after CycleFolder(1) = %d, want 7 (Work)", got)
+	}
+
+	m.folders = nil
+	if got := m.ActiveFolderID(); got != telegram.AllChatsFolderID {
+		t.Fatalf("ActiveFolderID() with no folders = %d, want AllChatsFolderID (%d)", got, telegram.AllChatsFolderID)
 	}
 }

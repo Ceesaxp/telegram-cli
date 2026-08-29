@@ -270,6 +270,20 @@ func (m *Model) ActiveChatId() int64 {
 	return m.activeChatId
 }
 
+// ActiveFolderID returns the ID of the currently active folder tab —
+// telegram.AllChatsFolderID when no folders are set (the default,
+// pre-load state). Exists for the app layer and tests: activeFolder is
+// unexported, and View() renders nothing but a loading spinner while
+// m.loading, so callers otherwise have no way to observe which folder is
+// selected (e.g. to assert a folder-cycling keybinding actually changed
+// something, rather than merely that the key was dispatched).
+func (m Model) ActiveFolderID() int32 {
+	if m.activeFolder < 0 || m.activeFolder >= len(m.folders) || m.folders[m.activeFolder] == nil {
+		return telegram.AllChatsFolderID
+	}
+	return m.folders[m.activeFolder].ID
+}
+
 // CycleFolder moves the active folder tab by delta (wrapping around) and
 // refilters the chat list to match.
 func (m *Model) CycleFolder(delta int) {
@@ -354,22 +368,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.focused {
 			// Terminal-independent folder switching: left/right arrows
-			// cycle folders, digits 1-9 jump straight to folder N (1 =
-			// All, always at index 0). Both are alternatives to the
-			// app-level alt+h/alt+l bindings, which some terminals
-			// (e.g. Ghostty's default "option acts as input") cannot
-			// deliver as a distinguishable alt-modified key at all.
-			// Neither collides with the list widget's own vi motions
-			// (up/down/j/k/g/G/enter, handled below) or with anything
-			// else app.go intercepts before dispatch reaches here:
-			// arrows aren't printable so quick-type never claims them,
-			// and quickTypeTarget in internal/app/app.go excludes 1-9
-			// from this panel the same way it excludes h/l.
+			// and the lazygit-style '['/']' cycle folders, digits 1-9
+			// jump straight to folder N (1 = All, always at index 0).
+			// chatlist is the sole owner of the '['/']' aliases — the
+			// app-level copy was removed this wave. Bare/alt h/l remain
+			// app-level (internal/app/app.go's viFolder gate), the
+			// terminal-independent alternative for terminals (e.g.
+			// Ghostty's default "option acts as input") that can't
+			// report alt as a distinguishable modifier at all.
+			//
+			// None of these collide with the list widget's own vi
+			// motions (up/down/j/k/g/G/enter, handled below). Quick-type
+			// (which used to intercept printable keys like these digits
+			// before they reached this panel) was removed this wave, so
+			// there's no longer anything upstream in app.go to keep in
+			// sync with here.
 			switch msg.String() {
-			case "left":
+			case "left", "[":
 				m.CycleFolder(-1)
 				return m, nil
-			case "right":
+			case "right", "]":
 				m.CycleFolder(1)
 				return m, nil
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
