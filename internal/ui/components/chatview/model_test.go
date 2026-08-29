@@ -1605,3 +1605,399 @@ func TestOpenFindMatchesCtrlF(t *testing.T) {
 		t.Fatalf("expected ctrl+f to open the input without dropping held hits")
 	}
 }
+
+// dispatchedAction runs a non-nil cmd and returns the MessageActionMsg it
+// produced, failing the test if the cmd is nil or yields something else.
+func dispatchedAction(t *testing.T, cmd tea.Cmd) MessageActionMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatalf("expected a non-nil cmd")
+	}
+	msg, ok := cmd().(MessageActionMsg)
+	if !ok {
+		t.Fatalf("expected a MessageActionMsg, got %T", msg)
+	}
+	return msg
+}
+
+// keysTestModel builds a model with history tall enough that a scroll
+// keypress actually moves scrollOffset instead of being immediately
+// reclamped to 0 by clampScrollUp, and a newest message (ID 1, sent by the
+// local user, so "edit" is accepted) that getTargetMessage resolves to at
+// scrollOffset 0 for the mnemonic-dispatch assertions.
+func keysTestModel() Model {
+	m := newTestModel()
+	m.focused = true
+	m.myUserId = 100
+	for i := int64(2); i <= 30; i++ {
+		m.store.Messages.Append(testChatID, textMessage(i, 200, strings.Repeat("line ", 8)))
+	}
+	m.store.Messages.Append(testChatID, textMessage(1, 100, "mine")) // newest, at the bottom
+	if m.maxScrollOffset() <= 6 {
+		panic("test needs a history taller than a couple of scroll steps")
+	}
+	return m
+}
+
+// TestSetKeysDefaultsUnchanged pins that a Model fresh out of New() — which
+// calls SetKeys(Keys{}) internally, never explicitly re-invoked here —
+// dispatches every previously-hardcoded chat view key exactly as before
+// chatview became configurable.
+func TestSetKeysDefaultsUnchanged(t *testing.T) {
+	base := keysTestModel()
+
+	_, cmd := base.handleKey(key('r'))
+	if got := dispatchedAction(t, cmd); got.Action != "reply" || got.MessageId != 1 {
+		t.Fatalf("expected 'r' to reply by default, got %+v", got)
+	}
+	_, cmd = base.handleKey(key('e'))
+	if got := dispatchedAction(t, cmd); got.Action != "edit" || got.MessageId != 1 {
+		t.Fatalf("expected 'e' to edit by default, got %+v", got)
+	}
+	_, cmd = base.handleKey(key('d'))
+	if got := dispatchedAction(t, cmd); got.Action != "delete" || got.MessageId != 1 {
+		t.Fatalf("expected 'd' to delete by default, got %+v", got)
+	}
+
+	m := base
+	m.scrollOffset = 0
+	m, _ = m.handleKey(key('k'))
+	if m.scrollOffset != 3 {
+		t.Fatalf("expected 'k' to scroll up by default, offset = %d", m.scrollOffset)
+	}
+	m, _ = m.handleKey(specialKey(tea.KeyUp))
+	if m.scrollOffset != 6 {
+		t.Fatalf("expected up arrow to scroll up by default, offset = %d", m.scrollOffset)
+	}
+	m, _ = m.handleKey(key('j'))
+	if m.scrollOffset != 3 {
+		t.Fatalf("expected 'j' to scroll down by default, offset = %d", m.scrollOffset)
+	}
+	m, _ = m.handleKey(specialKey(tea.KeyDown))
+	if m.scrollOffset != 0 {
+		t.Fatalf("expected down arrow to scroll down by default, offset = %d", m.scrollOffset)
+	}
+}
+
+// TestSetKeysConfiguredValuesDispatch checks that a non-default Keys value
+// takes effect for both the mnemonic (replace) and motion (add) fields.
+func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
+	m := keysTestModel()
+	m.SetKeys(Keys{
+		Reply:      "ctrl+r",
+		Edit:       "x",
+		Delete:     "y",
+		ScrollUp:   "w",
+		ScrollDown: "z",
+		PageUp:     "u",
+		PageDown:   "i",
+	})
+
+	if _, cmd := m.handleKey(ctrlKey('r')); dispatchedAction(t, cmd).Action != "reply" {
+		t.Fatalf("expected configured ctrl+r to reply")
+	}
+	if _, cmd := m.handleKey(key('x')); dispatchedAction(t, cmd).Action != "edit" {
+		t.Fatalf("expected configured 'x' to edit")
+	}
+	if _, cmd := m.handleKey(key('y')); dispatchedAction(t, cmd).Action != "delete" {
+		t.Fatalf("expected configured 'y' to delete")
+	}
+
+	// Replace semantics: the old mnemonic letters no longer do anything.
+	if _, cmd := m.handleKey(key('r')); cmd != nil {
+		t.Fatalf("expected bare 'r' to be inert once reply is rebound, got a cmd")
+	}
+	if _, cmd := m.handleKey(key('e')); cmd != nil {
+		t.Fatalf("expected bare 'e' to be inert once edit is rebound, got a cmd")
+	}
+	if _, cmd := m.handleKey(key('d')); cmd != nil {
+		t.Fatalf("expected bare 'd' to be inert once delete is rebound, got a cmd")
+	}
+
+	// Add semantics: the configured motion key works...
+	m2 := m
+	m2.scrollOffset = 0
+	m2, _ = m2.handleKey(key('w'))
+	if m2.scrollOffset != 3 {
+		t.Fatalf("expected configured 'w' to scroll up, offset = %d", m2.scrollOffset)
+	}
+	m2, _ = m2.handleKey(key('z'))
+	if m2.scrollOffset != 0 {
+		t.Fatalf("expected configured 'z' to scroll down, offset = %d", m2.scrollOffset)
+	}
+	before := m2.scrollOffset
+	m2, _ = m2.handleKey(key('u'))
+	if m2.scrollOffset != before+m2.pageStep() {
+		t.Fatalf("expected configured 'u' to page up")
+	}
+	m2, _ = m2.handleKey(key('i'))
+	if m2.scrollOffset != before {
+		t.Fatalf("expected configured 'i' to page down back to start")
+	}
+
+	// ...and so do the untouched hardcoded arrows/letters/pgup/pgdown: the
+	// arrows and hjkl are always-on, configuration only adds a binding.
+	m3 := m
+	m3.scrollOffset = 0
+	m3, _ = m3.handleKey(specialKey(tea.KeyUp))
+	if m3.scrollOffset != 3 {
+		t.Fatalf("expected the up arrow to still scroll up after rebinding scroll_up, offset = %d", m3.scrollOffset)
+	}
+	m3, _ = m3.handleKey(key('k'))
+	if m3.scrollOffset != 6 {
+		t.Fatalf("expected 'k' to still scroll up after rebinding scroll_up, offset = %d", m3.scrollOffset)
+	}
+	m3, _ = m3.handleKey(specialKey(tea.KeyDown))
+	if m3.scrollOffset != 3 {
+		t.Fatalf("expected the down arrow to still scroll down after rebinding scroll_down, offset = %d", m3.scrollOffset)
+	}
+	m3, _ = m3.handleKey(key('j'))
+	if m3.scrollOffset != 0 {
+		t.Fatalf("expected 'j' to still scroll down after rebinding scroll_down, offset = %d", m3.scrollOffset)
+	}
+	m3.scrollOffset = 5
+	before = m3.scrollOffset
+	m3, _ = m3.handleKey(specialKey(tea.KeyPgUp))
+	if m3.scrollOffset != before+m3.pageStep() {
+		t.Fatalf("expected pgup to still page up after rebinding page_up")
+	}
+	m3, _ = m3.handleKey(specialKey(tea.KeyPgDown))
+	if m3.scrollOffset != before {
+		t.Fatalf("expected pgdown to still page down after rebinding page_down")
+	}
+}
+
+// TestSetKeysCollisionFallsBackToBuiltin covers the shadowing rule: a
+// configured mnemonic that collides with one of chatview's fixed keys is
+// ignored, and a configured motion extra that collides with an already
+// claimed key (fixed, or an earlier-resolved field) is dropped rather than
+// silently making something unreachable.
+func TestSetKeysCollisionFallsBackToBuiltin(t *testing.T) {
+	m := keysTestModel()
+	// "j" is the fixed scroll-down key: reply must fall back to "r" rather
+	// than shadowing scroll-down or leaving reply unreachable.
+	m.SetKeys(Keys{Reply: "j"})
+
+	if m.keys.reply != "r" {
+		t.Fatalf("expected reply to fall back to the built-in 'r', got %q", m.keys.reply)
+	}
+	if _, cmd := m.handleKey(key('r')); dispatchedAction(t, cmd).Action != "reply" {
+		t.Fatalf("expected 'r' to still reply")
+	}
+	// Scroll up first so there is room for 'j' to visibly scroll back down.
+	m2, _ := m.handleKey(key('k'))
+	before := m2.scrollOffset
+	if before == 0 {
+		t.Fatalf("test needs 'k' to have scrolled up")
+	}
+	m2, _ = m2.handleKey(key('j'))
+	if m2.scrollOffset >= before {
+		t.Fatalf("expected 'j' to keep scrolling down, not reply")
+	}
+
+	// A motion configured to a key another field already claimed: reply
+	// claims "r" first (struct order), so scroll_up = "r" must get no
+	// extra binding, and 'r' must still mean reply.
+	m3 := keysTestModel()
+	m3.SetKeys(Keys{ScrollUp: "r"})
+	if m3.keys.scrollUpExtra != "" {
+		t.Fatalf("expected scroll_up = 'r' to be dropped as a collision, got extra %q", m3.keys.scrollUpExtra)
+	}
+	if _, cmd := m3.handleKey(key('r')); dispatchedAction(t, cmd).Action != "reply" {
+		t.Fatalf("expected 'r' to still reply, not scroll up")
+	}
+}
+
+// TestActiveKeysReflectsWhatHandleKeyActuallyMatches pins ActiveKeys as the
+// single source of truth a caller (e.g. internal/app's help card) must read
+// instead of re-deriving its own "resolved" view of the config: it has to
+// report the post-collision-fallback state, not the raw Keys SetKeys was
+// given, or a help card could advertise a binding the panel doesn't honor.
+func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
+	// Unconfigured: the built-in mnemonics, and no motion extras.
+	unconfigured := keysTestModel()
+	got := unconfigured.ActiveKeys()
+	want := Keys{Reply: "r", Edit: "e", Delete: "d"}
+	if got != want {
+		t.Fatalf("unconfigured ActiveKeys = %+v, want %+v", got, want)
+	}
+
+	// Accepted configuration: reports the configured values, including the
+	// motion extras that were actually accepted.
+	accepted := keysTestModel()
+	accepted.SetKeys(Keys{
+		Reply:      "ctrl+r",
+		Edit:       "x",
+		Delete:     "y",
+		ScrollUp:   "w",
+		ScrollDown: "z",
+		PageUp:     "u",
+		PageDown:   "i",
+	})
+	got = accepted.ActiveKeys()
+	want = Keys{
+		Reply: "ctrl+r", Edit: "x", Delete: "y",
+		ScrollUp: "w", ScrollDown: "z", PageUp: "u", PageDown: "i",
+	}
+	if got != want {
+		t.Fatalf("accepted ActiveKeys = %+v, want %+v", got, want)
+	}
+
+	// Colliding mnemonic: reply = "j" collides with the fixed scroll-down
+	// key, so handleKey falls back to "r" — ActiveKeys must report "r", not
+	// the rejected "j", or a help card would advertise a dead binding.
+	collidingMnemonic := keysTestModel()
+	collidingMnemonic.SetKeys(Keys{Reply: "j"})
+	if got := collidingMnemonic.ActiveKeys().Reply; got != "r" {
+		t.Fatalf("expected ActiveKeys().Reply = %q after a collision, got %q", "r", got)
+	}
+
+	// Rejected motion: scroll_up = "r" collides with reply's already-claimed
+	// "r" (struct order), so no extra scroll-up binding was accepted.
+	// ActiveKeys must report empty, not the rejected "r" — the built-ins
+	// (up/k) are always live and are not this field's job to repeat.
+	rejectedMotion := keysTestModel()
+	rejectedMotion.SetKeys(Keys{ScrollUp: "r"})
+	if got := rejectedMotion.ActiveKeys().ScrollUp; got != "" {
+		t.Fatalf("expected ActiveKeys().ScrollUp = %q after a collision, got %q", "", got)
+	}
+}
+
+// TestSetKeysUnreachableActionIsNeverSilentlyDoubleBound covers the
+// resolver bug an adversarial review found: reply = "e" (edit_message left
+// at its default "e") used to leave BOTH reply and edit bound to "e", with
+// edit permanently unreachable underneath reply's earlier switch case —
+// and nothing reported it, falsifying SetKeys's own claim that a
+// configuration can never make a key silently unreachable. Now pass 3
+// checks "claimed" on the fallback branch too, so edit resolves to ""
+// (honestly unreachable) instead of quietly sharing reply's key.
+func TestSetKeysUnreachableActionIsNeverSilentlyDoubleBound(t *testing.T) {
+	m := keysTestModel()
+	m.SetKeys(Keys{Reply: "e"})
+
+	if got := m.ActiveKeys(); got.Reply != "e" || got.Edit != "" {
+		t.Fatalf("ActiveKeys = %+v, want Reply=%q Edit=%q (unreachable)", got, "e", "")
+	}
+
+	// 'e' fires reply (it was configured to it)...
+	if _, cmd := m.handleKey(key('e')); dispatchedAction(t, cmd).Action != "reply" {
+		t.Fatalf("expected 'e' to reply, since reply was configured to it")
+	}
+	// ...and 'r', reply's old default, now claims nothing at all.
+	if _, cmd := m.handleKey(key('r')); cmd != nil {
+		t.Fatalf("expected bare 'r' to be inert once reply moved to 'e', got a cmd")
+	}
+	// Edit is unreachable, but delete (untouched by this collision) still
+	// works — the collision does not cascade into fields it never touched.
+	if _, cmd := m.handleKey(key('d')); dispatchedAction(t, cmd).Action != "delete" {
+		t.Fatalf("expected 'd' (untouched) to still delete")
+	}
+}
+
+// TestSetKeysExplicitConfigOutranksAnEarlierFieldsDefault covers the
+// asymmetry an adversarial review found: edit_message = "r" (reply left
+// unconfigured) used to be silently discarded, because reply's default
+// letter "r" was claimed before edit's explicit config was ever
+// considered — a one-sided rebind vanished, even though the full two-sided
+// swap worked. The three-pass algorithm accepts every EXPLICIT config
+// (pass 2) before any field tries its default (pass 3), so the explicit
+// edit_message = "r" now wins; reply has no other letter to fall back to
+// and honestly reports unreachable rather than re-claiming "r" out from
+// under edit.
+func TestSetKeysExplicitConfigOutranksAnEarlierFieldsDefault(t *testing.T) {
+	m := keysTestModel()
+	m.SetKeys(Keys{Edit: "r"})
+
+	got := m.ActiveKeys()
+	if got.Edit != "r" {
+		t.Fatalf("expected the explicit edit config %q to be honored, got Edit=%q", "r", got.Edit)
+	}
+	if got.Reply != "" {
+		t.Fatalf("expected reply to report unreachable once edit claimed its default letter, got Reply=%q", got.Reply)
+	}
+
+	if _, cmd := m.handleKey(key('r')); dispatchedAction(t, cmd).Action != "edit" {
+		t.Fatalf("expected 'r' to edit (the explicit config), not reply")
+	}
+}
+
+// TestSetKeysFullMnemonicSwapStillWorks is the companion to the one-sided
+// case above: when BOTH sides of a swap are explicitly configured, pass 2
+// claims each in field order and neither starves the other.
+func TestSetKeysFullMnemonicSwapStillWorks(t *testing.T) {
+	m := keysTestModel()
+	m.SetKeys(Keys{Reply: "e", Edit: "r"})
+
+	got := m.ActiveKeys()
+	if got.Reply != "e" || got.Edit != "r" {
+		t.Fatalf("expected the full swap to be honored, got %+v", got)
+	}
+	if _, cmd := m.handleKey(key('e')); dispatchedAction(t, cmd).Action != "reply" {
+		t.Fatalf("expected 'e' to reply")
+	}
+	if _, cmd := m.handleKey(key('r')); dispatchedAction(t, cmd).Action != "edit" {
+		t.Fatalf("expected 'r' to edit")
+	}
+}
+
+// TestSetReservedKeysBlocksAppLevelShadowing covers the second adversarial
+// finding: chatViewFixedKeys() only ever listed chatview's OWN keys, so
+// e.g. reply = "q" was accepted and advertised on the help card even
+// though app.go quits on "q". SetReservedKeys lets the app tell chatview
+// about that surface before SetKeys resolves, so a configured mnemonic
+// that would shadow an app-level key is rejected the same way a collision
+// with a chatview-internal key is.
+func TestSetReservedKeysBlocksAppLevelShadowing(t *testing.T) {
+	reserved := []string{"q", "h", "l", "i", "c", "/", "?", "tab"}
+
+	for _, try := range []string{"q", "h", "?"} {
+		t.Run(try, func(t *testing.T) {
+			m := keysTestModel()
+			m.SetReservedKeys(reserved)
+			m.SetKeys(Keys{Reply: try})
+
+			if got := m.ActiveKeys().Reply; got != "r" {
+				t.Fatalf("reply = %q is reserved at the app level and must fall back to %q, got %q", try, "r", got)
+			}
+			// The reserved key itself must not have been bound to
+			// anything in this panel: without SetReservedKeys's
+			// protection it would have been accepted as reply (none of
+			// q/h/? collide with chatview's own fixed keys), so this
+			// distinguishes "rejected" from "coincidentally inert".
+			if _, cmd := m.handleKey(key(rune(try[0]))); cmd != nil {
+				t.Fatalf("expected the reserved key %q to still be inert inside chatview, got a cmd", try)
+			}
+		})
+	}
+
+	// SetKeys behaves sanely (today's behavior) when SetReservedKeys was
+	// never called: nothing is reserved, so reply = "q" is accepted.
+	noReserved := keysTestModel()
+	noReserved.SetKeys(Keys{Reply: "q"})
+	if got := noReserved.ActiveKeys().Reply; got != "q" {
+		t.Fatalf("expected reply = %q accepted when SetReservedKeys was never called, got %q", "q", got)
+	}
+}
+
+// TestSetKeysMotionsUnaffectedByMnemonicResolution pins that the
+// three-pass mnemonic rework did not change motion resolution: additive
+// semantics still apply, and a configured motion still layers on top of
+// the always-on hardcoded spellings.
+func TestSetKeysMotionsUnaffectedByMnemonicResolution(t *testing.T) {
+	m := keysTestModel()
+	m.SetKeys(Keys{Reply: "e", Edit: "r", ScrollUp: "w"})
+
+	if got := m.ActiveKeys().ScrollUp; got != "w" {
+		t.Fatalf("expected the configured scroll_up extra to still be accepted, got %q", got)
+	}
+
+	before := m.scrollOffset
+	m2, _ := m.handleKey(key('w'))
+	if m2.scrollOffset <= before {
+		t.Fatalf("expected configured 'w' to still scroll up")
+	}
+	m3, _ := m.handleKey(specialKey(tea.KeyUp))
+	if m3.scrollOffset <= before {
+		t.Fatalf("expected the built-in up arrow to still scroll up alongside the configured extra")
+	}
+}

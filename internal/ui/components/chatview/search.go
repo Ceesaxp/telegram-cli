@@ -108,9 +108,9 @@ func (m *Model) pruneSearchHits(deleted []int64) {
 // every other key is text (so j/k/g do NOT scroll the history).
 //
 // Keys are matched on msg.String(); see the note in handleKey (model.go)
-// and the keyPress doc comment in internal/app/keymap.go — String() is
-// safe here only because nothing in this component binds an alt-modified
-// key, which the Kitty protocol reports as composed text on macOS.
+// and internal/keys.Press's doc comment — String() is safe here only
+// because nothing in this component binds an alt-modified key, which the
+// Kitty protocol reports as composed text on macOS.
 func (m Model) handleSearchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		// Cancel the input only. Results from an earlier search survive,
