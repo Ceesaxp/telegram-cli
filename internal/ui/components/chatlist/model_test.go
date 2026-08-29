@@ -213,6 +213,75 @@ func TestChatInFolderNoFlagsIncludesEverything(t *testing.T) {
 	}
 }
 
+func TestChatInFolderExplicitIncludeOnly(t *testing.T) {
+	// A user-created "these chats" folder has no type flags, only
+	// include_peers. Chats not on that list must not appear.
+	m := newTestModel()
+	folder := &telegram.ChatFolder{
+		ID:              7,
+		Title:           "Work",
+		IncludedChatIDs: []int64{10, 20},
+		PinnedChatIDs:   []int64{30},
+	}
+	inInclude := &store.ChatEntry{Chat: &telegram.Chat{ID: 10, Type: telegram.ChatTypePrivate}}
+	inPinned := &store.ChatEntry{Chat: &telegram.Chat{ID: 30, Type: telegram.ChatTypeSupergroup}}
+	other := &store.ChatEntry{Chat: &telegram.Chat{ID: 99, Type: telegram.ChatTypePrivate}}
+
+	if !m.chatInFolder(folder, inInclude) {
+		t.Error("included chat should be in an explicit folder")
+	}
+	if !m.chatInFolder(folder, inPinned) {
+		t.Error("pinned chat should be in an explicit folder")
+	}
+	if m.chatInFolder(folder, other) {
+		t.Error("unlisted chat must not appear in an explicit-only folder")
+	}
+}
+
+func TestChatInFolderChatlistNoFlags(t *testing.T) {
+	// dialogFilterChatlist has no category flags, only include/pin lists.
+	m := newTestModel()
+	folder := &telegram.ChatFolder{
+		ID:              12,
+		IncludedChatIDs: []int64{1},
+	}
+	listed := &store.ChatEntry{Chat: &telegram.Chat{ID: 1, Type: telegram.ChatTypeChannel}}
+	other := &store.ChatEntry{Chat: &telegram.Chat{ID: 2, Type: telegram.ChatTypeChannel}}
+	if !m.chatInFolder(folder, listed) {
+		t.Error("chatlist include should be visible")
+	}
+	if m.chatInFolder(folder, other) {
+		t.Error("chatlist folder must not show chats outside include_peers")
+	}
+}
+
+func TestCycleFolderRefiltersList(t *testing.T) {
+	m := newTestModel()
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Type: telegram.ChatTypePrivate, Title: "Alice"})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Type: telegram.ChatTypePrivate, Title: "Bob"})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Type: telegram.ChatTypePrivate, Title: "Carol"})
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 7, Title: "Work", IncludedChatIDs: []int64{2}},
+	}
+	m.activeFolder = 0
+	m.refreshList()
+	if got := len(m.list.Items); got != 3 {
+		t.Fatalf("All folder: %d items, want 3", got)
+	}
+
+	m.CycleFolder(1)
+	if m.ActiveFolderID() != 7 {
+		t.Fatalf("active folder ID = %d, want 7", m.ActiveFolderID())
+	}
+	if got := len(m.list.Items); got != 1 {
+		t.Fatalf("Work folder: %d items, want 1", got)
+	}
+	if m.list.Items[0].ID != "2" {
+		t.Fatalf("Work folder item ID = %q, want 2", m.list.Items[0].ID)
+	}
+}
+
 func TestChatInFolderExcludeMuted(t *testing.T) {
 	m := newTestModel()
 	folder := &telegram.ChatFolder{ExcludeMuted: true}
