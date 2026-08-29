@@ -541,6 +541,11 @@ func (m *Model) refreshList() {
 //     category flags and the mute/read excludes below;
 //   - otherwise, when the folder sets any category flag, the chat must
 //     match at least one of them (see matchesFolderCategory);
+//   - a custom folder with no category flags is include/pin only: chats
+//     not on those lists are out (this is how a "these chats" folder is
+//     stored — flags all false, include_peers set);
+//   - the implicit All folder (ID 0, no flags, no include/pin lists)
+//     shows every remaining chat;
 //   - ExcludeMuted drops muted chats, ExcludeRead drops read chats — both
 //     only for chats that reached this point (pinned/included chats
 //     already returned true above, matching Telegram's own behavior).
@@ -571,10 +576,16 @@ func (m *Model) chatInFolder(folder *telegram.ChatFolder, entry *store.ChatEntry
 		}
 	}
 
-	if folder.Contacts || folder.NonContacts || folder.Groups || folder.Channels || folder.Bots {
+	hasCategories := folder.Contacts || folder.NonContacts || folder.Groups || folder.Channels || folder.Bots
+	if hasCategories {
 		if !m.matchesFolderCategory(folder, chat) {
 			return false
 		}
+	} else if folder.ID != telegram.AllChatsFolderID {
+		// Custom / chatlist folder with no type flags: only the include
+		// and pin lists above count. Falling through here used to treat
+		// them like All, so switching tabs left the full chat list on screen.
+		return false
 	}
 
 	if folder.ExcludeMuted && chat.Muted {
