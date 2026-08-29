@@ -103,7 +103,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) loadChatsCmd() tea.Cmd {
 	return func() tea.Msg {
-		err := m.tg.LoadChats(50)
+		err := m.tg.LoadChats(telegram.MaxDialogsLimit)
 		if err != nil {
 			return chatsLoadedMsg{err: err}
 		}
@@ -342,6 +342,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case telegram.ChatFoldersMsg:
 		// Also arrives live from the update listener on folder edits.
 		m.setFolders(msg.Folders)
+		cmds = append(cmds, m.FolderLoadCmd())
+
+	case folderDialogsLoadedMsg:
+		for _, ch := range msg.chats {
+			if ch != nil {
+				m.store.Chats.Set(ch)
+			}
+		}
+		m.refreshList()
 
 	case telegram.ChatMuteChangedMsg:
 		m.store.Chats.SetMuted(msg.ChatId, msg.Muted)
@@ -389,14 +398,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			switch msg.String() {
 			case "left", "[":
 				m.CycleFolder(-1)
-				return m, nil
+				return m, m.FolderLoadCmd()
 			case "right", "]":
 				m.CycleFolder(1)
-				return m, nil
+				return m, m.FolderLoadCmd()
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 				n := int(msg.String()[0] - '1')
 				m.jumpToFolder(n)
-				return m, nil
+				return m, m.FolderLoadCmd()
 			}
 
 			if selected := m.list.Update(msg); selected {
@@ -435,6 +444,34 @@ func (m *Model) setFolders(folders []*telegram.ChatFolder) {
 	}
 
 	m.refreshList()
+}
+
+// FolderLoadCmd fetches include/pin dialogs for the active folder that
+// are missing from the recency-loaded chat list. Nil client (tests) is a
+// no-op.
+func (m Model) FolderLoadCmd() tea.Cmd {
+	if m.tg == nil {
+		return nil
+	}
+	var folder *telegram.ChatFolder
+	if m.activeFolder >= 0 && m.activeFolder < len(m.folders) {
+		folder = m.folders[m.activeFolder]
+	}
+	if !folder.NeedsPeerFetch() {
+		return nil
+	}
+	tg := m.tg
+	return func() tea.Msg {
+		chats, err := tg.LoadFolderDialogs(folder)
+		if err != nil || len(chats) == 0 {
+			return folderDialogsLoadedMsg{}
+		}
+		return folderDialogsLoadedMsg{chats: chats}
+	}
+}
+
+type folderDialogsLoadedMsg struct {
+	chats []*telegram.Chat
 }
 
 // normalizeFolders ensures an "All chats" folder is always present at

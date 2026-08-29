@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/gotd/td/tg"
@@ -35,6 +36,18 @@ type ChatFolder struct {
 	ExcludeMuted    bool
 	ExcludeRead     bool
 	ExcludeArchived bool
+
+	// Raw InputPeers from the filter, kept so LoadFolderDialogs can
+	// fetch include/pin chats that are not in the recency dialog page
+	// (access hashes would be lost if we only stored IDs).
+	pinnedPeers  []tg.InputPeerClass
+	includePeers []tg.InputPeerClass
+}
+
+// NeedsPeerFetch reports whether this folder has explicit include/pin
+// peers that must be loaded from the server to populate the list.
+func (f *ChatFolder) NeedsPeerFetch() bool {
+	return f != nil && (len(f.pinnedPeers) > 0 || len(f.includePeers) > 0)
 }
 
 // GetChatFolders returns the user's chat folders in server order.
@@ -77,6 +90,8 @@ func chatFolderFromTG(fc tg.DialogFilterClass) *ChatFolder {
 			ExcludeMuted:    f.ExcludeMuted,
 			ExcludeRead:     f.ExcludeRead,
 			ExcludeArchived: f.ExcludeArchived,
+			pinnedPeers:     f.PinnedPeers,
+			includePeers:    f.IncludePeers,
 		}
 
 	case *tg.DialogFilterChatlist:
@@ -89,6 +104,8 @@ func chatFolderFromTG(fc tg.DialogFilterClass) *ChatFolder {
 			Emoticon:        sanitizeTerminal(emoticon),
 			PinnedChatIDs:   chatIDsFromInputPeers(f.PinnedPeers),
 			IncludedChatIDs: chatIDsFromInputPeers(f.IncludePeers),
+			pinnedPeers:     f.PinnedPeers,
+			includePeers:    f.IncludePeers,
 		}
 
 	case *tg.DialogFilterDefault:
@@ -120,17 +137,99 @@ func chatIDsFromInputPeers(peers []tg.InputPeerClass) []int64 {
 }
 
 // chatIDFromInputPeer converts an InputPeer to the canonical TDLib-style
-// chat ID. InputPeerSelf, InputPeerEmpty and the *FromMessage variants
-// carry no resolvable ID here and are dropped.
+// chat ID. InputPeerSelf and InputPeerEmpty carry no numeric ID here
+// and are dropped from the ID lists (they are still sent to
+// LoadFolderDialogs as raw peers).
 func chatIDFromInputPeer(p tg.InputPeerClass) (int64, bool) {
 	switch v := p.(type) {
 	case *tg.InputPeerUser:
+		return userChatID(v.UserID), true
+	case *tg.InputPeerUserFromMessage:
 		return userChatID(v.UserID), true
 	case *tg.InputPeerChat:
 		return basicGroupChatID(v.ChatID), true
 	case *tg.InputPeerChannel:
 		return channelChatID(v.ChannelID), true
+	case *tg.InputPeerChannelFromMessage:
+		return channelChatID(v.ChannelID), true
 	default:
 		return 0, false
 	}
+}
+
+const folderPeerChunk = 100
+
+// LoadFolderDialogs fetches dialogs for a folder's include and pin lists.
+// Those chats often sit outside the recency window of MessagesGetDialogs,
+// so filtering the first page alone under-counts folder membership.
+func (c *Client) LoadFolderDialogs(folder *ChatFolder) ([]*Chat, error) {
+	if folder == nil {
+		return nil, nil
+	}
+	peers := uniqueInputPeers(folder.pinnedPeers, folder.includePeers)
+	if len(peers) == 0 {
+		return nil, nil
+	}
+
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	var out []*Chat
+	for i := 0; i < len(peers); i += folderPeerChunk {
+		end := i + folderPeerChunk
+		if end > len(peers) {
+			end = len(peers)
+		}
+		req := make([]tg.InputDialogPeerClass, 0, end-i)
+		for _, p := range peers[i:end] {
+			req = append(req, &tg.InputDialogPeer{Peer: p})
+		}
+		res, err := c.api.MessagesGetPeerDialogs(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("get folder dialogs: %w", err)
+		}
+		chats, err := c.materializePeerDialogs(ctx, res)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, chats...)
+	}
+	return out, nil
+}
+
+func (c *Client) materializePeerDialogs(ctx context.Context, res *tg.MessagesPeerDialogs) ([]*Chat, error) {
+	if res == nil {
+		return nil, nil
+	}
+	if err := c.peers.Apply(ctx, res.Users, res.Chats); err != nil {
+		return nil, fmt.Errorf("apply folder peers: %w", err)
+	}
+	chats, _, _ := c.chatsFromDialogParts(res.Dialogs, res.Messages, res.Users, res.Chats)
+	return chats, nil
+}
+
+func uniqueInputPeers(lists ...[]tg.InputPeerClass) []tg.InputPeerClass {
+	seen := make(map[int64]bool)
+	var out []tg.InputPeerClass
+	var noID []tg.InputPeerClass
+	for _, list := range lists {
+		for _, p := range list {
+			if p == nil {
+				continue
+			}
+			if _, ok := p.(*tg.InputPeerEmpty); ok {
+				continue
+			}
+			if id, ok := chatIDFromInputPeer(p); ok {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				out = append(out, p)
+				continue
+			}
+			noID = append(noID, p)
+		}
+	}
+	return append(out, noID...)
 }

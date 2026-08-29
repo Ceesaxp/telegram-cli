@@ -363,12 +363,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if (key.matches(m.keys.prevFolder) && noOverlay) ||
 				(key.matches("h") && viFolder) {
 				m.chatList.CycleFolder(-1)
-				return m, nil
+				return m, m.chatList.FolderLoadCmd()
 			}
 			if (key.matches(m.keys.nextFolder) && noOverlay) ||
 				(key.matches("l") && viFolder) {
 				m.chatList.CycleFolder(1)
-				return m, nil
+				return m, m.chatList.FolderLoadCmd()
 			}
 
 			// Search. Vi convention makes "/" mean "find in the buffer I am
@@ -863,7 +863,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		if chatID, ok := m.chatList.ClickAtXY(col, row); ok {
 			return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
 		}
-		return m, nil
+		return m, m.chatList.FolderLoadCmd()
 	}
 
 	if y < m.layout.ChatViewHeight {

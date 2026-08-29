@@ -255,6 +255,18 @@ func TestChatInFolderChatlistNoFlags(t *testing.T) {
 	}
 }
 
+func TestFolderLoadCmdNilClient(t *testing.T) {
+	m := newTestModel()
+	m.folders = []*telegram.ChatFolder{
+		defaultAllFolder(),
+		{ID: 7, Title: "Work", IncludedChatIDs: []int64{2}},
+	}
+	m.activeFolder = 1
+	if cmd := m.FolderLoadCmd(); cmd != nil {
+		t.Fatal("FolderLoadCmd with nil telegram client must be a no-op")
+	}
+}
+
 func TestCycleFolderRefiltersList(t *testing.T) {
 	m := newTestModel()
 	m.store.Chats.Set(&telegram.Chat{ID: 1, Type: telegram.ChatTypePrivate, Title: "Alice"})

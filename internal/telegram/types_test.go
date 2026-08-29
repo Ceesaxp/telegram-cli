@@ -102,7 +102,8 @@ func TestChatIDFromInputPeer(t *testing.T) {
 		{"channel", &tg.InputPeerChannel{ChannelID: 42, AccessHash: 7}, channelChatID(42), true},
 		{"self", &tg.InputPeerSelf{}, 0, false},
 		{"empty", &tg.InputPeerEmpty{}, 0, false},
-		{"from message", &tg.InputPeerUserFromMessage{UserID: 42}, 0, false},
+		{"user from message", &tg.InputPeerUserFromMessage{UserID: 42}, userChatID(42), true},
+		{"channel from message", &tg.InputPeerChannelFromMessage{ChannelID: 42}, channelChatID(42), true},
 	}
 	for _, tt := range tests {
 		got, ok := chatIDFromInputPeer(tt.peer)

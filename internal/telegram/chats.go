@@ -36,9 +36,10 @@ func (c *Client) LoadChats(limit int) error {
 // dialogsPageSize is the largest dialog page Telegram will return.
 const dialogsPageSize = 100
 
-// maxDialogsLimit caps ListChats so a bad limit cannot walk the whole
-// dialog list.
-const maxDialogsLimit = 500
+// MaxDialogsLimit caps ListChats so a bad limit cannot walk the whole
+// dialog list. The chat list loads this many so folder filters are not
+// limited to the first recency page.
+const MaxDialogsLimit = 500
 
 // dialogCursor is the pagination state of MessagesGetDialogs: the date
 // and ID of the last dialog's top message plus that dialog's peer.
@@ -55,8 +56,8 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 	if limit <= 0 {
 		limit = dialogsPageSize
 	}
-	if limit > maxDialogsLimit {
-		limit = maxDialogsLimit
+	if limit > MaxDialogsLimit {
+		limit = MaxDialogsLimit
 	}
 
 	var (
@@ -141,6 +142,43 @@ func (c *Client) listChatsPage(cursor dialogCursor, limit int) ([]*Chat, dialogC
 		return nil, next, 0, fmt.Errorf("apply peers: %w", err)
 	}
 
+	out, lastMessages, entities := c.chatsFromDialogParts(dialogs, messages, users, chats)
+	for _, dc := range dialogs {
+		d, ok := dc.(*tg.Dialog)
+		if !ok {
+			continue
+		}
+
+		// Advance the cursor even for dialogs we cannot convert into a
+		// Chat, otherwise one unknown peer would stall pagination. All
+		// three fields must come from the SAME dialog — a cursor mixing
+		// this page's ID with the previous page's date re-requests
+		// dialogs we already have. Dialogs whose top message is missing
+		// from the response are skipped for cursor purposes; the last
+		// one that does have a date wins, and if none does, next.peer
+		// stays nil and the caller stops.
+		if !complete {
+			if lm, ok := lastMessages[chatIDFromPeer(d.Peer)]; ok {
+				if peer, ok := inputPeerFromEntities(d.Peer, entities); ok {
+					next = dialogCursor{
+						date: int(lm.Date),
+						id:   d.TopMessage,
+						peer: peer,
+					}
+				}
+			}
+		}
+	}
+
+	if complete {
+		// Nothing left to page through: report a short page.
+		return out, dialogCursor{}, 0, nil
+	}
+	return out, next, len(dialogs), nil
+}
+
+// chatsFromDialogParts converts a dialogs payload into domain chats.
+func (c *Client) chatsFromDialogParts(dialogs []tg.DialogClass, messages []tg.MessageClass, users []tg.UserClass, chats []tg.ChatClass) ([]*Chat, map[int64]*Message, tg.Entities) {
 	entities := tg.Entities{
 		Users:    make(map[int64]*tg.User, len(users)),
 		Chats:    make(map[int64]*tg.Chat, len(chats)),
@@ -174,32 +212,10 @@ func (c *Client) listChatsPage(cursor dialogCursor, limit int) ([]*Chat, dialogC
 		if !ok {
 			continue
 		}
-
-		// Advance the cursor even for dialogs we cannot convert into a
-		// Chat, otherwise one unknown peer would stall pagination. All
-		// three fields must come from the SAME dialog — a cursor mixing
-		// this page's ID with the previous page's date re-requests
-		// dialogs we already have. Dialogs whose top message is missing
-		// from the response are skipped for cursor purposes; the last
-		// one that does have a date wins, and if none does, next.peer
-		// stays nil and the caller stops.
-		if !complete {
-			if lm, ok := lastMessages[chatIDFromPeer(d.Peer)]; ok {
-				if peer, ok := inputPeerFromEntities(d.Peer, entities); ok {
-					next = dialogCursor{
-						date: int(lm.Date),
-						id:   d.TopMessage,
-						peer: peer,
-					}
-				}
-			}
-		}
-
 		chat, err := c.chatFromPeer(d.Peer, entities)
 		if err != nil {
 			continue
 		}
-
 		chat.Pinned = d.Pinned
 		chat.UnreadCount = int32(d.UnreadCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
@@ -209,15 +225,9 @@ func (c *Client) listChatsPage(cursor dialogCursor, limit int) ([]*Chat, dialogC
 			chat.LastMessage = lm
 			chat.Order = int64(lm.Date)
 		}
-
 		out = append(out, chat)
 	}
-
-	if complete {
-		// Nothing left to page through: report a short page.
-		return out, dialogCursor{}, 0, nil
-	}
-	return out, next, len(dialogs), nil
+	return out, lastMessages, entities
 }
 
 // inputPeerFromEntities builds an InputPeer (access hash included) from a
