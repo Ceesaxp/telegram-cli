@@ -37,8 +37,8 @@ func (c *Client) LoadChats(limit int) error {
 const dialogsPageSize = 100
 
 // MaxDialogsLimit caps ListChats so a bad limit cannot walk the whole
-// dialog list. The chat list loads this many so folder filters are not
-// limited to the first recency page.
+// dialog list. The TUI first paint only loads one recency page; folder
+// membership comes from include/pin peers, not from this cap.
 const MaxDialogsLimit = 500
 
 // dialogCursor is the pagination state of MessagesGetDialogs: the date

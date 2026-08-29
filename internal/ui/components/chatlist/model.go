@@ -103,7 +103,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) loadChatsCmd() tea.Cmd {
 	return func() tea.Msg {
-		err := m.tg.LoadChats(telegram.MaxDialogsLimit)
+		err := m.tg.LoadChats(50)
 		if err != nil {
 			return chatsLoadedMsg{err: err}
 		}
@@ -447,8 +447,9 @@ func (m *Model) setFolders(folders []*telegram.ChatFolder) {
 }
 
 // FolderLoadCmd fetches include/pin dialogs for the active folder that
-// are missing from the recency-loaded chat list. Nil client (tests) is a
-// no-op.
+// are not already in the store. The folder's own peer list is the
+// membership source — not a recency slice of getDialogs. Nil client
+// (tests) is a no-op.
 func (m Model) FolderLoadCmd() tea.Cmd {
 	if m.tg == nil {
 		return nil
@@ -460,9 +461,15 @@ func (m Model) FolderLoadCmd() tea.Cmd {
 	if !folder.NeedsPeerFetch() {
 		return nil
 	}
+	already := make(map[int64]struct{})
+	for _, e := range m.store.Chats.OrderedChats() {
+		if e != nil && e.Chat != nil {
+			already[e.Chat.ID] = struct{}{}
+		}
+	}
 	tg := m.tg
 	return func() tea.Msg {
-		chats, err := tg.LoadFolderDialogs(folder)
+		chats, err := tg.LoadFolderDialogs(folder, already)
 		if err != nil || len(chats) == 0 {
 			return folderDialogsLoadedMsg{}
 		}

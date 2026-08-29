@@ -37,15 +37,16 @@ type ChatFolder struct {
 	ExcludeRead     bool
 	ExcludeArchived bool
 
-	// Raw InputPeers from the filter, kept so LoadFolderDialogs can
-	// fetch include/pin chats that are not in the recency dialog page
-	// (access hashes would be lost if we only stored IDs).
+	// Raw InputPeers from the filter. Access hashes live here; IDs
+	// alone are not enough to fetch a dialog that was never in the
+	// recency window.
 	pinnedPeers  []tg.InputPeerClass
 	includePeers []tg.InputPeerClass
 }
 
 // NeedsPeerFetch reports whether this folder has explicit include/pin
-// peers that must be loaded from the server to populate the list.
+// peers. The folder list is those peers (plus any type-flag matches
+// already in the recency cache), not a slice of getDialogs.
 func (f *ChatFolder) NeedsPeerFetch() bool {
 	return f != nil && (len(f.pinnedPeers) > 0 || len(f.includePeers) > 0)
 }
@@ -160,13 +161,15 @@ func chatIDFromInputPeer(p tg.InputPeerClass) (int64, bool) {
 const folderPeerChunk = 100
 
 // LoadFolderDialogs fetches dialogs for a folder's include and pin lists.
-// Those chats often sit outside the recency window of MessagesGetDialogs,
-// so filtering the first page alone under-counts folder membership.
-func (c *Client) LoadFolderDialogs(folder *ChatFolder) ([]*Chat, error) {
+// already skips peers whose chat IDs are already in the local store so
+// switching tabs does not re-fetch. One RPC covers up to folderPeerChunk
+// peers — a 30-chat folder is a single round trip, not a 500-dialog walk.
+func (c *Client) LoadFolderDialogs(folder *ChatFolder, already map[int64]struct{}) ([]*Chat, error) {
 	if folder == nil {
 		return nil, nil
 	}
 	peers := uniqueInputPeers(folder.pinnedPeers, folder.includePeers)
+	peers = dropKnownPeers(peers, already)
 	if len(peers) == 0 {
 		return nil, nil
 	}
@@ -195,6 +198,22 @@ func (c *Client) LoadFolderDialogs(folder *ChatFolder) ([]*Chat, error) {
 		out = append(out, chats...)
 	}
 	return out, nil
+}
+
+func dropKnownPeers(peers []tg.InputPeerClass, already map[int64]struct{}) []tg.InputPeerClass {
+	if len(already) == 0 {
+		return peers
+	}
+	out := make([]tg.InputPeerClass, 0, len(peers))
+	for _, p := range peers {
+		if id, ok := chatIDFromInputPeer(p); ok {
+			if _, have := already[id]; have {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (c *Client) materializePeerDialogs(ctx context.Context, res *tg.MessagesPeerDialogs) ([]*Chat, error) {

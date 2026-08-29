@@ -34,12 +34,30 @@ func TestUniqueInputPeersDedupsByID(t *testing.T) {
 
 func TestLoadFolderDialogsNil(t *testing.T) {
 	c := &Client{}
-	chats, err := c.LoadFolderDialogs(nil)
+	chats, err := c.LoadFolderDialogs(nil, nil)
 	if err != nil || chats != nil {
 		t.Fatalf("LoadFolderDialogs(nil) = (%v, %v)", chats, err)
 	}
-	chats, err = c.LoadFolderDialogs(&ChatFolder{ID: 3})
+	chats, err = c.LoadFolderDialogs(&ChatFolder{ID: 3}, nil)
 	if err != nil || chats != nil {
 		t.Fatalf("empty folder = (%v, %v)", chats, err)
+	}
+}
+
+func TestDropKnownPeers(t *testing.T) {
+	a := &tg.InputPeerUser{UserID: 1, AccessHash: 1}
+	b := &tg.InputPeerChannel{ChannelID: 2, AccessHash: 2}
+	peers := []tg.InputPeerClass{a, b}
+	already := map[int64]struct{}{userChatID(1): {}}
+	got := dropKnownPeers(peers, already)
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+	ch, ok := got[0].(*tg.InputPeerChannel)
+	if !ok || ch.ChannelID != 2 {
+		t.Fatalf("remaining peer = %#v, want channel 2", got[0])
+	}
+	if got := dropKnownPeers(peers, nil); len(got) != 2 {
+		t.Fatalf("nil already: len=%d, want 2", len(got))
 	}
 }
