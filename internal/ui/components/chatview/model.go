@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/keys"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
@@ -193,12 +194,26 @@ type Model struct {
 	searchQuery  string
 	searchHits   []int64
 	searchIdx    int
+
+	// keys holds the resolved (defaulted, collision-checked) bindings
+	// handleKey consults for reply/edit/delete/scroll/page. See SetKeys.
+	// New sets this to the built-in defaults, so a Model that never has
+	// SetKeys called again behaves exactly as it did before chatview became
+	// configurable.
+	keys resolvedKeys
+
+	// reservedKeys holds extra keys claimed outside this package (the
+	// app-level surface: quit, panel focus, tab, i/c, h/l panel movement,
+	// /, ?, and so on), set via SetReservedKeys. nil until that is called,
+	// in which case SetKeys treats the app-level surface as empty — this
+	// package's original, pre-reservation behavior.
+	reservedKeys map[string]bool
 }
 
 func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 	input := widgets.NewTextArea()
 	input.Focused = true
-	return Model{
+	m := Model{
 		store:              s,
 		tg:                 tg,
 		theme:              th,
@@ -207,6 +222,8 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		searchInput:        input,
 		autoDownloadPhotos: true,
 	}
+	m.SetKeys(Keys{})
+	return m
 }
 
 // ApplyMedia applies [media] config: image protocol and bubble size,
@@ -247,6 +264,261 @@ func (m *Model) SetSize(w, h int) {
 
 func (m *Model) SetFocused(focused bool) { m.focused = focused }
 func (m *Model) SetMyUserId(id int64)    { m.myUserId = id }
+
+// SetReservedKeys tells chatview which keys are already claimed by
+// bindings outside this package — every app-level key (quit, panel focus,
+// tab, i/c into the composer, h/l panel movement, /, ?, and so on) — so
+// SetKeys's collision resolution can refuse to accept a configured
+// mnemonic that would silently shadow one of them. Without this, e.g.
+// reply = "q" would be accepted, advertised on the help card as Reply, and
+// quit the app the moment it fired, because chatview had no way to know
+// app.go had already claimed "q".
+//
+// Call order: SetReservedKeys must be called before SetKeys, since SetKeys
+// resolves and freezes the claimed-key set immediately when it runs.
+// Calling SetKeys without ever calling SetReservedKeys first is safe: the
+// app-level surface is simply treated as empty, which is this package's
+// original, pre-reservation behavior.
+func (m *Model) SetReservedKeys(reserved []string) {
+	m.reservedKeys = make(map[string]bool, len(reserved))
+	for _, r := range reserved {
+		if key := normalizeChatViewKey(r); key != "" {
+			m.reservedKeys[key] = true
+		}
+	}
+}
+
+// Keys is the subset of config.KeyConfig that chatview consults directly.
+// chatview cannot import internal/config or internal/app (app imports this
+// package), so the caller — internal/app, in New() — is responsible for
+// reading config.toml's [keys] table, running each field through
+// config.NormalizeKey, and passing the result here via SetKeys.
+//
+// A zero/empty field means "keep the built-in default", so a Model that
+// never has SetKeys called behaves exactly as it did before chatview became
+// configurable (New calls SetKeys(Keys{}) itself for exactly this reason).
+//
+// Reply/Edit/Delete are mnemonics, not motions: a configured value REPLACES
+// the corresponding hardcoded letter ("r"/"e"/"d") rather than adding to it,
+// so rebinding e.g. reply away from "r" also frees "r" for something else.
+//
+// ScrollUp/ScrollDown/PageUp/PageDown are motions: a configured value is
+// ADDED alongside the always-on hardcoded spellings (arrows, k/j,
+// pgup/pgdown) rather than replacing them. Configuration only ever adds a
+// motion binding, it never removes one — matching vi/lazygit's expectation
+// that hjkl and the arrows always move, regardless of what else is bound.
+type Keys struct {
+	Reply, Edit, Delete  string
+	ScrollUp, ScrollDown string
+	PageUp, PageDown     string
+}
+
+// resolvedKeys is the fully-resolved (defaulted, collision-checked) view of
+// Keys that handleKey's switch matches against. See SetKeys.
+type resolvedKeys struct {
+	// reply/edit/delete are the single active spelling for each mnemonic:
+	// either the configured key or, absent one (or on a collision), the
+	// built-in letter.
+	reply, edit, delete string
+
+	// The motion fields are an *additional* spelling to accept alongside the
+	// fixed hardcoded ones baked into handleKey's switch; "" means no extra
+	// binding was configured (or it collided with something and was
+	// dropped).
+	scrollUpExtra, scrollDownExtra string
+	pageUpExtra, pageDownExtra     string
+}
+
+// chatViewFixedKeys is every key handleKey matches unconditionally, outside
+// of the configurable Keys fields: the scroll/page motions' hardcoded
+// spellings (which stay active no matter what ScrollUp/ScrollDown/PageUp/
+// PageDown are configured to — see Keys's doc comment) plus the remaining
+// keys this wave does not make configurable (g/G/home/end/ctrl+u/ctrl+d/
+// esc/ctrl+f/n/N/enter/o/s). This is chatview's own reserved surface;
+// SetKeys additionally claims whatever SetReservedKeys was given for the
+// app-level surface. Together they seed the "claimed" set no configured
+// binding may shadow.
+func chatViewFixedKeys() map[string]bool {
+	return map[string]bool{
+		"up": true, "k": true, "down": true, "j": true,
+		"pgup": true, "pgdown": true,
+		"g": true, "G": true, "home": true, "end": true,
+		"ctrl+u": true, "ctrl+d": true,
+		"esc": true, "ctrl+f": true,
+		"n": true, "N": true,
+		"enter": true, "o": true, "s": true,
+	}
+}
+
+// SetKeys resolves and stores the bindings handleKey consults. See Keys's
+// doc comment for the add-vs-replace rule between mnemonics and motions,
+// and SetReservedKeys's doc comment for the app-level surface this also
+// protects — call that first if the caller has one.
+//
+// Resolution runs in three passes over a single "claimed" set, so that
+// explicit configuration always outranks a built-in default regardless of
+// field order, and a collision never produces a silent double-bind:
+//
+//  1. Claim chatViewFixedKeys() and every key from SetReservedKeys. These
+//     are claimed unconditionally, before anything from k is considered.
+//  2. For Reply, Edit, and Delete in that order, if the field was
+//     EXPLICITLY configured (non-empty), accept it as that mnemonic's
+//     binding and claim it — unless it is already claimed, in which case
+//     the configured value is rejected outright (not partially honored)
+//     and the field is treated as unconfigured for pass 3.
+//  3. For any of Reply/Edit/Delete that did not get an accepted binding in
+//     pass 2 (unconfigured, or rejected), try its built-in letter
+//     ("r"/"e"/"d"). If that letter is itself already claimed — by a fixed
+//     key, a reserved key, or another field's pass-2 binding — the action
+//     is UNREACHABLE this call: it is left as "" rather than bound anyway,
+//     and ActiveKeys reports the same "" so a caller can advertise it
+//     honestly as unbound instead of lying about which key fires it. This
+//     never happens with an unconfigured Keys{}, since r/e/d never collide
+//     with each other or with anything in chatViewFixedKeys().
+//
+// Only after mnemonic resolution is finished are the motion fields
+// (ScrollUp/ScrollDown/PageUp/PageDown) considered, purely additively: a
+// configured extra spelling is accepted only if it is not already claimed
+// by anything above, and dropped (not bound anywhere) otherwise. The
+// hardcoded motion bases (up/k, down/j, pgup, pgdown) are already in
+// chatViewFixedKeys and stay live no matter what.
+//
+// Two collisions this resolves that a naive single-pass, field-order
+// resolver got wrong:
+//
+//   - reply = "e" (edit_message left at its default "e") used to leave
+//     both reply and edit bound to "e", with edit silently unreachable
+//     because reply's switch case came first — and nothing reported it.
+//     Now edit resolves to "" (unreachable) instead of double-binding.
+//   - edit_message = "r" (reply left at its default "r") used to be
+//     silently discarded, because reply's default claimed "r" before
+//     edit_message's explicit config was ever considered. Now pass 2 runs
+//     every explicit config before pass 3 tries any default, so the
+//     explicit edit_message = "r" wins and reply falls back to "" instead
+//     (there is no other letter for it to try).
+func (m *Model) SetKeys(k Keys) {
+	// Pass 1: the app-level and chatview-level surfaces are claimed
+	// unconditionally, before any of k is considered.
+	claimed := chatViewFixedKeys()
+	for r := range m.reservedKeys {
+		claimed[r] = true
+	}
+
+	// Pass 2: accept every EXPLICITLY configured mnemonic, field order,
+	// claiming as we go. A configured key already claimed is rejected
+	// outright; the field falls through to pass 3 as if unconfigured.
+	acceptConfigured := func(configured string) (value string, ok bool) {
+		if configured == "" {
+			return "", false
+		}
+		key := normalizeChatViewKey(configured)
+		if claimed[key] {
+			return "", false
+		}
+		claimed[key] = true
+		return key, true
+	}
+	reply, replyOK := acceptConfigured(k.Reply)
+	edit, editOK := acceptConfigured(k.Edit)
+	deleteKey, deleteOK := acceptConfigured(k.Delete)
+
+	// Pass 3: anything without an accepted config tries its built-in
+	// letter. If that too is claimed, the action is left unreachable ("")
+	// rather than silently sharing a key that already does something else.
+	tryDefault := func(def string) string {
+		if claimed[def] {
+			return ""
+		}
+		claimed[def] = true
+		return def
+	}
+	if !replyOK {
+		reply = tryDefault("r")
+	}
+	if !editOK {
+		edit = tryDefault("e")
+	}
+	if !deleteOK {
+		deleteKey = tryDefault("d")
+	}
+
+	// Motions: purely additive on top of the now-final claimed set (fixed
+	// + reserved + resolved mnemonics).
+	motionExtra := func(configured string) string {
+		if configured == "" {
+			return ""
+		}
+		key := normalizeChatViewKey(configured)
+		if claimed[key] {
+			return ""
+		}
+		claimed[key] = true
+		return key
+	}
+	scrollUpExtra := motionExtra(k.ScrollUp)
+	scrollDownExtra := motionExtra(k.ScrollDown)
+	pageUpExtra := motionExtra(k.PageUp)
+	pageDownExtra := motionExtra(k.PageDown)
+
+	m.keys = resolvedKeys{
+		reply:  reply,
+		edit:   edit,
+		delete: deleteKey,
+
+		scrollUpExtra:   scrollUpExtra,
+		scrollDownExtra: scrollDownExtra,
+		pageUpExtra:     pageUpExtra,
+		pageDownExtra:   pageDownExtra,
+	}
+}
+
+// ActiveKeys reports what handleKey actually matches right now, after
+// SetKeys's defaulting and collision resolution — not the raw Keys a caller
+// last passed in. This is the source of truth for anything outside this
+// package that advertises a chatview binding (the "?" help card, a status
+// bar hint, and so on): it exists precisely so nothing has to reimplement
+// SetKeys's collision rule to stay honest. A caller that instead re-derived
+// a "resolved" reply/scroll_up/etc. by re-running the config through its
+// own defaulting logic could end up advertising a binding that collided and
+// was dropped — e.g. showing "j" for reply after a user sets reply = "j",
+// when the panel still (correctly) matches "r". Always read this instead.
+//
+// Reply/Edit/Delete are returned as the single spelling that is actually
+// live — the configured value if it was accepted, the built-in letter if
+// it fell back to that, or "" if SetKeys's pass 3 found the action
+// UNREACHABLE (its configured value collided and its built-in letter was
+// also already claimed by something else). A caller rendering a help card
+// should show "" as "unbound", not as an empty/absent row that looks like
+// an oversight.
+//
+// ScrollUp/ScrollDown/PageUp/PageDown are returned as the *extra* spelling
+// that was accepted on top of the always-on built-ins (up/k, down/j, pgup,
+// pgdown) — empty when none was configured, or when the configured one
+// collided and was dropped. The built-ins themselves are not repeated here;
+// a caller advertising chatview's scroll/page bindings documents those
+// separately (see internal/app/keymap.go's prose table) and only needs this
+// for the additional spelling, if any.
+func (m Model) ActiveKeys() Keys {
+	return Keys{
+		Reply:  m.keys.reply,
+		Edit:   m.keys.edit,
+		Delete: m.keys.delete,
+
+		ScrollUp:   m.keys.scrollUpExtra,
+		ScrollDown: m.keys.scrollDownExtra,
+		PageUp:     m.keys.pageUpExtra,
+		PageDown:   m.keys.pageDownExtra,
+	}
+}
+
+// normalizeChatViewKey trims and lowercases a configured key the same way
+// config.NormalizeKey does, so a caller that (against SetKeys's doc
+// comment) forgets to run it through config.NormalizeKey first still gets
+// case-insensitive matching rather than a binding that silently never
+// fires.
+func normalizeChatViewKey(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
 
 // statusLineVisible reports whether View() draws the one-line strip under
 // the header — either the blocking load stage or the search input. The
@@ -1108,60 +1380,65 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.handleSearchKey(msg)
 	}
 
-	// Panel-local keys are matched on msg.String() rather than through
-	// app's keyPress helper, which is fine only because none of them is
-	// alt-modified: String() returns Key.Text when the terminal reported
-	// any, so a Kitty-protocol alt binding on macOS would arrive as its
-	// composed character ("¡" for alt+1) and never match here. See the
-	// keyPress doc comment in internal/app/keymap.go before adding an
-	// alt-modified binding to this switch — it needs Keystroke(), not
-	// String().
-	key := msg.String()
+	// kp carries both spellings of the key event (Keystroke() and String())
+	// so a configured, possibly-modified binding (e.g. reply = "ctrl+r")
+	// matches correctly even on terminals where String() alone would be
+	// wrong for a modified key. See internal/keys.Press's doc comment for
+	// the full Kitty-protocol rationale. Bare, unmodified letters/arrows/
+	// ctrl-combos match identically to before — Matches falls back to
+	// String() exactly when nothing is modified.
+	kp := keys.NewPress(msg)
 
-	switch key {
-	case "up", "k", "down", "j", "G", "end", "g", "home",
-		"ctrl+u", "ctrl+d", "pgup", "pgdown":
+	isScroll := kp.Matches(
+		"up", "k", m.keys.scrollUpExtra,
+		"down", "j", m.keys.scrollDownExtra,
+		"G", "end", "g", "home",
+		"ctrl+u", "ctrl+d",
+		"pgup", m.keys.pageUpExtra,
+		"pgdown", m.keys.pageDownExtra,
+	)
+	if isScroll {
 		// Scrolling by hand takes over from a jump still waiting to settle.
 		m.pendingJumpID = 0
 	}
 
-	switch key {
-	case "up", "k":
+	switch {
+	case kp.Matches("up", "k", m.keys.scrollUpExtra):
 		m.scrollOffset += 3
 		if cmd := m.clampScrollUp(); cmd != nil {
 			return m, cmd
 		}
-	case "pgup":
+	case kp.Matches("pgup", m.keys.pageUpExtra):
 		m.scrollOffset += m.pageStep()
 		if cmd := m.clampScrollUp(); cmd != nil {
 			return m, cmd
 		}
-	case "down", "j":
+	case kp.Matches("down", "j", m.keys.scrollDownExtra):
 		m.scrollOffset -= 3
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
-	case "pgdown":
+	case kp.Matches("pgdown", m.keys.pageDownExtra):
 		m.scrollOffset -= m.pageStep()
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
-	case "G", "end":
+	case kp.Matches("G", "end"):
 		m.scrollOffset = 0
-	case "g", "home":
+	case kp.Matches("g", "home"):
 		m.scrollOffset = m.maxScrollOffset()
-	case "ctrl+u":
+	case kp.Matches("ctrl+u"):
 		m.scrollOffset += m.height
 		if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
 			m.scrollOffset = maxOffset
 		}
-	case "ctrl+d":
+	case kp.Matches("ctrl+d"):
 		m.scrollOffset -= m.height
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
 
-	case "esc":
+	case kp.Matches("esc"):
 		// Vim-style: the first esc after a search drops the held hits, so
 		// n/N stop being claimed by this panel and the host can go back to
 		// quick-typing words that start with n/N. A second esc is the
@@ -1174,48 +1451,46 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "ctrl+f":
+	case kp.Matches("ctrl+f"):
 		m.OpenFind()
 		return m, nil
 
-	case "n":
+	case kp.Matches("n"):
 		if len(m.searchHits) == 0 {
 			return m, nil
 		}
 		cmd := m.jumpToHit(m.searchIdx + 1)
 		return m, cmd
-	case "N":
+	case kp.Matches("N"):
 		if len(m.searchHits) == 0 {
 			return m, nil
 		}
 		cmd := m.jumpToHit(m.searchIdx - 1)
 		return m, cmd
 
-	case "r":
+	case kp.Matches(m.keys.reply):
 		return m, m.messageAction("reply")
-	case "e":
+	case kp.Matches(m.keys.edit):
 		return m, m.messageAction("edit")
-	case "d":
+	case kp.Matches(m.keys.delete):
 		return m, m.messageAction("delete")
 
 	// Enter: play/open media of the bottom-visible message
-	case "enter":
+	case kp.Matches("enter"):
 		return m, m.playMedia()
 
 	// 'o' also opens media
-	case "o":
+	case kp.Matches("o"):
 		return m, m.playMedia()
 
 	// 's' saves/downloads file
-	case "s":
+	case kp.Matches("s"):
 		return m, m.downloadFile()
 	}
 
 	// Any key that moved the viewport may have brought photos whose
 	// thumbnails were skipped by the open-time prefetch cap into view.
-	switch key {
-	case "up", "k", "down", "j", "G", "end", "g", "home",
-		"ctrl+u", "ctrl+d", "pgup", "pgdown":
+	if isScroll {
 		cmd := m.lazyPhotoCmd()
 		return m, cmd
 	}
