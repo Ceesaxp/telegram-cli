@@ -23,6 +23,18 @@ type Model struct {
 	unreadCount  int32
 	unmutedCount int32
 	activeChatId int64
+
+	// hints is the keybind hint strip, supplied by the caller via
+	// SetHints; "" renders no strip at all.
+	//
+	// There is deliberately NO built-in default. This component cannot
+	// know the keymap — the bindings are configurable and resolved in
+	// internal/app — so any constant here would be a second, silently
+	// diverging copy of the key table, which is the exact drift
+	// internal/app/keymap.go generates helpSections() to avoid. The app
+	// sets this from its own resolvedKeys (Model.statusHints) in New, so
+	// a rebound key can never leave the bar advertising the old one.
+	hints string
 }
 
 // New creates a new status bar model.
@@ -48,6 +60,20 @@ func (m *Model) SetUserName(name string) {
 // SetConnected sets the connection indicator directly.
 func (m *Model) SetConnected(connected bool) {
 	m.connected = connected
+}
+
+// SetHints sets the keybind hint strip, which callers build from their
+// own resolved keys. An empty string means "no hints" — the bar then
+// shows only the connection state, the user name and the unread badge.
+// Callers that want a hint strip must supply one; this component has no
+// default of its own (see the hints field).
+//
+// The text is a single line of already-formatted "key:action" pairs; the
+// status bar styles it, budgets it against the available width (it is
+// the first block dropped when the bar does not fit — see View) and
+// never parses it.
+func (m *Model) SetHints(text string) {
+	m.hints = text
 }
 
 // SetActiveChatId sets the currently viewed chat.
@@ -149,15 +175,16 @@ func (m Model) View() string {
 		}
 	}
 
-	// Keybind hints — kept in sync with the actual bindings in
-	// internal/app/app.go (focusChatList/focusChatView/focusComposer
-	// default to alt+1/2/3, search defaults to "/", contacts to alt+c)
-	// and chatlist.Update (folder cycling also works as plain ←→ or a
-	// 1-9 jump while the chat list is focused, alongside the app-level
-	// alt+h/alt+l — the terminal-independent path for terminals that
-	// can't report alt as a distinguishable modifier).
-	hintsText := m.theme.StatusBar.Foreground(m.theme.TextMuted).
-		Render("Alt+1/2/3:Focus  /:Search  Alt+C:Contacts  ←→/1-9:Folders")
+	// Keybind hints. The text is entirely the caller's (SetHints, built
+	// from the app's resolved keys so rebinds show up here); this
+	// component only styles and budgets it. An unset strip must stay a
+	// genuinely empty string rather than a styled one: StatusBar carries
+	// PaddingLeft(1)+PaddingRight(1), so Render("") would still occupy
+	// two cells and push the layout below off by that much.
+	hintsText := ""
+	if m.hints != "" {
+		hintsText = m.theme.StatusBar.Foreground(m.theme.TextMuted).Render(m.hints)
+	}
 
 	center := typingText
 	centerW := lipgloss.Width(center)
@@ -189,10 +216,11 @@ func (m Model) View() string {
 	// the unread badge progressively shortened, then with the hints
 	// block dropped entirely — using the first combination that fits the
 	// available width. This mirrors the fallback order "full -> drop
-	// unread -> drop hints": the hints block (~57 cells) alone can
-	// exceed a narrow terminal, and unlike a fixed-width truncation this
-	// keeps whichever piece still fits legible rather than clipping it
-	// mid-word.
+	// unread -> drop hints": the hints block (caller-supplied via
+	// SetHints, so of unbounded length — the app's own strip is 50+
+	// cells) can exceed a narrow terminal, and unlike a fixed-width
+	// truncation this keeps whichever piece still fits legible rather
+	// than clipping it mid-word.
 	unreadCandidates := []string{unreadLong, unreadShort, ""}
 	hintsCandidates := []string{hintsText, ""}
 
