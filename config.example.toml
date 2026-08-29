@@ -54,11 +54,35 @@ show_preview = true
 
 # Keybindings — values below are the built-in defaults (see defaultConfig()
 # in internal/config/config.go); only listed fields are actually consulted,
-# see the KeyConfig doc comment there for which. A bare single printable
-# character (e.g. quit = "q") shadows quick-type, making that character
-# untypeable as message text — prefer alt+/ctrl+/function-key bindings.
+# see the KeyConfig doc comment there for which.
+#
+# Wired app-level bindings (quit through prev_folder) are matched before
+# the focused panel sees the key, so a bare printable binding (e.g.
+# quit_browsing = "q") shadows that key in the chat list and chat view.
+# MOST of them never reach the composer — it only ever gets focus
+# deliberately (i, c, Tab, a focus key, or a click), and app-level
+# dispatch claims almost nothing while it's focused — but "quit" is the
+# exception: it is matched before every other check in Update, focus
+# included, so quit = "x" means pressing x while writing a message quits
+# the app instead of typing an x. Nothing rejects that. Prefer a chord or
+# a function key for quit especially.
+#
+# reply/edit_message/delete_message are mnemonics: a value here REPLACES
+# the chat view's built-in r/e/d. scroll_up/scroll_down/page_up/page_down
+# are motions: a value here is ADDED alongside the always-live
+# k/j/arrows/pgup/pgdown, which keep working regardless. Either way, a
+# value that collides with a key already claimed elsewhere (the chat
+# view's own g/G, ctrl+u/ctrl+d, n/N, ctrl+f, enter/o/s, or the app-level
+# surface: h, l, i, c, tab, ctrl+v, and whatever quit/quit_browsing/help/
+# search/global_search/contacts/contacts_alt resolve to) is REFUSED, not
+# silently double-bound — the built-in keeps working and the configured
+# value is just never reached. Two things surface a refusal: running
+# -migrate-config (see the README) reports it as a warning, and the "?"
+# help card shows the now-unreachable action as "(unbound)" instead of a
+# blank or the wrong key.
 [keys]
 quit = "ctrl+c"
+quit_browsing = "q"          # quits from the chat list/chat view only; confirms first if the composer holds a draft or attachment
 focus_chat_list = "f1"
 focus_chat_view = "f2"
 focus_composer = "f3"
@@ -69,13 +93,13 @@ contacts_alt = "f4"
 help = "?"
 next_chat = "alt+j"
 prev_chat = "alt+k"
-reply = "r"
-edit_message = "e"
-delete_message = "d"
-forward = "f"
-scroll_up = "k"
-scroll_down = "j"
-page_up = "pgup"
-page_down = "pgdown"
+reply = "r"                   # mnemonic: replaces the chat view's built-in "r" (refused, falling back to "r", on a collision)
+edit_message = "e"            # mnemonic: replaces the built-in "e"
+delete_message = "d"          # mnemonic: replaces the built-in "d"
+forward = "f"                 # accepted for round-trip compatibility only — no forward-message feature exists to dispatch it to
+scroll_up = "k"                # motion: adds to the always-live k/up (refused, adding nothing, on a collision)
+scroll_down = "j"              # motion: adds to the always-live j/down
+page_up = "pgup"                # motion: adds to the always-live PgUp
+page_down = "pgdown"            # motion: adds to the always-live PgDn
 next_folder = "alt+l"
 prev_folder = "alt+h"
