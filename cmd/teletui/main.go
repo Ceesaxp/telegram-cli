@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -52,9 +53,18 @@ func main() {
 		}
 	}
 
+	migrate := flag.Bool("migrate-config", false,
+		"rewrite config.toml with the current default keybindings and exit")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		fatalf("Failed to load config: %v", err)
+	}
+
+	if *migrate {
+		runMigrateConfig(cfg)
+		return
 	}
 
 	if cfg.Telegram.APIID == 0 || cfg.Telegram.APIHash == "" {
@@ -132,6 +142,80 @@ func main() {
 	}
 
 	tgClient.Close()
+}
+
+// runMigrateConfig implements -migrate-config: back up the config file, bring
+// it up to the current defaults, write it back, and report what moved.
+//
+// Only defaults are touched. A binding the user actually chose is left alone
+// even when it now collides with something else, because silently rewriting
+// someone's deliberate configuration is worse than leaving a collision they
+// can see in the help overlay.
+func runMigrateConfig(cfg *config.Config) {
+	path := config.ConfigPath()
+	if _, err := os.Stat(path); err != nil {
+		// Not fatal, including when TELETUI_CONFIG points somewhere that
+		// does not exist: there is simply nothing to migrate, and the app
+		// writes a current-default config on first run.
+		fmt.Printf("No config file at %s — nothing to migrate.\n", path)
+		fmt.Println("It will be written with current defaults on first run.")
+		return
+	}
+
+	// Parsed a second time without defaults, so the summary can tell a key
+	// the file never had from one it set to today's default, and so the
+	// unexpanded "~/..." paths survive the rewrite.
+	raw, err := config.LoadRawFile(path)
+	if err != nil {
+		fatalf("Could not read %s: %v", path, err)
+	}
+
+	changes := config.Migrate(cfg, raw)
+	if len(changes) == 0 {
+		fmt.Printf("%s is already up to date.\n", path)
+		return
+	}
+	config.SortChanges(changes)
+
+	backup, err := config.BackupFile(path)
+	if err != nil {
+		fatalf("Could not back up %s: %v", path, err)
+	}
+	if err := config.SaveTo(path, cfg); err != nil {
+		fatalf("Could not write %s: %v", path, err)
+	}
+
+	fmt.Printf("Migrated %s (%d change(s)):\n\n", path, len(changes))
+	for _, c := range changes {
+		fmt.Printf("  %s\n", c)
+	}
+
+	// The rewrite emits the whole schema, not a patch, so it can add
+	// tables the file never had and it silently drops anything the current
+	// version does not recognize. Both are surprising if unannounced.
+	if added := raw.MissingSections(); len(added) > 0 {
+		fmt.Printf("\nAdded config section(s) with default values: [%s]\n",
+			strings.Join(added, "] ["))
+	}
+	if dropped := raw.Unknown(); len(dropped) > 0 {
+		fmt.Println("\nDropped unrecognized key(s) — this version has no such setting:")
+		for _, k := range dropped {
+			fmt.Printf("  %s\n", k)
+		}
+		fmt.Println("They are preserved in the backup if you need them back.")
+	}
+	if clashes := config.DetectKeyCollisions(cfg); len(clashes) > 0 {
+		fmt.Println("\nWarning: some bindings now overlap. Your own choices were")
+		fmt.Println("kept as-is, so a newly added default may collide with them:")
+		for _, c := range clashes {
+			fmt.Printf("  %s\n", c)
+		}
+		fmt.Println("Only the first match in the dispatch order wins; edit [keys] to resolve.")
+	}
+
+	fmt.Printf("\nBacked up to %s\n", backup)
+	fmt.Println("Note: the config is re-encoded from scratch, so comments and")
+	fmt.Println("key ordering in the original are lost. The backup keeps them.")
 }
 
 // fatalf reports a fatal startup or shutdown error and exits. It writes to

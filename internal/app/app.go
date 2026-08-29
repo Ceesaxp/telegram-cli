@@ -19,6 +19,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/contacts"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/groupinfo"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/statusbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
@@ -32,6 +33,7 @@ type Model struct {
 	composer  composer.Model
 	contacts  contacts.Model
 	search    search.Model
+	help      help.Model
 	groupInfo groupinfo.Model
 	statusBar statusbar.Model
 	dialog    *dialog.Model
@@ -94,6 +96,7 @@ type resolvedKeys struct {
 	globalSearch  string
 	contacts      string
 	contactsAlt   string
+	help          string
 	nextFolder    string
 	prevFolder    string
 	nextChat      string
@@ -120,6 +123,7 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 		globalSearch:  resolve(kc.GlobalSearch, "ctrl+g"),
 		contacts:      resolve(kc.Contacts, "alt+c"),
 		contactsAlt:   resolve(kc.ContactsAlt, "f4"),
+		help:          resolve(kc.Help, "?"),
 		nextFolder:    resolve(kc.NextFolder, "alt+l"),
 		prevFolder:    resolve(kc.PrevFolder, "alt+h"),
 		nextChat:      resolve(kc.NextChat, "alt+j"),
@@ -136,6 +140,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		composer:   composer.New(th),
 		contacts:   contacts.New(s, tg, th),
 		search:     search.New(s, tg, th),
+		help:       help.New(th),
 		groupInfo:  groupinfo.New(s, tg, th),
 		statusBar:  statusbar.New(s, th),
 		screen:     ScreenLoading,
@@ -150,6 +155,11 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		keys:       resolveKeys(cfg.Keys),
 	}
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
+	// Built once from the resolved bindings and the resolved editing mode:
+	// neither changes after startup, so there is nothing to keep in sync
+	// afterwards.
+	m.help.SetSections(m.helpSections())
+	m.help.SetFooter(m.helpFooter())
 	return m
 }
 
@@ -207,6 +217,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.screen == ScreenMain {
+			// The help overlay is a modal reference card. While it is up
+			// it owns the keyboard: closing keys are handled here (the
+			// component never closes itself), scrolling goes to the
+			// component, and everything else is swallowed. Swallowing
+			// rather than falling through matters — the panels are hidden
+			// behind the overlay, so a key that changed one would take
+			// effect invisibly.
+			if m.help.IsVisible() {
+				if key.matches("esc", m.keys.help, "q") {
+					m.help.SetVisible(false)
+					return m, nil
+				}
+				var cmd tea.Cmd
+				m.help, cmd = m.help.Update(msg)
+				return m, cmd
+			}
+
 			// In-chat search (chatview's ctrl+f) owns the keyboard while
 			// its input line is open: esc closes the search rather than
 			// moving focus, and printables are query text, not quick-type.
@@ -226,8 +253,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			// Tab / Shift+Tab cycle panels
-			if key.matches("tab") && m.focus != PanelSearch && m.focus != PanelComposer {
+			// Tab / Shift+Tab cycle panels, from the composer as well as
+			// the browsing panels — the help card advertises tab as global,
+			// and a literal tab in a chat message is rare enough that
+			// cycling is the more useful meaning. (Shift+Tab already
+			// worked from the composer.) The search overlay keeps tab for
+			// its own use.
+			if key.matches("tab") && m.focus != PanelSearch {
 				switch m.focus {
 				case PanelChatList:
 					m.setFocus(PanelChatView)
@@ -318,16 +350,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			noOverlay := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
 			// Bare h/l cycle folders too, but only while the chat list is
 			// focused — the vi "move left/right" motion, and the alt-free
-			// way to reach the folder tabs. The cost is that h and l are no
-			// longer quick-typed from the chat list panel (quickTypeTarget
-			// excludes them there); composing from the list is the secondary
-			// path, and every other panel still types them normally.
+			// way to reach the folder tabs.
+			// The lazygit spelling ([ and ]) is deliberately NOT handled
+			// here: chatlist binds it itself, next to the arrows and
+			// digits it already owns. Claiming it in both places would
+			// mean two implementations of one behavior, and app-level
+			// dispatch runs first, so the chatlist copy would be dead
+			// code that still has to be kept in step.
 			viFolder := noOverlay && m.focus == PanelChatList
-			if (key.matches(m.keys.prevFolder) && noOverlay) || (key.matches("h") && viFolder) {
+			if (key.matches(m.keys.prevFolder) && noOverlay) ||
+				(key.matches("h") && viFolder) {
 				m.chatList.CycleFolder(-1)
 				return m, nil
 			}
-			if (key.matches(m.keys.nextFolder) && noOverlay) || (key.matches("l") && viFolder) {
+			if (key.matches(m.keys.nextFolder) && noOverlay) ||
+				(key.matches("l") && viFolder) {
 				m.chatList.CycleFolder(1)
 				return m, nil
 			}
@@ -356,6 +393,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focus != PanelComposer && noOverlay {
 				m.search.SetVisible(true)
 				m.setFocus(PanelSearch)
+				return m, nil
+			}
+
+			// Help overlay. Not from the composer: the composer owns
+			// printables, and "?" is a character someone will want to
+			// type. Every other panel has no use for a bare "?".
+			if key.matches(m.keys.help) && m.focus != PanelComposer && noOverlay {
+				m.help.SetVisible(true)
 				return m, nil
 			}
 
@@ -397,28 +442,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, pasteFromClipboard(m.composer.ChatId())
 			}
 
-			// Quick compose: just start typing from chatview
-			if key.matches("i") && m.focus == PanelChatView {
+			// Compose: i (vi insert) or c (compose) from either browsing
+			// panel moves focus to the composer.
+			//
+			// Typing is always an explicit move now. The app used to
+			// forward any printable key straight to the composer, which
+			// made every single-character binding a trade-off against
+			// being able to start a message with that character, and made
+			// the reverse mistake — a stray keystroke silently becoming
+			// message text — just as easy.
+			// Gated like every other bare-key binding: an open overlay or
+			// dialog owns its own input, and with no chat selected the
+			// composer has nothing to send to — it would only show its
+			// "open a chat first" notice, so "c" is better left inert.
+			//
+			// The composer's own chat id is the condition, not the chat
+			// list's: it is what submit actually sends to, and the two are
+			// set from the same ChatSelectedMsg.
+			if key.matches("i", "c") && noOverlay &&
+				m.composer.ChatId() != 0 &&
+				(m.focus == PanelChatView || m.focus == PanelChatList) {
 				m.setFocus(PanelComposer)
 				return m, nil
-			}
-
-			// Quick-type: printable characters jump straight to the composer
-			// (when a chat is open), like a desktop chat app.
-			if m.chatList.ActiveChatId() != 0 && quickTypeTarget(m.focus, key) {
-				m.setFocus(PanelComposer)
-				forward := msg
-				return m, func() tea.Msg { return forward }
 			}
 		}
 
 	case tea.MouseClickMsg:
 		if m.screen == ScreenMain {
+			// A click lands on whatever is drawn under the help card, which
+			// the user cannot see. Dropped rather than routed: the card has
+			// nothing clickable.
+			if m.help.IsVisible() {
+				return m, nil
+			}
 			return m.handleMouseClick(msg)
 		}
 
 	case tea.MouseWheelMsg:
 		if m.screen == ScreenMain {
+			// Dropped, not forwarded: scrolling the chat that is hidden
+			// behind the card would be invisible, and help exposes no
+			// scroll entry point of its own (its Update takes key events
+			// only). Keyboard scrolling inside the card still works.
+			if m.help.IsVisible() {
+				return m, nil
+			}
 			return m.handleMouseWheel(msg)
 		}
 
@@ -426,13 +494,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAuthStateChanged(msg)
 
 	case AuthErrorMsg:
-		m.screen = ScreenAuth
+		m.setScreen(ScreenAuth)
 		m.auth.SetStep(auth.StepPhone)
 		m.auth.SetError(msg.Err.Error())
 		return m, nil
 
 	case AuthenticatedMsg:
-		m.screen = ScreenMain
+		m.setScreen(ScreenMain)
 		m.myUserId = msg.UserId
 		m.chatView.SetMyUserId(msg.UserId)
 		m.statusBar.SetUserName(fmt.Sprintf("%s %s", msg.FirstName, msg.LastName))
@@ -511,6 +579,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case composer.MessageSubmittedMsg:
+		// Focus deliberately stays on the composer after a send. Chatting
+		// is a run of messages, not one message, and bouncing focus back to
+		// the chat view would make the second message cost another i/c.
+		// Esc is how you leave (see the escape handler above), and the
+		// panel border plus the composer help line make the mode visible.
 		cmds = append(cmds, m.handleMessageSubmit(msg))
 
 	case composer.PasteRequestedMsg:
@@ -672,16 +745,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleAuthStateChanged(msg AuthStateChangedMsg) (tea.Model, tea.Cmd) {
 	switch telegram.AuthState(msg.State) {
 	case telegram.AuthStateWaitPhone:
-		m.screen = ScreenAuth
+		m.setScreen(ScreenAuth)
 		m.auth.SetStep(auth.StepPhone)
 	case telegram.AuthStateWaitCode:
-		m.screen = ScreenAuth
+		m.setScreen(ScreenAuth)
 		m.auth.SetStep(auth.StepCode)
 	case telegram.AuthStateWaitPassword:
-		m.screen = ScreenAuth
+		m.setScreen(ScreenAuth)
 		m.auth.SetStep(auth.StepPassword)
 	case telegram.AuthStateReady:
-		m.screen = ScreenAuth
+		m.setScreen(ScreenAuth)
 		m.auth.SetStep(auth.StepDone)
 	case telegram.AuthStateClosed:
 		// The authorizer only reports this once the client is gone, so it
@@ -707,6 +780,21 @@ func clientErrorReason(err error) string {
 	return err.Error()
 }
 
+// setScreen switches the top-level screen, closing any overlay that only the
+// main screen knows how to dismiss.
+//
+// The help card is the dangerous one: its close and scroll keys are handled
+// inside Update's ScreenMain branch, so an auth transition arriving while it
+// is open (a revoked session, an AuthErrorMsg) would strand an unclosable
+// card over the login form. Clearing it here is the fix at the source; View
+// also refuses to draw it off the main screen.
+func (m *Model) setScreen(s ScreenState) {
+	if s != ScreenMain {
+		m.help.SetVisible(false)
+	}
+	m.screen = s
+}
+
 // enterFatalError puts the UI into the terminal-failure state described on
 // Model.fatalError. The status bar is corrected on the way in so that
 // nothing left on screen keeps claiming the app is connected.
@@ -723,60 +811,18 @@ func (m Model) enterFatalError(reason string) Model {
 	return m
 }
 
-// quickTypeTarget reports whether a key pressed in the given panel should be
-// forwarded to the composer as text input. Keys already bound to panel
-// navigation/actions are excluded.
-//
-// A key held with a modifier other than shift is never text, however it was
-// spelled: a Kitty-protocol alt+1 carries Text "¡" on a macOS layout, and
-// rune-counting that would swallow the alt+1 focus binding. keyPress.modified
-// is checked instead of the rune count alone.
-func quickTypeTarget(panel FocusPanel, key keyPress) bool {
-	if key.modified {
-		return false
-	}
-	text := key.text
-	isPrintable := len([]rune(text)) == 1 || text == "space"
-	if !isPrintable {
-		return false
-	}
-	switch panel {
-	case PanelChatView:
-		switch text {
-		case "k", "j", "g", "G", "r", "e", "d", "o", "s":
-			return false
-		}
-		return true
-	case PanelChatList:
-		switch text {
-		// j/k/g/G are the list's own vi motions; h/l cycle the folder tabs
-		// (see the folder-cycling branch in Update); 1-9 jump straight to
-		// folder N inside chatlist. All three groups are alt-free ways to
-		// work the chat list on terminals that cannot report Option/Alt,
-		// and all three cost the ability to start a message with those
-		// characters from this panel only — composing from the chat view
-		// (or after Tab/alt+3) is unaffected.
-		case "k", "j", "g", "G", "h", "l",
-			"1", "2", "3", "4", "5", "6", "7", "8", "9":
-			return false
-		}
-		return true
-	}
-	return false
-}
-
 // helpLine returns the format string for the bottom help bar. The composer
 // gets its own line: none of the navigation keys apply while typing, and its
 // line-editing keys are what the user needs reminding of. The composer's own
-// hint line carries the rest of the detail.
+// hint line carries the rest of the detail. The full keymap lives behind the
+// help overlay (keys.help).
 func helpLine(focus FocusPanel) string {
 	if focus == PanelComposer {
 		return " Enter:send │ Ctrl+J:newline │ Ctrl+O:editor │ Ctrl+T:attach │ " +
 			"Ctrl+V:paste │ Esc:cancel │ Tab:switch │ %s"
 	}
-	return " Tab:switch │ Esc:back │ j/k:move │ h/l:folder │ /:find │ n/N:match │ " +
-		"Ctrl+G:search all │ Ctrl+U/D:half-page │ Enter:open · s:save │ " +
-		"Alt+C or F4:contacts │ i:compose │ %s"
+	return " ?:help │ Tab:switch │ Esc:back │ j/k:move │ h/l:folder │ /:find │ " +
+		"n/N:match │ i or c:compose │ Alt+C or F4:contacts │ %s"
 }
 
 // mouseInLeftPanel reports whether the point is over the left panel
@@ -1006,8 +1052,10 @@ func (m *Model) updateLayout() {
 	m.chatView.SetSize(l.ChatViewWidth-2, l.ChatViewHeight-2)
 	m.composer.SetSize(l.ComposerWidth-2, l.ComposerHeight-2)
 	m.contacts.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
-	// The search overlay sizes its own box from the full window dimensions.
+	// The search and help overlays size their own boxes from the full
+	// window dimensions.
 	m.search.SetSize(m.width, m.height)
+	m.help.SetSize(m.width, m.height)
 	m.groupInfo.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
 	m.statusBar.SetSize(l.StatusBarWidth)
 }
@@ -1071,6 +1119,21 @@ func (m Model) View() tea.View {
 		content = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
 			m.search.View())
+	}
+
+	// Help is drawn last so it covers whatever else is open — it is only
+	// ever opened when nothing else is, but a race would otherwise leave it
+	// half-hidden behind a panel it is explaining.
+	//
+	// ScreenMain only. The close/scroll keys live in the ScreenMain branch
+	// of Update, so drawing this card over the auth screen would make it
+	// unclosable — and every keystroke aimed at dismissing it would land in
+	// the phone or 2FA field behind it, typed blind. setScreen also clears
+	// the overlay on any transition; this is the second lock.
+	if m.help.IsVisible() && m.screen == ScreenMain {
+		content = lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			m.help.View())
 	}
 
 	v := tea.NewView(content)

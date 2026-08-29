@@ -14,10 +14,16 @@ import (
 // silent death into something the user cannot miss.
 
 // sizedMainModel is a main-screen model with a window size, so the views
-// under test render something inspectable.
-func sizedMainModel(t *testing.T) Model {
+// under test render something inspectable. Several components (the chat
+// list's folder tab bar among them) render nothing at zero width, which
+// would make view-based assertions pass vacuously.
+func sizedMainModel(t *testing.T, focus ...FocusPanel) Model {
 	t.Helper()
-	m := mainModel(t, PanelChatList)
+	panel := PanelChatList
+	if len(focus) > 0 {
+		panel = focus[0]
+	}
+	m := mainModel(t, panel)
 	m.width, m.height = 100, 40
 	m.updateLayout()
 	return m

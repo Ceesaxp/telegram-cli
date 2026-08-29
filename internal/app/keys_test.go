@@ -1,7 +1,9 @@
 package app
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +12,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 )
 
 // These tests drive the *real* terminal input decoder rather than hand-built
@@ -153,13 +156,6 @@ func TestKeyPressMatchesEveryAltEncoding(t *testing.T) {
 				if !k.modified {
 					t.Errorf("modified = false for alt-modified %q", seq)
 				}
-				// An alt binding must never be swallowed by quick-type and
-				// forwarded to the composer as message text.
-				for _, panel := range []FocusPanel{PanelChatView, PanelChatList} {
-					if quickTypeTarget(panel, k) {
-						t.Errorf("quickTypeTarget(panel %d, %q) = true, want false", panel, seq)
-					}
-				}
 			})
 		}
 	}
@@ -218,16 +214,6 @@ func TestKeyPressEmptyBindingInert(t *testing.T) {
 	}
 }
 
-// TestQuickTypeForwardsPlainText keeps the quick-type path working for what it
-// is actually for.
-func TestQuickTypeForwardsPlainText(t *testing.T) {
-	for _, seq := range []string{"a", "z", "1", "?", "¡"} {
-		if k := newKeyPress(decodeKey(t, seq)); !quickTypeTarget(PanelChatView, k) {
-			t.Errorf("quickTypeTarget(chatview, %q) = false, want true", seq)
-		}
-	}
-}
-
 // mainModel returns a Model parked on the main screen with the given focus,
 // ready to be driven with decoded key presses. setFocus (rather than a bare
 // field assignment) is used so the sub-models' own focused flags match — the
@@ -237,15 +223,22 @@ func mainModel(t *testing.T, focus FocusPanel) Model {
 	m := newTestModel(t)
 	m.screen = ScreenMain
 	m.setFocus(focus)
+	// Pin the line-editing keymap: New() otherwise infers it from the
+	// developer's $EDITOR, and vi mode changes what esc means in the
+	// composer (first esc leaves insert mode, only the second leaves the
+	// panel). The vi behavior is the composer package's to test.
+	m.composer.SetEditingMode(composer.ModeEmacs)
 	return m
 }
 
-// openChatModel is mainModel with a chat open in the chat view, which some
-// paths require — chatview.OpenFind is a no-op with no chat to search.
+// openChatModel is mainModel with a chat open, which several paths require:
+// chatview.OpenFind is a no-op with nothing to search, and i/c refuse to
+// focus a composer that has no chat to send to.
 func openChatModel(t *testing.T, focus FocusPanel) Model {
 	t.Helper()
 	m := mainModel(t, focus)
 	m.chatView.OpenChat(testChatID, "Test Chat")
+	m.composer.SetChatId(testChatID)
 	return m
 }
 
@@ -376,7 +369,7 @@ func TestChatViewSearchModeOwnsKeys(t *testing.T) {
 	// Sanity: without search active, "i" from chatview jumps to the composer.
 	// This is the behavior the yield below has to suppress, so a passing
 	// assertion afterwards means something.
-	if m := update(t, mainModel(t, PanelChatView), "i"); m.focus != PanelComposer {
+	if m := update(t, openChatModel(t, PanelChatView), "i"); m.focus != PanelComposer {
 		t.Fatalf("precondition: focus = %v after \"i\", want PanelComposer", m.focus)
 	}
 
@@ -437,7 +430,7 @@ func TestMatchCycleKeysAreUnmodifiedPrintables(t *testing.T) {
 // actually being hits: with none, chatview is not in a special mode and app
 // shortcuts keep working.
 func TestNoSearchResultsDoesNotYield(t *testing.T) {
-	m := mainModel(t, PanelChatView)
+	m := openChatModel(t, PanelChatView)
 	if m.chatView.HasSearchResults() {
 		t.Fatal("fresh chatview unexpectedly reports search results")
 	}
@@ -563,61 +556,478 @@ func TestCtrlKIsNotAnAppBinding(t *testing.T) {
 	}
 }
 
-// TestViFolderKeysOnlyInChatList pins the h/l trade-off: they cycle the folder
-// tabs (and are therefore not quick-typed) while the chat list is focused, and
-// stay ordinary message text everywhere else. The chat list's folder index is
+// TestFolderCyclingKeys covers the alt-free folder bindings app.go dispatches:
+// vi h/l and lazygit [/], both gated to the chat list, alongside the alt
+// spellings that work from anywhere. The chat list's folder index is
 // unexported in another package, so the guard conditions are asserted rather
 // than the resulting tab.
-func TestViFolderKeysOnlyInChatList(t *testing.T) {
-	for _, seq := range []string{"h", "l"} {
-		k := newKeyPress(decodeKey(t, seq))
-		if quickTypeTarget(PanelChatList, k) {
-			t.Errorf("%q is still quick-typed from the chat list", seq)
+func TestFolderCyclingKeys(t *testing.T) {
+	// normalizeFolders always sorts the implicit "All" folder to index 0 and
+	// keeps the rest in server order, so the tab ring is 0 -> 7 -> 9 -> 0.
+	const work, family int32 = 7, 9
+	seedFolders := func(t *testing.T, m Model) Model {
+		t.Helper()
+		m = send(t, m, telegram.ChatFoldersMsg{Folders: []*telegram.ChatFolder{
+			{ID: telegram.AllChatsFolderID, Title: "All"},
+			{ID: work, Title: "Work"},
+			{ID: family, Title: "Family"},
+		}})
+		if got := m.chatList.ActiveFolderID(); got != telegram.AllChatsFolderID {
+			t.Fatalf("precondition: active folder = %d, want All (%d)",
+				got, telegram.AllChatsFolderID)
 		}
-		if !quickTypeTarget(PanelChatView, k) {
-			t.Errorf("%q stopped being quick-typed from the chat view", seq)
-		}
+		return m
 	}
-	// The alt spellings keep working from every panel.
-	m := mainModel(t, PanelChatView)
+
+	// The alt spellings keep working, in every encoding a terminal uses.
+	base := sizedMainModel(t)
 	for _, seq := range []string{"\x1bh", "\x1b[104;3;729u", "\x1bl", "\x1b[108;3;172u"} {
-		k := newKeyPress(decodeKey(t, seq))
-		if !k.matches(m.keys.prevFolder, m.keys.nextFolder) {
+		if k := newKeyPress(decodeKey(t, seq)); !k.matches(base.keys.prevFolder, base.keys.nextFolder) {
 			t.Errorf("%q no longer matches a folder binding", seq)
 		}
 	}
-	// Quick-type still works for the other printables in the chat list.
-	for _, seq := range []string{"a", "z", "?"} {
-		if !quickTypeTarget(PanelChatList, newKeyPress(decodeKey(t, seq))) {
-			t.Errorf("%q stopped being quick-typed from the chat list", seq)
+
+	// Each spelling walks the whole ring and wraps, so a key that is merely
+	// swallowed rather than acted on fails here.
+	forward := []int32{work, family, telegram.AllChatsFolderID}
+	backward := []int32{family, work, telegram.AllChatsFolderID}
+	for _, tc := range []struct {
+		name string
+		seq  string
+		want []int32
+	}{
+		{"vi next", "l", forward},
+		{"lazygit next", "]", forward},
+		{"alt next", "\x1bl", forward},
+		{"vi prev", "h", backward},
+		{"lazygit prev", "[", backward},
+		{"alt prev", "\x1bh", backward},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := seedFolders(t, sizedMainModel(t))
+			for i, want := range tc.want {
+				m = update(t, m, tc.seq)
+				if got := m.chatList.ActiveFolderID(); got != want {
+					t.Fatalf("press %d of %q: active folder = %d, want %d",
+						i+1, tc.seq, got, want)
+				}
+			}
+		})
+	}
+
+	// Cycling is consumed here: no focus move, no overlay, and nothing put
+	// back on the command loop.
+	m := seedFolders(t, sizedMainModel(t))
+	for _, seq := range []string{"h", "l", "[", "]"} {
+		got, cmd := updateCmd(t, m, seq)
+		if got.focus != PanelChatList {
+			t.Errorf("%q moved focus to %v", seq, got.focus)
+		}
+		if got.search.IsVisible() || got.contacts.IsVisible() || got.help.IsVisible() {
+			t.Errorf("%q opened an overlay", seq)
+		}
+		if cmd != nil {
+			if _, isKey := cmd().(tea.KeyPressMsg); isKey {
+				t.Errorf("%q was re-emitted instead of handled", seq)
+			}
+		}
+	}
+
+	// The bare aliases are chat-list only: from the chat view they must not
+	// touch the folder tabs, so they stay available to that panel. The alt
+	// spellings still work from anywhere.
+	view := seedFolders(t, sizedMainModel(t, PanelChatView))
+	for _, seq := range []string{"h", "l", "[", "]"} {
+		got := update(t, view, seq)
+		if got.focus != PanelChatView {
+			t.Errorf("%q from the chat view moved focus to %v", seq, got.focus)
+		}
+		if id := got.chatList.ActiveFolderID(); id != telegram.AllChatsFolderID {
+			t.Errorf("%q cycled the folder tab from the chat view (now %d)", seq, id)
+		}
+	}
+	if got := update(t, view, "\x1bl"); got.chatList.ActiveFolderID() != work {
+		t.Errorf("alt+l from the chat view: active folder = %d, want %d",
+			got.chatList.ActiveFolderID(), work)
+	}
+}
+
+// TestChatListKeysReachChatList covers the bindings chatlist implements
+// itself — left/right arrows and the 1-9 folder jump. They only work if
+// app.go does not consume them on the way past, so this asserts app-level
+// dispatch claims none of them.
+func TestChatListKeysReachChatList(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	appBindings := []string{
+		m.keys.quit, m.keys.focusChatList, m.keys.focusChatView, m.keys.focusComposer,
+		m.keys.search, m.keys.globalSearch, m.keys.contacts, m.keys.contactsAlt,
+		m.keys.nextFolder, m.keys.prevFolder, m.keys.nextChat, m.keys.prevChat,
+		m.keys.help,
+	}
+	seqs := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+		"\x1b[D" /* left */, "\x1b[C" /* right */}
+	for _, seq := range seqs {
+		k := newKeyPress(decodeKey(t, seq))
+		if k.matches(appBindings...) {
+			t.Errorf("%q collides with an app-level binding (stroke=%q)", seq, k.stroke)
+		}
+		got := update(t, m, seq)
+		if got.focus != PanelChatList {
+			t.Errorf("%q moved focus to %v instead of reaching chatlist", seq, got.focus)
+		}
+		if got.search.IsVisible() || got.contacts.IsVisible() {
+			t.Errorf("%q opened an overlay instead of reaching chatlist", seq)
+		}
+	}
+
+	// The alt+1/2/3 focus bindings must still outrank the digit jump.
+	for _, tc := range []struct {
+		seq  string
+		want FocusPanel
+	}{
+		{"\x1b1", PanelChatList}, {"\x1b[50;3;8482u", PanelChatView}, {"\x1b3", PanelComposer},
+	} {
+		if got := update(t, m, tc.seq); got.focus != tc.want {
+			t.Errorf("%q: focus = %v, want %v", tc.seq, got.focus, tc.want)
 		}
 	}
 }
 
-// TestResolveKeysDefaults pins the defaults app.go falls back to when a
-// config predates a field (or is the zero value used by these tests).
-func TestResolveKeysDefaults(t *testing.T) {
-	want := map[string]string{
-		"quit": "ctrl+c", "focusChatList": "f1", "focusChatView": "f2",
-		"focusComposer": "f3", "search": "/", "globalSearch": "ctrl+g",
-		"contacts": "alt+c", "contactsAlt": "f4", "nextFolder": "alt+l",
-		"prevFolder": "alt+h", "nextChat": "alt+j", "prevChat": "alt+k",
-	}
-	k := resolveKeys(config.KeyConfig{})
-	got := map[string]string{
-		"quit": k.quit, "focusChatList": k.focusChatList, "focusChatView": k.focusChatView,
-		"focusComposer": k.focusComposer, "search": k.search, "globalSearch": k.globalSearch,
-		"contacts": k.contacts, "contactsAlt": k.contactsAlt, "nextFolder": k.nextFolder,
-		"prevFolder": k.prevFolder, "nextChat": k.nextChat, "prevChat": k.prevChat,
-	}
-	for name, w := range want {
-		if got[name] != w {
-			t.Errorf("%s = %q, want %q", name, got[name], w)
+// TestComposeRequiresAnExplicitMove covers the removal of quick-type. A
+// printable key used to jump to the composer and become message text, which
+// made every single-character binding a trade-off against typing that
+// character — and made a stray keystroke silently become a message. Typing is
+// now always entered deliberately.
+func TestComposeRequiresAnExplicitMove(t *testing.T) {
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		m := openChatModel(t, panel)
+		for _, seq := range []string{"a", "z", "q", "?", "0", "¡", " "} {
+			if got := update(t, m, seq); got.focus == PanelComposer {
+				t.Errorf("panel %v: %q jumped to the composer", panel, seq)
+			}
+		}
+		// i and c are the deliberate ways in, from both browsing panels.
+		for _, seq := range []string{"i", "c"} {
+			if got := update(t, m, seq); got.focus != PanelComposer {
+				t.Errorf("panel %v: %q did not focus the composer (got %v)", panel, seq, got.focus)
+			}
 		}
 	}
-	// A configured value wins and is normalized on the way in.
-	if k := resolveKeys(config.KeyConfig{Contacts: "Option+C"}); k.contacts != "alt+c" {
-		t.Errorf("configured contacts = %q, want alt+c", k.contacts)
+	// alt+c is still the contacts overlay, not compose — the modifier is
+	// what separates them.
+	if got := update(t, mainModel(t, PanelChatList), "\x1bc"); !got.contacts.IsVisible() {
+		t.Error("alt+c no longer opens the contacts overlay")
+	}
+}
+
+// TestComposerEditingModeFromConfig covers the wiring between
+// ui.compose_editing and the composer's editing mode. The resolution rules
+// themselves live in config and are tested there; this pins the translation
+// and that New() actually applies it.
+func TestComposerEditingModeFromConfig(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+
+	cases := []struct {
+		setting string
+		editor  string
+		want    composer.EditingMode
+	}{
+		{"vi", "", composer.ModeVi},
+		{"emacs", "vim", composer.ModeEmacs},
+		{"auto", "vim", composer.ModeVi},
+		{"auto", "nano", composer.ModeEmacs},
+		{"", "", composer.ModeEmacs},
+	}
+	for _, tc := range cases {
+		t.Run(tc.setting+"/"+tc.editor, func(t *testing.T) {
+			t.Setenv("EDITOR", tc.editor)
+			if got := composerEditingMode(tc.setting); got != tc.want {
+				t.Errorf("composerEditingMode(%q) with EDITOR=%q = %v, want %v",
+					tc.setting, tc.editor, got, tc.want)
+			}
+		})
+	}
+
+	// New() applies it rather than leaving the composer on its default.
+	t.Setenv("EDITOR", "")
+	cfg := &config.Config{}
+	cfg.UI.ComposeEditing = config.ComposeEditingVi
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	if got := m.composer.EditingMode(); got != composer.ModeVi {
+		t.Errorf("New() left the composer in mode %v, want ModeVi", got)
+	}
+}
+
+// TestComposerFocusIsSticky covers the send-and-keep-typing behavior: a chat
+// is a run of messages, so focus stays put after a send and esc is the way
+// out. Nothing in the submit path may move it.
+func TestComposerFocusIsSticky(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m.composer.SetChatId(testChatID)
+
+	m = send(t, m, composer.MessageSubmittedMsg{ChatId: testChatID, Text: "hello"})
+	if m.focus != PanelComposer {
+		t.Errorf("focus = %v after a send, want PanelComposer", m.focus)
+	}
+
+	// A second send from the same state behaves the same.
+	m = send(t, m, composer.MessageSubmittedMsg{ChatId: testChatID, Text: "and again"})
+	if m.focus != PanelComposer {
+		t.Errorf("focus = %v after a second send, want PanelComposer", m.focus)
+	}
+
+	// Esc steps out, once the composer has nothing of its own to cancel.
+	if m = update(t, m, "\x1b"); m.focus != PanelChatView {
+		t.Errorf("focus = %v after esc, want PanelChatView", m.focus)
+	}
+}
+
+// TestHelpOverlay covers the "?" overlay: it opens from the browsing panels,
+// owns the keyboard while up, closes on esc/?/q, and is never opened from the
+// composer, where "?" is a character someone wants to type.
+func TestHelpOverlay(t *testing.T) {
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		m := update(t, mainModel(t, panel), "?")
+		if !m.help.IsVisible() {
+			t.Errorf("panel %v: \"?\" did not open the help overlay", panel)
+		}
+		// Focus is untouched — the overlay is modal, not a panel.
+		if m.focus != panel {
+			t.Errorf("panel %v: opening help moved focus to %v", panel, m.focus)
+		}
+	}
+
+	// From the composer "?" is text, not a binding.
+	if m := update(t, mainModel(t, PanelComposer), "?"); m.help.IsVisible() {
+		t.Error("\"?\" opened the help overlay from the composer")
+	}
+
+	// While it is up, keys that would otherwise act are swallowed.
+	m := update(t, mainModel(t, PanelChatList), "?")
+	for _, seq := range []string{"\x1b2" /* alt+2 */, "\x1bc" /* alt+c */, "i", "/"} {
+		got := update(t, m, seq)
+		if got.focus != PanelChatList {
+			t.Errorf("%q moved focus to %v behind the help overlay", seq, got.focus)
+		}
+		if got.contacts.IsVisible() || got.search.IsVisible() {
+			t.Errorf("%q opened another overlay behind the help overlay", seq)
+		}
+		if !got.help.IsVisible() {
+			t.Errorf("%q closed the help overlay", seq)
+		}
+	}
+
+	// Scroll keys reach the component instead of being swallowed.
+	if got := update(t, m, "j"); !got.help.IsVisible() {
+		t.Error("j closed the help overlay instead of scrolling it")
+	}
+
+	// Each of the closing keys works.
+	for _, seq := range []string{"\x1b" /* esc */, "?", "q"} {
+		if got := update(t, m, seq); got.help.IsVisible() {
+			t.Errorf("%q did not close the help overlay", seq)
+		}
+	}
+
+	// Quit still outranks it — the overlay must not trap the user.
+	if _, cmd := m.Update(decodeKey(t, "\x03")); cmd == nil {
+		t.Error("ctrl+c produced no command while the help overlay was open")
+	}
+}
+
+// TestHelpSectionsComeFromResolvedKeys is the anti-drift check: the overlay
+// must describe the bindings the dispatcher actually matches, so rebinding a
+// key has to change what the overlay says.
+func TestHelpSectionsComeFromResolvedKeys(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Keys.Contacts = "alt+p"
+	cfg.Keys.GlobalSearch = "ctrl+y"
+	cfg.Keys.Help = "f12"
+	cfg.Keys.Quit = "ctrl+x"
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+
+	var all string
+	for _, sec := range m.helpSections() {
+		if sec.Title == "" {
+			t.Error("a help section has no title")
+		}
+		if len(sec.Bindings) == 0 {
+			t.Errorf("help section %q has no bindings", sec.Title)
+		}
+		for _, b := range sec.Bindings {
+			if b.Keys == "" || b.Desc == "" {
+				t.Errorf("section %q has an incomplete binding %+v", sec.Title, b)
+			}
+			all += b.Keys + "\x00"
+		}
+	}
+
+	for _, want := range []string{"alt+p", "ctrl+y", "f12", "ctrl+x"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the overlay does not mention the configured %q", want)
+		}
+	}
+	// The defaults these replaced must be gone, or the overlay is lying.
+	for _, gone := range []string{"alt+c", "ctrl+g"} {
+		if strings.Contains(all, gone) {
+			t.Errorf("the overlay still advertises the replaced default %q", gone)
+		}
+	}
+
+	// The hardcoded quit keys are always live, so they belong on the row
+	// even when a third is configured.
+	if row, ok := findBinding(m.helpSections(), "Quit"); !ok {
+		t.Error("no Quit row")
+	} else {
+		for _, want := range []string{"ctrl+c", "ctrl+q", "ctrl+x"} {
+			if !strings.Contains(row.Keys, want) {
+				t.Errorf("Quit row %q omits %q", row.Keys, want)
+			}
+		}
+	}
+
+	// The footer names the configured help key, not a stale "?".
+	if got := m.helpFooter(); !strings.Contains(got, "f12") || strings.Contains(got, "?") {
+		t.Errorf("footer = %q, want it to name the configured help key", got)
+	}
+	for _, want := range []string{"esc", "q"} {
+		if !strings.Contains(m.helpFooter(), want) {
+			t.Errorf("footer %q omits the %q close key", m.helpFooter(), want)
+		}
+	}
+}
+
+// findBinding returns the first binding whose Desc starts with prefix.
+func findBinding(sections []help.Section, descPrefix string) (help.Binding, bool) {
+	for _, sec := range sections {
+		for _, b := range sec.Bindings {
+			if strings.HasPrefix(b.Desc, descPrefix) {
+				return b, true
+			}
+		}
+	}
+	return help.Binding{}, false
+}
+
+// TestHelpDescriptionsMatchBehavior pins the rows the review found lying:
+// each assertion drives the key and checks the overlay's wording against what
+// actually happened.
+func TestHelpDescriptionsMatchBehavior(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	sections := m.helpSections()
+
+	t.Run("tab really is global", func(t *testing.T) {
+		row, ok := findBinding(sections, "Cycle panel focus")
+		if !ok {
+			t.Fatal("no panel-cycling row")
+		}
+		if !strings.Contains(row.Keys, "tab") {
+			t.Fatalf("row keys = %q, want tab", row.Keys)
+		}
+		// Advertised without a caveat, so it must work from every panel
+		// including the one the card is least likely to be read from.
+		for _, panel := range []FocusPanel{PanelComposer, PanelChatList, PanelChatView} {
+			if got := update(t, openChatModel(t, panel), "\t"); got.focus == panel {
+				t.Errorf("tab did nothing from panel %v", panel)
+			}
+		}
+	})
+
+	t.Run("ctrl+g says it is not available while composing", func(t *testing.T) {
+		row, ok := findBinding(sections, "Search all chats")
+		if !ok {
+			t.Fatal("no global-search row")
+		}
+		if !strings.Contains(row.Desc, "composing") {
+			t.Errorf("Desc = %q, want it to note the composer exclusion", row.Desc)
+		}
+		// Which is the truth: it opens elsewhere, not from the composer.
+		if got := update(t, openChatModel(t, PanelComposer), "\x07"); got.search.IsVisible() {
+			t.Error("ctrl+g opened the search overlay from the composer")
+		}
+		if got := update(t, openChatModel(t, PanelChatView), "\x07"); !got.search.IsVisible() {
+			t.Error("ctrl+g did not open the search overlay from the chat view")
+		}
+	})
+
+	t.Run("ctrl+d and ctrl+u are described as pages", func(t *testing.T) {
+		row, ok := findBinding(sections, "Page down / up")
+		if !ok {
+			t.Fatal("no paging row")
+		}
+		if !strings.Contains(row.Keys, "ctrl+d") {
+			t.Fatalf("first paging row is %q, want the ctrl+d/ctrl+u row", row.Keys)
+		}
+		// chatview moves by a full panel height for these, not a half page.
+		var all string
+		for _, sec := range sections {
+			for _, b := range sec.Bindings {
+				all += b.Desc + "\x00"
+			}
+		}
+		if strings.Contains(all, "Half page") {
+			t.Error("the overlay still calls ctrl+d/ctrl+u a half page")
+		}
+	})
+}
+
+// TestComposerHelpFollowsEditingMode: the two keymaps disagree about what esc
+// does, which is exactly what a reader opens the card to settle.
+func TestComposerHelpFollowsEditingMode(t *testing.T) {
+	find := func(t *testing.T, mode composer.EditingMode) help.Section {
+		t.Helper()
+		m := mainModel(t, PanelComposer)
+		m.composer.SetEditingMode(mode)
+		for _, sec := range m.helpSections() {
+			if strings.HasPrefix(sec.Title, "Composer") {
+				return sec
+			}
+		}
+		t.Fatal("no composer section")
+		return help.Section{}
+	}
+
+	emacs := find(t, composer.ModeEmacs)
+	if !strings.Contains(emacs.Title, "emacs") {
+		t.Errorf("title = %q, want it to name the emacs keymap", emacs.Title)
+	}
+	var emacsAll string
+	for _, b := range emacs.Bindings {
+		emacsAll += b.Keys + "\x00" + b.Desc + "\x00"
+	}
+	if !strings.Contains(emacsAll, "ctrl+w") || !strings.Contains(emacsAll, "ctrl+a / ctrl+e") {
+		t.Error("the emacs section omits its readline chords")
+	}
+	if strings.Contains(emacsAll, "insert mode") {
+		t.Error("the emacs section describes vi's esc")
+	}
+
+	vi := find(t, composer.ModeVi)
+	if !strings.Contains(vi.Title, "vi") {
+		t.Errorf("title = %q, want it to name the vi keymap", vi.Title)
+	}
+	var viAll string
+	for _, b := range vi.Bindings {
+		viAll += b.Keys + "\x00" + b.Desc + "\x00"
+	}
+	if !strings.Contains(viAll, "insert mode") {
+		t.Error("the vi section does not explain that esc leaves insert mode first")
+	}
+	if strings.Contains(viAll, "ctrl+w") {
+		t.Error("the vi section advertises emacs chords")
+	}
+	// Both keymaps keep the chords that are not line editing.
+	for _, sec := range []help.Section{emacs, vi} {
+		var keys string
+		for _, b := range sec.Bindings {
+			keys += b.Keys + "\x00"
+		}
+		for _, want := range []string{"enter", "ctrl+j", "ctrl+t", "ctrl+v", "ctrl+o"} {
+			if !strings.Contains(keys, want) {
+				t.Errorf("%s omits %q", sec.Title, want)
+			}
+		}
 	}
 }
 
@@ -697,81 +1107,157 @@ func TestSearchKeysYieldToOpenOverlays(t *testing.T) {
 	}
 }
 
-// TestChatListFolderKeysNotQuickTyped covers the alt-free chat-list bindings
-// chatlist implements internally (left/right arrows and the 1-9 folder jump).
-// They only ever reach chatlist if app.go's quick-type does not claim them
-// first, which for the digits it previously did.
-func TestChatListFolderKeysNotQuickTyped(t *testing.T) {
-	for _, seq := range []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"} {
-		k := newKeyPress(decodeKey(t, seq))
-		if quickTypeTarget(PanelChatList, k) {
-			t.Errorf("digit %q is still quick-typed from the chat list", seq)
-		}
-		// Digits stay ordinary text everywhere else.
-		if !quickTypeTarget(PanelChatView, k) {
-			t.Errorf("digit %q stopped being quick-typed from the chat view", seq)
-		}
+// TestResolveKeysDefaults pins the defaults app.go falls back to when a
+// config predates a field (or is the zero value used by these tests).
+func TestResolveKeysDefaults(t *testing.T) {
+	want := map[string]string{
+		"quit": "ctrl+c", "focusChatList": "f1", "focusChatView": "f2",
+		"focusComposer": "f3", "search": "/", "globalSearch": "ctrl+g",
+		"contacts": "alt+c", "contactsAlt": "f4", "help": "?",
+		"nextFolder": "alt+l", "prevFolder": "alt+h",
+		"nextChat": "alt+j", "prevChat": "alt+k",
 	}
-	// "0" has no folder to jump to, so it stays typable.
-	if !quickTypeTarget(PanelChatList, newKeyPress(decodeKey(t, "0"))) {
-		t.Error(`"0" should still be quick-typed from the chat list`)
+	k := resolveKeys(config.KeyConfig{})
+	got := map[string]string{
+		"quit": k.quit, "focusChatList": k.focusChatList, "focusChatView": k.focusChatView,
+		"focusComposer": k.focusComposer, "search": k.search, "globalSearch": k.globalSearch,
+		"contacts": k.contacts, "contactsAlt": k.contactsAlt, "help": k.help,
+		"nextFolder": k.nextFolder, "prevFolder": k.prevFolder,
+		"nextChat": k.nextChat, "prevChat": k.prevChat,
 	}
-	// Arrows are not printable, so quick-type never claimed them.
-	for _, seq := range []string{"\x1b[D", "\x1b[C"} { // left, right
-		if quickTypeTarget(PanelChatList, newKeyPress(decodeKey(t, seq))) {
-			t.Errorf("arrow %q is quick-typed from the chat list", seq)
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s = %q, want %q", name, got[name], w)
 		}
 	}
-	// And the alt+1/2/3 focus bindings must still win over the digit jump,
-	// since they are matched before dispatch reaches chatlist.
-	m := mainModel(t, PanelChatList)
-	for _, tc := range []struct {
-		seq  string
-		want FocusPanel
+	// A configured value wins and is normalized on the way in.
+	if k := resolveKeys(config.KeyConfig{Contacts: "Option+C"}); k.contacts != "alt+c" {
+		t.Errorf("configured contacts = %q, want alt+c", k.contacts)
+	}
+}
+
+// TestHelpDoesNotSurviveAScreenChange covers the trap the review found: the
+// help card's close and scroll keys are handled only in Update's ScreenMain
+// branch, so a card left open across an auth transition would be unclosable
+// — and every key aimed at dismissing it would land in the phone or 2FA
+// field drawn behind it, typed blind.
+func TestHelpDoesNotSurviveAScreenChange(t *testing.T) {
+	transitions := []struct {
+		name string
+		msg  tea.Msg
 	}{
-		{"\x1b1", PanelChatList}, {"\x1b[50;3;8482u", PanelChatView}, {"\x1b3", PanelComposer},
-	} {
-		if got := update(t, m, tc.seq); got.focus != tc.want {
-			t.Errorf("%q: focus = %v, want %v", tc.seq, got.focus, tc.want)
+		{"auth error", AuthErrorMsg{Err: errors.New("session revoked")}},
+		{"auth wants a phone number", AuthStateChangedMsg{State: int(telegram.AuthStateWaitPhone)}},
+		{"auth wants a code", AuthStateChangedMsg{State: int(telegram.AuthStateWaitCode)}},
+		{"auth wants the 2FA password", AuthStateChangedMsg{State: int(telegram.AuthStateWaitPassword)}},
+	}
+	for _, tc := range transitions {
+		t.Run(tc.name, func(t *testing.T) {
+			m := update(t, sizedMainModel(t), "?")
+			if !m.help.IsVisible() {
+				t.Fatal("precondition: help did not open")
+			}
+
+			m = send(t, m, tc.msg)
+			if m.screen != ScreenAuth {
+				t.Fatalf("screen = %v, want ScreenAuth", m.screen)
+			}
+			if m.help.IsVisible() {
+				t.Error("the help card survived the transition to the auth screen")
+			}
+			// The auth form is what the user sees, not a help card.
+			if view := m.View().Content; strings.Contains(view, "to close") {
+				t.Error("the help card is still drawn over the auth screen")
+			}
+
+			// Keys reach auth rather than being swallowed by the card's
+			// handler, which does not run outside ScreenMain.
+			before := m.auth.View()
+			if after := update(t, m, "5"); after.auth.View() == before {
+				t.Error("a keystroke did not reach the auth form")
+			}
+		})
+	}
+}
+
+// TestHelpIsNeverDrawnOffTheMainScreen is the second lock: even if some
+// future path sets the flag without going through setScreen, View refuses to
+// draw a card whose dismiss keys are unreachable.
+func TestHelpIsNeverDrawnOffTheMainScreen(t *testing.T) {
+	m := sizedMainModel(t)
+	m.help.SetVisible(true)
+	for _, screen := range []ScreenState{ScreenAuth, ScreenLoading} {
+		m.screen = screen // deliberately bypassing setScreen
+		if strings.Contains(m.View().Content, "to close") {
+			t.Errorf("the help card was drawn on screen %v", screen)
+		}
+	}
+	m.screen = ScreenMain
+	if !strings.Contains(m.View().Content, "to close") {
+		t.Error("the help card is not drawn on the main screen")
+	}
+}
+
+// TestHelpSwallowsMouse: a click or wheel event over the card would
+// otherwise act on the panels hidden underneath it.
+func TestHelpSwallowsMouse(t *testing.T) {
+	// Focused on the chat view, so a click into the left panel is a change
+	// the assertion can actually see.
+	m := update(t, sizedMainModel(t, PanelChatView), "?")
+	if !m.help.IsVisible() {
+		t.Fatal("precondition: help did not open")
+	}
+	click := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5}
+	if without := send(t, sizedMainModel(t, PanelChatView), click); without.focus != PanelChatList {
+		t.Fatalf("precondition: the same click without the card gave focus %v, want PanelChatList",
+			without.focus)
+	}
+
+	clicked := send(t, m, click)
+	if clicked.focus != PanelChatView {
+		t.Errorf("a click behind the help card moved focus to %v", clicked.focus)
+	}
+	if !clicked.help.IsVisible() {
+		t.Error("a click closed the help card")
+	}
+
+	wheeled := send(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 5, Y: 5})
+	if !wheeled.help.IsVisible() {
+		t.Error("a wheel event closed the help card")
+	}
+}
+
+// TestComposeNeedsAChat covers the guard restored with quick-type's removal:
+// i/c must not focus a composer that has nothing to send to, and must yield
+// to an overlay or dialog that owns its own input.
+func TestComposeNeedsAChat(t *testing.T) {
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		for _, seq := range []string{"i", "c"} {
+			// No chat open.
+			if got := update(t, mainModel(t, panel), seq); got.focus == PanelComposer {
+				t.Errorf("panel %v: %q focused the composer with no chat open", panel, seq)
+			}
+			// Overlay open.
+			overlay := update(t, openChatModel(t, panel), "\x1bc") // contacts
+			if !overlay.contacts.IsVisible() {
+				t.Fatal("precondition: contacts did not open")
+			}
+			if got := update(t, overlay, seq); got.focus == PanelComposer {
+				t.Errorf("panel %v: %q stole a key from the contacts overlay", panel, seq)
+			}
 		}
 	}
 }
 
-// TestComposerEditingModeFromConfig covers the wiring between
-// ui.compose_editing and the composer's editing mode. The resolution rules
-// themselves live in config and are tested there; this pins the translation
-// and that New() actually applies it.
-func TestComposerEditingModeFromConfig(t *testing.T) {
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", "")
-
-	cases := []struct {
-		setting string
-		editor  string
-		want    composer.EditingMode
-	}{
-		{"vi", "", composer.ModeVi},
-		{"emacs", "vim", composer.ModeEmacs},
-		{"auto", "vim", composer.ModeVi},
-		{"auto", "nano", composer.ModeEmacs},
-		{"", "", composer.ModeEmacs},
+// TestTabCyclesFromTheComposer: the help card advertises tab as a global
+// binding, so it has to work from the composer too.
+func TestTabCyclesFromTheComposer(t *testing.T) {
+	m := update(t, openChatModel(t, PanelComposer), "\t")
+	if m.focus == PanelComposer {
+		t.Error("tab did not cycle out of the composer")
 	}
-	for _, tc := range cases {
-		t.Run(tc.setting+"/"+tc.editor, func(t *testing.T) {
-			t.Setenv("EDITOR", tc.editor)
-			if got := composerEditingMode(tc.setting); got != tc.want {
-				t.Errorf("composerEditingMode(%q) with EDITOR=%q = %v, want %v",
-					tc.setting, tc.editor, got, tc.want)
-			}
-		})
-	}
-
-	// New() applies it rather than leaving the composer on its default.
-	t.Setenv("EDITOR", "")
-	cfg := &config.Config{}
-	cfg.UI.ComposeEditing = config.ComposeEditingVi
-	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
-	if got := m.composer.EditingMode(); got != composer.ModeVi {
-		t.Errorf("New() left the composer in mode %v, want ModeVi", got)
+	// Shift+tab still steps the other way.
+	if got := update(t, openChatModel(t, PanelComposer), "\x1b[Z"); got.focus != PanelChatView {
+		t.Errorf("shift+tab from the composer went to %v, want PanelChatView", got.focus)
 	}
 }

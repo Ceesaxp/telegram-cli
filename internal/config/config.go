@@ -45,7 +45,30 @@ type UIConfig struct {
 	// (the default) to infer it from $VISUAL/$EDITOR. Resolve it with
 	// [ResolveComposeEditing]; never read the raw value.
 	ComposeEditing string `toml:"compose_editing"`
+	// ParseMarkdown enables the Telegram Desktop markdown subset in
+	// outgoing messages and captions (**bold**, __italic__, `code`,
+	// ```pre```, ~~strike~~, ||spoiler||, [text](url)).
+	//
+	// Defaults to FALSE: what you typed is what gets sent. The composer has
+	// no preview, so with parsing on silently by default the first time a
+	// user notices is when a message has already left — and the syntax
+	// overlaps with things people paste verbatim. __init__ arrives as
+	// init, a snippet full of ** loses it, a table of || collapses. Opting
+	// in means knowing that transformation happens.
+	//
+	// -migrate-config turns it on for existing configs, where it reports
+	// the change, so upgraders get the feature but are told about it.
+	ParseMarkdown bool `toml:"parse_markdown"`
 }
+
+// Default storage locations, in the portable "~/" form. defaultConfig
+// expands them for the running app; -migrate-config writes these literals so
+// a generated config stays portable instead of hardcoding one machine's home
+// directory.
+const (
+	DefaultSessionFile = "~/.local/share/tele-tui/session.json"
+	DefaultFilesDir    = "~/.local/share/tele-tui/files"
+)
 
 // Line-editing keymaps for [UIConfig.ComposeEditing].
 const (
@@ -116,7 +139,7 @@ type NotificationConfig struct {
 //   - Wired (read by internal/app, which normalizes the value via
 //     [NormalizeKey] and falls back to its built-in default when empty):
 //     Quit, FocusChatList, FocusChatView, FocusComposer, Search,
-//     GlobalSearch, Contacts, ContactsAlt, NextFolder, PrevFolder,
+//     GlobalSearch, Contacts, ContactsAlt, Help, NextFolder, PrevFolder,
 //     NextChat, PrevChat. Note FocusChatList/View/Composer are wired *in
 //     addition to* their hardcoded alt+1/2/3 shortcuts, which always work
 //     regardless of configuration.
@@ -129,11 +152,13 @@ type NotificationConfig struct {
 //     vi motions those components implement (j/k, g/G, ctrl+u/ctrl+d,
 //     n/N, ctrl+f, and the readline keys in the composer).
 //
-// Wired bindings are checked before quick-type's fallthrough to the
-// composer, so configuring a bare single printable character (e.g.
-// quit = "q" or next_folder = "l") shadows that character everywhere —
-// it becomes untypeable as message text whenever a chat is open. Prefer
-// modifier-based bindings (alt+, ctrl+, a function key) to avoid this.
+// Wired bindings are matched before the focused panel sees the key, so a
+// binding here shadows that key in the chat list and chat view. It does not
+// shadow it in the composer: typing is only ever entered deliberately (i, c,
+// Tab, the focus keys, or a click), and once the composer has focus almost
+// nothing is claimed at app level — see the exception list in the keymap
+// table in internal/app/keymap.go. A bare printable is therefore a
+// reasonable binding here, though a modifier still reads more clearly.
 //
 // # macOS: Alt bindings and the Option key
 //
@@ -170,6 +195,8 @@ type KeyConfig struct {
 	// so the overlay stays reachable on terminals that cannot report Alt
 	// (see the macOS notes below). Default f4.
 	ContactsAlt string `toml:"contacts_alt"`
+	// Help opens the keybinding overlay. Default "?".
+	Help string `toml:"help"`
 	// GlobalSearch searches every chat. Search ("/") does the same from
 	// every panel except the chat view, where vi convention makes "/" mean
 	// "find in this buffer"; GlobalSearch is the panel-independent binding.
@@ -303,8 +330,8 @@ func Load() (*Config, error) {
 func defaultConfig() *Config {
 	return &Config{
 		Storage: StorageConfig{
-			SessionFile: expandPath("~/.local/share/tele-tui/session.json"),
-			FilesDir:    expandPath("~/.local/share/tele-tui/files"),
+			SessionFile: expandPath(DefaultSessionFile),
+			FilesDir:    expandPath(DefaultFilesDir),
 		},
 		UI: UIConfig{
 			ComposeEditing:  ComposeEditingAuto,
@@ -313,6 +340,7 @@ func defaultConfig() *Config {
 			ShowAvatars:     true,
 			TimestampFormat: "15:04",
 			DateFormat:      "2006-01-02",
+			ParseMarkdown:   false,
 		},
 		Media: MediaConfig{
 			ImageProtocol:       "auto",
@@ -338,6 +366,7 @@ func defaultConfig() *Config {
 			Contacts:      "alt+c",
 			ContactsAlt:   "f4",
 			GlobalSearch:  "ctrl+g",
+			Help:          "?",
 			NextChat:      "alt+j",
 			PrevChat:      "alt+k",
 			Reply:         "r",
@@ -354,16 +383,24 @@ func defaultConfig() *Config {
 	}
 }
 
-// Save writes the config to the default config path.
+// Save writes the config to the path the app will read back: $TELETUI_CONFIG
+// when set, otherwise the default location. See [ConfigPath].
+//
+// Writing to the default location unconditionally would break the first-run
+// setup wizard under $TELETUI_CONFIG: the credentials it collects would land
+// in a file [Load] never looks at, and the next launch would ask for them
+// again.
 func Save(cfg *Config) error {
-	path := defaultConfigPath()
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	return SaveTo(ConfigPath(), cfg)
+}
 
+// marshalConfig encodes a config as TOML.
+func marshalConfig(cfg *Config) ([]byte, error) {
 	data, err := toml.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+		return nil, fmt.Errorf("marshaling config: %w", err)
 	}
-	return os.WriteFile(path, data, 0o600)
+	return data, nil
 }
 
 func defaultConfigPath() string {
@@ -375,6 +412,9 @@ func defaultConfigPath() string {
 	return filepath.Join(xdgConfig, "tele-tui", "config.toml")
 }
 
+// findConfigPath returns the config file to read, or "" when there is none.
+// [ConfigPath] is the same resolution for writing, where a file that does not
+// exist yet is the normal case rather than a miss.
 func findConfigPath() string {
 	if p := os.Getenv("TELETUI_CONFIG"); p != "" {
 		return p

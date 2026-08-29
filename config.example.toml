@@ -21,6 +21,20 @@ show_avatars = true
 timestamp_format = "15:04"   # Go time format
 date_format = "2006-01-02"
 
+# Line editing in the composer: "emacs" (readline chords), "vi" (modal),
+# or "auto" to follow $VISUAL/$EDITOR.
+compose_editing = "auto"
+
+# Format outgoing messages with Telegram's markdown subset.
+#
+# WARNING: this rewrites what you typed. **bold**, __italic__, `code`,
+# ```pre```, ~~strike~~, ||spoiler|| and [text](url) are consumed as
+# formatting and the markers disappear from the sent message — so __init__
+# arrives as init, and a pasted snippet can lose characters. There is no
+# preview in the composer, so you only see the result after sending.
+# The built-in default is false; this example turns it on deliberately.
+parse_markdown = true
+
 # Media settings
 [media]
 image_protocol = "auto"      # "auto", "sixel", "kitty", "blocks"
