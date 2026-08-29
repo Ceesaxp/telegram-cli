@@ -2102,3 +2102,140 @@ func TestLiveKeysAreAdvertisedWhereTheyWork(t *testing.T) {
 		}
 	})
 }
+
+// withDialog is a main-screen model with a confirm dialog up, focused on
+// the given panel.
+func withDialog(t *testing.T, focus FocusPanel) Model {
+	t.Helper()
+	m := openChatModel(t, focus)
+	d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+	m.dialog = &d
+	return m
+}
+
+// TestDialogIsModalForTheKeyboard covers three defects that shared one
+// cause: app-level dispatch gated some bindings on m.dialog and forgot
+// others, so a modal dialog was modal for the mouse and for rendering but
+// not for the keys.
+//
+// The symptoms were worse than "a key did the wrong thing". Tab cycled
+// panel focus BEHIND the modal — and tab is the first key the dialog's own
+// hint line advertises as the way to choose a button, so the one key it
+// told you to press was the one key that did nothing to it. Escape moved
+// focus on the first press and only cancelled on the second. The panel
+// focus keys moved focus with the dialog still waiting for an answer.
+func TestDialogIsModalForTheKeyboard(t *testing.T) {
+	// The keys that used to act on the panels behind the dialog. Each must
+	// now leave focus alone and leave the dialog standing.
+	t.Run("panel keys do not fire behind it", func(t *testing.T) {
+		for _, tc := range []struct{ name, seq string }{
+			{"tab", "\t"},
+			{"shift+tab", "\x1b[Z"},
+			{"alt+1", "\x1b1"},
+			{"alt+2", "\x1b[50;3;8482u"}, // kitty, with composed text
+			{"alt+3", "\x1b3"},
+			{"f1", "\x1bOP"},
+			{"f3", "\x1bOR"},
+			{"h", "h"},
+			{"l", "l"},
+			{"q", "q"},
+			{"i", "i"},
+			{"?", "?"},
+			{"/", "/"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				for _, panel := range []FocusPanel{
+					PanelChatList, PanelChatView, PanelComposer,
+				} {
+					m := withDialog(t, panel)
+					got, cmd := updateCmd(t, m, tc.seq)
+					if got.focus != panel {
+						t.Errorf("from %v: %s moved focus to %v behind the "+
+							"dialog", panel, tc.name, got.focus)
+					}
+					if got.dialog == nil || !got.dialog.IsVisible() {
+						t.Errorf("from %v: %s dismissed the dialog", panel, tc.name)
+					}
+					if got.help.IsVisible() || got.search.IsVisible() ||
+						got.contacts.IsVisible() {
+						t.Errorf("from %v: %s opened an overlay over the dialog",
+							panel, tc.name)
+					}
+					if quits(cmd) {
+						t.Errorf("from %v: %s quit while the dialog was up",
+							panel, tc.name)
+					}
+				}
+			})
+		}
+	})
+
+	// The positive half: the keys the dialog's hint line advertises have to
+	// reach it. Tab is the one the bug ate.
+	t.Run("tab reaches the dialog", func(t *testing.T) {
+		m := withDialog(t, PanelChatView)
+		before := m.dialog.View()
+		got := update(t, m, "\t")
+		if got.dialog == nil {
+			t.Fatal("the dialog disappeared")
+		}
+		if got.dialog.View() == before {
+			t.Error("tab did not move the dialog's selection — the key its " +
+				"own hint line advertises first still does nothing")
+		}
+	})
+
+	// One press, from every panel. The old behavior cost two from anywhere
+	// but the chat list, and mutated focus underneath the modal on the way.
+	t.Run("one esc cancels it", func(t *testing.T) {
+		for _, panel := range []FocusPanel{
+			PanelChatList, PanelChatView, PanelComposer,
+		} {
+			m := withDialog(t, panel)
+			got, cmd := updateCmd(t, m, "\x1b")
+
+			if got.dialog != nil && got.dialog.IsVisible() {
+				t.Errorf("from %v: one esc left the dialog up", panel)
+			}
+			if got.focus != panel {
+				t.Errorf("from %v: esc moved focus to %v while cancelling",
+					panel, got.focus)
+			}
+
+			// It cancelled rather than confirmed, and the app clears the
+			// dialog when that result comes back round.
+			var result *dialog.DialogResultMsg
+			for _, msg := range flattenCmd(cmd) {
+				if r, ok := msg.(dialog.DialogResultMsg); ok {
+					result = &r
+				}
+			}
+			if result == nil {
+				t.Errorf("from %v: esc produced no dialog result", panel)
+				continue
+			}
+			if result.Confirmed {
+				t.Errorf("from %v: esc CONFIRMED the dialog", panel)
+			}
+			out, _ := got.Update(*result)
+			if next := out.(Model); next.dialog != nil {
+				t.Errorf("from %v: the dialog outlived its own result", panel)
+			}
+		}
+	})
+
+	// A modal must never be able to trap someone in the program.
+	t.Run("ctrl+c and ctrl+q still quit", func(t *testing.T) {
+		for _, tc := range []struct{ name, seq string }{
+			{"ctrl+c", "\x03"},
+			{"ctrl+q", "\x11"},
+		} {
+			for _, panel := range []FocusPanel{PanelChatList, PanelComposer} {
+				if _, cmd := updateCmd(t, withDialog(t, panel), tc.seq); !quits(cmd) {
+					t.Errorf("from %v: %s did not quit with a dialog up",
+						panel, tc.name)
+				}
+			}
+		}
+	})
+}

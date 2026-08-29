@@ -466,7 +466,7 @@ func (m Model) helpSections() []help.Section {
 		{Title: "Overlays", Bindings: []help.Binding{
 			{Keys: "esc", Desc: "Close"},
 			{Keys: "enter", Desc: "Accept the selection"},
-			{Keys: "j / k", Desc: "Move"},
+			{Keys: "j / k", Desc: "Move within a list (dialogs use the arrows)"},
 		}},
 	}
 }

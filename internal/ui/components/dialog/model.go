@@ -67,15 +67,29 @@ func NewAlert(th *theme.Theme, id, title, message string) Model {
 }
 
 // NewPrompt creates a prompt dialog with text input.
+//
+// It starts highlighted on OK, unlike NewConfirm — buttonIdx 1, not 0.
+// A prompt COLLECTS something (the attach-file path); accepting what the
+// user just typed is not destructive, and Enter is the universal reflex
+// at the end of typing. Defaulting it to Cancel meant "type /tmp/a.png,
+// press Enter" silently threw the path away and the only way to attach
+// was type -> arrow -> Enter, which nothing on screen suggested.
+//
+// The Cancel-by-default rule that NewConfirm keeps is a guard for
+// DESTRUCTIVE actions (delete for everyone, quit with an unsent draft),
+// where the cost of a reflex Enter is asymmetric. That asymmetry does
+// not exist here: the worst case of a reflex Enter on a prompt is an
+// empty path, which the app already ignores.
 func NewPrompt(th *theme.Theme, id, title, message string) Model {
 	return Model{
-		theme:   th,
-		visible: true,
-		kind:    KindPrompt,
-		id:      id,
-		title:   title,
-		message: message,
-		buttons: []string{"Cancel", "OK"},
+		theme:     th,
+		visible:   true,
+		kind:      KindPrompt,
+		id:        id,
+		title:     title,
+		message:   message,
+		buttons:   []string{"Cancel", "OK"},
+		buttonIdx: 1,
 	}
 }
 
@@ -99,36 +113,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return DialogResultMsg{ID: m.id, Confirmed: false}
 			}
 
+		// Movement is HORIZONTAL only. j/k were briefly wired here and
+		// are deliberately gone: the button row is a row, "up"/"down"
+		// have no meaning across it, and j/k are precisely the keys a
+		// user is already holding when a confirm appears mid-scroll —
+		// d, a reflexive j, Enter, and the message is deleted for
+		// everyone. In a prompt they would be worse than meaningless,
+		// since that dialog's input owns every printable (a file path
+		// may well contain a j) and they fall through to the text
+		// branch below.
+		//
+		// tab stays honored at this level even though the app's own
+		// focus cycling normally consumes it before the dialog sees it;
+		// the hint therefore does not advertise it.
 		case "tab", "right":
 			m.moveButton(1)
 
 		case "left":
 			m.moveButton(-1)
 
-		case "j", "k":
-			// The help card advertises j/k as "Move", so they have to
-			// work. In a PROMPT dialog they stay text: that dialog's
-			// input owns every printable (a file path may well contain
-			// a j), exactly as the default branch below assumes.
-			if m.kind == KindPrompt {
-				m.input += msg.String()
-				break
-			}
-			if msg.String() == "j" {
-				m.moveButton(1)
-			} else {
-				m.moveButton(-1)
-			}
-
 		case "enter":
 			// Enter accepts the HIGHLIGHTED button, whatever it is — it
-			// is not a shortcut for "Confirm". A confirm dialog starts
-			// on Cancel on purpose: these dialogs guard destructive or
-			// lossy actions (deleting a message, quitting with a draft
-			// in the composer), and a reflex Enter must not be what
-			// performs one. The View below makes the highlighted button
-			// unmistakable and spells the movement keys out, so the
-			// behavior is discoverable rather than surprising.
+			// is never a shortcut for a particular button. What differs
+			// per kind is where the highlight STARTS (see the New*
+			// constructors): a confirm starts on Cancel, because a
+			// reflex Enter must not delete a message or discard a draft;
+			// a prompt starts on OK, because a reflex Enter after typing
+			// must not throw away what was typed. The View below makes
+			// the highlighted button unmistakable and spells the keys
+			// out, so either default is visible before Enter is pressed.
 			m.visible = false
 			confirmed := m.buttonIdx == len(m.buttons)-1
 			return m, func() tea.Msg {
@@ -217,10 +230,22 @@ func (m Model) renderButtons() string {
 // renderHint spells out the keys the dialog actually honors, inside the
 // dialog. Without it, "enter accepts the highlighted button" is a rule a
 // user can only discover by losing something to it.
+//
+// It names ONLY keys that reach this component in the running app. tab
+// is honored by Update but omitted here because the app's focus cycling
+// consumes it first, and j/k are not movement keys at all — a hint that
+// lists keys the dialog does not actually get is the same drift this
+// wave removed from the status bar and the README.
 func (m Model) renderHint() string {
-	hint := "←/→ or tab: choose · enter: accept"
-	if len(m.buttons) <= 1 {
-		hint = "enter: dismiss"
+	hint := "←/→: choose · enter: accept · esc: cancel"
+	switch {
+	case len(m.buttons) <= 1:
+		// An alert has nothing to choose between.
+		hint = "enter or esc: dismiss"
+	case m.kind == KindPrompt:
+		// Enter is the reflex at the end of typing, and here it accepts
+		// what was typed — lead with that rather than with movement.
+		hint = "enter: accept input · ←/→: choose · esc: cancel"
 	}
 	return lipgloss.NewStyle().Foreground(m.theme.TextMuted).Render(hint)
 }
