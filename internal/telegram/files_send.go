@@ -105,10 +105,12 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 // sendUploadedMedia sends already-uploaded media to peer and publishes the
 // resulting message to the update stream.
 func (c *Client) sendUploadedMedia(ctx context.Context, peer tg.InputPeerClass, media tg.InputMediaClass, caption string, replyToMessageID int64) (*Message, error) {
+	body, entities := c.formatOutgoing(caption)
 	req := &tg.MessagesSendMediaRequest{
 		Peer:     peer,
 		Media:    media,
-		Message:  caption,
+		Message:  body,
+		Entities: entities,
 		RandomID: rand.Int63(),
 	}
 	if replyToMessageID != 0 {

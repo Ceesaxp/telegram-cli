@@ -17,9 +17,13 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int
 		return nil, fmt.Errorf("send message: %w", err)
 	}
 
+	// Link previews are left to the server: NoWebpage stays unset so
+	// markdown changes formatting only, never preview behaviour.
+	body, entities := c.formatOutgoing(text)
 	req := &tg.MessagesSendMessageRequest{
 		Peer:     peer,
-		Message:  text,
+		Message:  body,
+		Entities: entities,
 		RandomID: rand.Int63(),
 	}
 	if replyToMessageID != 0 {
@@ -36,11 +40,14 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int
 		// UpdateShortSentMessage carries no full message — build one from
 		// what we know. It DOES carry the real message ID, so the copy
 		// arriving later via the update dispatcher dedups correctly.
+		// Echo what went on the wire, not what was typed: markers are
+		// stripped and the entities run through the incoming converter,
+		// so the local copy renders exactly like the server's.
 		msg = &Message{
 			ChatID:           chatID,
 			IsOutgoing:       true,
 			ReplyToMessageID: replyToMessageID,
-			Content:          &MessageText{Text: &FormattedText{Text: text}},
+			Content:          &MessageText{Text: formattedTextFromTG(body, entities)},
 		}
 		if s, ok := updates.(*tg.UpdateShortSentMessage); ok {
 			msg.ID = int64(s.ID)
@@ -60,10 +67,12 @@ func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*M
 		return nil, fmt.Errorf("edit message: %w", err)
 	}
 
+	body, entities := c.formatOutgoing(text)
 	updates, err := c.api.MessagesEditMessage(ctx, &tg.MessagesEditMessageRequest{
-		Peer:    peer,
-		ID:      int(messageID),
-		Message: text,
+		Peer:     peer,
+		ID:       int(messageID),
+		Message:  body,
+		Entities: entities,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("edit message: %w", err)
