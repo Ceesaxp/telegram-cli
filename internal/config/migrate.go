@@ -561,7 +561,7 @@ func resolveTarget(path string) string {
 // default location; migration has to write back to the file it read, which
 // TELETUI_CONFIG can move.
 func SaveTo(path string, cfg *Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 	data, err := marshalConfig(cfg)

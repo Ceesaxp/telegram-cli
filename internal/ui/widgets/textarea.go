@@ -46,6 +46,10 @@ type TextArea struct {
 	// breaks, InsertNewline is meaningful, and View renders one row per
 	// line inside a vertically scrolling window Height rows tall.
 	MultiLine bool
+	// EchoPassword, on the single-line path, renders a bullet per rune
+	// instead of Value so a 2FA password is not visible on screen. The
+	// cursor and placeholder (when empty) are unchanged.
+	EchoPassword bool
 }
 
 func NewTextArea() TextArea {
@@ -416,10 +420,18 @@ func (t *TextArea) View() string {
 		}
 	}
 
-	start, end := textWindow(len(runes), cursor, visible)
-	content := string(runes[start:end])
+	display := runes
+	if t.EchoPassword {
+		masked := make([]rune, len(runes))
+		for i := range runes {
+			masked[i] = '•'
+		}
+		display = masked
+	}
+	start, end := textWindow(len(display), cursor, visible)
+	content := string(display[start:end])
 	if t.Focused {
-		content = string(runes[start:cursor]) + "█" + string(runes[cursor:end])
+		content = string(display[start:cursor]) + "█" + string(display[cursor:end])
 	}
 
 	return t.Style.Width(t.Width).Render(content)

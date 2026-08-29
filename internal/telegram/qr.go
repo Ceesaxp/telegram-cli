@@ -45,7 +45,7 @@ func LoginWithQR(ctx context.Context, cfg *config.Config, opts QRLoginOptions) (
 	if opts.ShowQRCode == nil {
 		return nil, errors.New("QR login requires a QR code callback")
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o700); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
 

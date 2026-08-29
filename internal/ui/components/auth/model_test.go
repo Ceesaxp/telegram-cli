@@ -26,3 +26,28 @@ func TestSubmitPhoneWaitsForCodeRequestConfirmation(t *testing.T) {
 		t.Fatalf("expected pending request hint to be rendered, got %q", view)
 	}
 }
+
+func TestPasswordInputIsMasked(t *testing.T) {
+	authorizer := telegram.NewTUIAuthorizer(&config.Config{})
+	model := New(theme.DarkTheme(), authorizer)
+	model.SetSize(80, 24)
+
+	model.SetStep(StepPassword)
+	model.input.Value = "secret-pass"
+	model.input.Focused = true
+	view := model.View()
+	if strings.Contains(view, "secret-pass") {
+		t.Fatalf("password step View leaked the password: %q", view)
+	}
+	if !strings.Contains(view, "•") && !strings.Contains(view, "*") {
+		t.Fatalf("password step View has no mask glyphs: %q", view)
+	}
+
+	model.SetStep(StepPhone)
+	model.input.Value = "+15551234567"
+	model.input.Focused = true
+	view = model.View()
+	if !strings.Contains(view, "+15551234567") {
+		t.Fatalf("phone step View should show the input, got %q", view)
+	}
+}

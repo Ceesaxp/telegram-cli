@@ -66,31 +66,45 @@ seven waves, now closed:
 Detailed history lives in git (`a0bce8c..HEAD`); this file only tracks what
 remains.
 
-## Deferred / follow-ups
+## Shipped on `fix/hardening-remaining`
+
+- [x] **Jail `send_file` paths** — REST/MCP resolve via
+      `ResolveAllowedSendPath` (abs + EvalSymlinks, under `files_dir` or
+      cwd). TUI attach stays unrestricted.
+- [x] **HTTP timeouts and body limits** — `ReadHeaderTimeout` 10s,
+      `ReadTimeout` 30s, `WriteTimeout` 10m, `IdleTimeout` 120s;
+      JSON bodies capped at 1 MiB.
+- [x] **Mask 2FA password** — TUI `TextArea.EchoPassword`; CLI
+      `ReadAuthLine` uses `term.ReadPassword` on a TTY. QR login
+      already hid input.
+- [x] **Session / files / config dirs `0700`**
+- [x] **Honor `[media]`** — `ApplyMedia` wires protocol, bubble size,
+      voice/video players, `AutoDownloadPhotos`, `AutoDownloadLimitMB`.
+      Voice notes still download on play (no eager prefetch).
+- [x] **`DownloadFileSync` singleflight** per file key
+- [x] **Bounded `image.Decode`** — 20 MiB / 20e6 pixels via
+      `DecodeConfig` before Decode
+
+## Remaining — product / cleanup
 
 - [ ] **Group info panel unreachable** — `groupinfo.Model` and
       `OpenGroupInfo` exist and are dispatched to when focused, but no
       keybinding ever sets `PanelGroupInfo` or calls `OpenGroupInfo`.
 - [ ] **`dialog.NewAlert` is dead code** — no caller anywhere outside
       `internal/ui/components/dialog/model.go` itself.
-- [ ] **`config.example.toml`'s `[keys]` block has drifted again** — it's
-      missing `help`, `global_search`, and `contacts_alt` (all wired,
-      added in Wave 7), and its comment above `[keys]` still warns that a
-      bare printable "shadows quick-type" — quick-type was removed in
-      Wave 5, so that specific hazard no longer applies (a bare printable
-      binding is now only a chat-list/chat-view shadowing concern, not a
-      composer one). Sync it with `internal/config/config.go`'s
-      `defaultConfig()` — README documents the actual current defaults in
-      the meantime.
-- [ ] Multi-file paste (attach several files from one clipboard file drop
-      list — currently only the first file reference is used)
-- [ ] Clipboard *text* fallback (paste clipboard text into the composer
-      when no image/file is present — currently shows "no image or file
-      in clipboard")
-- [ ] Per-chat drafts (switching chats currently discards the draft and
-      any pending attachment)
-- [ ] `isWildcardHost` covers `0.0.0.0` / `::` / `0:0:0:0:0:0:0:0` — revisit
-      for other wildcard/edge-case spellings if the REST API's
-      loopback-only assumption ever loosens further
-- [ ] Expose photo sending via the REST API (`/api/send-file` always sends
-      as a document) and the MCP `send_file` tool
+- [ ] **`config.example.toml` `[keys]` comment is stale** — the block
+      lists `help` / `global_search` / `contacts_alt`, but the comment
+      still warns that a bare printable "shadows quick-type". Quick-type
+      was removed. Status bar hints are still hardcoded and will not
+      follow rebinds.
+- [ ] **MCP and REST remain a 1:1 copy**
+- [ ] **`pkg/utils` sanitizers unused** — inbound text is sanitized in
+      `telegram.sanitizeTerminal`
+- [ ] **SIGINT handler `os.Exit(0)`** — `cmd/teletui` skips bubbletea
+      teardown
+- [ ] Multi-file paste (currently only the first clipboard file)
+- [ ] Clipboard *text* fallback
+- [ ] Per-chat drafts
+- [ ] `isWildcardHost` edge-case spellings if REST binds beyond loopback
+- [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
+      (currently always a document)

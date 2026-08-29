@@ -8,7 +8,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -229,14 +228,20 @@ func runLogin(cfg *config.Config) {
 
 	// Feed stdin lines into the authorizer according to the current state.
 	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			value := strings.TrimSpace(scanner.Text())
+		for {
+			mu.Lock()
+			s := state
+			mu.Unlock()
+			line, err := telegram.ReadAuthLine(os.Stdin, s == telegram.AuthStateWaitPassword)
+			if err != nil {
+				return
+			}
+			value := strings.TrimSpace(line)
 			if value == "" {
 				continue
 			}
 			mu.Lock()
-			s := state
+			s = state
 			mu.Unlock()
 			switch s {
 			case telegram.AuthStateWaitPhone:
@@ -322,10 +327,7 @@ func runServe(cfg *config.Config, addr string, token string, allowedHosts []stri
 		api.AddAllowedHost(h)
 	}
 	log.Printf("allowed Host/Origin values: %s", strings.Join(api.AllowedHosts(), ", "))
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: api.Handler(),
-	}
+	srv := newHTTPServer(addr, api.Handler())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -341,5 +343,16 @@ func runServe(cfg *config.Config, addr string, token string, allowedHosts []stri
 	log.Printf("listening on http://%s", addr)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("http server: %v", err)
+	}
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      10 * time.Minute, // media download can match telegram.transferTimeout
+		IdleTimeout:       120 * time.Second,
 	}
 }

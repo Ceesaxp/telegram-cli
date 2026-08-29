@@ -71,8 +71,8 @@ func NewRPCClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
 }
 
 func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *Client {
-	os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o755)
-	os.MkdirAll(cfg.Storage.FilesDir, 0o755)
+	os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o700)
+	os.MkdirAll(cfg.Storage.FilesDir, 0o700)
 
 	dispatcher := tg.NewUpdateDispatcher()
 
@@ -313,6 +313,11 @@ func (c *Client) Close() {
 	if c.cancel != nil {
 		c.cancel()
 	}
+}
+
+// FilesDir is the local directory downloaded media is stored in.
+func (c *Client) FilesDir() string {
+	return c.config.Storage.FilesDir
 }
 
 // opTimeout bounds a single RPC round-trip. Without it a hung network

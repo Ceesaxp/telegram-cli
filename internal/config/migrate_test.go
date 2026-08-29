@@ -511,6 +511,27 @@ func TestSaveToTightensPermissions(t *testing.T) {
 	}
 }
 
+func TestSaveToCreatesPrivateDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "private", "config.toml")
+	if err := SaveTo(path, defaultConfig()); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// MkdirAll 0700 never grants group/other bits; umask can only clear
+	// them. With a typical 022 umask the result is 0700.
+	got := info.Mode().Perm()
+	if got&0o077 != 0 {
+		t.Errorf("config dir mode = %o, group/other bits must not be granted", got)
+	}
+	if got != 0o700 {
+		t.Errorf("config dir mode = %o, want 0700", got)
+	}
+}
+
 func TestBackupFilePermissionsAndCollision(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

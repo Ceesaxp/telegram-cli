@@ -125,6 +125,7 @@ func (m *Model) SetError(err string) {
 func (m *Model) SetStep(step Step) {
 	m.step = step
 	m.input.Reset()
+	m.input.EchoPassword = step == StepPassword
 
 	switch step {
 	case StepPhone:

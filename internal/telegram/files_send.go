@@ -7,10 +7,49 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 )
+
+// ResolveAllowedSendPath returns the absolute, symlink-resolved form of
+// path if it exists and is the same as, or inside, one of roots.
+// Empty roots are ignored. The file itself must exist (a dangling last
+// component is rejected) so a symlink cannot later be swapped for a
+// path outside the jail.
+func ResolveAllowedSendPath(path string, roots ...string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("send file: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("send file: %w", err)
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		evalRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(evalRoot, resolved)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return resolved, nil
+	}
+	return "", fmt.Errorf("send file: path %q is outside the allowed directories", path)
+}
 
 // SendFileMessage uploads a local file and sends it as a document,
 // optionally with a caption and as a reply.
