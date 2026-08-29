@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
@@ -31,6 +32,11 @@ func newTestModel() Model {
 	s := store.NewStore()
 	th := theme.DarkTheme()
 	return New(s, nil, th)
+}
+
+func TestApplyMediaImageProtocolConstructs(t *testing.T) {
+	m := newTestModel()
+	m.ApplyMedia(config.MediaConfig{ImageProtocol: "blocks"})
 }
 
 func TestTruncatePreviewTextRuneSafe(t *testing.T) {

@@ -63,6 +63,28 @@ func TestSingleLineTypingAndSubmit(t *testing.T) {
 	}
 }
 
+func TestEchoPasswordMasksValue(t *testing.T) {
+	ta := singleLine()
+	ta.EchoPassword = true
+	ta.Value = "secret"
+	ta.Cursor = len([]rune(ta.Value))
+	view := ta.View()
+	if strings.Contains(view, "secret") {
+		t.Fatalf("View leaked password: %q", view)
+	}
+	if !strings.Contains(view, "•") {
+		t.Fatalf("View has no mask glyphs: %q", view)
+	}
+
+	ta.Value = ""
+	ta.Placeholder = "password"
+	ta.Focused = false
+	view = ta.View()
+	if !strings.Contains(view, "password") {
+		t.Fatalf("empty password field should show placeholder, got %q", view)
+	}
+}
+
 // A single-line input has no second line to move to, so the multi-line motions
 // are inert there — the search overlay keeps its own up/down list navigation.
 func TestSingleLineVerticalMotionIsInert(t *testing.T) {

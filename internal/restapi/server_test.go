@@ -130,6 +130,26 @@ func TestSendValidation(t *testing.T) {
 	}
 }
 
+func TestSendFileMissingPath(t *testing.T) {
+	req := authedRequest(http.MethodPost, "/api/send-file", `{"chat_id":123}`)
+	rec := serve(testServer(), req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSendJSONBodyTooLarge(t *testing.T) {
+	body := `{"chat_id":1,"text":"` + strings.Repeat("a", 1<<20) + `"}`
+	req := authedRequest(http.MethodPost, "/api/send", body)
+	rec := serve(testServer(), req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "too large") {
+		t.Fatalf("expected too-large message, got %s", got)
+	}
+}
+
 func TestMediaMissingParams(t *testing.T) {
 	for _, url := range []string{"/api/media", "/api/media?chat_id=123", "/api/media?message_id=1"} {
 		req := authedRequest(http.MethodGet, url, "")

@@ -9,7 +9,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -150,14 +149,20 @@ func runLogin(cfg *config.Config) {
 
 	// Feed stdin lines into the authorizer according to the current state.
 	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			value := strings.TrimSpace(scanner.Text())
+		for {
+			mu.Lock()
+			s := state
+			mu.Unlock()
+			line, err := telegram.ReadAuthLine(os.Stdin, s == telegram.AuthStateWaitPassword)
+			if err != nil {
+				return
+			}
+			value := strings.TrimSpace(line)
 			if value == "" {
 				continue
 			}
 			mu.Lock()
-			s := state
+			s = state
 			mu.Unlock()
 			switch s {
 			case telegram.AuthStateWaitPhone:

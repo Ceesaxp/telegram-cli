@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
@@ -640,7 +641,7 @@ func TestPhotoDownloadTargetsDedupByFile(t *testing.T) {
 		textMessage(5, 100, "not a photo"),
 	}
 
-	order, wanted := photoDownloadTargets(msgs)
+	order, wanted := photoDownloadTargets(msgs, 0)
 	if len(order) != 2 {
 		t.Fatalf("expected one download per unique file, got %v", order)
 	}
@@ -1061,7 +1062,7 @@ func TestPhotoPrefetchIsCapped(t *testing.T) {
 		msgs = append(msgs, photoMessage(int64(i), 100, fmt.Sprintf("file-%d", i), "photo"))
 	}
 
-	targets := recentPhotoTargets(msgs, st, photoPrefetchLimit)
+	targets := recentPhotoTargets(msgs, st, photoPrefetchLimit, 0)
 	if len(targets) != photoPrefetchLimit {
 		t.Fatalf("expected the prefetch capped at %d, got %d", photoPrefetchLimit, len(targets))
 	}
@@ -1080,14 +1081,53 @@ func TestPhotoPrefetchIsCapped(t *testing.T) {
 		photoMessage(3, 100, "file-b", "b"),
 	}
 	st.Files.Update(&telegram.File{ID: "file-b", Path: "/tmp/b.jpg", Downloaded: true})
-	targets = recentPhotoTargets(mixed, st, photoPrefetchLimit)
+	targets = recentPhotoTargets(mixed, st, photoPrefetchLimit, 0)
 	if len(targets) != 1 || targets[0].ID != 2 {
 		t.Fatalf("expected only the undownloaded photo, got %v", targets)
 	}
 
 	// A zero/negative cap fetches nothing.
-	if got := recentPhotoTargets(msgs, st, 0); got != nil {
+	if got := recentPhotoTargets(msgs, st, 0, 0); got != nil {
 		t.Fatalf("expected no targets for a zero cap, got %d", len(got))
+	}
+}
+
+func TestApplyMediaDisablesPhotoPrefetch(t *testing.T) {
+	m := newTestModel()
+	m.ApplyMedia(config.MediaConfig{ImageProtocol: "blocks", AutoDownloadPhotos: false})
+
+	var msgs []*telegram.Message
+	for i := 1; i <= 5; i++ {
+		msgs = append(msgs, photoMessage(int64(i), 100, fmt.Sprintf("file-%d", i), "photo"))
+	}
+	if got := m.photoPrefetchTargets(msgs); got != nil {
+		t.Fatalf("expected no photo prefetch when AutoDownloadPhotos=false, got %d", len(got))
+	}
+}
+
+func TestApplyMediaImageProtocolConstructs(t *testing.T) {
+	m := newTestModel()
+	m.ApplyMedia(config.MediaConfig{ImageProtocol: "blocks"})
+}
+
+func TestPhotoDownloadSkipsOversize(t *testing.T) {
+	small := photoMessage(1, 100, "file-small", "s")
+	big := photoMessage(2, 100, "file-big", "b")
+	unknown := photoMessage(3, 100, "file-unknown", "u")
+	small.Content.(*telegram.MessagePhoto).Photo.Sizes[0].File.Size = 100
+	big.Content.(*telegram.MessagePhoto).Photo.Sizes[0].File.Size = 3 << 20
+	// unknown keeps Size 0
+
+	const maxBytes = 1 << 20
+	order, wanted := photoDownloadTargets([]*telegram.Message{small, big, unknown}, maxBytes)
+	if len(order) != 2 || order[0] != "file-small" || order[1] != "file-unknown" {
+		t.Fatalf("expected small+unknown, got %v", order)
+	}
+	if _, ok := wanted["file-big"]; ok {
+		t.Fatalf("oversized photo should not be a download target")
+	}
+	if needsThumbnail(big, store.NewStore(), maxBytes) {
+		t.Fatalf("oversized photo should not need a thumbnail")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -458,7 +459,18 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := s.tg.SendFileMessage(in.ChatID, in.Path, in.Caption, in.ReplyToMessageID)
+	cwd, err := os.Getwd()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot determine working directory")
+		return
+	}
+	path, err := telegram.ResolveAllowedSendPath(in.Path, s.tg.FilesDir(), cwd)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	msg, err := s.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID)
 	if err != nil {
 		writeTelegramError(w, err)
 		return
@@ -569,7 +581,13 @@ func writeTelegramError(w http.ResponseWriter, err error) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	limited := http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+	if err := json.NewDecoder(limited).Decode(v); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusBadRequest, "request body too large")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}

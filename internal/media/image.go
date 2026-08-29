@@ -6,9 +6,15 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"os"
 
 	"golang.org/x/image/draw"
+)
+
+const (
+	maxImageFileBytes = 20 << 20
+	maxImagePixels    = 20_000_000
 )
 
 type ImageRenderer struct {
@@ -26,11 +32,30 @@ func NewImageRenderer(protocol Protocol, maxWidth, maxHeight int) *ImageRenderer
 }
 
 func (r *ImageRenderer) RenderFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("opening image: %w", err)
+	}
+	if err := checkImageFileSize(info.Size()); err != nil {
+		return "", err
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("opening image: %w", err)
 	}
 	defer f.Close()
+
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return "", fmt.Errorf("decoding image: %w", err)
+	}
+	if err := checkImageBounds(info.Size(), cfg.Width, cfg.Height); err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("decoding image: %w", err)
+	}
 
 	img, _, err := image.Decode(f)
 	if err != nil {
@@ -38,6 +63,26 @@ func (r *ImageRenderer) RenderFile(path string) (string, error) {
 	}
 
 	return r.RenderImage(img)
+}
+
+func checkImageFileSize(fileSize int64) error {
+	if fileSize > maxImageFileBytes {
+		return fmt.Errorf("image too large")
+	}
+	return nil
+}
+
+func checkImageBounds(fileSize int64, width, height int) error {
+	if err := checkImageFileSize(fileSize); err != nil {
+		return err
+	}
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("image dimensions too large")
+	}
+	if height > maxImagePixels/width {
+		return fmt.Errorf("image dimensions too large")
+	}
+	return nil
 }
 
 func (r *ImageRenderer) RenderImage(img image.Image) (string, error) {

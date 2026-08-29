@@ -116,6 +116,26 @@ func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 	}
 }
 
+const (
+	defaultImageCols = 50
+	defaultImageRows = 25
+)
+
+// SetImageProtocol replaces the image renderer used for photo bubbles.
+// Zero cols/rows fall back to the historical 50x25 bubble size.
+func (r *MessageRenderer) SetImageProtocol(protocol media.Protocol, maxCols, maxRows int) {
+	if r == nil {
+		return
+	}
+	if maxCols <= 0 {
+		maxCols = defaultImageCols
+	}
+	if maxRows <= 0 {
+		maxRows = defaultImageRows
+	}
+	r.imgRend = media.NewImageRenderer(protocol, maxCols, maxRows)
+}
+
 // ensureGlamourWidth rebuilds the glamour renderer only when the desired
 // word-wrap width actually changed, so repeated calls with the same panel
 // width are cheap.

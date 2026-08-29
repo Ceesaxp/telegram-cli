@@ -4,6 +4,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -249,7 +250,15 @@ func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in s
 }
 
 func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in sendFileIn) (*mcp.CallToolResult, messageOut, error) {
-	msg, err := h.tg.SendFileMessage(in.ChatID, in.Path, in.Caption, in.ReplyToMessageID)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, messageOut{}, err
+	}
+	path, err := telegram.ResolveAllowedSendPath(in.Path, h.tg.FilesDir(), cwd)
+	if err != nil {
+		return nil, messageOut{}, err
+	}
+	msg, err := h.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID)
 	if err != nil {
 		return nil, messageOut{}, err
 	}

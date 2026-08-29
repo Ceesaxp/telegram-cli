@@ -1,8 +1,10 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // validateToken must never allow an empty/blank token through except via
@@ -32,5 +34,28 @@ func TestValidateTokenErrorNamesSource(t *testing.T) {
 func TestValidateTokenAcceptsNonEmpty(t *testing.T) {
 	if err := validateToken("a-real-token-value", "TELETUI_API_TOKEN"); err != nil {
 		t.Fatalf("expected no error for a non-empty token, got: %v", err)
+	}
+}
+
+func TestNewHTTPServerTimeouts(t *testing.T) {
+	h := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	srv := newHTTPServer("127.0.0.1:0", h)
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 10s", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v, want 30s", srv.ReadTimeout)
+	}
+	if srv.WriteTimeout != 10*time.Minute {
+		t.Errorf("WriteTimeout = %v, want 10m", srv.WriteTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
+	}
+	if srv.Addr != "127.0.0.1:0" {
+		t.Errorf("Addr = %q, want 127.0.0.1:0", srv.Addr)
+	}
+	if srv.Handler == nil {
+		t.Error("Handler is nil")
 	}
 }

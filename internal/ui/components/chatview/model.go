@@ -10,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -130,6 +132,15 @@ type Model struct {
 	renderer *render.MessageRenderer
 	cache    *bubbleCache
 
+	voice *media.VoicePlayer
+	video *media.VideoPlayer
+
+	// autoDownloadPhotos defaults to true in New so tests that skip
+	// ApplyMedia keep the historical open-chat prefetch. ApplyMedia
+	// overwrites it from config.
+	autoDownloadPhotos  bool
+	autoDownloadLimitMB int
+
 	width        int
 	height       int
 	focused      bool
@@ -188,12 +199,30 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 	input := widgets.NewTextArea()
 	input.Focused = true
 	return Model{
-		store:       s,
-		tg:          tg,
-		theme:       th,
-		renderer:    render.NewMessageRenderer(th),
-		cache:       newBubbleCache(),
-		searchInput: input,
+		store:              s,
+		tg:                 tg,
+		theme:              th,
+		renderer:           render.NewMessageRenderer(th),
+		cache:              newBubbleCache(),
+		searchInput:        input,
+		autoDownloadPhotos: true,
+	}
+}
+
+// ApplyMedia applies [media] config: image protocol and bubble size,
+// external players, and photo auto-download. Voice notes download on
+// play regardless of AutoDownloadVoice; they are not eagerly prefetched.
+func (m *Model) ApplyMedia(cfg config.MediaConfig) {
+	m.autoDownloadPhotos = cfg.AutoDownloadPhotos
+	m.autoDownloadLimitMB = cfg.AutoDownloadLimitMB
+	m.voice = media.NewVoicePlayer(cfg.VoicePlayer)
+	m.video = media.NewVideoPlayer(cfg.VideoPlayer)
+	if m.renderer != nil {
+		m.renderer.SetImageProtocol(
+			media.ResolveProtocol(cfg.ImageProtocol),
+			cfg.MaxImageWidth,
+			cfg.MaxImageHeight,
+		)
 	}
 }
 
@@ -488,8 +517,9 @@ func (m Model) fetchSendersCmd(gen int, chatID int64, wanted []int64, work metaW
 // with at most metaFetchConcurrency downloads in flight.
 func (m Model) fetchPhotosCmd(gen int, chatID int64, msgs []*telegram.Message, work metaWork) tea.Cmd {
 	tg, st := m.tg, m.store
+	maxBytes := m.photoMaxBytes()
 	return func() tea.Msg {
-		order, wanted := photoDownloadTargets(msgs)
+		order, wanted := photoDownloadTargets(msgs, maxBytes)
 
 		var (
 			mu   sync.Mutex
@@ -548,11 +578,12 @@ func (m *Model) finishMeta() {
 
 // photoDownloadTargets returns the thumbnails a page still needs, keyed by
 // FILE rather than by message: the same photo can appear twice in one page
-// (e.g. a forward of a message already in the page), and two concurrent
-// DownloadFileSync calls for one file race on the same output path. Each
-// file is downloaded once and its result fanned out to every message that
-// shows it. order preserves page order so downloads start top-down.
-func photoDownloadTargets(msgs []*telegram.Message) (order []string, wanted map[string][]int64) {
+// (e.g. a forward of a message already in the page). The file registry
+// coalesces concurrent DownloadFileSync calls for one key; grouping here
+// still avoids duplicate work on the UI side. Each file is downloaded once
+// and its result fanned out to every message that shows it. order preserves
+// page order so downloads start top-down.
+func photoDownloadTargets(msgs []*telegram.Message, maxBytes int64) (order []string, wanted map[string][]int64) {
 	wanted = make(map[string][]int64)
 	for _, msg := range msgs {
 		photo, ok := msg.Content.(*telegram.MessagePhoto)
@@ -561,6 +592,9 @@ func photoDownloadTargets(msgs []*telegram.Message) (order []string, wanted map[
 		}
 		target := thumbnailSize(photo.Photo)
 		if target == nil || target.File == nil || target.File.Downloaded {
+			continue
+		}
+		if fileExceedsLimit(target.File, maxBytes) {
 			continue
 		}
 		id := target.File.ID
@@ -621,7 +655,7 @@ func bestPhotoSize(photo *telegram.Photo) *telegram.PhotoSize {
 // fresh File value rather than mutating the one hanging off the message,
 // so msg.…File.Downloaded stays false for the whole session and cannot be
 // used on its own to decide what still needs fetching.
-func needsThumbnail(msg *telegram.Message, st *store.Store) bool {
+func needsThumbnail(msg *telegram.Message, st *store.Store, maxBytes int64) bool {
 	photo, ok := msg.Content.(*telegram.MessagePhoto)
 	if !ok {
 		return false
@@ -630,23 +664,52 @@ func needsThumbnail(msg *telegram.Message, st *store.Store) bool {
 	if target == nil || target.File == nil || target.File.Downloaded {
 		return false
 	}
+	if fileExceedsLimit(target.File, maxBytes) {
+		return false
+	}
 	if st != nil && st.Files.IsComplete(target.File.ID) {
 		return false
 	}
 	return true
 }
 
+// fileExceedsLimit reports whether f is known to be larger than maxBytes.
+// Size 0 is treated as unknown and allowed. maxBytes <= 0 means no limit.
+func fileExceedsLimit(f *telegram.File, maxBytes int64) bool {
+	if f == nil || maxBytes <= 0 || f.Size <= 0 {
+		return false
+	}
+	return f.Size > maxBytes
+}
+
+func (m Model) photoMaxBytes() int64 {
+	if m.autoDownloadLimitMB <= 0 {
+		return 0
+	}
+	return int64(m.autoDownloadLimitMB) << 20
+}
+
+// photoPrefetchTargets is the open-chat photo prefetch, gated on
+// AutoDownloadPhotos. Tests that never call ApplyMedia keep the default
+// (enabled) via New.
+func (m Model) photoPrefetchTargets(msgs []*telegram.Message) []*telegram.Message {
+	if !m.autoDownloadPhotos {
+		return nil
+	}
+	return recentPhotoTargets(msgs, m.store, photoPrefetchLimit, m.photoMaxBytes())
+}
+
 // recentPhotoTargets returns at most limit photo messages that still need
 // a thumbnail, preferring the newest — the ones the reader lands on when
 // the chat opens at the bottom. The result stays in page order (oldest
 // first) so downloads still start with the topmost of the chosen set.
-func recentPhotoTargets(msgs []*telegram.Message, st *store.Store, limit int) []*telegram.Message {
+func recentPhotoTargets(msgs []*telegram.Message, st *store.Store, limit int, maxBytes int64) []*telegram.Message {
 	if limit <= 0 {
 		return nil
 	}
 	var out []*telegram.Message
 	for i := len(msgs) - 1; i >= 0 && len(out) < limit; i-- {
-		if needsThumbnail(msgs[i], st) {
+		if needsThumbnail(msgs[i], st, maxBytes) {
 			out = append(out, msgs[i])
 		}
 	}
@@ -689,7 +752,7 @@ func (m Model) visiblePhotoTargets(margin int) []*telegram.Message {
 		if last <= lo || first >= hi {
 			continue
 		}
-		if needsThumbnail(msg, m.store) {
+		if needsThumbnail(msg, m.store, m.photoMaxBytes()) {
 			out = append(out, msg)
 			if len(out) >= photoPrefetchLimit {
 				break
@@ -703,7 +766,7 @@ func (m Model) visiblePhotoTargets(margin int) []*telegram.Message {
 // scroll position, unless the meta pipeline is already busy (which also
 // keeps a held-down scroll key from firing one command per repeat).
 func (m *Model) lazyPhotoCmd() tea.Cmd {
-	if m.tg == nil || m.metaBusy || m.chatID == 0 {
+	if !m.autoDownloadPhotos || m.tg == nil || m.metaBusy || m.chatID == 0 {
 		return nil
 	}
 	targets := m.visiblePhotoTargets(photoLazyMargin)
@@ -902,7 +965,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		priority, trailing := senderTargets(page, m.store, senderPriorityWindow)
 		work := metaWork{
-			photos:  recentPhotoTargets(page, m.store, photoPrefetchLimit),
+			photos:  m.photoPrefetchTargets(page),
 			senders: trailing,
 		}
 		if len(priority) > 0 {
@@ -1349,43 +1412,69 @@ func (m Model) downloadAndPlay(key string, mediaType string, statusMsg string) t
 	if key == "" {
 		return nil
 	}
+	voice, video := m.voice, m.video
 	return func() tea.Msg {
-		// Download
 		file, err := m.tg.DownloadFileSync(key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
 
 		path := file.Path
-
-		// Play based on type
-		var cmd *exec.Cmd
 		switch mediaType {
 		case "voice", "audio":
-			// Try mpv first, then ffplay
-			if _, err := exec.LookPath("mpv"); err == nil {
-				cmd = exec.Command("mpv", "--no-video", "--really-quiet", path)
-			} else if _, err := exec.LookPath("ffplay"); err == nil {
-				cmd = exec.Command("ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path)
-			} else {
-				// Open with default app
-				cmd = defaultOpenCmd(path)
+			if err := playVoice(voice, path); err != nil {
+				return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Play error: %v", err)}
 			}
 		case "video":
-			if _, err := exec.LookPath("mpv"); err == nil {
-				cmd = exec.Command("mpv", path)
-			} else {
-				cmd = defaultOpenCmd(path)
+			if err := playVideo(video, path); err != nil {
+				return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Play error: %v", err)}
 			}
-		}
-
-		if cmd != nil {
-			cmd.Start()
-			go cmd.Wait()
 		}
 
 		return MediaPlayMsg{Status: "playing", Info: statusMsg}
 	}
+}
+
+func playVoice(voice *media.VoicePlayer, path string) error {
+	if voice != nil {
+		return voice.Play(path)
+	}
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("mpv"); err == nil {
+		cmd = exec.Command("mpv", "--no-video", "--really-quiet", path)
+	} else if _, err := exec.LookPath("ffplay"); err == nil {
+		cmd = exec.Command("ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path)
+	} else {
+		cmd = defaultOpenCmd(path)
+	}
+	if cmd == nil {
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
+func playVideo(video *media.VideoPlayer, path string) error {
+	if video != nil {
+		return video.Play(path)
+	}
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("mpv"); err == nil {
+		cmd = exec.Command("mpv", path)
+	} else {
+		cmd = defaultOpenCmd(path)
+	}
+	if cmd == nil {
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
 }
 
 func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {

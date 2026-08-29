@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/constant"
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
+	"golang.org/x/sync/singleflight"
 )
 
 // fileEntry is a registered downloadable file.
@@ -33,10 +34,44 @@ type avatarRef struct {
 type fileRegistry struct {
 	mu      sync.RWMutex
 	entries map[string]*fileEntry
+	sf      singleflight.Group
 }
 
 func newFileRegistry() *fileRegistry {
 	return &fileRegistry{entries: make(map[string]*fileEntry)}
+}
+
+func (r *fileRegistry) do(key string, fn func() (any, error)) (any, error) {
+	v, err, _ := r.sf.Do(key, fn)
+	return v, err
+}
+
+// fileSnap is a copy of the fields DownloadFileSync needs so the registry
+// lock is not held across the network download.
+type fileSnap struct {
+	location tg.InputFileLocationClass
+	avatar   *avatarRef
+	size     int64
+	name     string
+	path     string
+	done     bool
+}
+
+func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.entries[key]
+	if !ok {
+		return fileSnap{}, false
+	}
+	return fileSnap{
+		location: e.location,
+		avatar:   e.avatar,
+		size:     e.size,
+		name:     e.name,
+		path:     e.path,
+		done:     e.done,
+	}, true
 }
 
 func (r *fileRegistry) put(key string, e *fileEntry) *File {
@@ -44,13 +79,6 @@ func (r *fileRegistry) put(key string, e *fileEntry) *File {
 	defer r.mu.Unlock()
 	r.entries[key] = e
 	return &File{ID: key, Size: e.size}
-}
-
-func (r *fileRegistry) get(key string) (*fileEntry, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	e, ok := r.entries[key]
-	return e, ok
 }
 
 func (r *fileRegistry) markDone(key, path string) {
@@ -131,49 +159,57 @@ func (c *Client) registerAvatar(chatID, photoID int64) *File {
 }
 
 // DownloadFileSync downloads a registered file to the files dir
-// and returns its local state.
+// and returns its local state. Concurrent calls for the same key share
+// one in-flight download via the registry's singleflight group.
 func (c *Client) DownloadFileSync(key string) (*File, error) {
-	entry, ok := c.files.get(key)
-	if !ok {
-		return nil, fmt.Errorf("unknown file %q", key)
-	}
-
-	if entry.done && entry.path != "" {
-		if _, err := os.Stat(entry.path); err == nil {
-			return &File{ID: key, Path: entry.path, Size: entry.size, Downloaded: true}, nil
+	v, err := c.files.do(key, func() (any, error) {
+		snap, ok := c.files.snapshot(key)
+		if !ok {
+			return nil, fmt.Errorf("unknown file %q", key)
 		}
-	}
 
-	ctx, cancel := transferCtx()
-	defer cancel()
+		if snap.done && snap.path != "" {
+			if _, err := os.Stat(snap.path); err == nil {
+				return &File{ID: key, Path: snap.path, Size: snap.size, Downloaded: true}, nil
+			}
+		}
 
-	location := entry.location
-	if location == nil && entry.avatar != nil {
-		peer, err := c.inputPeer(ctx, entry.avatar.chatID)
-		if err != nil {
+		ctx, cancel := transferCtx()
+		defer cancel()
+
+		location := snap.location
+		if location == nil && snap.avatar != nil {
+			peer, err := c.inputPeer(ctx, snap.avatar.chatID)
+			if err != nil {
+				return nil, fmt.Errorf("download %s: %w", key, err)
+			}
+			location = &tg.InputPeerPhotoFileLocation{
+				Peer:    peer,
+				PhotoID: snap.avatar.photoID,
+			}
+		}
+		if location == nil {
+			return nil, fmt.Errorf("file %q has no location", key)
+		}
+
+		name := fmt.Sprintf("%s_%s",
+			sanitizeDownloadFileName(key),
+			sanitizeDownloadFileName(snap.name))
+		path := filepath.Join(c.config.Storage.FilesDir, name)
+
+		if _, err := downloader.NewDownloader().Download(c.api, location).ToPath(ctx, path); err != nil {
 			return nil, fmt.Errorf("download %s: %w", key, err)
 		}
-		location = &tg.InputPeerPhotoFileLocation{
-			Peer:    peer,
-			PhotoID: entry.avatar.photoID,
-		}
-	}
-	if location == nil {
-		return nil, fmt.Errorf("file %q has no location", key)
-	}
 
-	name := fmt.Sprintf("%s_%s",
-		sanitizeDownloadFileName(key),
-		sanitizeDownloadFileName(entry.name))
-	path := filepath.Join(c.config.Storage.FilesDir, name)
-
-	if _, err := downloader.NewDownloader().Download(c.api, location).ToPath(ctx, path); err != nil {
-		return nil, fmt.Errorf("download %s: %w", key, err)
+		c.files.markDone(key, path)
+		file := &File{ID: key, Path: path, Size: snap.size, Downloaded: true}
+		c.send(FileUpdateMsg{File: file})
+		return file, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	c.files.markDone(key, path)
-	file := &File{ID: key, Path: path, Size: entry.size, Downloaded: true}
-	c.send(FileUpdateMsg{File: file})
+	file, _ := v.(*File)
 	return file, nil
 }
 

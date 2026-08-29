@@ -154,6 +154,8 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		authorizer: authorizer,
 		keys:       resolveKeys(cfg.Keys),
 	}
+	m.chatView.ApplyMedia(cfg.Media)
+	m.chatList.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Built once from the resolved bindings and the resolved editing mode:
 	// neither changes after startup, so there is nothing to keep in sync

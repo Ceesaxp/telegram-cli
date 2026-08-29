@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
@@ -76,6 +77,12 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
 		dirty:       &dirty,
 	}
+}
+
+// ApplyMedia sets the avatar image protocol from [media] config.
+// Avatar cell size stays 4x2 regardless of MaxImageWidth/Height.
+func (m *Model) ApplyMedia(cfg config.MediaConfig) {
+	m.avatarRend = media.NewImageRenderer(media.ResolveProtocol(cfg.ImageProtocol), 4, 2)
 }
 
 // defaultAllFolder synthesizes the implicit "All chats" folder so the tab
