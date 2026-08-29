@@ -21,6 +21,9 @@ go.work.sum
 *.swo
 *~
 
+# Agent tooling — local session state, not project config
+.claude/
+
 # TDLib data
 .tdlib/
 
