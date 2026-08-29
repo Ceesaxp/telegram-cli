@@ -2,10 +2,10 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
+	"github.com/imtaqin/telegram-cli/internal/keys"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 )
@@ -33,6 +33,7 @@ import (
 // ## Global — any panel
 //
 //	ctrl+c, ctrl+q     quit                          (plus [keys.quit])
+//	q                  quit, from the browsing panels only [keys.quit_browsing]
 //	tab, shift+tab     cycle panel focus            (including from the composer)
 //	alt+1, f1          focus chat list               [keys.focus_chat_list]
 //	alt+2, f2          focus chat view               [keys.focus_chat_view]
@@ -48,29 +49,37 @@ import (
 // ## Chat list
 //
 //	j, k / down, up    next / previous chat
-//	h, l / left, right previous / next folder tab    (alt-free folder cycling)
-//	[, ]               previous / next folder tab    (lazygit spelling, chatlist)
+//	l                  focus the chat view           (h here is a no-op)
+//	[, ] / left, right previous / next folder tab    (alt-free folder cycling)
 //	1-9                jump to folder N (1 = All)
 //	g, G / home, end   first / last chat
 //	enter              open the selected chat
 //	i, c               focus the composer
-//	/                  search all chats              [keys.search]
+//	/                  filter this list              [keys.search]
+//	q                  quit                          [keys.quit_browsing]
 //	click              select a chat, or switch to a clicked folder tab
 //	wheel              scroll
 //
 // ## Chat view
 //
-//	j, k / down, up    scroll down / up
+//	j, k / down, up    scroll down / up              [+keys.scroll_down, +keys.scroll_up]
 //	g, G / home, end   top / bottom
 //	ctrl+d, ctrl+u     page down / up
-//	pgdown, pgup       page down / up
-//	/, ctrl+f          find in this chat
+//	pgdown, pgup       page down / up                [+keys.page_down, +keys.page_up]
+//	h                  focus the chat list           (l here is a no-op)
+//	/, ctrl+f          find in this chat             [keys.search]
 //	n, N               next / previous match
 //	esc                close the find input, else leave the panel
-//	r, e, d            reply / edit / delete message
+//	r, e, d            reply / edit / delete message [keys.reply, keys.edit_message, keys.delete_message]
 //	enter, o           open attachment
 //	s                  save attachment
 //	i, c               focus the composer
+//	q                  quit                          [keys.quit_browsing]
+//
+// A [+keys.x] above is additive: the configured key is an extra spelling
+// alongside the hardcoded one, never a replacement. The chat view's
+// mnemonics (r/e/d) are the other way round — configuring one moves it.
+// See chatview.Keys.
 //
 // ## Composer
 //
@@ -97,17 +106,29 @@ import (
 // focused, so neither keymap's chords are shadowed. The complete list of keys
 // that still fire from a focused composer:
 //
-//	ctrl+c, ctrl+q     quit
+//	ctrl+c, ctrl+q     quit                          (plus [keys.quit])
 //	ctrl+v             paste a clipboard image
 //	esc                only when the composer has nothing to cancel
 //	tab, shift+tab     cycle panel focus            (including from the composer)
-//	alt+1/2/3, f1-f3   focus a panel
-//	alt+j/k, alt+h/l   chat and folder navigation
-//	alt+c, f4          contacts overlay
+//	alt+1/2/3, f1-f3   focus a panel                 [keys.focus_chat_list, _chat_view, _composer]
+//	alt+j/k, alt+h/l   chat and folder navigation    [keys.next_chat, prev_chat, next_folder, prev_folder]
+//	alt+c, f4          contacts overlay              [keys.contacts, keys.contacts_alt]
 //
 // Every one of those is a modifier or function key that no line-editing
-// keymap binds. Note "?" is absent: the composer owns printables. No other ctrl+<letter> is claimed at app level — in
-// particular ctrl+a/b/d/e/f/j/k/o/t/u/w all fall through to the composer.
+// keymap binds. Note "?" is absent, as is [keys.quit_browsing]: the
+// composer owns printables, and a bare letter would be text here.
+// No other ctrl+<letter> is claimed at app level — in particular
+// ctrl+a/b/d/e/f/j/k/o/t/u/w all fall through to the composer.
+//
+// The [keys.x] tags on that list are load-bearing, not decoration. Those
+// bindings are matched BEFORE the composer sees the event, so rebinding
+// one to a printable character makes that character untypable in a
+// message. [keys.quit] is the sharpest edge: it is matched before every
+// focus gate in Update, so keys.quit = "x" means pressing x while writing
+// quits the application instead of typing an x. Nothing rejects that
+// configuration — [config.DetectKeyCollisions] only compares bindings
+// against each other, not against "is this a character someone types".
+// Prefer a chord or a function key for all of them.
 //
 // ## Overlays — search, contacts, dialogs
 //
@@ -121,6 +142,35 @@ import (
 //	j, k / down, up    scroll
 //	pgup, pgdown       page
 //	g, G / home, end   top / bottom
+//
+// ## Deliberate departures from lazygit
+//
+// The layout is lazygit's — panels side by side, h/l between them, [ and ]
+// for the tabs inside one, ? for the card, q for the way out. Three places
+// deviate on purpose. They are listed here so they are read rather than
+// discovered.
+//
+//   - Digits select folders, not panels. Lazygit gives 1-5 to its panels;
+//     here 1-9 jump to a folder tab and alt+1/2/3 focus a panel. Folder
+//     switching is the higher-frequency action in a chat client — a folder
+//     is a whole different set of conversations, while the panels are two
+//     halves of the one you already have open — and alt+digit for "tab N"
+//     is browser muscle memory that costs nothing to honor. It is a
+//     paradigm inversion, and it is the one an incoming lazygit user is
+//     most likely to trip over.
+//
+//   - Enter in the chat view opens the attachment. A drill-in convention
+//     would make enter focus or expand the item under the cursor; there is
+//     nothing to drill into here, because the chat view is already the
+//     bottom of the hierarchy. Opening the media is the only action the
+//     key could usefully name, and o is its synonym.
+//
+//   - o means two different things by panel: open the attachment in the
+//     chat view, open a line below in the composer's vi normal mode. That
+//     is legitimate under the modal design — the composer owns its own
+//     keymap and app-level dispatch claims almost nothing while it has
+//     focus — but the collision is real, and someone comparing the two
+//     halves of this table should find it stated rather than infer a bug.
 //
 // If the Telegram client dies (see Model.fatalError), the UI is replaced by
 // an error panel and every binding above except quit becomes inert — there is
@@ -147,80 +197,41 @@ const (
 	ScreenMain
 )
 
-// keyPress is the normalized view of a terminal key event that app-level
-// binding dispatch matches against.
-//
-// Matching on tea.KeyPressMsg.String() alone is not sufficient. String()
-// returns Key.Text whenever the terminal attached any, and only falls back to
-// Keystroke() when it did not. Terminals speaking the Kitty keyboard protocol
-// report alt-modified keys *with* their composed text on macOS — Option+1
-// arrives as CSI 49;3;161u, i.e. Code='1', Mod=ModAlt, Text="¡" — so String()
-// yields "¡" while Keystroke() yields "alt+1". Keystroke() is derived from
-// Key.Code/Key.BaseCode and the modifier bits only, so it is stable across
-// every encoding the decoder handles (legacy ESC-prefix, Kitty CSI-u, XTerm
-// modifyOtherKeys).
-//
-// String() is still needed for the unmodified case, where it reports what the
-// keyboard layout actually produced: shift+/ is "?" via String() but
-// "shift+/" via Keystroke(), and a binding of "/" should match it.
-type keyPress struct {
-	// stroke is Keystroke(): "alt+1", "ctrl+v", "f1", "a", "shift+/".
-	stroke string
-	// text is String(): the characters the terminal reported ("?", "A", "¡"),
-	// falling back to stroke for keys that produce no text.
-	text string
-	// modified reports whether a modifier beyond shift/caps-lock was held.
-	// Such a key press must never be treated as text input.
-	modified bool
-}
-
-// newKeyPress captures the two spellings of a key event once, so dispatch
-// does not recompute them for every binding it tests.
-func newKeyPress(msg tea.KeyPressMsg) keyPress {
-	return keyPress{
-		stroke:   msg.Keystroke(),
-		text:     msg.String(),
-		modified: msg.Mod&^(tea.ModShift|tea.ModCapsLock|tea.ModNumLock|tea.ModScrollLock) != 0,
-	}
-}
-
-// matches reports whether the key press is any of the given bindings.
-// Bindings are expected in config.NormalizeKey / Keystroke() form. Empty
-// bindings never match, so an unset config field is inert.
-//
-// The Keystroke() spelling is authoritative. The String() spelling is only
-// consulted for unmodified keys: allowing it for modified ones would let a
-// Kitty-reported alt+/ (Text "/") fire a plain "/" binding.
-func (k keyPress) matches(bindings ...string) bool {
-	for _, b := range bindings {
-		if b == "" {
-			continue
-		}
-		if b == k.stroke {
-			return true
-		}
-		if !k.modified && b == k.text {
-			return true
-		}
-	}
-	return false
-}
+// Key-event matching lives in internal/keys: the same matcher has to run
+// in app.go and in the panels, and when it existed as two byte-identical
+// private copies only one of them could be fixed at a time. See keys.Press
+// for why Keystroke() is authoritative and String() is consulted only for
+// unmodified keys.
 
 // quitKeys renders the quit row. ctrl+c and ctrl+q are both hardcoded in
 // Update and always work, so both are shown; a configured third key joins
 // them unless it duplicates one.
 func quitKeys(configured string) string {
-	keys := []string{"ctrl+c", "ctrl+q"}
+	shown := []string{"ctrl+c", "ctrl+q"}
 	if configured != "" && configured != "ctrl+c" && configured != "ctrl+q" {
-		keys = append(keys, configured)
+		shown = append(shown, configured)
 	}
-	return strings.Join(keys, " / ")
+	return strings.Join(shown, " / ")
 }
 
 // composerHelpSection describes the composer using the line-editing keymap
 // that is actually active, rather than listing both and letting the reader
 // guess. The two keymaps disagree about what esc does, which is exactly the
 // kind of thing a help card exists to answer.
+//
+// ctrl+d and delete are emacs-only here for the same reason. Both reach
+// the textarea's DeleteChar in vi mode too, but only from INSERT state:
+// handleViNormal drops anything carrying ctrl before its switch, and has
+// no "delete" case, so neither survives an Esc. Advertising them to a vi
+// user would name keys that stop working the moment they leave insert.
+// Normal mode's answer is "x", which the vi section already lists.
+//
+// home and end go the other way and appear in BOTH sections, because
+// handleViNormal really does bind them ("0", "home" and "$", "end") — so
+// unlike 0 and $, they keep working in insert state as well. That is why
+// the vi rows pair them with 0/$ and qualify only the vi-specific half:
+// the row has to say which of the two keys on it survives the mode
+// change, or it is advertising a difference it does not name.
 func (m Model) composerHelpSection() help.Section {
 	common := []help.Binding{
 		{Keys: "enter", Desc: "Send"},
@@ -237,17 +248,20 @@ func (m Model) composerHelpSection() help.Section {
 			help.Binding{Keys: "o / O", Desc: "Open a line below / above and insert"},
 			help.Binding{Keys: "h / l / j / k", Desc: "Move by character and line (normal mode)"},
 			help.Binding{Keys: "w / b", Desc: "Move by word (normal mode)"},
-			help.Binding{Keys: "0 / $", Desc: "Start / end of line (normal mode)"},
+			help.Binding{Keys: "0 / home", Desc: "Start of line (0 only in normal mode)"},
+			help.Binding{Keys: "$ / end", Desc: "End of line ($ only in normal mode)"},
 			help.Binding{Keys: "x / D / dd", Desc: "Delete character, to end of line, whole line"},
 		)}
 	}
 
 	return help.Section{Title: "Composer (emacs editing)", Bindings: append(common,
 		help.Binding{Keys: "esc", Desc: "Cancel reply/edit/attachment, then leave"},
-		help.Binding{Keys: "ctrl+a / ctrl+e", Desc: "Start / end of line"},
+		help.Binding{Keys: "ctrl+a / home", Desc: "Start of line"},
+		help.Binding{Keys: "ctrl+e / end", Desc: "End of line"},
 		help.Binding{Keys: "ctrl+b / ctrl+f", Desc: "Back / forward one character"},
 		help.Binding{Keys: "ctrl+u / ctrl+k", Desc: "Kill to start / end of line"},
 		help.Binding{Keys: "ctrl+w", Desc: "Kill the previous word"},
+		help.Binding{Keys: "ctrl+d / delete", Desc: "Delete the character under the cursor"},
 	)}
 }
 
@@ -257,6 +271,75 @@ func (m Model) composerHelpSection() help.Section {
 func (m Model) helpFooter() string {
 	return fmt.Sprintf("esc / %s / q to close · j k to scroll", m.keys.help)
 }
+
+// reservedKeys is every key app-level dispatch takes before the focused
+// browsing panel sees it: keys.AppFixed, plus whatever config resolved the
+// configurable app-level bindings to.
+//
+// It is handed to chatview (SetReservedKeys, in New) so that panel can
+// refuse a configured binding it would never receive. Without it, chatview
+// accepted reply = "q", advertised it on the help card, and pressing "q"
+// quit the application — the panel had no way to know app.go had claimed
+// the key first.
+//
+// Passing the resolved values rather than the raw config is what makes it
+// correct under rebinding: a user who moves quit_browsing to f9 frees "q"
+// for the chat view, and this list says so.
+//
+// TestAppFixedMatchesDispatcher parses app.go and fails if a Matches call
+// names a key this does not cover, so the list cannot fall behind the
+// dispatcher the way the old (nonexistent) one did.
+func (m Model) reservedKeys() []string {
+	k := m.keys
+	return keys.AppReserved(
+		k.quit, k.quitBrowsing, k.help,
+		k.search, k.globalSearch,
+		k.contacts, k.contactsAlt,
+		k.focusChatList, k.focusChatView, k.focusComposer,
+		k.nextChat, k.prevChat,
+		k.nextFolder, k.prevFolder,
+	)
+}
+
+// statusHints is the abbreviated key strip along the bottom bar.
+//
+// Built from the same resolvedKeys the dispatcher matches, for the reason
+// helpSections is: a rebound key must not leave the bar advertising the one
+// it replaced. Nothing here is hardcoded except keys that are themselves
+// hardcoded in Update (h/l) or in chatlist ([ and ]).
+//
+// It is an abbreviation, not a reference. The one row that has to be there
+// is the help key — it is what turns a stranded user into a reading one,
+// and every other binding is one keystroke behind it. The rest is the
+// shortest path back to moving: the panels, the folder tabs, find, and the
+// way out. The bar drops the whole strip rather than truncate it on a
+// narrow terminal, so keeping it short is what keeps it visible.
+//
+// Set once, in New. Bindings resolve at startup and never change while the
+// program runs; if they ever become rebindable at runtime, this has to be
+// re-set alongside the help sections and footer.
+func (m Model) statusHints() string {
+	return strings.Join([]string{
+		m.keys.help + ":Help",
+		"h/l:Panels",
+		m.keys.search + ":Find",
+		"[/]:Folders",
+		m.keys.quitBrowsing + ":Quit",
+	}, "  ")
+}
+
+// unboundKey is what the help card shows where a binding should be but
+// there is none — a mnemonic whose key a configuration handed to something
+// else, leaving the action with no way to reach it (see
+// chatview.ActiveKeys). It is spelled as a word rather than left blank
+// because an empty cell in a key column reads as a rendering fault, and
+// the reader's next move is to file a bug about the card instead of fixing
+// the config that caused it.
+//
+// It is deliberately not a plausible key: nothing a terminal can send
+// looks like this, so it cannot be mistaken for something to press. The
+// documentation drift tests skip it by name for the same reason.
+const unboundKey = "(unbound)"
 
 // helpSections builds the content of the help overlay.
 //
@@ -269,8 +352,32 @@ func (m Model) helpFooter() string {
 //
 // The doc comment at the top of this file is the same map in prose, kept for
 // readers of the source; this is the version the user sees.
+//
+// The chat view's rows are the one place the resolved value is read back
+// out of the component rather than out of resolvedKeys: chatview resolves
+// what it is handed against its own fixed keys and drops a binding that
+// would shadow one (see chatview.SetKeys), so ActiveKeys is the only
+// spelling that is guaranteed to be the one handleKey matches. Reading
+// resolvedKeys here instead would advertise a colliding keys.reply that
+// the panel silently refused.
 func (m Model) helpSections() []help.Section {
 	k := m.keys
+	// Post-resolution, so a configured binding the chat view refused is
+	// not advertised as if it had been accepted. The motion fields carry
+	// only the extra accepted spelling ("" when there is none); the
+	// built-in j/k, arrows and pgup/pgdown are always live and are named
+	// by alsoBound below.
+	cv := m.chatView.ActiveKeys()
+	// A mnemonic can come back empty: a configuration that points reply at
+	// edit's letter leaves edit with nothing, and chatview reports that
+	// rather than pretending. Say so on the card — the row is the only
+	// place the user finds out the action has become unreachable.
+	bound := func(key string) string {
+		if key == "" {
+			return unboundKey
+		}
+		return key
+	}
 	// or joins the app-level spelling of a binding with its alt-free
 	// alternative, skipping the alternative when a user has configured both
 	// to the same key.
@@ -282,6 +389,25 @@ func (m Model) helpSections() []help.Section {
 			return b
 		}
 		return a + " / " + b
+	}
+	// alsoBound renders a motion row: the spellings chatview hardcodes,
+	// plus any configured extra that is not already one of them. Motions
+	// there are additive — a configured scroll_up is an ADDITIONAL way to
+	// scroll up, never a replacement for k or the arrow — so a row that
+	// showed only the configured key would be advertising the removal of
+	// keys that still work. See chatview.Keys's doc comment.
+	alsoBound := func(fixed string, extras ...string) string {
+		out := fixed
+		for _, e := range extras {
+			if e == "" {
+				continue
+			}
+			if slices.Contains(strings.Split(out, " / "), e) {
+				continue
+			}
+			out += " / " + e
+		}
+		return out
 	}
 
 	return []help.Section{
@@ -301,27 +427,40 @@ func (m Model) helpSections() []help.Section {
 		}},
 		{Title: "Chat list", Bindings: []help.Binding{
 			{Keys: "j / k", Desc: "Next / previous chat"},
-			{Keys: "h / l", Desc: "Previous / next folder tab"},
+			{Keys: "l", Desc: "Focus the chat view"},
 			{Keys: "[ / ]", Desc: "Previous / next folder tab"},
 			{Keys: "left / right", Desc: "Previous / next folder tab"},
 			{Keys: "1-9", Desc: "Jump to folder N (1 = All)"},
-			{Keys: "g / G", Desc: "First / last chat"},
+			// Split in two rather than "g / G / home / end": the Keys
+			// column pairs positionally with the Desc, and a four-key row
+			// against a two-word description leaves the reader guessing
+			// which end "home" is. Both spellings are the list widget's
+			// (internal/ui/widgets/list.go), not chatlist's own.
+			{Keys: "g / home", Desc: "First chat"},
+			{Keys: "G / end", Desc: "Last chat"},
 			{Keys: "enter", Desc: "Open the selected chat"},
 			{Keys: "i / c", Desc: "Compose a message"},
-			{Keys: k.search, Desc: "Search all chats"},
+			{Keys: k.search, Desc: "Filter this chat list"},
+			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 			{Keys: "click", Desc: "Select a chat, or switch folder tab"},
 		}},
 		{Title: "Chat view", Bindings: []help.Binding{
-			{Keys: "j / k", Desc: "Scroll down / up"},
-			{Keys: "g / G", Desc: "Top / bottom"},
+			{Keys: alsoBound("j / k", cv.ScrollDown, cv.ScrollUp), Desc: "Scroll down / up"},
+			{Keys: "g / home", Desc: "Top"},
+			{Keys: "G / end", Desc: "Bottom"},
 			{Keys: "ctrl+d / ctrl+u", Desc: "Page down / up"},
-			{Keys: "pgdown / pgup", Desc: "Page down / up, keeping a line of context"},
+			{Keys: alsoBound("pgdown / pgup", cv.PageDown, cv.PageUp),
+				Desc: "Page down / up, keeping a line of context"},
+			{Keys: "h", Desc: "Focus the chat list"},
 			{Keys: or(k.search, "ctrl+f"), Desc: "Find in this chat"},
 			{Keys: "n / N", Desc: "Next / previous match"},
-			{Keys: "r / e / d", Desc: "Reply / edit / delete message"},
+			{Keys: strings.Join([]string{
+				bound(cv.Reply), bound(cv.Edit), bound(cv.Delete),
+			}, " / "), Desc: "Reply / edit / delete message"},
 			{Keys: "enter / o", Desc: "Open attachment"},
 			{Keys: "s", Desc: "Save attachment"},
 			{Keys: "i / c", Desc: "Compose a message"},
+			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 		}},
 		m.composerHelpSection(),
 		{Title: "Overlays", Bindings: []help.Binding{

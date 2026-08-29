@@ -463,6 +463,75 @@ func TestDetectKeyCollisions(t *testing.T) {
 		}
 	})
 
+	// The failure that got the wave rejected: chatview accepted reply = "q",
+	// advertised it on the help card as Reply, and quit the application when
+	// pressed, because app-level dispatch matches "q" first.
+	t.Run("component field colliding with an app field", func(t *testing.T) {
+		cfg := defaultConfig()
+		cfg.Keys.Reply = "q"
+		got := DetectKeyCollisions(cfg)
+		if len(got) != 1 {
+			t.Fatalf("got %d collisions, want exactly 1 (no double-reporting): %v",
+				len(got), got)
+		}
+		for _, want := range []string{`"q"`, "reply"} {
+			if !strings.Contains(got[0], want) {
+				t.Errorf("collision %q does not mention %s", got[0], want)
+			}
+		}
+	})
+
+	// The other half, and the one nothing could see before: a key the app
+	// hardcodes, so there is no config field for it to clash with.
+	t.Run("component field colliding with a hardcoded app key", func(t *testing.T) {
+		for _, key := range []string{"h", "l", "i", "c", "tab", "esc", "ctrl+v", "alt+1"} {
+			cfg := defaultConfig()
+			cfg.Keys.Reply = key
+			got := DetectKeyCollisions(cfg)
+			if len(got) != 1 {
+				t.Fatalf("reply = %q: got %d collisions, want 1: %v", key, len(got), got)
+			}
+			if !strings.Contains(got[0], "claims it first") ||
+				!strings.Contains(got[0], "reply") {
+				t.Errorf("reply = %q: unhelpful message %q", key, got[0])
+			}
+		}
+	})
+
+	// An older config.toml that predates quit_browsing has an empty field,
+	// but the app still dispatches the default at runtime — so the clash is
+	// real and has to be reported against the default, not against "".
+	t.Run("absent app field still reserves its default", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Keys.Reply = "q"
+		got := DetectKeyCollisions(cfg)
+		if len(got) != 1 || !strings.Contains(got[0], "claims it first") {
+			t.Errorf("got %v, want the app-claims-q collision reported against "+
+				"quit_browsing's default", got)
+		}
+	})
+
+	// And rebinding really frees the key, or the diagnostic would be telling
+	// users to do something that does not work.
+	t.Run("rebinding the app key releases it", func(t *testing.T) {
+		cfg := defaultConfig()
+		cfg.Keys.QuitBrowsing = "f9"
+		cfg.Keys.Reply = "q"
+		if got := DetectKeyCollisions(cfg); len(got) != 0 {
+			t.Errorf("got %v, want none: quit_browsing moved to f9, so \"q\" is free", got)
+		}
+	})
+
+	// Motions are component-dispatched too, and collide the same way.
+	t.Run("a motion field collides as well", func(t *testing.T) {
+		cfg := defaultConfig()
+		cfg.Keys.ScrollUp = "l"
+		got := DetectKeyCollisions(cfg)
+		if len(got) != 1 || !strings.Contains(got[0], "scroll_up") {
+			t.Errorf("got %v, want scroll_up reported against the app's \"l\"", got)
+		}
+	})
+
 	t.Run("nil and empty", func(t *testing.T) {
 		if got := DetectKeyCollisions(nil); got != nil {
 			t.Errorf("DetectKeyCollisions(nil) = %v, want nil", got)

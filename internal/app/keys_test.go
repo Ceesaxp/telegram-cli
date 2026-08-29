@@ -3,15 +3,19 @@ package app
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/imtaqin/telegram-cli/internal/keys"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 )
 
@@ -43,181 +47,6 @@ func decodeKey(t *testing.T, seq string) tea.KeyPressMsg {
 	return tea.KeyPressMsg(kp)
 }
 
-// TestDecoderKeyStrings records what the real decoder produces for every
-// encoding a terminal may use for the app's bindings. The "want String" column
-// is the trap: for Kitty-with-associated-text it is the composed character,
-// not the binding name, which is why dispatch matches on Keystroke().
-func TestDecoderKeyStrings(t *testing.T) {
-	cases := []struct {
-		name          string
-		seq           string
-		wantString    string
-		wantKeystroke string
-	}{
-		// Legacy ESC-prefix alt (xterm "metaSendsEscape", iTerm2 "Esc+",
-		// Terminal.app "Use Option as Meta key").
-		{"legacy alt+1", "\x1b1", "alt+1", "alt+1"},
-		{"legacy alt+2", "\x1b2", "alt+2", "alt+2"},
-		{"legacy alt+3", "\x1b3", "alt+3", "alt+3"},
-		{"legacy alt+c", "\x1bc", "alt+c", "alt+c"},
-		{"legacy alt+h", "\x1bh", "alt+h", "alt+h"},
-		{"legacy alt+l", "\x1bl", "alt+l", "alt+l"},
-		{"legacy alt+j", "\x1bj", "alt+j", "alt+j"},
-		{"legacy alt+k", "\x1bk", "alt+k", "alt+k"},
-
-		// Kitty CSI-u, no associated text (US layout / option-as-alt).
-		{"kitty alt+1", "\x1b[49;3u", "alt+1", "alt+1"},
-		{"kitty alt+2", "\x1b[50;3u", "alt+2", "alt+2"},
-		{"kitty alt+3", "\x1b[51;3u", "alt+3", "alt+3"},
-		{"kitty alt+c", "\x1b[99;3u", "alt+c", "alt+c"},
-		{"kitty alt+h", "\x1b[104;3u", "alt+h", "alt+h"},
-		{"kitty alt+l", "\x1b[108;3u", "alt+l", "alt+l"},
-		{"kitty alt+j", "\x1b[106;3u", "alt+j", "alt+j"},
-		{"kitty alt+k", "\x1b[107;3u", "alt+k", "alt+k"},
-
-		// Kitty CSI-u with associated text (3rd parameter): the macOS
-		// Option-composed character rides along with the modifier. String()
-		// reports the composed character; only Keystroke() names the binding.
-		{"kitty alt+1 + text ¡", "\x1b[49;3;161u", "¡", "alt+1"},
-		{"kitty alt+2 + text ™", "\x1b[50;3;8482u", "™", "alt+2"},
-		{"kitty alt+3 + text £", "\x1b[51;3;163u", "£", "alt+3"},
-		{"kitty alt+c + text ç", "\x1b[99;3;231u", "ç", "alt+c"},
-		{"kitty alt+h + text ˙", "\x1b[104;3;729u", "˙", "alt+h"},
-		{"kitty alt+l + text ¬", "\x1b[108;3;172u", "¬", "alt+l"},
-		{"kitty alt+j + text ∆", "\x1b[106;3;8710u", "∆", "alt+j"},
-		{"kitty alt+k + text ˚", "\x1b[107;3;730u", "˚", "alt+k"},
-
-		// XTerm modifyOtherKeys CSI 27 ; mod ; code ~.
-		{"modifyOtherKeys alt+1", "\x1b[27;3;49~", "alt+1", "alt+1"},
-		{"modifyOtherKeys alt+2", "\x1b[27;3;50~", "alt+2", "alt+2"},
-		{"modifyOtherKeys alt+3", "\x1b[27;3;51~", "alt+3", "alt+3"},
-
-		// Non-alt bindings, for contrast.
-		{"f1", "\x1bOP", "f1", "f1"},
-		{"f2", "\x1bOQ", "f2", "f2"},
-		{"f3", "\x1bOR", "f3", "f3"},
-		{"ctrl+v", "\x16", "ctrl+v", "ctrl+v"},
-		{"tab", "\t", "tab", "tab"},
-		{"shift+tab", "\x1b[Z", "shift+tab", "shift+tab"},
-		{"esc", "\x1b", "esc", "esc"},
-		{"plain 1", "1", "1", "1"},
-
-		// Shifted printable: here String() is the useful spelling and
-		// Keystroke() is not — hence dispatch consults both.
-		{"kitty shift+/", "\x1b[47:63;2u", "?", "shift+/"},
-
-		// Terminal.app / iTerm2 default: Option composes the character and
-		// sends it with NO modifier bit. Genuinely indistinguishable from the
-		// user typing "¡"; see the macOS notes on config.KeyConfig.
-		{"bare composed ¡ (option-as-input)", "¡", "¡", "¡"},
-		{"bare composed ç (option-as-input)", "ç", "ç", "ç"},
-		{"bare composed ¬ (option-as-input)", "¬", "¬", "¬"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			msg := decodeKey(t, tc.seq)
-			if got := msg.String(); got != tc.wantString {
-				t.Errorf("String() = %q, want %q", got, tc.wantString)
-			}
-			if got := msg.Keystroke(); got != tc.wantKeystroke {
-				t.Errorf("Keystroke() = %q, want %q", got, tc.wantKeystroke)
-			}
-		})
-	}
-}
-
-// TestKeyPressMatchesEveryAltEncoding is the core regression: every encoding a
-// terminal may use for an alt binding must match the single configured
-// spelling, and must never be mistaken for text input.
-func TestKeyPressMatchesEveryAltEncoding(t *testing.T) {
-	cases := []struct {
-		binding string
-		seqs    []string
-	}{
-		{"alt+1", []string{"\x1b1", "\x1b[49;3u", "\x1b[49;3;161u", "\x1b[27;3;49~"}},
-		{"alt+2", []string{"\x1b2", "\x1b[50;3u", "\x1b[50;3;8482u", "\x1b[27;3;50~"}},
-		{"alt+3", []string{"\x1b3", "\x1b[51;3u", "\x1b[51;3;163u", "\x1b[27;3;51~"}},
-		{"alt+c", []string{"\x1bc", "\x1b[99;3u", "\x1b[99;3;231u"}},
-		{"alt+h", []string{"\x1bh", "\x1b[104;3u", "\x1b[104;3;729u"}},
-		{"alt+l", []string{"\x1bl", "\x1b[108;3u", "\x1b[108;3;172u"}},
-		{"alt+j", []string{"\x1bj", "\x1b[106;3u", "\x1b[106;3;8710u"}},
-		{"alt+k", []string{"\x1bk", "\x1b[107;3u", "\x1b[107;3;730u"}},
-	}
-
-	for _, tc := range cases {
-		for _, seq := range tc.seqs {
-			t.Run(tc.binding+"/"+seq, func(t *testing.T) {
-				k := newKeyPress(decodeKey(t, seq))
-				if !k.matches(tc.binding) {
-					t.Errorf("matches(%q) = false for %q (stroke=%q text=%q)",
-						tc.binding, seq, k.stroke, k.text)
-				}
-				if !k.modified {
-					t.Errorf("modified = false for alt-modified %q", seq)
-				}
-			})
-		}
-	}
-}
-
-// TestKeyPressMatchesUnmodified covers the other half of the strategy: for
-// keys with no modifier the String() spelling is what a user configures, so it
-// must still match.
-func TestKeyPressMatchesUnmodified(t *testing.T) {
-	cases := []struct {
-		seq     string
-		binding string
-	}{
-		{"/", "/"},
-		{"?", "?"},
-		{"\x1b[47:63;2u", "?"},       // kitty shift+/, Keystroke is "shift+/"
-		{"\x1b[47:63;2u", "shift+/"}, // ...and the keystroke spelling too
-		{"\x1bOP", "f1"},
-		{"\x16", "ctrl+v"},
-		{"\t", "tab"},
-		{"\x1b[Z", "shift+tab"},
-		{"\x1b", "esc"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.binding+"/"+tc.seq, func(t *testing.T) {
-			if k := newKeyPress(decodeKey(t, tc.seq)); !k.matches(tc.binding) {
-				t.Errorf("matches(%q) = false (stroke=%q text=%q)", tc.binding, k.stroke, k.text)
-			}
-		})
-	}
-}
-
-// TestKeyPressModifiedNeverMatchesBareBinding guards the reason String() is
-// only consulted for unmodified keys: a Kitty-reported alt+/ carries Text "/",
-// which must not fire a plain "/" binding.
-func TestKeyPressModifiedNeverMatchesBareBinding(t *testing.T) {
-	k := newKeyPress(decodeKey(t, "\x1b[47;3;47u")) // alt+/ with text "/"
-	if k.stroke != "alt+/" {
-		t.Fatalf("stroke = %q, want alt+/", k.stroke)
-	}
-	if k.matches("/") {
-		t.Error("alt+/ matched the bare \"/\" binding")
-	}
-	if !k.matches("alt+/") {
-		t.Error("alt+/ did not match the \"alt+/\" binding")
-	}
-}
-
-// TestKeyPressEmptyBindingInert makes sure an unconfigured (empty) binding
-// never matches anything.
-func TestKeyPressEmptyBindingInert(t *testing.T) {
-	for _, seq := range []string{"\x1b1", "a", "\x1b"} {
-		if newKeyPress(decodeKey(t, seq)).matches("") {
-			t.Errorf("empty binding matched %q", seq)
-		}
-	}
-}
-
-// mainModel returns a Model parked on the main screen with the given focus,
-// ready to be driven with decoded key presses. setFocus (rather than a bare
-// field assignment) is used so the sub-models' own focused flags match — the
-// focused-panel dispatch only reaches a component that believes it is focused.
 func mainModel(t *testing.T, focus FocusPanel) Model {
 	t.Helper()
 	m := newTestModel(t)
@@ -339,7 +168,7 @@ func TestFolderAndChatNavBindingsResolve(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.binding+"/"+tc.seq, func(t *testing.T) {
-			if !newKeyPress(decodeKey(t, tc.seq)).matches(tc.binding) {
+			if !keys.NewPress(decodeKey(t, tc.seq)).Matches(tc.binding) {
 				t.Errorf("%q did not match binding %q", tc.seq, tc.binding)
 			}
 		})
@@ -351,11 +180,11 @@ func TestFolderAndChatNavBindingsResolve(t *testing.T) {
 // composed character leaves nothing to match on. See the macOS notes on
 // config.KeyConfig.
 func TestBareComposedOptionCharIsUndetectable(t *testing.T) {
-	k := newKeyPress(decodeKey(t, "¡"))
-	if k.modified {
+	k := keys.NewPress(decodeKey(t, "¡"))
+	if k.Modified() {
 		t.Fatal("bare composed char unexpectedly carries a modifier")
 	}
-	if k.matches("alt+1") {
+	if k.Matches("alt+1") {
 		t.Error("bare \"¡\" matched alt+1 — the decoder now reports a modifier; " +
 			"revisit the macOS notes on config.KeyConfig")
 	}
@@ -411,17 +240,17 @@ func TestChatViewSearchModeOwnsKeys(t *testing.T) {
 // which is out of reach here — so the match test is asserted directly.
 func TestMatchCycleKeysAreUnmodifiedPrintables(t *testing.T) {
 	for _, seq := range []string{"n", "N", "\x1b[110:78;2u" /* kitty shift+n */} {
-		k := newKeyPress(decodeKey(t, seq))
-		if !k.matches("n", "N") {
-			t.Errorf("%q did not match n/N (stroke=%q text=%q)", seq, k.stroke, k.text)
+		k := keys.NewPress(decodeKey(t, seq))
+		if !k.Matches("n", "N") {
+			t.Errorf("%q did not match n/N (stroke=%q text=%q)", seq, k.Stroke(), k.Text())
 		}
 	}
 	// Modified variants must not be mistaken for the match-cycling keys, so
 	// alt+n stays available to app-level bindings.
 	for _, seq := range []string{"\x1bn", "\x1b[110;3u", "\x0e" /* ctrl+n */} {
-		k := newKeyPress(decodeKey(t, seq))
-		if k.matches("n", "N") {
-			t.Errorf("%q wrongly matched n/N (stroke=%q text=%q)", seq, k.stroke, k.text)
+		k := keys.NewPress(decodeKey(t, seq))
+		if k.Matches("n", "N") {
+			t.Errorf("%q wrongly matched n/N (stroke=%q text=%q)", seq, k.Stroke(), k.Text())
 		}
 	}
 }
@@ -487,11 +316,67 @@ func TestSlashIsContextual(t *testing.T) {
 		}
 	})
 
-	t.Run("chatlist searches globally", func(t *testing.T) {
+	// "/" means "search the buffer in front of you" in BOTH browsing
+	// panels now: the chat list gets its own local filter rather than the
+	// global overlay, which is what ctrl+g is for.
+	// This is the assertion that pins the change: before it, "/" from the
+	// chat list opened the GLOBAL search overlay and moved focus to
+	// PanelSearch. Now it stays in the panel and opens chatlist's own
+	// filter, so "/" means "search what is in front of me" in both
+	// browsing panels rather than one.
+	t.Run("chatlist filters itself", func(t *testing.T) {
+		m, cmd := updateCmd(t, mainModel(t, PanelChatList), "/")
+		if m.search.IsVisible() || m.focus == PanelSearch {
+			t.Errorf("global search overlay opened from the chat list "+
+				"(visible=%v focus=%v)", m.search.IsVisible(), m.focus)
+		}
+		if !m.chatList.FilterActive() {
+			t.Error("the chat list filter did not open")
+		}
+		if m.focus != PanelChatList {
+			t.Errorf("focus = %v, want PanelChatList", m.focus)
+		}
+		// Called directly, not re-emitted — same livelock reasoning as the
+		// chat view's find above.
+		if cmd != nil {
+			if _, ok := cmd().(tea.KeyPressMsg); ok {
+				t.Error("\"/\" re-emitted a key event instead of calling OpenFilter")
+			}
+		}
+	})
+
+	// While the filter input is open it owns the keyboard, exactly as
+	// chatview's find does. This is the negative case for the two bindings
+	// this wave adds: h/l must not move panels and q must not quit out
+	// from under a query being typed — they are text, and the app yields
+	// them to chatlist untouched.
+	t.Run("an open filter owns the keys", func(t *testing.T) {
 		m := update(t, mainModel(t, PanelChatList), "/")
-		if !m.search.IsVisible() || m.focus != PanelSearch {
-			t.Errorf("visible=%v focus=%v, want the global search overlay",
-				m.search.IsVisible(), m.focus)
+		if !m.chatList.FilterActive() {
+			t.Fatal("precondition: filter not open")
+		}
+		for _, seq := range []string{"l", "h", "q", "?"} {
+			got, cmd := updateCmd(t, m, seq)
+			if got.focus != PanelChatList {
+				t.Errorf("%q moved focus to %v while filtering", seq, got.focus)
+			}
+			if got.help.IsVisible() {
+				t.Errorf("%q opened the help overlay while filtering", seq)
+			}
+			if got.search.IsVisible() {
+				t.Errorf("%q opened the global search while filtering", seq)
+			}
+			if quits(cmd) {
+				t.Errorf("%q quit while filtering", seq)
+			}
+			if !got.chatList.FilterActive() {
+				t.Errorf("%q closed the filter input", seq)
+			}
+		}
+		// esc is the filter's own close key while the input is open, not
+		// the app's focus ladder.
+		if got := update(t, m, "\x1b"); got.focus != PanelChatList {
+			t.Errorf("esc while filtering moved focus to %v", got.focus)
 		}
 	})
 }
@@ -531,9 +416,9 @@ func TestContactsAltBinding(t *testing.T) {
 // it here would silently break line editing.
 func TestCtrlKIsNotAnAppBinding(t *testing.T) {
 	m := mainModel(t, PanelComposer)
-	k := newKeyPress(decodeKey(t, "\x0b")) // ctrl+k
-	if k.stroke != "ctrl+k" {
-		t.Fatalf("stroke = %q, want ctrl+k", k.stroke)
+	k := keys.NewPress(decodeKey(t, "\x0b")) // ctrl+k
+	if k.Stroke() != "ctrl+k" {
+		t.Fatalf("stroke = %q, want ctrl+k", k.Stroke())
 	}
 	for name, binding := range map[string]string{
 		"contacts":     m.keys.contacts,
@@ -546,7 +431,7 @@ func TestCtrlKIsNotAnAppBinding(t *testing.T) {
 		"nextChat":     m.keys.nextChat,
 		"prevChat":     m.keys.prevChat,
 	} {
-		if k.matches(binding) {
+		if k.Matches(binding) {
 			t.Errorf("ctrl+k is bound to %s", name)
 		}
 	}
@@ -556,11 +441,11 @@ func TestCtrlKIsNotAnAppBinding(t *testing.T) {
 	}
 }
 
-// TestFolderCyclingKeys covers the alt-free folder bindings app.go dispatches:
-// vi h/l and lazygit [/], both gated to the chat list, alongside the alt
-// spellings that work from anywhere. The chat list's folder index is
-// unexported in another package, so the guard conditions are asserted rather
-// than the resulting tab.
+// TestFolderCyclingKeys covers folder cycling after bare h/l were taken away
+// from it and given to panel movement. Four spellings remain and all four
+// have to keep working, or the change cost something: lazygit's [ and ], the
+// left/right arrows, the 1-9 jump (covered in TestChatListKeysReachChatList),
+// and the alt+h/alt+l that work from any panel.
 func TestFolderCyclingKeys(t *testing.T) {
 	// normalizeFolders always sorts the implicit "All" folder to index 0 and
 	// keeps the rest in server order, so the tab ring is 0 -> 7 -> 9 -> 0.
@@ -582,7 +467,7 @@ func TestFolderCyclingKeys(t *testing.T) {
 	// The alt spellings keep working, in every encoding a terminal uses.
 	base := sizedMainModel(t)
 	for _, seq := range []string{"\x1bh", "\x1b[104;3;729u", "\x1bl", "\x1b[108;3;172u"} {
-		if k := newKeyPress(decodeKey(t, seq)); !k.matches(base.keys.prevFolder, base.keys.nextFolder) {
+		if k := keys.NewPress(decodeKey(t, seq)); !k.Matches(base.keys.prevFolder, base.keys.nextFolder) {
 			t.Errorf("%q no longer matches a folder binding", seq)
 		}
 	}
@@ -596,11 +481,11 @@ func TestFolderCyclingKeys(t *testing.T) {
 		seq  string
 		want []int32
 	}{
-		{"vi next", "l", forward},
 		{"lazygit next", "]", forward},
+		{"arrow next", "\x1b[C", forward},
 		{"alt next", "\x1bl", forward},
-		{"vi prev", "h", backward},
 		{"lazygit prev", "[", backward},
+		{"arrow prev", "\x1b[D", backward},
 		{"alt prev", "\x1bh", backward},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -618,7 +503,7 @@ func TestFolderCyclingKeys(t *testing.T) {
 	// Cycling is consumed here: no focus move, no overlay, and nothing put
 	// back on the command loop.
 	m := seedFolders(t, sizedMainModel(t))
-	for _, seq := range []string{"h", "l", "[", "]"} {
+	for _, seq := range []string{"[", "]"} {
 		got, cmd := updateCmd(t, m, seq)
 		if got.focus != PanelChatList {
 			t.Errorf("%q moved focus to %v", seq, got.focus)
@@ -637,7 +522,7 @@ func TestFolderCyclingKeys(t *testing.T) {
 	// touch the folder tabs, so they stay available to that panel. The alt
 	// spellings still work from anywhere.
 	view := seedFolders(t, sizedMainModel(t, PanelChatView))
-	for _, seq := range []string{"h", "l", "[", "]"} {
+	for _, seq := range []string{"[", "]"} {
 		got := update(t, view, seq)
 		if got.focus != PanelChatView {
 			t.Errorf("%q from the chat view moved focus to %v", seq, got.focus)
@@ -649,6 +534,21 @@ func TestFolderCyclingKeys(t *testing.T) {
 	if got := update(t, view, "\x1bl"); got.chatList.ActiveFolderID() != work {
 		t.Errorf("alt+l from the chat view: active folder = %d, want %d",
 			got.chatList.ActiveFolderID(), work)
+	}
+
+	// The point of the change: bare h/l no longer touch the folder tabs
+	// from either browsing panel. This is the regression that would
+	// reappear if the old viFolder gate were restored alongside the new
+	// panel movement.
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		base := seedFolders(t, sizedMainModel(t, panel))
+		for _, seq := range []string{"h", "l"} {
+			got := update(t, base, seq)
+			if id := got.chatList.ActiveFolderID(); id != telegram.AllChatsFolderID {
+				t.Errorf("%q from panel %v cycled the folder tab (now %d)",
+					seq, panel, id)
+			}
+		}
 	}
 }
 
@@ -667,9 +567,9 @@ func TestChatListKeysReachChatList(t *testing.T) {
 	seqs := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
 		"\x1b[D" /* left */, "\x1b[C" /* right */}
 	for _, seq := range seqs {
-		k := newKeyPress(decodeKey(t, seq))
-		if k.matches(appBindings...) {
-			t.Errorf("%q collides with an app-level binding (stroke=%q)", seq, k.stroke)
+		k := keys.NewPress(decodeKey(t, seq))
+		if k.Matches(appBindings...) {
+			t.Errorf("%q collides with an app-level binding (stroke=%q)", seq, k.Stroke())
 		}
 		got := update(t, m, seq)
 		if got.focus != PanelChatList {
@@ -996,8 +896,10 @@ func TestComposerHelpFollowsEditingMode(t *testing.T) {
 	for _, b := range emacs.Bindings {
 		emacsAll += b.Keys + "\x00" + b.Desc + "\x00"
 	}
-	if !strings.Contains(emacsAll, "ctrl+w") || !strings.Contains(emacsAll, "ctrl+a / ctrl+e") {
-		t.Error("the emacs section omits its readline chords")
+	for _, chord := range []string{"ctrl+w", "ctrl+a", "ctrl+e", "ctrl+u", "ctrl+k"} {
+		if !strings.Contains(emacsAll, chord) {
+			t.Errorf("the emacs section omits the readline chord %q", chord)
+		}
 	}
 	if strings.Contains(emacsAll, "insert mode") {
 		t.Error("the emacs section describes vi's esc")
@@ -1051,9 +953,9 @@ func TestComposerKeepsItsChords(t *testing.T) {
 		}
 		seq := fmt.Sprintf("\x1b[%d;5u", r)
 		t.Run(string(r), func(t *testing.T) {
-			k := newKeyPress(decodeKey(t, seq))
-			if want := "ctrl+" + string(r); k.stroke != want {
-				t.Fatalf("stroke = %q, want %q", k.stroke, want)
+			k := keys.NewPress(decodeKey(t, seq))
+			if want := "ctrl+" + string(r); k.Stroke() != want {
+				t.Fatalf("stroke = %q, want %q", k.Stroke(), want)
 			}
 			m := update(t, mainModel(t, PanelComposer), seq)
 			if m.focus != PanelComposer {
@@ -1074,9 +976,9 @@ func TestComposerKeepsItsChords(t *testing.T) {
 		{"\x0a", "ctrl+j"}, // newline
 		{"\x0f", "ctrl+o"}, // external editor
 	} {
-		k := newKeyPress(decodeKey(t, tc.seq))
-		if k.stroke != tc.stroke {
-			t.Fatalf("stroke = %q, want %q", k.stroke, tc.stroke)
+		k := keys.NewPress(decodeKey(t, tc.seq))
+		if k.Stroke() != tc.stroke {
+			t.Fatalf("stroke = %q, want %q", k.Stroke(), tc.stroke)
 		}
 		if m := update(t, mainModel(t, PanelComposer), tc.seq); m.focus != PanelComposer {
 			t.Errorf("%s moved focus to %v", tc.stroke, m.focus)
@@ -1089,7 +991,8 @@ func TestComposerKeepsItsChords(t *testing.T) {
 // rather than re-triggering the binding that opened it.
 func TestSearchKeysYieldToOpenOverlays(t *testing.T) {
 	// Open the global search from the chat list, then type "/" into it.
-	m := update(t, mainModel(t, PanelChatList), "/")
+	// ctrl+g is what opens it there now: "/" is the chat list's own filter.
+	m := update(t, mainModel(t, PanelChatList), "\x07")
 	if !m.search.IsVisible() {
 		t.Fatal("precondition: global search did not open")
 	}
@@ -1111,19 +1014,29 @@ func TestSearchKeysYieldToOpenOverlays(t *testing.T) {
 // config predates a field (or is the zero value used by these tests).
 func TestResolveKeysDefaults(t *testing.T) {
 	want := map[string]string{
-		"quit": "ctrl+c", "focusChatList": "f1", "focusChatView": "f2",
+		"quit": "ctrl+c", "quitBrowsing": "q",
+		"focusChatList": "f1", "focusChatView": "f2",
 		"focusComposer": "f3", "search": "/", "globalSearch": "ctrl+g",
 		"contacts": "alt+c", "contactsAlt": "f4", "help": "?",
 		"nextFolder": "alt+l", "prevFolder": "alt+h",
 		"nextChat": "alt+j", "prevChat": "alt+k",
+		// Handed to chatview rather than dispatched here; the defaults
+		// are the keys chatview hardcoded before it took them from config.
+		"reply": "r", "editMessage": "e", "deleteMessage": "d",
+		"scrollUp": "k", "scrollDown": "j",
+		"pageUp": "pgup", "pageDown": "pgdown",
 	}
 	k := resolveKeys(config.KeyConfig{})
 	got := map[string]string{
-		"quit": k.quit, "focusChatList": k.focusChatList, "focusChatView": k.focusChatView,
+		"quit": k.quit, "quitBrowsing": k.quitBrowsing,
+		"focusChatList": k.focusChatList, "focusChatView": k.focusChatView,
 		"focusComposer": k.focusComposer, "search": k.search, "globalSearch": k.globalSearch,
 		"contacts": k.contacts, "contactsAlt": k.contactsAlt, "help": k.help,
 		"nextFolder": k.nextFolder, "prevFolder": k.prevFolder,
 		"nextChat": k.nextChat, "prevChat": k.prevChat,
+		"reply": k.reply, "editMessage": k.editMessage, "deleteMessage": k.deleteMessage,
+		"scrollUp": k.scrollUp, "scrollDown": k.scrollDown,
+		"pageUp": k.pageUp, "pageDown": k.pageDown,
 	}
 	for name, w := range want {
 		if got[name] != w {
@@ -1260,4 +1173,932 @@ func TestTabCyclesFromTheComposer(t *testing.T) {
 	if got := update(t, openChatModel(t, PanelComposer), "\x1b[Z"); got.focus != PanelChatView {
 		t.Errorf("shift+tab from the composer went to %v, want PanelChatView", got.focus)
 	}
+}
+
+// quits reports whether a command is the one that ends the program. Only the
+// direct tea.Quit is recognized, which is what every quit path here returns;
+// a batch containing it would be a different (and unintended) shape.
+func quits(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+// TestViPanelMovement covers the change bare h/l went through: they used to
+// cycle the folder tabs, and now move between the two browsing panels, which
+// is what left/right mean in a layout that is literally two columns.
+//
+// The negative half matters as much as the positive: they must be one step at
+// a time (no wrap), must never land in the composer, and must be inert while
+// an overlay or dialog owns the keyboard.
+func TestViPanelMovement(t *testing.T) {
+	t.Run("l enters the chat view, h returns", func(t *testing.T) {
+		m := update(t, openChatModel(t, PanelChatList), "l")
+		if m.focus != PanelChatView {
+			t.Fatalf("l from the chat list: focus = %v, want PanelChatView", m.focus)
+		}
+		if m = update(t, m, "h"); m.focus != PanelChatList {
+			t.Fatalf("h from the chat view: focus = %v, want PanelChatList", m.focus)
+		}
+	})
+
+	// The esc ladder's discipline: a step you cannot take is nothing, not a
+	// wrap onto the far side. l from the chat view in particular must not
+	// reach the composer — typing is entered deliberately or not at all.
+	t.Run("the edges are no-ops, not wraps", func(t *testing.T) {
+		for _, tc := range []struct {
+			seq   string
+			panel FocusPanel
+		}{
+			{"h", PanelChatList},
+			{"l", PanelChatView},
+		} {
+			got, cmd := updateCmd(t, openChatModel(t, tc.panel), tc.seq)
+			if got.focus != tc.panel {
+				t.Errorf("%q at the edge of %v moved focus to %v",
+					tc.seq, tc.panel, got.focus)
+			}
+			if got.search.IsVisible() || got.contacts.IsVisible() || got.help.IsVisible() {
+				t.Errorf("%q at the edge of %v opened an overlay", tc.seq, tc.panel)
+			}
+			if quits(cmd) {
+				t.Errorf("%q at the edge of %v quit", tc.seq, tc.panel)
+			}
+		}
+	})
+
+	// The composer owns printables: h and l are text there, not motion.
+	t.Run("the composer is unaffected", func(t *testing.T) {
+		m := openChatModel(t, PanelComposer)
+		for _, seq := range []string{"h", "l"} {
+			got := update(t, m, seq)
+			if got.focus != PanelComposer {
+				t.Errorf("%q moved focus out of the composer to %v", seq, got.focus)
+			}
+		}
+		if m = update(t, m, "h"); !m.composer.HasDraft() {
+			t.Error("\"h\" typed in the composer did not become text")
+		}
+	})
+
+	// An overlay or dialog owns the keyboard while it is up. The panels
+	// behind it are not visible, so moving focus there would happen blind.
+	t.Run("inert while an overlay or dialog is up", func(t *testing.T) {
+		cases := map[string]func(t *testing.T) Model{
+			"help": func(t *testing.T) Model {
+				return update(t, openChatModel(t, PanelChatList), "?")
+			},
+			"global search": func(t *testing.T) Model {
+				return update(t, openChatModel(t, PanelChatList), "\x07") // ctrl+g
+			},
+			"contacts": func(t *testing.T) Model {
+				return update(t, openChatModel(t, PanelChatList), "\x1bc")
+			},
+			"dialog": func(t *testing.T) Model {
+				m := openChatModel(t, PanelChatList)
+				d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+				m.dialog = &d
+				return m
+			},
+		}
+		for name, setup := range cases {
+			t.Run(name, func(t *testing.T) {
+				m := setup(t)
+				before := m.focus
+				for _, seq := range []string{"h", "l"} {
+					if got := update(t, m, seq); got.focus != before {
+						t.Errorf("%q moved focus from %v to %v with the %s up",
+							seq, before, got.focus, name)
+					}
+				}
+			})
+		}
+	})
+}
+
+// TestQuitFromBrowsingPanels covers "q" quitting from the chat list and chat
+// view — free there because neither is a text surface — and the confirm that
+// stands between a single keystroke and a discarded draft.
+func TestQuitFromBrowsingPanels(t *testing.T) {
+	t.Run("quits from both browsing panels", func(t *testing.T) {
+		for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+			m := openChatModel(t, panel)
+			if m.composer.HasDraft() || m.composer.Attachment() != "" {
+				t.Fatalf("precondition: composer is not empty in panel %v", panel)
+			}
+			got, cmd := updateCmd(t, m, "q")
+			if !quits(cmd) {
+				t.Errorf("q from panel %v did not quit", panel)
+			}
+			if got.dialog != nil {
+				t.Errorf("q from panel %v raised a confirm over an empty composer", panel)
+			}
+		}
+	})
+
+	// The composer owns printables, which is the whole reason a bare letter
+	// can mean "quit" anywhere else.
+	t.Run("inert from the composer", func(t *testing.T) {
+		m, cmd := updateCmd(t, openChatModel(t, PanelComposer), "q")
+		if quits(cmd) {
+			t.Fatal("q quit from the composer")
+		}
+		if m.focus != PanelComposer {
+			t.Errorf("focus = %v, want PanelComposer", m.focus)
+		}
+		if !m.composer.HasDraft() {
+			t.Error("\"q\" typed in the composer did not become text")
+		}
+	})
+
+	t.Run("inert while an overlay or dialog is up", func(t *testing.T) {
+		// q still closes the help overlay — the one place it already had a
+		// meaning, which this change does not disturb.
+		h := update(t, openChatModel(t, PanelChatList), "?")
+		if !h.help.IsVisible() {
+			t.Fatal("precondition: help did not open")
+		}
+		got, cmd := updateCmd(t, h, "q")
+		if quits(cmd) {
+			t.Error("q quit instead of closing the help overlay")
+		}
+		if got.help.IsVisible() {
+			t.Error("q did not close the help overlay")
+		}
+
+		for name, setup := range map[string]func(t *testing.T) Model{
+			"global search": func(t *testing.T) Model {
+				return update(t, openChatModel(t, PanelChatList), "\x07")
+			},
+			"contacts": func(t *testing.T) Model {
+				return update(t, openChatModel(t, PanelChatList), "\x1bc")
+			},
+			"dialog": func(t *testing.T) Model {
+				m := openChatModel(t, PanelChatList)
+				d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+				m.dialog = &d
+				return m
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				if _, cmd := updateCmd(t, setup(t), "q"); quits(cmd) {
+					t.Errorf("q quit with the %s up", name)
+				}
+			})
+		}
+	})
+
+	// draft builds the state a user would lose: a real message typed into
+	// the composer, with focus handed back to a browsing panel.
+	draft := func(t *testing.T, text string) Model {
+		t.Helper()
+		m := openChatModel(t, PanelComposer)
+		for _, r := range text {
+			m = update(t, m, string(r))
+		}
+		m.setFocus(PanelChatList)
+		return m
+	}
+
+	t.Run("a draft asks before discarding it", func(t *testing.T) {
+		m := draft(t, "hi")
+		if !m.composer.HasDraft() {
+			t.Fatal("precondition: no draft in the composer")
+		}
+		got, cmd := updateCmd(t, m, "q")
+		if quits(cmd) {
+			t.Fatal("q discarded a draft without asking")
+		}
+		if got.dialog == nil || !got.dialog.IsVisible() {
+			t.Fatal("q with a draft did not raise the confirm dialog")
+		}
+
+		// Confirming quits; cancelling returns to where the user was.
+		out, cmd := got.Update(dialog.DialogResultMsg{ID: "quit", Confirmed: true})
+		if !quits(cmd) {
+			t.Error("confirming the quit dialog did not quit")
+		}
+		if _, ok := out.(Model); !ok {
+			t.Fatalf("Update returned %T, want app.Model", out)
+		}
+
+		out, cmd = got.Update(dialog.DialogResultMsg{ID: "quit", Confirmed: false})
+		if quits(cmd) {
+			t.Error("cancelling the quit dialog quit anyway")
+		}
+		next := out.(Model)
+		if next.dialog != nil {
+			t.Error("cancelling left the dialog on screen")
+		}
+		if !next.composer.HasDraft() {
+			t.Error("cancelling lost the draft it was protecting")
+		}
+	})
+
+	// Whitespace is not work. Prompting for it would be the kind of dialog
+	// people learn to dismiss unread.
+	t.Run("a whitespace-only draft quits at once", func(t *testing.T) {
+		m := draft(t, "   ")
+		if m.composer.HasDraft() {
+			t.Fatal("precondition: whitespace counted as a draft")
+		}
+		got, cmd := updateCmd(t, m, "q")
+		if !quits(cmd) {
+			t.Error("q did not quit with a whitespace-only composer")
+		}
+		if got.dialog != nil {
+			t.Error("whitespace raised a confirm dialog")
+		}
+	})
+
+	// A pending attachment is the other half of the rule: nothing typed,
+	// but something to lose.
+	t.Run("a pending attachment asks too", func(t *testing.T) {
+		m := openChatModel(t, PanelChatList)
+		m.composer.SetAttachment("/tmp/pasted.png", true)
+		if m.composer.HasDraft() {
+			t.Fatal("precondition: an attachment should not count as draft text")
+		}
+		got, cmd := updateCmd(t, m, "q")
+		if quits(cmd) {
+			t.Fatal("q discarded a pending attachment without asking")
+		}
+		if got.dialog == nil || !got.dialog.IsVisible() {
+			t.Error("q with a pending attachment did not raise the confirm dialog")
+		}
+	})
+}
+
+// TestStatusHintsComeFromResolvedKeys is the status bar's half of the rule
+// helpSections already follows: a rebound key must not leave the bar
+// advertising the one it replaced. The review's specific complaint was the
+// missing "?" — the one key that unlocks every other key.
+func TestStatusHintsComeFromResolvedKeys(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	hints := m.statusHints()
+	for _, want := range []string{"?:Help", "h/l", "q:Quit"} {
+		if !strings.Contains(hints, want) {
+			t.Errorf("hints %q omit %q", hints, want)
+		}
+	}
+
+	cfg := &config.Config{}
+	cfg.Keys.Help = "f12"
+	cfg.Keys.QuitBrowsing = "ctrl+x"
+	cfg.Keys.Search = "ctrl+f"
+	rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	got := rebound.statusHints()
+	for _, want := range []string{"f12:Help", "ctrl+x:Quit", "ctrl+f:Find"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rebound hints %q omit %q", got, want)
+		}
+	}
+	for _, gone := range []string{"?:Help", "q:Quit", "/:Find"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("rebound hints %q still advertise %q", got, gone)
+		}
+	}
+
+	// The strip is an abbreviation that points at "?", not a second help
+	// card. The status bar drops it whole rather than truncate it, so length
+	// is what decides whether it is on screen at all.
+	if len(hints) > 60 {
+		t.Errorf("hints are %d chars, too long to survive a narrow terminal: %q",
+			len(hints), hints)
+	}
+}
+
+// TestChatViewKeysComeFromConfig covers the plumbing that ended eight config
+// fields being advertised and ignored: reply/edit/delete and the scroll and
+// page keys are resolved here and handed to the panel that implements them.
+//
+// The help card reads them back through chatview.ActiveKeys rather than from
+// resolvedKeys, because chatview refuses a binding that would shadow a key it
+// already owns — and a card that advertised the refused binding would be the
+// exact drift this wave exists to remove.
+func TestChatViewKeysComeFromConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Keys.Reply = "y"
+	cfg.Keys.EditMessage = "Option+E"
+	cfg.Keys.DeleteMessage = "x"
+	cfg.Keys.ScrollUp = "u"
+	cfg.Keys.ScrollDown = "n" // collides with chatview's next-match key
+	cfg.Keys.PageUp = "b"
+	cfg.Keys.PageDown = "f"
+	k := resolveKeys(cfg.Keys)
+
+	// Normalized on the way in, like every other configured binding.
+	if k.editMessage != "alt+e" {
+		t.Errorf("editMessage = %q, want the normalized alt+e", k.editMessage)
+	}
+
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	row, ok := findBinding(m.helpSections(), "Reply / edit / delete")
+	if !ok {
+		t.Fatal("no reply/edit/delete row")
+	}
+	if row.Keys != "y / alt+e / x" {
+		t.Errorf("reply row = %q, want the configured \"y / alt+e / x\"", row.Keys)
+	}
+
+	// Motions are additive in chatview: a configured scroll key is an extra
+	// spelling, not a replacement, so the row has to name both or it
+	// advertises the removal of keys that still work. And scroll_down = "n"
+	// collided with the next-match key, so chatview dropped it — the card
+	// must not claim it.
+	scroll, ok := findBinding(m.helpSections(), "Scroll down / up")
+	if !ok {
+		t.Fatal("no scroll row")
+	}
+	if scroll.Keys != "j / k / u" {
+		t.Errorf("scroll row = %q, want \"j / k / u\" (the collided \"n\" dropped)",
+			scroll.Keys)
+	}
+	page, ok := findBinding(m.helpSections(), "Page down / up, keeping")
+	if !ok {
+		t.Fatal("no paging row")
+	}
+	for _, want := range []string{"pgdown", "pgup", "f", "b"} {
+		if !slices.Contains(strings.Split(page.Keys, " / "), want) {
+			t.Errorf("paging row %q omits %q", page.Keys, want)
+		}
+	}
+
+	// The defaults leave the rows exactly as they read before chatview
+	// became configurable — no duplicated "j / k / j / k".
+	plain := New(&config.Config{}, nil, store.NewStore(),
+		telegram.NewTUIAuthorizer(&config.Config{}))
+	if row, ok := findBinding(plain.helpSections(), "Scroll down / up"); !ok || row.Keys != "j / k" {
+		t.Errorf("default scroll row = %q, want \"j / k\"", row.Keys)
+	}
+	if row, ok := findBinding(plain.helpSections(), "Reply / edit / delete"); !ok || row.Keys != "r / e / d" {
+		t.Errorf("default reply row = %q, want \"r / e / d\"", row.Keys)
+	}
+}
+
+// TestChatViewMnemonicCollisionIsNotAdvertised is the end-to-end version of
+// the rule above: reply = "j" would shadow the scroll-down motion, so
+// chatview keeps "r". The card has to say "r", and the panel has to mean it.
+func TestChatViewMnemonicCollisionIsNotAdvertised(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Keys.Reply = "j"
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	m.screen = ScreenMain
+	m.composer.SetEditingMode(composer.ModeEmacs)
+	m.setFocus(PanelChatView)
+	m.chatView.OpenChat(testChatID, "Test Chat")
+	m.composer.SetChatId(testChatID)
+	// messageAction needs something to act on: it targets the message at
+	// the bottom of the view.
+	m.store.Messages.Append(testChatID, &telegram.Message{ID: 11, ChatID: testChatID})
+
+	row, ok := findBinding(m.helpSections(), "Reply / edit / delete")
+	if !ok {
+		t.Fatal("no reply/edit/delete row")
+	}
+	if row.Keys != "r / e / d" {
+		t.Errorf("row = %q, want the built-in \"r / e / d\" — the configured "+
+			"\"j\" collides with scroll-down and was refused", row.Keys)
+	}
+
+	// And the card is right: "r" replies, "j" does not.
+	_, cmd := updateCmd(t, m, "r")
+	if act, ok := findMessageAction(cmd); !ok || act.Action != "reply" {
+		t.Errorf("\"r\" produced %+v (found=%v), want a reply action", act, ok)
+	}
+	_, cmd = updateCmd(t, m, "j")
+	if act, ok := findMessageAction(cmd); ok {
+		t.Errorf("\"j\" produced the %q action; it should still be scroll-down",
+			act.Action)
+	}
+}
+
+// findMessageAction walks a (possibly batched) command for a chat view
+// message action. app.Update batches the focused panel's command with the
+// status bar's, so the interesting message is rarely the top-level one.
+func findMessageAction(cmd tea.Cmd) (chatview.MessageActionMsg, bool) {
+	for _, msg := range flattenCmd(cmd) {
+		if act, ok := msg.(chatview.MessageActionMsg); ok {
+			return act, true
+		}
+	}
+	return chatview.MessageActionMsg{}, false
+}
+
+func flattenCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, flattenCmd(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+// TestHelpLineComesFromResolvedKeys covers the fourth copy of the keymap —
+// the bar drawn under the status bar on every frame. It was the last one
+// still hardcoded, and it was advertising "h/l:folder" after h/l stopped
+// touching the folders.
+//
+// It is also per-panel now. One line for all five focus states named keys
+// that did nothing in four of them: n/N outside the chat view, "find" for
+// a "/" that filters, Esc:back from the panel that IS back.
+func TestHelpLineComesFromResolvedKeys(t *testing.T) {
+	line := func(t *testing.T, panel FocusPanel, name string) string {
+		t.Helper()
+		m := mainModel(t, panel)
+		return m.helpLine(name)
+	}
+
+	t.Run("chat list", func(t *testing.T) {
+		got := line(t, PanelChatList, "CHATS")
+		for _, want := range []string{"?:help", "l:messages", "/:filter",
+			"q:quit", "CHATS"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("chat list line %q omits %q", got, want)
+			}
+		}
+		// The three the single shared line used to lie about here.
+		for _, gone := range []string{"n/N", ":find", "Esc:back", "folder"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("chat list line %q advertises %q, which does "+
+					"nothing from this panel", got, gone)
+			}
+		}
+	})
+
+	t.Run("chat view", func(t *testing.T) {
+		got := line(t, PanelChatView, "MESSAGES")
+		for _, want := range []string{"?:help", "h:chats", "/:find", "n/N:match",
+			"Esc:back", "q:quit", "MESSAGES"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("chat view line %q omits %q", got, want)
+			}
+		}
+		if strings.Contains(got, ":filter") {
+			t.Errorf("chat view line %q calls \"/\" a filter; it is find here", got)
+		}
+	})
+
+	// The composer's line is deliberately different: none of the browsing
+	// keys are live there.
+	t.Run("composer", func(t *testing.T) {
+		got := line(t, PanelComposer, "COMPOSE")
+		if !strings.Contains(got, "Enter:send") || !strings.Contains(got, "COMPOSE") {
+			t.Errorf("composer line %q is not the composer's", got)
+		}
+		for _, gone := range []string{"h:", "l:", "q:quit", "n/N"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("composer line %q advertises the browsing key %q", got, gone)
+			}
+		}
+	})
+
+	// The overlays own the keyboard; the panel keys behind them are not
+	// reachable until they close.
+	t.Run("overlays", func(t *testing.T) {
+		for _, tc := range []struct {
+			panel FocusPanel
+			name  string
+			want  string
+		}{
+			{PanelSearch, "SEARCH", "Esc:close"},
+			{PanelContacts, "CONTACTS", "Esc:close"},
+			{PanelGroupInfo, "INFO", "Esc:back"},
+		} {
+			got := line(t, tc.panel, tc.name)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("%s line %q omits %q", tc.name, got, tc.want)
+			}
+			for _, gone := range []string{"i or c:compose", "n/N", "Tab:switch"} {
+				if strings.Contains(got, gone) {
+					t.Errorf("%s line %q advertises %q, inert while the "+
+						"overlay is up", tc.name, got, gone)
+				}
+			}
+		}
+	})
+
+	t.Run("follows a rebind", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Keys.Help = "f12"
+		cfg.Keys.QuitBrowsing = "ctrl+x"
+		rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+		rebound.setFocus(PanelChatList)
+		got := rebound.helpLine("CHATS")
+		for _, want := range []string{"f12:help", "ctrl+x:quit"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("rebound line %q omits %q", got, want)
+			}
+		}
+		for _, gone := range []string{"?:help", "q:quit"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("rebound line %q still advertises %q", got, gone)
+			}
+		}
+	})
+
+	// A binding containing a percent sign used to be read as a format verb,
+	// because the line was a format string handed to Sprintf.
+	t.Run("a percent binding is not a format verb", func(t *testing.T) {
+		pct := &config.Config{}
+		pct.Keys.Help = "%"
+		p := New(pct, nil, store.NewStore(), telegram.NewTUIAuthorizer(pct))
+		p.setFocus(PanelChatList)
+		if got := p.helpLine("CHATS"); !strings.Contains(got, "%:help") ||
+			strings.Contains(got, "%!") {
+			t.Errorf("help line mangled a %% binding: %q", got)
+		}
+	})
+}
+
+// TestReservedKeysStopChatViewStealingAppBindings is the end-to-end proof
+// for the defect that got this wave rejected: chatview accepted
+// reply = "q", the help card advertised it as Reply, and pressing "q" quit
+// the application. The panel had no way to know app.go had claimed the key
+// first — Model.reservedKeys, handed over in New, is that way.
+func TestReservedKeysStopChatViewStealingAppBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		check func(t *testing.T, m Model)
+	}{
+		{
+			name: "q still quits",
+			key:  "q",
+			check: func(t *testing.T, m Model) {
+				if _, cmd := updateCmd(t, m, "q"); !quits(cmd) {
+					t.Error("q did not quit — the chat view took it")
+				}
+			},
+		},
+		{
+			name: "h still moves panels",
+			key:  "h",
+			check: func(t *testing.T, m Model) {
+				if got := update(t, m, "h"); got.focus != PanelChatList {
+					t.Errorf("h left focus at %v — the chat view took it", got.focus)
+				}
+			},
+		},
+		{
+			name: "i still reaches the composer",
+			key:  "i",
+			check: func(t *testing.T, m Model) {
+				if got := update(t, m, "i"); got.focus != PanelComposer {
+					t.Errorf("i left focus at %v — the chat view took it", got.focus)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Keys.Reply = tc.key
+			m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+			m.screen = ScreenMain
+			m.composer.SetEditingMode(composer.ModeEmacs)
+			m.setFocus(PanelChatView)
+			m.chatView.OpenChat(testChatID, "Test Chat")
+			m.composer.SetChatId(testChatID)
+			m.store.Messages.Append(testChatID, &telegram.Message{
+				ID: 11, ChatID: testChatID,
+			})
+
+			// The panel refused the binding, so reply keeps its letter...
+			if got := m.chatView.ActiveKeys().Reply; got != "r" {
+				t.Errorf("reply resolved to %q; a reserved key should have "+
+					"been refused in favour of the built-in \"r\"", got)
+			}
+			// ...and the card must not advertise the refused key either.
+			row, ok := findBinding(m.helpSections(), "Reply / edit / delete")
+			if !ok {
+				t.Fatal("no reply/edit/delete row")
+			}
+			if strings.Contains(row.Keys, tc.key) {
+				t.Errorf("row %q advertises %q, which app.go claims first",
+					row.Keys, tc.key)
+			}
+			// ...and the app-level meaning of the key is intact.
+			tc.check(t, m)
+			// The reply action is still reachable, on its own letter.
+			if _, cmd := updateCmd(t, m, "r"); func() bool {
+				act, found := findMessageAction(cmd)
+				return !found || act.Action != "reply"
+			}() {
+				t.Error("\"r\" no longer replies")
+			}
+		})
+	}
+}
+
+// TestUnreachableMnemonicIsShownAsUnbound covers the other outcome: a
+// configuration that is not reserved but still leaves an action with no
+// key, because a sibling mnemonic took it. reply = "e" is accepted — "e"
+// is the chat view's own letter, not the app's — and edit is left with
+// nothing. The card has to say that rather than render an empty cell,
+// which reads as a rendering fault and gets reported as one.
+func TestUnreachableMnemonicIsShownAsUnbound(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Keys.Reply = "e"
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+
+	if got := m.chatView.ActiveKeys(); got.Reply != "e" || got.Edit != "" {
+		t.Fatalf("precondition: ActiveKeys = %+v, want reply \"e\" and edit "+
+			"reported as unreachable", got)
+	}
+
+	row, ok := findBinding(m.helpSections(), "Reply / edit / delete")
+	if !ok {
+		t.Fatal("no reply/edit/delete row")
+	}
+	if row.Keys != "e / "+unboundKey+" / d" {
+		t.Errorf("row = %q, want %q", row.Keys, "e / "+unboundKey+" / d")
+	}
+	// The specific thing being prevented: a blank between the separators.
+	for _, part := range strings.Split(row.Keys, " / ") {
+		if strings.TrimSpace(part) == "" {
+			t.Errorf("row %q has an empty key cell, which reads as a "+
+				"rendering bug rather than as a configuration problem", row.Keys)
+		}
+	}
+	// And no other row is disturbed by one mnemonic collapsing.
+	if scroll, ok := findBinding(m.helpSections(), "Scroll down / up"); !ok ||
+		scroll.Keys != "j / k" {
+		t.Errorf("scroll row = %q, want the untouched \"j / k\"", scroll.Keys)
+	}
+}
+
+// TestContactsRespectsModals covers the gate the review found missing: the
+// contacts toggle had no overlay guard at all, so alt+c opened the contacts
+// panel out from under a modal dialog that was still waiting for an answer.
+//
+// The gate is deliberately NOT the usual noOverlay: contacts is a toggle,
+// and gating it on "no overlay is up" would leave the key that opens the
+// panel unable to close it.
+func TestContactsRespectsModals(t *testing.T) {
+	t.Run("a dialog cannot be bypassed", func(t *testing.T) {
+		m := openChatModel(t, PanelChatList)
+		d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+		m.dialog = &d
+		for _, seq := range []string{"\x1bc", "\x1bOS"} { // alt+c, f4
+			got := update(t, m, seq)
+			if got.contacts.IsVisible() {
+				t.Errorf("%q opened contacts over an open dialog", seq)
+			}
+			if got.dialog == nil {
+				t.Errorf("%q dismissed the dialog", seq)
+			}
+		}
+	})
+
+	t.Run("the search overlay cannot be bypassed", func(t *testing.T) {
+		m := update(t, openChatModel(t, PanelChatList), "\x07") // ctrl+g
+		if !m.search.IsVisible() {
+			t.Fatal("precondition: global search did not open")
+		}
+		if got := update(t, m, "\x1bc"); got.contacts.IsVisible() {
+			t.Error("alt+c opened contacts over the search overlay")
+		}
+	})
+
+	t.Run("still toggles itself closed", func(t *testing.T) {
+		m := update(t, openChatModel(t, PanelChatList), "\x1bc")
+		if !m.contacts.IsVisible() {
+			t.Fatal("precondition: contacts did not open")
+		}
+		if got := update(t, m, "\x1bc"); got.contacts.IsVisible() {
+			t.Error("alt+c could no longer close the panel it opened")
+		}
+	})
+}
+
+// TestComposerExceptionListIsTrue pins the claim keymap.go makes and the
+// docs copy: the complete list of keys that still fire from a focused
+// composer. The review found the list omitting two that do — keys.quit and
+// the contacts pair — which matters because a user who rebinds keys.quit to
+// a printable loses that character while writing, and nothing warns them.
+func TestComposerExceptionListIsTrue(t *testing.T) {
+	// keys.quit is matched before every focus gate, so it fires while
+	// composing. That is correct by design for a quit key, and the reason
+	// the doc comment now spells out the hazard of rebinding it to a letter.
+	cfg := &config.Config{}
+	cfg.Keys.Quit = "ctrl+x"
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	m.screen = ScreenMain
+	m.composer.SetEditingMode(composer.ModeEmacs)
+	m.composer.SetChatId(testChatID)
+	m.setFocus(PanelComposer)
+	if _, cmd := updateCmd(t, m, "\x18"); !quits(cmd) { // ctrl+x
+		t.Error("keys.quit did not fire from the composer, but the keymap " +
+			"table lists it as one that does")
+	}
+
+	// The contacts pair likewise — alt+c and f4 are not characters.
+	for _, seq := range []string{"\x1bc", "\x1bOS"} {
+		c := openChatModel(t, PanelComposer)
+		if got := update(t, c, seq); !got.contacts.IsVisible() {
+			t.Errorf("%q did not open contacts from the composer, but the "+
+				"keymap table lists it as one that does", seq)
+		}
+	}
+
+	// And the counter-claim: quit_browsing is a bare letter, so it must NOT
+	// fire here — it is text.
+	q := openChatModel(t, PanelComposer)
+	if _, cmd := updateCmd(t, q, "q"); quits(cmd) {
+		t.Error("keys.quit_browsing quit from the composer; it is supposed " +
+			"to be a typed character there")
+	}
+}
+
+// TestLiveKeysAreAdvertisedWhereTheyWork covers five live bindings
+// the help card used to omit. The omission was not harmless: because the
+// README drift test compares the README's Key column against this card, a
+// key missing here could not be documented there either — so the facts got
+// written into the Action column, where the parser never looks. Hiding a
+// fact from the test to keep the test green is how a guarantee rots.
+//
+// Each row is pinned to the handler that implements it, because the other
+// failure mode is worse than an omission: advertising a key that does
+// nothing is exactly what this wave exists to stop.
+func TestLiveKeysAreAdvertisedWhereTheyWork(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	sections := m.helpSections()
+
+	// Home/End are handled by the panels (chatview's own g/G/home/end
+	// switch, and the list widget's for the chat list), which only works
+	// because app-level dispatch claims neither on the way past.
+	t.Run("app claims neither", func(t *testing.T) {
+		appBindings := []string{
+			m.keys.quit, m.keys.quitBrowsing, m.keys.focusChatList,
+			m.keys.focusChatView, m.keys.focusComposer, m.keys.search,
+			m.keys.globalSearch, m.keys.contacts, m.keys.contactsAlt,
+			m.keys.help, m.keys.nextFolder, m.keys.prevFolder,
+			m.keys.nextChat, m.keys.prevChat,
+		}
+		// Every encoding a terminal uses for these two.
+		for _, seq := range []string{
+			"\x1b[H", "\x1b[1~", "\x1bOH", // home
+			"\x1b[F", "\x1b[4~", "\x1bOF", // end
+		} {
+			k := keys.NewPress(decodeKey(t, seq))
+			if k.Matches(appBindings...) || k.Matches(keys.AppFixed...) {
+				t.Errorf("%q (%s) collides with an app-level binding, so it "+
+					"never reaches the panel the card credits it to",
+					seq, k.Stroke())
+			}
+			for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+				got := update(t, openChatModel(t, panel), seq)
+				if got.focus != panel {
+					t.Errorf("%q moved focus from %v to %v instead of "+
+						"reaching the panel", seq, panel, got.focus)
+				}
+				if got.search.IsVisible() || got.contacts.IsVisible() ||
+					got.help.IsVisible() {
+					t.Errorf("%q opened an overlay from %v", seq, panel)
+				}
+			}
+		}
+	})
+
+	// The rows themselves. Split one-key-per-meaning: a "g / G / home / end"
+	// row against "Top / bottom" leaves the reader guessing which end
+	// "home" is.
+	t.Run("rows name both spellings", func(t *testing.T) {
+		for _, tc := range []struct{ desc, want string }{
+			{"First chat", "g / home"},
+			{"Last chat", "G / end"},
+			{"Top", "g / home"},
+			{"Bottom", "G / end"},
+		} {
+			row, ok := findBinding(sections, tc.desc)
+			if !ok {
+				t.Errorf("no %q row", tc.desc)
+				continue
+			}
+			if row.Keys != tc.want {
+				t.Errorf("%q row = %q, want %q", tc.desc, row.Keys, tc.want)
+			}
+		}
+	})
+
+	// The composer's own share of these keys. ctrl+d and delete both reach
+	// the textarea's DeleteChar, and both die in vi NORMAL state —
+	// handleViNormal drops ctrl-carrying keys before its switch and has no
+	// "delete" case — so they are emacs-only on the card. home and end go
+	// the other way: handleViNormal binds them ("0","home" / "$","end"), so
+	// they survive the mode change and belong in both sections.
+	t.Run("composer rows follow the editing mode", func(t *testing.T) {
+		section := func(t *testing.T, mode composer.EditingMode) help.Section {
+			t.Helper()
+			c := mainModel(t, PanelComposer)
+			c.composer.SetEditingMode(mode)
+			for _, sec := range c.helpSections() {
+				if strings.HasPrefix(sec.Title, "Composer") {
+					return sec
+				}
+			}
+			t.Fatal("no composer section")
+			return help.Section{}
+		}
+		// Token membership, not substring: the vi section legitimately
+		// contains "dd" and "D", which a naive Contains would read as a
+		// delete binding.
+		names := func(sec help.Section) map[string]string {
+			out := map[string]string{}
+			for _, b := range sec.Bindings {
+				for _, key := range strings.Split(b.Keys, " / ") {
+					out[key] = b.Desc
+				}
+			}
+			return out
+		}
+
+		emacs, vi := names(section(t, composer.ModeEmacs)), names(section(t, composer.ModeVi))
+
+		for _, key := range []string{"ctrl+d", "delete"} {
+			desc, ok := emacs[key]
+			if !ok {
+				t.Errorf("the emacs composer section does not advertise %q", key)
+				continue
+			}
+			if !strings.Contains(strings.ToLower(desc), "delete") {
+				t.Errorf("%q row says %q, want it to describe a delete", key, desc)
+			}
+			if _, wrong := vi[key]; wrong {
+				t.Errorf("the vi composer section advertises %q, which stops "+
+					"working the moment the user leaves insert mode", key)
+			}
+		}
+
+		for _, key := range []string{"home", "end"} {
+			if _, ok := emacs[key]; !ok {
+				t.Errorf("the emacs composer section does not advertise %q", key)
+			}
+			desc, ok := vi[key]
+			if !ok {
+				t.Errorf("the vi composer section does not advertise %q, but "+
+					"handleViNormal binds it", key)
+				continue
+			}
+			// The row pairs home/end with 0/$, which are normal-mode only.
+			// It has to say which half survives the mode change.
+			if !strings.Contains(desc, "normal mode") {
+				t.Errorf("vi %q row says %q, want it to qualify the half that "+
+					"is normal-mode only", key, desc)
+			}
+		}
+	})
+
+	// End to end, through the real decoder: home moves to the start of the
+	// line and the delete-class keys remove the character now under the
+	// cursor. A row naming a key the textarea ignored would pass every
+	// assertion above and still be a lie.
+	t.Run("the composer keys really do it", func(t *testing.T) {
+		for _, tc := range []struct{ name, seq string }{
+			{"ctrl+d", "\x04"},
+			{"delete", "\x1b[3~"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := openChatModel(t, PanelComposer)
+				c = update(t, c, "a")
+				c = update(t, c, "b")
+				if !strings.Contains(c.composer.View(), "ab") {
+					t.Fatalf("precondition: composer view = %q, want the "+
+						"typed \"ab\"", c.composer.View())
+				}
+				c = update(t, c, "\x1b[H") // home
+				c = update(t, c, tc.seq)
+				view := c.composer.View()
+				if strings.Contains(view, "ab") {
+					t.Errorf("after home + %s the view still shows \"ab\": %q",
+						tc.name, view)
+				}
+				if !strings.Contains(view, "b") {
+					t.Errorf("after home + %s the view lost the wrong "+
+						"character: %q", tc.name, view)
+				}
+			})
+		}
+
+		// end returns the cursor to the line end, where a delete has
+		// nothing under it to remove.
+		c := openChatModel(t, PanelComposer)
+		c = update(t, c, "a")
+		c = update(t, c, "b")
+		c = update(t, c, "\x1b[H") // home
+		c = update(t, c, "\x1b[F") // end
+		c = update(t, c, "\x04")   // ctrl+d
+		if view := c.composer.View(); !strings.Contains(view, "ab") {
+			t.Errorf("end did not return the cursor to the line end: after "+
+				"home, end, ctrl+d the view is %q, want \"ab\" intact", view)
+		}
+	})
 }
