@@ -136,21 +136,41 @@ type NotificationConfig struct {
 // KeyConfig lists user-configurable key bindings. Not every field is
 // currently consulted:
 //
-//   - Wired (read by internal/app, which normalizes the value via
-//     [NormalizeKey] and falls back to its built-in default when empty):
-//     Quit, FocusChatList, FocusChatView, FocusComposer, Search,
-//     GlobalSearch, Contacts, ContactsAlt, Help, NextFolder, PrevFolder,
-//     NextChat, PrevChat. Note FocusChatList/View/Composer are wired *in
-//     addition to* their hardcoded alt+1/2/3 shortcuts, which always work
-//     regardless of configuration.
+//   - Wired, dispatched by internal/app itself (which normalizes the value
+//     via [NormalizeKey] and falls back to its built-in default when
+//     empty): Quit, QuitBrowsing, FocusChatList, FocusChatView,
+//     FocusComposer, Search, GlobalSearch, Contacts, ContactsAlt, Help,
+//     NextFolder, PrevFolder, NextChat, PrevChat. Note
+//     FocusChatList/View/Composer are wired *in addition to* their
+//     hardcoded alt+1/2/3 shortcuts, which always work regardless of
+//     configuration.
+//   - Wired, resolved by internal/app and handed to the chat view, which
+//     implements them: Reply, EditMessage, DeleteMessage, ScrollUp,
+//     ScrollDown, PageUp, PageDown. Same normalization and defaulting; the
+//     difference is only which layer matches the key. Two rules apply
+//     there and nowhere else. Reply/EditMessage/DeleteMessage are
+//     mnemonics: a value REPLACES the built-in r/e/d. ScrollUp/ScrollDown/
+//     PageUp/PageDown are motions: a value is ADDED to the built-in j/k,
+//     the arrows and pgup/pgdown, which always keep working. And a value
+//     that collides with a key the chat view already claims is dropped
+//     rather than allowed to shadow it. The chat view's remaining keys
+//     (g/G, ctrl+u/ctrl+d, n/N, ctrl+f, enter/o/s) are hardcoded there, as
+//     are the chat list's arrows and digits and the composer's line
+//     editing — see the keymap table in internal/app/keymap.go.
 //   - Unwired (parsed and preserved on save, but not consulted anywhere —
-//     kept so existing config.toml files round-trip cleanly; a user's
-//     values here are silently inert): Reply, EditMessage, DeleteMessage,
-//     Forward, ScrollUp, ScrollDown, PageUp, PageDown. These map to
-//     behavior owned by the chatlist/chatview components, not dispatched
-//     from app.go — see the keymap table in internal/app/keymap.go for the
-//     vi motions those components implement (j/k, g/G, ctrl+u/ctrl+d,
-//     n/N, ctrl+f, and the readline keys in the composer).
+//     kept so existing config.toml files round-trip cleanly; a value here
+//     is silently inert): Forward. There is no forward-a-message feature
+//     to bind it to; the field exists only so config files that set it
+//     still load.
+//
+// A component-dispatched field set to a key internal/app claims first is
+// not merely shadowed — it is dead, because app-level dispatch runs before
+// the focused panel sees the event. reply = "q" used to be accepted,
+// advertised on the help card as Reply, and quit the application when
+// pressed. Two things now prevent that: the chat view is told what the app
+// has claimed (keys.AppReserved) and refuses such a binding, keeping its
+// built-in letter; and [DetectKeyCollisions] reports it, so the refusal is
+// explained rather than silent.
 //
 // Wired bindings are matched before the focused panel sees the key, so a
 // binding here shadows that key in the chat list and chat view. It does not
@@ -182,10 +202,22 @@ type NotificationConfig struct {
 //
 // So every alt binding has an alt-free alternative: f1/f2/f3 for panel
 // focus, f4 for contacts (ContactsAlt), ctrl+g for global search
-// (GlobalSearch), and bare h/l for the folder tabs while the chat list is
-// focused. Rebinding here works too — prefer ctrl+… or a function key.
+// (GlobalSearch), and "[" / "]", the left/right arrows or the 1-9 jump for
+// the folder tabs while the chat list is focused. (Bare h/l used to be that
+// fallback for the folder tabs; they now move between panels, which is what
+// left/right means in a two-column layout — see internal/app/keymap.go.)
+// Rebinding here works too — prefer ctrl+… or a function key.
 type KeyConfig struct {
-	Quit          string `toml:"quit"`
+	Quit string `toml:"quit"`
+	// QuitBrowsing quits from the chat list and the chat view only, where
+	// a bare letter cannot be mistaken for typing — the composer owns
+	// printables and never sees it. Quit (and the hardcoded ctrl+c /
+	// ctrl+q) work from everywhere including the composer. Default "q".
+	//
+	// An unsent draft or a pending attachment turns it into a confirm
+	// rather than an immediate exit, so a single keystroke cannot discard
+	// a message being written.
+	QuitBrowsing  string `toml:"quit_browsing"`
 	FocusChatList string `toml:"focus_chat_list"`
 	FocusChatView string `toml:"focus_chat_view"`
 	FocusComposer string `toml:"focus_composer"`
@@ -359,6 +391,7 @@ func defaultConfig() *Config {
 		},
 		Keys: KeyConfig{
 			Quit:          "ctrl+c",
+			QuitBrowsing:  "q",
 			FocusChatList: "f1",
 			FocusChatView: "f2",
 			FocusComposer: "f3",

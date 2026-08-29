@@ -5,11 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/imtaqin/telegram-cli/internal/keys"
 )
 
 // MigrationChange records one field the migration rewrote.
@@ -67,16 +70,24 @@ var staleKeyDefaults = map[string][]string{
 }
 
 // migratableKeyFields lists the [keys] fields the migration will rewrite:
-// exactly the ones internal/app dispatches on. The rest (reply, forward,
-// scroll_up, page_up, …) are parsed and preserved but never consulted, so
-// changing them cannot change behavior — rewriting them would only add noise
-// to the summary and churn to the file.
+// exactly the ones that reach a dispatcher — those internal/app matches
+// itself, plus those it resolves and hands to the chat view. The remainder
+// (forward) is parsed and preserved but never consulted, so changing it
+// cannot change behavior; rewriting it would only add noise to the summary
+// and churn to the file.
+//
+// The same set answers "is this binding live?" for DetectKeyCollisions, so
+// a field belongs here exactly when a value in it can shadow another.
 var migratableKeyFields = map[string]bool{
-	"quit": true, "focus_chat_list": true, "focus_chat_view": true,
+	"quit": true, "quit_browsing": true,
+	"focus_chat_list": true, "focus_chat_view": true,
 	"focus_composer": true, "search": true, "global_search": true,
 	"contacts": true, "contacts_alt": true, "help": true,
 	"next_chat": true, "prev_chat": true,
 	"next_folder": true, "prev_folder": true,
+	"reply": true, "edit_message": true, "delete_message": true,
+	"scroll_up": true, "scroll_down": true,
+	"page_up": true, "page_down": true,
 }
 
 // keyFields maps each TOML key name to accessors on a KeyConfig, so the
@@ -88,6 +99,7 @@ var keyFields = []struct {
 	set  func(*KeyConfig, string)
 }{
 	{"quit", func(k *KeyConfig) string { return k.Quit }, func(k *KeyConfig, v string) { k.Quit = v }},
+	{"quit_browsing", func(k *KeyConfig) string { return k.QuitBrowsing }, func(k *KeyConfig, v string) { k.QuitBrowsing = v }},
 	{"focus_chat_list", func(k *KeyConfig) string { return k.FocusChatList }, func(k *KeyConfig, v string) { k.FocusChatList = v }},
 	{"focus_chat_view", func(k *KeyConfig) string { return k.FocusChatView }, func(k *KeyConfig, v string) { k.FocusChatView = v }},
 	{"focus_composer", func(k *KeyConfig) string { return k.FocusComposer }, func(k *KeyConfig, v string) { k.FocusComposer = v }},
@@ -397,25 +409,67 @@ var aliasPairs = [][2]string{
 	{"search", "global_search"},
 }
 
-// DetectKeyCollisions reports [keys] fields that internal/app dispatches on
-// and that share a binding, as human-readable lines.
+// componentDispatchedFields are the [keys] fields a COMPONENT matches
+// rather than internal/app: internal/app only resolves them and hands them
+// over (chatview.SetKeys). That distinction is what makes them able to
+// collide across a package boundary — app-level dispatch runs first, so a
+// value here that app.go already claims never reaches the component at
+// all.
+var componentDispatchedFields = map[string]bool{
+	"reply": true, "edit_message": true, "delete_message": true,
+	"scroll_up": true, "scroll_down": true,
+	"page_up": true, "page_down": true,
+}
+
+// appDispatchedValue returns the binding internal/app will actually match
+// for one of its own fields, falling back to the shipped default when the
+// file does not set it — which is how an older config.toml behaves at
+// runtime, and therefore the value a collision has to be measured against.
+func appDispatchedValue(cfg *Config, get func(*KeyConfig) string) string {
+	if v := NormalizeKey(get(&cfg.Keys)); v != "" {
+		return v
+	}
+	return NormalizeKey(get(&defaultConfig().Keys))
+}
+
+// DetectKeyCollisions reports [keys] fields whose bindings cannot all
+// work, as human-readable lines. Two kinds are found.
 //
-// Filling in new fields can create a collision the user never made: someone
-// who bound search to "?" gets help = "?" from this migration, and only one
-// of the two can win. The migration will not silently rewrite a deliberate
-// choice, so the honest thing is to name the clash and let the user decide.
+// **Within config.** Two fields the same dispatcher matches, set to one
+// key. Filling in new fields can create a collision the user never made:
+// someone who bound search to "?" gets help = "?" from this migration, and
+// only one of the two can win. The migration will not silently rewrite a
+// deliberate choice, so the honest thing is to name the clash and let the
+// user decide.
 //
-// Two limits worth knowing:
+// **Across the package boundary.** A component-dispatched field (see
+// componentDispatchedFields) set to a key internal/app claims first. This
+// is the case that shipped broken: reply = "q" was accepted, advertised on
+// the help card as Reply, and quit the application when pressed, because
+// app-level dispatch matched "q" before the chat view ever saw the event.
+// The reservation is measured against keys.AppReserved, so it follows the
+// user's own config — moving quit_browsing to f9 frees "q", and this stops
+// reporting it.
 //
-//   - Only the wired fields are considered. The inert ones (reply,
-//     scroll_up, page_up, …) are not dispatched from app.go, so a shared
-//     value there means nothing.
-//   - Only configurable fields are considered. Plenty of bindings are
-//     hardcoded — the alt+1/2/3 focus keys, i/c to compose, h/l and [/] for
-//     folders, chatview's n/N and r/e/d, the composer's readline chords —
-//     and binding a [keys] field to one of those collides without being
-//     reported here. The help overlay shows the real, merged map; this
-//     checks only what config.toml can express.
+// What remains unchecked, and why:
+//
+//   - The one inert field (forward) reaches no dispatcher, so a shared
+//     value there means nothing and is ignored.
+//   - Keys the OTHER components hardcode: chatview's g/G, n/N, ctrl+f,
+//     ctrl+u/ctrl+d, enter/o/s; chatlist's arrows, [ / ] and 1-9; the
+//     composer's readline and vi chords. Binding a [keys] field onto one
+//     of those still collides silently here. The chat view resolves its
+//     own share at runtime — a configured binding that would shadow a key
+//     it already owns is dropped rather than allowed to win — but it does
+//     so quietly, and this function is where that ought to become a
+//     message. Naming those sets here would mean a second, hand-copied
+//     record of them; the honest fix is for each component to publish its
+//     claimed set the way internal/app now does through keys.AppFixed.
+//   - Whether the *combination* is usable. Two bindings can be
+//     collision-free and still miserable.
+//
+// The help overlay shows the real, merged map; this checks only what
+// config.toml can express.
 func DetectKeyCollisions(cfg *Config) []string {
 	if cfg == nil {
 		return nil
@@ -442,6 +496,7 @@ func DetectKeyCollisions(cfg *Config) []string {
 	}
 
 	var out []string
+	reported := map[string]bool{}
 	for binding, fields := range byBinding {
 		if len(fields) < 2 {
 			continue
@@ -451,10 +506,55 @@ func DetectKeyCollisions(cfg *Config) []string {
 			continue
 		}
 		sort.Strings(fields)
+		reported[binding] = true
 		out = append(out, fmt.Sprintf("%q is bound to %s", binding, strings.Join(fields, ", ")))
 	}
+
+	// Across the package boundary: app-level dispatch runs before the
+	// focused panel sees the key, so a component field set to something
+	// internal/app claims is not ambiguous — it is simply dead, and it is
+	// worse than dead when the key it lost to does something drastic.
+	appClaimed := appReserved(cfg)
+	for _, f := range keyFields {
+		if !componentDispatchedFields[f.name] {
+			continue
+		}
+		v := NormalizeKey(f.get(&cfg.Keys))
+		if v == "" || reported[v] {
+			// A value already named by the within-config pass is the same
+			// clash seen from the other side; saying it twice helps nobody.
+			continue
+		}
+		if slices.Contains(appClaimed, v) {
+			out = append(out, fmt.Sprintf(
+				"%q is bound to %s, but the app claims it first — the chat view never receives it",
+				v, f.name))
+		}
+	}
+
 	sort.Strings(out)
 	return out
+}
+
+// appReserved is every key internal/app takes before the focused browsing
+// panel sees it, for this config. See keys.AppReserved.
+func appReserved(cfg *Config) []string {
+	return keys.AppReserved(
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Quit }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.QuitBrowsing }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Help }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Search }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.GlobalSearch }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Contacts }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.ContactsAlt }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusChatList }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusChatView }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusComposer }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.NextChat }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.PrevChat }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.NextFolder }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.PrevFolder }),
+	)
 }
 
 // isStaleKeyDefault reports whether value is one of the retired defaults for
