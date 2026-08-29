@@ -145,11 +145,15 @@ immediately undoes.
 
 ### Untouched by TUI 2.0
 
-- [ ] **`config.example.toml` `[keys]` comment is stale** — still warns that a
-      bare printable "shadows quick-type"; quick-type was removed. A plain doc
-      fix, needed now. (The file needs a second pass later anyway for
-      `ui.inline_images` / `ui.rail` / `ui.mode_indicator` and the removal of
-      `chat_list_width` / `show_avatars` under decision 10.)
+- [x] ~~**`config.example.toml` `[keys]` comment is stale**~~ — **already
+      fixed**, verified 2026-08-29. The quick-type wording is gone; the
+      comment now correctly describes what happens today (a wired bare
+      printable shadows that key in the chat list and chat view, with `quit`
+      called out as the exception that also reaches the composer), and
+      `forward` is marked as accepted for round-trip compatibility only. The
+      file still needs a pass for `ui.inline_images` / `ui.rail` and the
+      removal of `chat_list_width` / `show_avatars` under decision 10 — that
+      lands with phase 5, not as a standalone doc fix.
 - [ ] **MCP and REST remain a 1:1 copy**
 - [ ] `isWildcardHost` edge-case spellings if REST binds beyond loopback
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
