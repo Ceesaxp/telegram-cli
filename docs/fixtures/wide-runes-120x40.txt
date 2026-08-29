@@ -1,0 +1,44 @@
+# wide-runes-120x40.txt  (120×40)
+# every line below is exactly 120 display cells wide
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive                          ● connected · mtproto 2.0 · devices 1 │ 21:04 
+ / filter chats…                  9/9 │ # デプロイ調整 │ group … buf 2 │ ln 214/214  bot │ PINNED                       
+▌# デプロイ調整                 2m    │                                                  │ ▪ Deploy window 14:00–1… ivo 
+   田中: リベース済み、CI緑       [4] │                                                  │ ▪ Runbook: auth p95 s… nadia 
+ @ Ægir Þórsdóttir              6m    │                                                  │                              
+   you: pushing the tag now           │                                                  │ MEMBERS · 24                 
+ # مجموعة-الترحيل               14m   │                                                  │ ● ivo                  admin 
+   مريم: 429 من المصدر            [2] │                                                  │ ● nadia                      
+ ~ wire notes                   1h    │                                                  │ ● sam                        
+   draft: saved locally               │                                                  │ ○ mira                    4h 
+ ! ops-alerts 🔔 muted          2h    │                                                  │ ○ jonas                   2d 
+   bot: p95 back under 400ms     (31) │                                                  │ · +19 more                   
+ @ Zoë Ćurić                    4h    │                                                  │                              
+   sounds good — thurs then           │ TODAY ────────────────────────────────────────── │ FILES                        
+ # 设计评审                     yd    │   08:10   田中さ…  デプロイの時間帯は14:00から1  │ ▣ auth-p95-2608.png     184K 
+   you: left comments on 3            │                    5:30です。それまでにレビュー  │ ▤ incident-0812.md        6K 
+ ! tape/changelog muted         yd    │                    をお願いします。              │ ▤ backoff.patch           2K 
+   v0.4.1 — keymap overhaul           │   08:12  Ægir Þó…  Naïve café ré́sumé — combining │                              
+ @ Jonas Vik                    2d    │                    accents must not shear the    │                              
+   thanks, that unblocked me          │                    grid.                         │                              
+                                      │                    [👍 3] [🎉 12]                │                              
+                                      │   08:14      مريم  مرحبا — the retry backoff     │                              
+                                      │                    caps at 30s. RTL name, LTR    │                              
+                                      │                    body.                         │                              
+                                      │   08:15       you  确认。队列面板显示已恢复。Re  │                              
+                                      │                    suming rollout.  ✓✓           │                              
+                                      │                    [🚀 4] [🔥 2] [👀 15]         │                              
+                                      │   08:16   田中さ…  ありがとう 🙏 全角記号：、。… │                              
+                                      │                    ないこと。                    │                              
+                                      │                    ▣ 負荷-p95-260…  184 KB · png │                              
+                                      │   08:18  Ægir Þó…  ↳ 田中さくら ありがとう 🙏    │                              
+                                      │                    Zero-width joiner sequence:   │                              
+                                      │                    👨‍👩‍👧‍👦 renders as one             │                              
+                                      │                    cluster.                      │                              
+                                      │ ▌ 08:19      مريم  اختبار أخير — last line,      │                              
+                                      │                    cursor sits here.             │                              
+                                      │               ···  田中さくら is typing…         │                              
+                                      │ reply ↳ مريم: اختبار أخير…           esc to drop │                              
+ j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands        md │                              
+ q quit  i compose  : command  r reply  y yank  e edit  ? keymap                   idx 214 msgs · 9 buffers · 37 unread 
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

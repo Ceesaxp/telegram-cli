@@ -87,24 +87,158 @@ remains.
 
 ## Remaining — product / cleanup
 
-- [ ] **Group info panel unreachable** — `groupinfo.Model` and
-      `OpenGroupInfo` exist and are dispatched to when focused, but no
-      keybinding ever sets `PanelGroupInfo` or calls `OpenGroupInfo`.
-- [ ] **`dialog.NewAlert` is dead code** — no caller anywhere outside
-      `internal/ui/components/dialog/model.go` itself.
-- [ ] **`config.example.toml` `[keys]` comment is stale** — the block
-      lists `help` / `global_search` / `contacts_alt`, but the comment
-      still warns that a bare printable "shadows quick-type". Quick-type
-      was removed. Status bar hints are still hardcoded and will not
-      follow rebinds.
-- [ ] **MCP and REST remain a 1:1 copy**
-- [ ] **`pkg/utils` sanitizers unused** — inbound text is sanitized in
-      `telegram.sanitizeTerminal`
+Reviewed against the TUI 2.0 design (docs/tui-2.0.md) — some of this is
+eliminated by that work, some is absorbed into it, and some is untouched.
+Marked accordingly so nothing gets fixed twice or fixed in a way TUI 2.0
+immediately undoes.
+
+### Eliminated by TUI 2.0 — do not fix
+
+- [x] ~~**Group info panel unreachable**~~ — `groupinfo.Model` and
+      `OpenGroupInfo` exist but no keybinding ever reaches them. **Do not add
+      a binding**: the context rail supersedes the component outright
+      (docs/tui-2.0.md phase 6, which deletes `groupinfo` once the rail
+      preserves its information). Closed as won't-fix.
+- [x] ~~**`pkg/utils` sanitizers unused**~~ — confirmed *the whole package*
+      has zero callers outside itself (`sanitize.go`, `truncate.go`,
+      `timeformat.go`). Worse than unused: `Truncate`, `TruncateMiddle`, and
+      `PadRight` are all **rune-count** geometry, exactly what TUI 2.0 phase 0
+      prohibits, so they are a trap for anyone who reaches for them while
+      building the new layout. Delete the package as part of the phase 0
+      width standardisation rather than finding it callers. Inbound text stays
+      sanitized in `telegram.sanitizeTerminal`.
+
+### Absorbed into TUI 2.0 — fix there, not separately
+
+- [ ] **`dialog.NewAlert` is dead code** — `NewConfirm` has callers, `NewAlert`
+      has none. Decision 8 requires confirmation and error behaviour for
+      destructive palette commands (pin, mute, secret chat, export), which is
+      what a single-button alert is for. Expect phase 7 to give it its first
+      caller; revisit only if phase 7 ships without one.
+- [ ] **Status bar hints are hardcoded and do not follow rebinds** — the
+      second half of the stale-`config.example.toml` item below. TUI 2.0
+      replaces the status bar with a context-sensitive hint bar that should
+      read from the phase 7 command registry, which is precisely what stops
+      hints drifting from bindings. Fix it there, once.
+- [ ] **Clipboard *text* fallback** — phase 8 already adds a text/code copy
+      abstraction for `y` (with a possible OSC 52 path). Read and write
+      directions are the same code area; do both in one pass.
+- [x] **Per-chat drafts** — **promoted from nice-to-have to in-scope TUI 2.0
+      work** (decision 13). All six frame goldens render a chat-list preview
+      row as `draft: saved locally`, and that stands: the composer keeps a
+      draft per chat, switching chats preserves it and its staged attachment
+      instead of discarding them, and the chat list reads that state.
+      In-memory for the session; no Telegram draft sync. Lands with the
+      composer in phase 5, with the preview row in phase 2.
+- [ ] **Multi-file paste** (currently only the first clipboard file) — now
+      explicitly gated: decision 5 keeps a single staged attachment for TUI
+      2.0 and defers albums, which need slice-based composer state, ordering
+      and caption rules, and Telegram multi-media send. Blocked, not dropped.
+
+### Raised in priority by TUI 2.0
+
 - [ ] **SIGINT handler `os.Exit(0)`** — `cmd/teletui` skips bubbletea
-      teardown
-- [ ] Multi-file paste (currently only the first clipboard file)
-- [ ] Clipboard *text* fallback
-- [ ] Per-chat drafts
+      teardown. Already untidy; phase 8 makes it riskier, since a hard exit
+      while a Kitty/Sixel overlay is on screen can leave the terminal in a
+      graphics or alt-screen state the shell inherits. Worth fixing before
+      the media overlay lands.
+
+### Untouched by TUI 2.0
+
+- [ ] **`config.example.toml` `[keys]` comment is stale** — still warns that a
+      bare printable "shadows quick-type"; quick-type was removed. A plain doc
+      fix, needed now. (The file needs a second pass later anyway for
+      `ui.inline_images` / `ui.rail` / `ui.mode_indicator` and the removal of
+      `chat_list_width` / `show_avatars` under decision 10.)
+- [ ] **MCP and REST remain a 1:1 copy**
 - [ ] `isWildcardHost` edge-case spellings if REST binds beyond loopback
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
+
+## TUI 2.0 — design closed, implementation not started
+
+Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
+thirteen decisions are resolved. Handoff archived in
+[docs/handoff/](docs/handoff/). Goldens in
+[docs/fixtures/](docs/fixtures/). **No code has been written yet**; the design
+phase is what is complete.
+
+- [x] **Visual sign-off (decision 11)** — `docs/fixtures/` holds cell-exact
+      goldens at 80×24, 100×30, 120×40, 137×29, 200×60, plus a
+      CJK/emoji/RTL/ZWJ fixture and a block gallery. All seven verified
+      line-by-line under both `uniseg.StringWidth` and `ansi.StringWidth`;
+      one ZWJ padding defect found and fixed.
+- [x] **Handoff reconciled** — divergences recorded in docs/tui-2.0.md
+      ("Divergences from the handoff prose"); three fixture-forced amendments
+      folded into the spec; four factual errors in the reconciliation table
+      corrected against the code.
+- [x] **Threads deferred (decision 12)** — `t thread` was in five hint-bar
+      goldens and specified nowhere. Removed; the five rows were regenerated
+      cell-exact. `t` now belongs to the voice-note transcript alone.
+
+### Design decisions — all closed
+
+**Nothing blocks implementation.** Decisions 3 and 6–13 were resolved on
+2026-08-29; 1, 2, 4, and 5 were resolved when the design record was written.
+
+- [x] **D3 — mode model**: app mode is independent of the composer's emacs/vi
+      submode and the badge reports app mode only. The vi Escape ladder is
+      **unchanged**: first Escape leaves vi insert and flips the badge to
+      NORMAL, second Escape cancels a pending reply/edit/attachment. Emacs
+      cancels on the first Escape as it does today. The badge is additive —
+      it describes the ladder rather than altering it, which is why
+      `keys_test` must pass unmodified.
+- [x] **D6 — rail data policy**: deferred until the rail is opened; no fetch
+      on chat open.
+- [x] **D7 — top-bar facts**: functions deferred, cells kept with placeholder
+      text (`mtproto 2.0`, `devices 1`). Goldens regenerated. **See release
+      blocker below.**
+- [x] **D8 — command authority**: pin/unpin, mute/unmute, reload-config
+      authorised; secret chat and Markdown export deferred and not registered.
+- [x] **D9 — responsive precedence**: 12–19 rows keeps the width-based column
+      layout with the top bar and no hint bar. Narrowing order is rail off,
+      then chat list, then thread — the thread is the region that survives.
+      Narrow single-panel with no chat selected shows the chat list.
+- [x] **D10 — configuration migration**: `ui.chat_list_width` and
+      `ui.show_avatars` removed outright (reported by `-migrate-config`, old
+      values recoverable from the backup); `ui.mode_indicator` never added,
+      since the badge must not be configurable away.
+- [x] **D13 — per-chat drafts**: in scope. Drafts survive a chat switch along
+      with their staged attachment, and the chat list shows `draft: saved
+      locally`. In-memory for the session; no Telegram draft sync.
+
+### Release blockers created by a deferral
+
+- [ ] **Top-bar placeholders must not ship.** The goldens and the spec carry
+      `mtproto 2.0` and `devices 1` as literal placeholder text so the layout
+      and shrink order could be settled without the data. Before release,
+      either wire both to a real source or drop the two cells and regenerate
+      the affected top-bar rows. A hard-coded transport version presented as
+      live connection status is a lie in the UI.
+
+### First code, in this order
+
+- [ ] **Golden harness** (~60 lines): fixture loader, ANSI stripper, per-line
+      width assertion, row-count assertion. Build it before any renderer —
+      it turns the frame work into red/green.
+- [ ] **Width standardisation**: use `ansi.StringWidth`, promote
+      `widgets.FitLine` to a shared package. Do **not** add a new
+      display-width utility or promote `uniseg` to a direct dependency.
+- [ ] **Mode resolver + command registry + palette** — no dependency on the
+      frame redesign, so it can run in parallel from day one, and phase 2's
+      hint bar should read from the registry rather than hardcode hints.
+- [ ] **Frame** (theme roles, layout, borderless assembly, top bar, hint bar,
+      chat list) as **one** branch — phases 1–3 are not separable, since the
+      existing components rely on Lipgloss borders to absorb width slop.
+- [ ] **Thread grid** — the riskiest parcel: `chatview/model.go` is ~1960
+      lines against ~2000 lines of tests, and the line-index scroll
+      machinery must survive behaviourally intact. Land the cursor-identity
+      fix (`getTargetMessage` is a bottom-visible approximation) as its own
+      commit first.
+
+### Documentation debt that comes due when code ships
+
+- [ ] README "Features" still advertises **Message Bubbles** and **Profile
+      Avatars**; both are explicit TUI 2.0 non-goals.
+- [ ] README "Screenshot" block is drawn in bubbles with rounded borders.
+- [ ] README "Architecture" diagram labels the message panel `(bubbles)`.

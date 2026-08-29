@@ -1,0 +1,28 @@
+# frame-80x24.txt  (80×24)
+# every line below is exactly 80 display cells wide
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive            ● connected │ 21:04 
+ / filter chats…          9/9 │ # infra-oncall │ group… buf 2 │ ln 214/214  bot 
+▌# infra-oncall         2m    │   20:47     nadia  That is the migration        
+   nadia: rebased, CI gr… [4] │                    backfill, not the rollout.   
+ @ Nadia Feld           6m    │                    It drains in ~20 min.        
+   you: pushing the tag now   │   20:52       you  Confirmed from the queue     
+ # relay-protocol       14m   │                    dashboard. Resuming.  ✓✓     
+   ivo: the 429 is upstr… [2] │ 4 NEW ───────────────────────────────────────── 
+ ~ wire notes           1h    │   20:58       ivo  Resumed. Canary at 5%.       
+   draft: saved locally       │   21:01     nadia  ↳ ivo 4412 ready for the se… 
+ ! ops-alerts muted     2h    │                    Rebased onto main, CI is     
+   bot: p95 back under … (31) │                    green now. 4412 ready for    
+ @ Mira Okonkwo         4h    │                    the second approval.         
+   sounds good — thurs then   │   21:02       sam  Approved. Merging behind the 
+ # design-crit          yd    │                    flag.                        
+   you: left comments on 3    │                    [🚀 4]                       
+ ! tape/changelog muted yd    │ ▌ 21:03       ivo  Good. I will write the       
+   v0.4.1 — keymap overhaul   │                    incident note either way —   
+ @ Jonas Vik            2d    │                    cheap to have, expensive to  
+   thanks, that unblocked me  │                    reconstruct.                 
+                              │               ···  nadia is typing…             
+                              │ reply ↳ nadia: Rebased o…           esc to drop 
+ j/k move  g/G ends  u unread │ NORMAL › i to compose · : for commands       md 
+ q quit  i compose  : command  r reply     idx 214 msgs · 9 buffers · 37 unread 
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

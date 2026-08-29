@@ -1,0 +1,34 @@
+# frame-100x30.txt  (100×30)
+# every line below is exactly 100 display cells wide
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive      ● connected · mtproto 2.0 · devices 1 │ 21:04 
+ / filter chats…                  9/9 │ # infra-oncall │ group · 24 member… buf 2 │ ln 214/214  bot 
+▌# infra-oncall                 2m    │                        look?                                
+   nadia: rebased, CI green       [4] │                        ▣ auth-p95-2608.png  184 KB · png    
+ @ Nadia Feld                   6m    │                        [👀 5] [🔥 2]                        
+   you: pushing the tag now           │   20:44           sam  The offending query, for the record: 
+ # relay-protocol               14m   │                        ┌ sql ──────── 4 lines · y to yank ┐ 
+   ivo: the 429 is upstream       [2] │                        │ 1   SELECT s.* FROM sessions s   │ 
+ ~ wire notes                   1h    │                        │ 2     JOIN devices d ON d.sid =… │ 
+   draft: saved locally               │                        │ 3   - WHERE s.touched > now() -… │ 
+ ! ops-alerts muted             2h    │                        │ 4   + WHERE s.touched > now() -… │ 
+   bot: p95 back under 400ms     (31) │                        └──────────────────────────────────┘ 
+ @ Mira Okonkwo                 4h    │   20:47         nadia  That is the migration backfill, not  
+   sounds good — thurs then           │                        the rollout. It drains in ~20 min.   
+ # design-crit                  yd    │   20:52           you  Confirmed from the queue dashboard.  
+   you: left comments on 3            │                        Resuming.  ✓✓                        
+ ! tape/changelog muted         yd    │ 4 NEW ───────────────────────────────────────────────────── 
+   v0.4.1 — keymap overhaul           │   20:58           ivo  Resumed. Canary at 5%.               
+ @ Jonas Vik                    2d    │   21:01         nadia  ↳ ivo 4412 ready for the second app… 
+   thanks, that unblocked me          │                        Rebased onto main, CI is green now.  
+                                      │                        4412 ready for the second approval.  
+                                      │   21:02           sam  Approved. Merging behind the flag.   
+                                      │                        [🚀 4]                               
+                                      │ ▌ 21:03           ivo  Good. I will write the incident note 
+                                      │                        either way — cheap to have,          
+                                      │                        expensive to reconstruct.            
+                                      │                   ···  nadia is typing…                     
+                                      │ reply ↳ nadia: Rebased onto main, CI…           esc to drop 
+ j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                   md 
+ q quit  i compose  : command  r reply  y yank  e edit         idx 214 msgs · 9 buffers · 37 unread 
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
