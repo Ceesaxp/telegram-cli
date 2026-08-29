@@ -639,6 +639,13 @@ update-state database being locked by another `tele-tui`/`login` process
 and the peer cache in `state.db` having belonged to a different account
 (rebuilt automatically, also covered there).
 
+## TUI 2.0 design
+
+The proposed terminal-native redesign, repository reconciliation, open product
+decisions, phased delivery plan, and verification matrix are recorded in
+[docs/tui-2.0.md](docs/tui-2.0.md). The document is intentionally a plan:
+implementation starts after its data-scope and keymap decisions are resolved.
+
 ## Architecture
 
 ```
