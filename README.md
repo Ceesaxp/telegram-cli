@@ -20,11 +20,12 @@
 ## Features
 
 - **Chat Management** — Private chats, groups, supergroups, channels
-- **Chat Folders** — Folder tab bar above the chat list, `Alt+H` / `Alt+L` to cycle, Telegram-compatible pinned/include/exclude filter semantics
+- **Chat Folders** — Folder tab bar above the chat list; `h`/`l`, `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; Telegram-compatible pinned/include/exclude filter semantics
 - **Message Bubbles** — Rounded bordered bubbles, own messages right-aligned, read status indicators, real ANSI-aware word wrap to the bubble width
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
 - **Profile Avatars** — Colored initials or rendered profile photos in chat list
-- **Markdown Rendering** — Code blocks, bold, italic, links via [Glamour](https://github.com/charmbracelet/glamour)
+- **Incoming Markdown Rendering** — Code blocks, bold, italic, links via [Glamour](https://github.com/charmbracelet/glamour)
+- **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
 - **Voice/Audio Playback** — Play voice messages and audio inline via `mpv` / `ffplay`
 - **Video** — Open videos in external player (`mpv` / `vlc` / `xdg-open`)
@@ -33,6 +34,9 @@
 - **Search** — Search chats, messages, and the global Telegram directory; selecting a result jumps straight to that message, scrolled and centred, paging back through history if needed
 - **Contacts** — Contact list with online status indicators
 - **Group Info** — Member list, admin roles, group description (component exists; not yet reachable from a keybinding — see [TODO.md](TODO.md))
+- **Help Overlay** — `?` opens a scrollable, lazygit-style keybinding cheat sheet built from the same bindings the app dispatches on, so it can't drift out of sync
+- **Composer Editing Modes** — emacs (readline) or vi (modal, real cursor semantics) line editing, selectable or auto-detected from `$VISUAL`/`$EDITOR`; `Ctrl+O` edits the draft in a full external editor
+- **Config Migration** — `-migrate-config` upgrades an existing `config.toml` to current defaults, with a timestamped backup and a change report
 - **Authentication** — Phone/SMS code and 2FA password, plus QR login for `telegram-mcp`
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
 - **Notifications** — Desktop notifications via `notify-send` / `osascript`, gated on terminal focus for read receipts and skipped for muted chats
@@ -112,61 +116,226 @@ Config saved! Starting Telegram CLI...
 
 ## Keybindings
 
-`Esc` works app-wide: it closes whatever overlay/dialog is open, clears a
-composer that's mid-reply/edit or holding a pending attachment, or otherwise
-steps focus back toward the chat list — one `Esc` at a time. `F1`/`F2`/`F3`
-also work app-wide for panel focus (this used to be broken — a config-vs-key
-casing mismatch meant they were silently ignored — it's fixed now).
+Motions follow vi convention: `h`/`j`/`k`/`l`, `g`/`G` jump to the ends,
+`Ctrl+U`/`Ctrl+D` move a half page, `/` searches whatever you're looking at
+and `n`/`N` step through the matches.
 
-### Navigation
+Typing is always entered on purpose — `i`, `c`, `Tab`, a focus key, or a
+click on the composer — nothing is forwarded to the composer implicitly, so
+no binding below costs you the ability to type that character. (Older
+builds forwarded any printable key straight to the composer as "quick-type"
+the moment a chat was open; that's gone — typing now always starts with an
+explicit move to the composer.)
+
+Every `Alt+…` binding below has an alt-free alternative *except* `Alt+J`/
+`Alt+K` (next/prev chat — use the chat list's own `j`/`k` while it's
+focused) and folder cycling from any panel other than the chat list (the
+alt-free `h`/`l`, `[`/`]`, arrows and digits only work while the chat list
+has focus). See "macOS: Alt bindings and the Option key" below if `Alt+…`
+bindings don't seem to work at all.
+
+Press `?` any time outside the composer for a scrollable cheat sheet built
+from the same bindings documented here.
+
+### Global — any panel
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `Shift+Tab` | Cycle chat list → messages → composer (and back) |
-| `Esc` | Close overlay/dialog, clear reply/edit/attachment, or go back |
+| `Ctrl+C` / `Ctrl+Q` | Quit (plus `keys.quit` if set to something else) |
+| `?` | Toggle the help overlay |
+| `Tab` / `Shift+Tab` | Cycle panel focus (works from the composer too) |
 | `F1` / `Alt+1` | Focus chat list |
-| `F2` / `Alt+2` | Focus messages |
+| `F2` / `Alt+2` | Focus chat view |
 | `F3` / `Alt+3` | Focus composer |
-| `Alt+H` / `Alt+L` | Previous / next chat folder tab |
-| `Alt+J` / `Alt+K` | Next / previous chat in the list |
-| `i` | Start composing (from chat view) |
-| any printable key | Quick-type: jump to the composer and start typing (chat list / chat view, once a chat is open) |
-| `j` / `k` (or `↓` / `↑`) | Scroll down/up |
-| `g` / `G` (or Home / End) | Jump to oldest/newest loaded message |
-| `Ctrl+U` / `Ctrl+D` | Page up/down (messages panel) |
+| `Esc` | Close overlay, else step back |
+| `Alt+J` / `Alt+K` | Next / previous chat |
+| `Alt+L` / `Alt+H` | Next / previous folder |
+| `Alt+C` / `F4` | Toggle contacts overlay |
+| `Ctrl+G` | Search all chats (not while composing) |
+| `Ctrl+V` | Paste a clipboard image |
 
-### Actions
+### Chat list
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Select chat / send message / play or open the focused message's media |
-| `o` | Open/play media |
-| `s` | Save/download file |
-| `/` | Search |
-| `Alt+C` | Toggle contacts |
-| `r` | Reply to message |
-| `e` | Edit own message |
-| `d` | Delete message |
-| `Ctrl+V` | Paste an image/file from the clipboard and attach it (any panel, while a chat is open) |
-| `Ctrl+Q` / `Ctrl+C` | Quit |
+| `j` / `k` (or `↓` / `↑`) | Next / previous chat |
+| `h` / `l` (or `←` / `→`) | Previous / next folder tab |
+| `[` / `]` | Previous / next folder tab (lazygit spelling) |
+| `1`–`9` | Jump to folder N (1 = All, always present) |
+| click a folder tab | Switch to it |
+| `g` / `G` (or Home / End) | First / last chat |
+| `Enter` | Open the selected chat |
+| `i` / `c` | Compose a message |
+| `/` | Search all chats |
+| click a chat | Select it |
+| wheel | Scroll |
+
+### Chat view
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` (or `↓` / `↑`) | Scroll down / up |
+| `g` / `G` (or Home / End) | Top / bottom |
+| `Ctrl+D` / `Ctrl+U` | Page down / up |
+| `PgDn` / `PgUp` | Page down / up, keeping a line of context |
+| `/` or `Ctrl+F` | Find in this chat |
+| `n` / `N` | Next / previous match |
+| `Esc` | Drop the find results (first press), else step back |
+| `r` / `e` / `d` | Reply / edit / delete message |
+| `Enter` / `o` | Open attachment |
+| `s` | Save attachment |
+| `i` / `c` | Compose a message |
+
+`/` is contextual: from the chat view it opens in-chat find (vi
+convention — "search the buffer in front of you"); from every other panel
+it's the global search overlay. `Ctrl+G` reaches global search from
+anywhere, chat view included, without that ambiguity.
 
 ### Composer
 
+Focus stays on the composer after you send — a conversation is a run of
+messages, not one — so `Esc` is how you leave it.
+
 | Key | Action |
 |-----|--------|
-| `Enter` | Send message |
-| `Esc` | Cancel reply/edit or discard a pending attachment first, then leave the composer |
-| `Ctrl+W` | Delete word |
-| `Ctrl+U` | Clear line before cursor |
-| `Ctrl+K` | Clear line after cursor |
+| `Enter` | Send |
+| `Ctrl+J` / `Shift+Enter` | Insert a newline (`Enter` alone sends) |
+| `Esc` | Cancel reply/edit/attachment first, then leave |
 | `Ctrl+T` | Attach a file by path |
-| `Ctrl+V` | Paste an image from the clipboard and attach it |
+| `Ctrl+V` | Paste a clipboard image |
+| `Ctrl+O` | Edit the draft in `$VISUAL`/`$EDITOR` |
+
+Almost nothing else is claimed at app level while the composer has focus,
+so neither line-editing keymap below loses a chord. The complete exception
+list: `Ctrl+C`/`Ctrl+Q` (quit), `Ctrl+V`, `Esc` (only when there's nothing
+to cancel), `Tab`/`Shift+Tab`, the panel-focus keys (`Alt+1/2/3`,
+`F1`-`F3`), `Alt+J`/`K`/`H`/`L` (chat/folder navigation), and `Alt+C`/`F4`
+(contacts) — every one a modifier or function key no line-editing keymap
+binds. No other `Ctrl+<letter>` is claimed at app level, so `Ctrl+A/B/D/E/
+F/J/K/O/T/U/W` all reach the composer.
+
+### Composer editing modes
+
+The composer speaks either the **emacs** (readline) or **vi** line-editing
+keymap, chosen by `ui.compose_editing` in `config.toml`:
+
+| `compose_editing` | Behavior |
+|---|---|
+| `"emacs"` | Readline chords, always |
+| `"vi"` | Modal vi, always |
+| `"auto"` (default) | Inferred from `$VISUAL`, falling back to `$EDITOR`: if the editor's command name contains "vi" (`vi`, `vim`, `nvim`, `gvim`, `view`) → vi, else emacs. No editor set → emacs. |
+
+**Emacs mode** adds, on top of the shared table above:
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+A` / `Ctrl+E` | Start / end of line |
+| `Ctrl+B` / `Ctrl+F` | Back / forward one character |
+| `Ctrl+U` / `Ctrl+K` | Kill to start / end of line |
+| `Ctrl+W` | Kill the previous word |
+
+**Vi mode** starts in insert mode — typing a message is the common case,
+and landing in normal mode would swallow the first word. Normal mode uses
+real vi cursor semantics: the cursor sits *on* a character, never in the
+gap after it, so `$x` deletes the line's last character rather than the
+line break, and `$i` inserts before it rather than after:
+
+| Key | Action |
+|-----|--------|
+| `Esc` | Leave insert mode; `Esc` again cancels reply/edit/attachment, then leaves — same as emacs's Esc, one keystroke later |
+| `i` / `a` / `A` | Insert before / after cursor, at end of line |
+| `o` / `O` | Open a line below / above and insert |
+| `h`/`l`/`j`/`k` | Move by character / line (normal mode) |
+| `w` / `b` | Move by word (normal mode) |
+| `0` / `$` | Start / end of line (normal mode) |
+| `x` | Delete a character (never the line break) |
+| `D` | Delete to end of line (never the line break) |
+| `dd` | Delete the whole line |
+
+The newline chord is inert in vi's normal mode (`o`/`O` open a line there
+instead) and dropped from the hint line accordingly. `Shift+Enter` and
+`Ctrl+Enter` only arrive from a terminal speaking the Kitty keyboard
+protocol or xterm's `modifyOtherKeys` — the legacy encoding has no way to
+put a modifier on Enter at all, which is why `Ctrl+J` is the primary
+newline chord: every terminal can send it. `Alt+Enter` is also accepted,
+but deliberately not primary: its legacy encoding (`Esc` then `CR`) is
+byte-for-byte what "press Esc, then press Enter" produces — exactly what a
+vi user types constantly to leave insert mode and send.
+
+`Ctrl+O` writes the draft to a temp file and suspends the program to run
+`$VISUAL` (falling back to `$EDITOR`) on it. The variable is treated as a
+shell command line, so flags work (`nvim -u NONE`) exactly as they do for
+`git`, and a path with spaces needs the same quoting
+(`EDITOR='"/path with spaces/subl" -w'`). A non-zero exit (`:cq`, a crash)
+keeps your original draft untouched; a clean exit replaces it, trims the
+trailing newline editors add, and drops you back into insert mode if
+you're in vi mode.
+
+### Overlays — search, contacts, dialogs
+
+| Key | Action |
+|-----|--------|
+| `Esc` | Close |
+| `Enter` | Accept the selection |
+| `j` / `k` (or `↓` / `↑`) | Move |
+
+### Help overlay (`?`)
+
+A lazygit-style scrollable cheat sheet built from the same resolved
+bindings as the tables above, so a rebound key is described correctly
+instead of drifting out of sync with what the card shows.
+
+| Key | Action |
+|-----|--------|
+| `?` / `Esc` / `q` | Close |
+| `j` / `k` (or `↓` / `↑`) | Scroll |
+| `PgUp` / `PgDn` | Page |
+| `g` / `G` (or Home / End) | Top / bottom |
+
+The card's own footer line only spells out `esc / ? / q to close · j k to
+scroll` — `PgUp`/`PgDn` and `g`/`G` work too, just not named there; this
+table is the complete list. The status bar's one-line hint strip is even
+more abbreviated (it has no room to be contextual about `/`, and doesn't
+mention `?` at all) — treat it as a pointer at `?` for the full picture,
+not as the full picture itself.
+
+While the help overlay is open it owns the keyboard entirely: everything
+except its own close/scroll keys is swallowed rather than passed through,
+since the panels behind it aren't visible.
+
+If the Telegram client dies for good (see "Troubleshooting &
+Diagnostics" below), the UI is replaced by an error panel and every
+binding above except quit becomes inert.
+
+### macOS: Alt bindings and the Option key
+
+The default `Alt+…` bindings only reach the app when the terminal reports
+Option as a modifier. Several don't, by default:
+
+| Terminal | Fix |
+|---|---|
+| Ghostty | `macos-option-as-alt = true` (default `false` on macOS) |
+| Terminal.app | Settings → Profiles → Keyboard → "Use Option as Meta key" (off by default) |
+| iTerm2 | Settings → Profiles → Keys → Left/Right Option key → "Esc+" |
+| kitty / WezTerm / Alacritty | Report Option as Alt by default — nothing to change |
+
+Without that setting, macOS composes the character itself and the
+terminal sends only that — Option+1 arrives as a bare "¡" with no modifier
+bit, indistinguishable from someone typing "¡" outright. No amount of key
+matching recovers the binding from that: it never reaches the app as
+`alt+1` at all, on any terminal, because the substitution happens before
+the terminal builds the key event. That's why every `Alt+…` binding except
+next/prev chat and cross-panel folder cycling has a fallback that doesn't
+depend on Option being reported — see the Global table above — and why
+rebinding to `ctrl+…` or a function key in `[keys]` is the fix for those
+two if Option can't be made to work.
 
 ### Configuring keys
 
 `[keys]` in `config.toml` overrides a subset of bindings; case-insensitive,
-with `"escape"` accepted as an alias for `"esc"`. Only some fields are
-actually consulted:
+with `"escape"` accepted as an alias for `"esc"`, `"option"`/`"opt"` for
+`"alt"`, and a handful of other common spellings normalized the same way.
+Only some fields are actually consulted:
 
 | Field | Default | Wired? |
 |-------|---------|--------|
@@ -175,22 +344,28 @@ actually consulted:
 | `focus_chat_view` | `f2` | yes — *in addition to* the hardcoded `Alt+2` |
 | `focus_composer` | `f3` | yes — *in addition to* the hardcoded `Alt+3` |
 | `search` | `/` | yes |
+| `global_search` | `ctrl+g` | yes |
 | `contacts` | `alt+c` | yes |
+| `contacts_alt` | `f4` | yes — the alt-free fallback for `contacts` |
+| `help` | `?` | yes |
 | `next_folder` | `alt+l` | yes |
 | `prev_folder` | `alt+h` | yes |
 | `next_chat` | `alt+j` | yes |
 | `prev_chat` | `alt+k` | yes |
-| `reply`, `edit_message`, `delete_message`, `forward`, `scroll_up`, `scroll_down`, `page_up`, `page_down` | — | no — parsed and saved so old config files round-trip, but not consulted anywhere |
+| `reply`, `edit_message`, `delete_message`, `forward`, `scroll_up`, `scroll_down`, `page_up`, `page_down` | — | no — parsed and saved so old config files round-trip, but not consulted anywhere (the chatlist/chatview components hardcode the real bindings for these) |
 
-**Warning:** wired bindings are checked before quick-type's composer
-fallthrough, so binding a bare single printable character (e.g.
-`quit = "q"` or `next_folder = "l"`) shadows that character everywhere —
-it becomes untypeable as message text whenever a chat is open. Prefer
-modifier-based bindings (`alt+`, `ctrl+`, a function key).
+**Warning:** wired bindings are matched before the focused panel sees the
+key, so a binding here shadows that key in the chat list and chat view. It
+does *not* shadow it in the composer — typing there is only ever entered
+deliberately (see "Composer" above) — so a bare printable is a reasonable
+composer-adjacent binding, though a modifier still reads more clearly.
 
-> [`config.example.toml`](config.example.toml)'s `[keys]` block is kept in
-> sync with these defaults; `internal/config/config.go`'s `defaultConfig()`
-> remains the source of truth if the two ever drift.
+> [`config.example.toml`](config.example.toml)'s `[keys]` block predates
+> `help`, `global_search`, and `contacts_alt` and doesn't list them —
+> `internal/config/config.go`'s `defaultConfig()` (and the table above) is
+> the source of truth. Predates a config of your own? Run
+> `-migrate-config` (below) rather than hand-editing it — it fills in
+> exactly these gaps and tells you what it added.
 
 ### Clipboard paste (`Ctrl+V`)
 
@@ -227,8 +402,9 @@ PowerShell on Windows.
 
 A tab bar above the chat list shows your Telegram folders, plus a
 synthesized "All" tab that's always present — even for accounts with no
-custom folders, and even before the folder list has loaded. `Alt+H` /
-`Alt+L` cycle tabs left/right, wrapping around.
+custom folders, and even before the folder list has loaded. See
+[Keybindings](#keybindings) for how to switch tabs — several
+terminal-independent ways, plus `Alt+H`/`Alt+L` where Option-as-Meta is on.
 
 Filtering follows Telegram's own folder semantics: chats explicitly
 *excluded* from a folder are always hidden; chats explicitly *pinned* or
@@ -290,6 +466,116 @@ voice_player = "mpv"     # "mpv", "ffplay"
 video_player = "mpv"     # "mpv", "vlc", "xdg-open"
 ```
 
+## Config Migration (`-migrate-config`)
+
+```bash
+bin/tele-tui -migrate-config
+```
+
+Brings an existing `~/.config/tele-tui/config.toml` (or wherever
+`TELETUI_CONFIG` points) up to current defaults and exits without starting
+the app. **Recommended for any config that predates this branch** — several
+key defaults changed underneath it, and a config from before will otherwise
+carry conflicting bindings silently.
+
+What one run does:
+
+- **Retires stale key defaults.** A `[keys]` field holding a value that used
+  to ship as the default — not something you chose — is replaced with the
+  current one: `focus_chat_list`/`focus_chat_view`/`focus_composer` from
+  `ctrl+1`/`ctrl+2`/`ctrl+3` to `f1`/`f2`/`f3`; `contacts` from `ctrl+k`
+  (now the composer's kill-to-end-of-line) to `alt+c`; `next_chat`/
+  `prev_chat` from `ctrl+j`/`ctrl+k` (now the newline chord and
+  kill-to-start-of-line) to `alt+j`/`alt+k`. A binding you actually chose
+  is left exactly alone, even if it now collides with something — see the
+  collision report below.
+- **Fills in fields your file never had**, at their current default: any
+  newer `[keys]` field (`help`, `global_search`, `contacts_alt`, …),
+  `ui.compose_editing` (`"auto"`), and `storage.state_file` — written out
+  explicitly as the path the client would otherwise derive implicitly
+  (next to `session_file`), so the location stops being implied. Also
+  `ui.parse_markdown`, but as a special case: it's set to `true` on
+  migration and the change is reported, on the reasoning that an existing
+  user already has a working setup and the feature is worth having —
+  brand-new configs still default to `false` (see Outgoing Markdown below).
+- **Reports what it did**, field by field, as `field   old -> new`; any
+  config *section* your file didn't have at all, now added in full with
+  defaults; any key your file had that this version no longer recognizes
+  (dropped by the rewrite, but preserved in the backup); and any `[keys]`
+  bindings that now collide with each other — checked only among the
+  fields `internal/app` actually dispatches on, so a value that happens to
+  match a hardcoded binding (`i`/`c`, the composer's readline chords, …)
+  isn't flagged.
+- **Backs up first, unconditionally.** The original is copied to
+  `config.toml.bak`, byte-for-byte, at `0600`, before anything is
+  rewritten — it's the only copy that keeps your comments and key
+  ordering, since the migration re-encodes the whole file through the TOML
+  marshaller. An existing backup is never overwritten: migrating twice
+  gets a `config.toml.bak.<YYYYMMDD-HHMMSS>` the second time, so a repeat
+  run can't clobber your one copy of the real original.
+- **Writes atomically, at `0600`, following symlinks.** Both the config
+  and its backup land at the *resolved* path — a `config.toml` symlinked
+  in from a dotfiles repo gets rewritten in place there, not replaced with
+  a plain file that breaks the link. The write itself goes to a temp file
+  in the same directory, `fsync`'d, then renamed over the target, so a
+  crash mid-write can't leave a truncated config.
+- **Keeps paths portable.** `session_file`/`files_dir`/`state_file` are
+  written back exactly as your file had them — a `~/...` form stays
+  `~/...` — and a path your file lacked is filled with the same portable
+  `~/...` literal the built-in default uses, never an absolute path baked
+  to one machine's home directory.
+- **Idempotent.** A config already at current defaults reports "already up
+  to date" and writes nothing (no backup, no rewrite); running it again
+  right after a successful migration is a no-op.
+
+If there's no config file to migrate — including a `TELETUI_CONFIG` path
+that doesn't exist — it says so and exits; there's nothing to back up,
+since the app writes a fresh default config on first run anyway.
+
+## Outgoing Markdown
+
+Off by default. Turn it on with `ui.parse_markdown = true` in
+`config.toml` — or run `-migrate-config` (the previous section), which
+turns it on for an existing config and reports the change.
+
+| Markup | Result |
+|---|---|
+| `**text**` | bold |
+| `__text__` | italic |
+| `` `text` `` | inline code |
+| Triple backtick fence, optional language on the opening line | fenced code block — a single word right after the opening fence, followed by a newline, is read as the language and is not part of the content |
+| `~~text~~` | strikethrough |
+| `\|\|text\|\|` | spoiler |
+| `[text](url)` | link — parentheses inside `url` may nest if balanced, and the scheme must be `http`, `https`, `tg`, `mailto`, or `ftp` |
+
+Applies everywhere typed text reaches the wire: text messages, edits, and
+photo/file captions alike.
+
+**Why off by default:** the composer has no preview, so with parsing on
+silently by default the first time you'd notice is after a message has
+already gone out — and the syntax overlaps with things people paste
+verbatim. `__init__` arrives as `init`; a code snippet full of `**` loses
+it; a table of `||` cells collapses into spoilers. Opting in means knowing
+that transformation happens. `-migrate-config` turns it on for existing
+configs specifically because they already have a working setup and it's
+worth having — but tells you so in its report — and the shipped
+[`config.example.toml`](config.example.toml) turns it on too, with the
+same warning inline.
+
+Fallback guarantees, so a message is never mangled by a marker that wasn't
+meant as one:
+
+- An opening marker with no matching closer — or an empty span like
+  `****` — is sent exactly as typed.
+- `` `code` `` and ` ```pre``` ` are opaque: markers found *inside* them
+  are never interpreted, which is what makes it possible to send markdown
+  *about* markdown.
+- A `[text](url)` whose scheme isn't on the allowlist (`javascript:`,
+  `data:`, a bare/schemeless string, …) is sent exactly as typed too — not
+  silently dropped or half-converted. The check is deliberately an
+  allowlist rather than a blocklist: new dangerous schemes get invented
+  faster than a blocklist can track them.
+
 ## Persistence
 
 The TUI (and any process's `login` subcommand) persists Telegram's
@@ -311,6 +597,47 @@ TUI over the same data directory without contending for it. If the
 database can't be opened at all (e.g. briefly locked by another process's
 `login`), that's logged and non-fatal — the run just falls back to gotd's
 in-memory state for that session, losing gap recovery but nothing else.
+
+## Troubleshooting & Diagnostics
+
+**Logging is silenced by default**, `tele-tui` only. The TUI owns the
+terminal in raw mode, so a stray log write lands in the middle of a
+rendered frame — this used to happen from background goroutines logging
+"connection state: connecting" every time the network blipped.
+`telegram-api` and `telegram-mcp` are unaffected and keep logging to
+stderr normally.
+
+Get the log back with `TELETUI_DEBUG`:
+
+```bash
+TELETUI_DEBUG=/tmp/teletui.log bin/tele-tui
+```
+
+The file is opened in **append** mode with a
+`=== teletui session started <RFC3339> (pid <pid>) ===` banner per run,
+never truncated — debugging this app usually means restarting it
+repeatedly, and truncating on every start would destroy the log of the run
+that actually reproduced the problem. If the path can't be opened, that's
+reported once on stderr (this runs before the alt screen takes over) and
+the run continues with logging disabled, rather than sitting there waiting
+for output that will never arrive.
+
+**If the Telegram client dies for good** — the session was revoked from
+another device, or the connection failed in a way the client gave up on —
+the whole UI is replaced by an error panel: what happened, a plain
+statement that it will not recover on its own, and a nudge to restart.
+Every keybinding except quit goes inert at that point — the panels behind
+the error screen are still holding their last-known state, but acting on
+them would only mutate data you can no longer see. The panel points at
+`TELETUI_DEBUG` for more detail.
+
+**Non-fatal degradations** — the client keeps running, just with something
+turned off — surface as a `⚠ ...` notice on the composer's hint line
+instead of a full-screen panel. Two you may see in practice: the
+update-state database being locked by another `tele-tui`/`login` process
+(gap recovery disabled for this run only — see [Persistence](#persistence)),
+and the peer cache in `state.db` having belonged to a different account
+(rebuilt automatically, also covered there).
 
 ## Architecture
 

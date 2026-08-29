@@ -119,3 +119,32 @@ func TestDefaultConfigComposeEditing(t *testing.T) {
 		t.Errorf("default ComposeEditing = %q, want %q", got, ComposeEditingAuto)
 	}
 }
+
+// TestExampleConfigKeysMatchDefaults keeps config.example.toml's [keys] block
+// in step with defaultConfig. The example is what users copy, and it has
+// silently fallen behind twice — every binding added in a wave has to be
+// added here too, or new users start from a config that is missing them.
+//
+// Only [keys] is compared. Other sections deliberately diverge: the example
+// sets parse_markdown = true to show the feature off, while the built-in
+// default is false (see UIConfig.ParseMarkdown).
+func TestExampleConfigKeysMatchDefaults(t *testing.T) {
+	t.Setenv("TELETUI_CONFIG", "../../config.example.toml")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("loading config.example.toml: %v", err)
+	}
+
+	def := defaultConfig()
+	for _, f := range keyFields {
+		got, want := f.get(&cfg.Keys), f.get(&def.Keys)
+		if got == "" {
+			t.Errorf("config.example.toml is missing keys.%s (default %q)", f.name, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("config.example.toml has keys.%s = %q, want the default %q",
+				f.name, got, want)
+		}
+	}
+}

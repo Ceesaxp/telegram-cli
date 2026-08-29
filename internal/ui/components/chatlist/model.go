@@ -168,9 +168,8 @@ func (m Model) tabBarHeight() int {
 //
 // ClickAt has no column, so a click on the tab bar row is only ever a
 // no-op here — it cannot tell which folder tab was hit. ClickAtXY is the
-// column-aware companion that can; ClickAt is kept only because the app
-// currently calls it (see ClickAtXY's doc comment for the one-line
-// app.go change that switches over to it).
+// column-aware companion that can, and is what the app calls; this is now
+// the row-only half it delegates to.
 func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
 	if m.loading {
 		return 0, false
@@ -202,18 +201,15 @@ func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
 // chat; a click on any row below the tab bar behaves exactly like
 // ClickAt(y).
 //
-// The app today only calls ClickAt(row) from handleMouseClick in
-// internal/app/app.go:
+// This is what the app calls, from handleMouseClick in
+// internal/app/app.go, with both coordinates made panel-local:
 //
-//	if chatID, ok := m.chatList.ClickAt(row); ok {
+//	row, col := y-1, x-1
+//	if chatID, ok := m.chatList.ClickAtXY(col, row); ok {
 //
-// which has no column to hit-test the tab bar with, so a tab-bar click
-// is silently swallowed instead of switching folders. The one-line fix
-// for the app agent to make is:
-//
-//	if chatID, ok := m.chatList.ClickAtXY(x, row); ok {
-//
-// (x is already in scope in handleMouseClick as msg.X).
+// It used to call ClickAt(row), which has no column to hit-test the tab
+// bar with, so a click on a folder tab was silently swallowed instead of
+// switching folders.
 func (m *Model) ClickAtXY(x, y int) (chatID int64, ok bool) {
 	if m.loading {
 		return 0, false

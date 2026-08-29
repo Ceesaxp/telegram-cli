@@ -366,7 +366,8 @@ func (p *mdParser) addEntity(e tg.MessageEntityClass, offset, length int32) {
 }
 
 // markdownEnabled reports whether outgoing markdown parsing is on. It is
-// on by default; a Client without config (tests) parses nothing.
+// OFF by default and opted into via config (or the -migrate-config flag);
+// a Client without config (tests) parses nothing.
 func (c *Client) markdownEnabled() bool {
 	return c.config != nil && c.config.UI.ParseMarkdown
 }
