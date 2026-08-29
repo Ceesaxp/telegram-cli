@@ -2,6 +2,7 @@ package composer
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
@@ -308,6 +309,17 @@ func (m Model) Attachment() string { return m.attachment }
 
 // ChatId returns the chat the composer is currently sending to, 0 when none.
 func (m Model) ChatId() int64 { return m.chatID }
+
+// HasDraft reports whether the composer holds unsent text.
+//
+// It exists for app.go's quit-confirm rule: "q" from a browsing panel quits
+// outright, unless there is work in the composer to lose, in which case it
+// asks first. Whitespace alone is not work, so it is trimmed.
+//
+// Not replaceable by IsComposing: that answers a different question (does
+// Escape belong to the composer) and is true for reply/edit mode and, in vi
+// mode, for insert mode — regardless of whether anything has been typed.
+func (m Model) HasDraft() bool { return strings.TrimSpace(m.textarea.Value) != "" }
 
 // IsEditing reports whether the composer is editing an existing message.
 // Attachments cannot be added to an edit.

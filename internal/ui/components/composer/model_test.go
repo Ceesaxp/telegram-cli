@@ -287,3 +287,47 @@ func TestSetChatIdReturnsDisplacedAttachment(t *testing.T) {
 		t.Errorf("second SetChatId returned %q, want empty", discarded)
 	}
 }
+
+// TestHasDraft covers the accessor app.go's quit-confirm rule reads: only
+// actual typed text counts as work to lose. Whitespace does not, and neither
+// does a mode change on its own — which is why IsComposing cannot stand in
+// for it.
+func TestHasDraft(t *testing.T) {
+	m := newFocused()
+	if m.HasDraft() {
+		t.Error("a fresh composer reports a draft")
+	}
+
+	m, _ = press(t, m, "a")
+	if !m.HasDraft() {
+		t.Error("a typed character is not reported as a draft")
+	}
+
+	m.Reset()
+	if m.HasDraft() {
+		t.Error("Reset left a draft behind")
+	}
+
+	// Whitespace alone is not work: it must not raise a confirm dialog.
+	m.textarea.Value = "   \n\t "
+	if m.HasDraft() {
+		t.Error("whitespace-only text reports a draft")
+	}
+
+	// Reply mode and a pending attachment both make IsComposing true while
+	// the text stays empty. HasDraft answers only for the text.
+	m.textarea.Value = ""
+	m.EnterReplyMode(7, "preview")
+	if m.HasDraft() {
+		t.Error("reply mode alone reports a draft")
+	}
+	if !m.IsComposing() {
+		t.Error("precondition: reply mode should be composing")
+	}
+
+	m.Reset()
+	m.SetAttachment("/tmp/x.png", true)
+	if m.HasDraft() {
+		t.Error("a pending attachment alone reports a draft")
+	}
+}
