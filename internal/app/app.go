@@ -283,6 +283,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
+			// A dialog is modal, and modal has to mean it for the
+			// keyboard too. It owns every key from here down: esc
+			// cancels, arrows (or tab) choose a button, enter
+			// accepts, and a prompt's input takes the printables.
+			// j / k are deliberately not button movement: the row is
+			// horizontal, and a reflexive j after opening a delete
+			// confirm must not arm Confirm.
+			//
+			// One break rather than a dialog check on each binding.
+			// Gating them individually is how this was wrong three
+			// separate ways at once — tab cycled panel focus behind the
+			// modal (and tab is the FIRST key the dialog's own hint line
+			// advertises, so the one advertised key did nothing), the
+			// first esc moved focus and only a second one cancelled, and
+			// alt+1/2/3 and f1-f3 each moved focus with the dialog still
+			// up. Every one of those was a binding someone forgot to
+			// gate, and there is no reason to believe the next one would
+			// be remembered either.
+			//
+			// Breaking rather than returning hands the event to the
+			// sub-model dispatch at the bottom of Update, where
+			// blockedByDialog already routes input to the dialog alone —
+			// the same yield chatview's find and chatlist's filter use.
+			// ctrl+c / ctrl+q / keys.quit are unaffected: they are
+			// matched above this whole block, and a modal must never be
+			// able to trap someone in the program.
+			if m.dialog != nil {
+				break
+			}
+
 			// In-chat search (chatview's ctrl+f) owns the keyboard while
 			// its input line is open: esc closes the search rather than
 			// moving focus, and printables are query text, not quick-type.

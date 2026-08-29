@@ -61,12 +61,11 @@ func TestConfirmDefaultsToCancel(t *testing.T) {
 	}
 }
 
-// TestMovementKeysMoveTheHighlight covers the keys the help card
-// advertises. j/k were advertised but did nothing at all.
+// TestMovementKeysMoveTheHighlight covers the keys that actually move
+// the highlight. j/k are NOT among them — see
+// TestConfirmIgnoresJAndK.
 func TestMovementKeysMoveTheHighlight(t *testing.T) {
 	cases := map[string]tea.KeyPressMsg{
-		"j":     key('j'),
-		"k":     key('k'),
 		"tab":   specialKey(tea.KeyTab),
 		"left":  specialKey(tea.KeyLeft),
 		"right": specialKey(tea.KeyRight),
@@ -106,9 +105,68 @@ func TestMovementWrapsBothWays(t *testing.T) {
 	if m.buttonIdx != 0 {
 		t.Fatalf("left from Confirm: buttonIdx = %d, want 0 (Cancel)", m.buttonIdx)
 	}
-	m, _ = press(m, key('j'), key('j'))
+	m, _ = press(m, specialKey(tea.KeyRight), specialKey(tea.KeyRight))
 	if m.buttonIdx != 0 {
-		t.Fatalf("j twice: buttonIdx = %d, want back at 0", m.buttonIdx)
+		t.Fatalf("right twice: buttonIdx = %d, want back at 0", m.buttonIdx)
+	}
+}
+
+// TestConfirmIgnoresJAndK is a safety regression test, not a style one.
+// j/k were briefly wired as movement here; that made the destructive
+// path EASIER, because j/k are what a user's fingers are already on when
+// a confirm appears mid-scroll — "d, reflexive j, enter" would have
+// deleted a message for everyone. A confirm dialog must not move its
+// highlight for any key but the horizontal ones.
+func TestConfirmIgnoresJAndK(t *testing.T) {
+	for _, r := range []rune{'j', 'k'} {
+		m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+		m, _ = press(m, key(r))
+		if m.buttonIdx != 0 {
+			t.Fatalf("%q moved the confirm highlight to %d; it must stay on Cancel", string(r), m.buttonIdx)
+		}
+
+		// And the reflex that follows must still be harmless.
+		_, cmd := press(m, specialKey(tea.KeyEnter))
+		if result(t, cmd).Confirmed {
+			t.Fatalf("%q then enter confirmed a destructive dialog", string(r))
+		}
+	}
+}
+
+// TestPromptDefaultsToOK is the data-loss regression: a prompt COLLECTS
+// something, so the reflex after typing — Enter — has to accept it. This
+// dialog used to start on Cancel, which silently discarded the path the
+// user had just typed into the attach-file flow.
+func TestPromptDefaultsToOK(t *testing.T) {
+	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	if m.buttonIdx != len(m.buttons)-1 {
+		t.Fatalf("a fresh prompt highlights button %d (%q), want the last one (OK)",
+			m.buttonIdx, m.buttons[m.buttonIdx])
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "[ OK ]") {
+		t.Fatalf("a fresh prompt does not show OK as highlighted:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+// TestPromptTypeThenEnterCarriesTheInput is the attach-file flow
+// end-to-end: type a path, press Enter, get it back.
+func TestPromptTypeThenEnterCarriesTheInput(t *testing.T) {
+	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+
+	for _, r := range "/tmp/a.png" {
+		m, _ = press(m, key(r))
+	}
+	_, cmd := press(m, specialKey(tea.KeyEnter))
+
+	got := result(t, cmd)
+	if !got.Confirmed {
+		t.Fatal("type-then-enter did not confirm the prompt: the typed path would be discarded")
+	}
+	if got.Input != "/tmp/a.png" {
+		t.Fatalf("prompt result Input = %q, want %q", got.Input, "/tmp/a.png")
+	}
+	if got.ID != "attach-file" {
+		t.Fatalf("prompt result ID = %q, want %q", got.ID, "attach-file")
 	}
 }
 
@@ -118,29 +176,30 @@ func TestMovementWrapsBothWays(t *testing.T) {
 func TestPromptTreatsMovementLettersAsText(t *testing.T) {
 	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
 
+	start := m.buttonIdx
 	m, _ = press(m, key('j'), key('k'), key('.'), key('t'), key('x'), key('t'))
 	if m.input != "jk.txt" {
 		t.Fatalf("prompt input = %q, want %q — j/k must be text in a prompt", m.input, "jk.txt")
 	}
-	if m.buttonIdx != 0 {
-		t.Fatalf("j/k moved the prompt's button highlight to %d, want 0", m.buttonIdx)
+	if m.buttonIdx != start {
+		t.Fatalf("j/k moved the prompt's button highlight to %d, want %d", m.buttonIdx, start)
 	}
 
-	// Arrows and tab are not text, so they still choose a button.
+	// Arrows and tab are not text, so they still choose a button — here
+	// moving OFF the default OK and onto Cancel.
 	m, _ = press(m, specialKey(tea.KeyTab))
-	if m.buttonIdx != 1 {
-		t.Fatalf("tab in a prompt: buttonIdx = %d, want 1", m.buttonIdx)
+	if m.buttonIdx != 0 {
+		t.Fatalf("tab in a prompt: buttonIdx = %d, want 0 (Cancel)", m.buttonIdx)
 	}
 	_, cmd := press(m, specialKey(tea.KeyEnter))
-	got := result(t, cmd)
-	if !got.Confirmed || got.Input != "jk.txt" {
-		t.Fatalf("prompt result = %+v, want confirmed with input %q", got, "jk.txt")
+	if got := result(t, cmd); got.Confirmed {
+		t.Fatalf("enter on the highlighted Cancel confirmed: %+v", got)
 	}
 }
 
 func TestEscCancels(t *testing.T) {
 	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
-	m, _ = press(m, key('j')) // highlight Confirm
+	m, _ = press(m, specialKey(tea.KeyRight)) // highlight Confirm
 	m, cmd := press(m, specialKey(tea.KeyEscape))
 
 	if result(t, cmd).Confirmed {
@@ -166,13 +225,13 @@ func TestViewMarksTheHighlightedButtonWithoutColor(t *testing.T) {
 		t.Fatalf("View() marks Confirm as highlighted while buttonIdx is 0:\n%s", plain)
 	}
 
-	m, _ = press(m, key('j'))
+	m, _ = press(m, specialKey(tea.KeyRight))
 	plain = ansi.Strip(m.View())
 	if !strings.Contains(plain, "[ Confirm ]") {
-		t.Fatalf("after j, View() does not mark Confirm as highlighted:\n%s", plain)
+		t.Fatalf("after right, View() does not mark Confirm as highlighted:\n%s", plain)
 	}
 	if strings.Contains(plain, "[ Cancel ]") {
-		t.Fatalf("after j, View() still marks Cancel as highlighted:\n%s", plain)
+		t.Fatalf("after right, View() still marks Cancel as highlighted:\n%s", plain)
 	}
 }
 
@@ -182,10 +241,18 @@ func TestViewMarksTheHighlightedButtonWithoutColor(t *testing.T) {
 func TestViewShowsTheMovementHint(t *testing.T) {
 	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
 	plain := ansi.Strip(m.View())
-	for _, want := range []string{"tab: choose", "enter: accept"} {
+	for _, want := range []string{"←/→: choose", "enter: accept", "esc: cancel"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() is missing %q:\n%s", want, plain)
+			t.Fatalf("confirm View() is missing %q:\n%s", want, plain)
 		}
+	}
+
+	// A prompt leads with Enter, because that is the reflex at the end of
+	// typing and here it accepts what was typed.
+	p := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	plain = ansi.Strip(p.View())
+	if !strings.Contains(plain, "enter: accept input") {
+		t.Fatalf("prompt View() does not say Enter accepts the input:\n%s", plain)
 	}
 
 	// A single-button alert has nothing to choose between, so it says so.
@@ -194,8 +261,29 @@ func TestViewShowsTheMovementHint(t *testing.T) {
 	if strings.Contains(plain, "choose") {
 		t.Fatalf("an alert with one button advertises a choice:\n%s", plain)
 	}
-	if !strings.Contains(plain, "enter: dismiss") {
+	if !strings.Contains(plain, "enter or esc: dismiss") {
 		t.Fatalf("alert View() is missing its dismiss hint:\n%s", plain)
+	}
+}
+
+// TestHintNamesOnlyKeysTheDialogGets: the hint must not advertise a key
+// the dialog never receives (the app's focus cycling eats tab) or a key
+// that is not movement at all (j/k). A hint that lists keys the
+// component does not honor is the same documentation drift this wave
+// removed from the status bar and the README.
+func TestHintNamesOnlyKeysTheDialogGets(t *testing.T) {
+	dialogs := map[string]Model{
+		"confirm": NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?"),
+		"alert":   NewAlert(theme.DarkTheme(), "oops", "Error", "Something broke"),
+		"prompt":  NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:"),
+	}
+	for name, m := range dialogs {
+		plain := ansi.Strip(m.renderHint())
+		for _, forbidden := range []string{"tab", "j/k", "j:", "k:"} {
+			if strings.Contains(plain, forbidden) {
+				t.Errorf("%s hint advertises %q, which the dialog does not get: %q", name, forbidden, plain)
+			}
+		}
 	}
 }
 
