@@ -278,7 +278,12 @@ func (m Model) gridReplyRow(msg *telegram.Message, g gridGeometry) string {
 			who = render.SenderName(other, m.store)
 		}
 		body := ""
-		if lines := m.renderer.RenderBody(other, m.store, g.BodyW*2); len(lines) > 0 {
+		// Twice the body width, so a quote taken from the first line of
+		// the cited message is a whole sentence rather than the fragment
+		// that happened to fit a wrapped line. Spoilers stay hidden: a
+		// quote is not the message the cursor is on.
+		opts := render.BodyOptions{Width: g.BodyW * 2}
+		if lines := m.renderer.RenderBody(other, m.store, opts); len(lines) > 0 {
 			body = strings.TrimSpace(stripSGR(lines[0]))
 		}
 		text = strings.TrimSpace(who + " " + body)
@@ -295,8 +300,8 @@ func (m Model) gridReplyRow(msg *telegram.Message, g gridGeometry) string {
 // the reply that cites it.
 //
 // It is deliberately narrow: the only escapes this package ever puts into a
-// body line are SGR colour and attribute codes from EntitiesToANSI and
-// lipgloss.
+// body line are SGR colour and attribute codes from the entity renderer and
+// from lipgloss.
 func stripSGR(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -347,7 +352,13 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 		out = append(out, gridDivider(label, g.Width, r.Amber, r.Amber))
 	}
 
-	body := m.renderer.RenderBody(msg, m.store, g.BodyW)
+	body := m.renderer.RenderBody(msg, m.store, render.BodyOptions{
+		Width: g.BodyW,
+		// Spoilers only ever open on the message the cursor is on, and
+		// only after x. Revealing them anywhere else would defeat the
+		// point of a spoiler on a screen somebody else can see.
+		RevealSpoilers: m.revealedID != 0 && msg.ID == m.revealedID,
+	})
 
 	var rows []string
 	if msg.IsForwarded {

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
@@ -41,7 +42,7 @@ func TestRenderBodyWrapsLongSingleToken(t *testing.T) {
 	msg := textMessage(strings.Repeat("x", 500), nil)
 
 	const bodyW = 31
-	lines := r.RenderBody(msg, st, bodyW)
+	lines := r.RenderBody(msg, st, BodyOptions{Width: bodyW})
 
 	for i, line := range lines {
 		if got := ansi.StringWidth(line); got > bodyW {
@@ -72,7 +73,7 @@ func TestRenderBodyCJKAndEmoji(t *testing.T) {
 		}
 	}()
 
-	lines := r.RenderBody(msg, st, bodyW)
+	lines := r.RenderBody(msg, st, BodyOptions{Width: bodyW})
 	if len(lines) == 0 {
 		t.Fatal("expected rendered body lines")
 	}
@@ -119,7 +120,7 @@ func TestRenderBodyDoesNotReflowArt(t *testing.T) {
 	}
 
 	const bodyW = 31 // narrower than rowWidth, so cropping is exercised
-	lines := r.RenderBody(msg, st, bodyW)
+	lines := r.RenderBody(msg, st, BodyOptions{Width: bodyW})
 
 	if len(lines) != len(rows) {
 		t.Fatalf("expected %d lines (one per art row), got %d: %q", len(rows), len(lines), lines)
@@ -135,8 +136,15 @@ func TestRenderBodyDoesNotReflowArt(t *testing.T) {
 }
 
 // TestRenderBodyKeepsEntityStylesAcrossWraps: a bold run spanning a wrap
-// point must be bold on both lines. A wrapper that is not ANSI-aware either
-// drops the style or leaks it to the end of the message.
+// must open its style on EVERY line it covers and close it at the end of
+// each one.
+//
+// Opening once and closing at the very end looks correct in a single-column
+// dump and is wrong on screen: a terminal does not reset at a newline, and
+// the rows of a panel are not adjacent — whatever a body line leaves open
+// bleeds through its trailing padding, across the panel rule, and into the
+// next column. That is the bug this asserts against, and it is invisible to
+// any test that only checks the joined output.
 func TestRenderBodyKeepsEntityStylesAcrossWraps(t *testing.T) {
 	r := newTestRenderer()
 	st := store.NewStore()
@@ -148,17 +156,59 @@ func TestRenderBodyKeepsEntityStylesAcrossWraps(t *testing.T) {
 		Type:   &telegram.TextEntityTypeBold{},
 	}})
 
-	lines := r.RenderBody(msg, st, 31)
+	lines := r.RenderBody(msg, st, BodyOptions{Width: 31})
 	if len(lines) < 4 {
 		t.Fatalf("test needs several wrapped lines, got %d", len(lines))
 	}
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "\033[1m") {
-		t.Fatalf("bold escape did not survive wrapping:\n%s", joined)
+
+	for i, line := range lines {
+		if !strings.Contains(ansi.Strip(line), "bold") {
+			continue
+		}
+		if !strings.Contains(line, "\x1b[1;") && !strings.Contains(line, "\x1b[1m") {
+			t.Errorf("line %d carries bold text but never opens the style: %q", i, line)
+		}
+		if open := cell.OpenStyle(line); open != "" {
+			t.Errorf("line %d leaves %q open past the end of the row: %q", i, open, line)
+		}
 	}
-	if !strings.Contains(joined, "\033[22m") {
-		t.Fatalf("bold-reset escape did not survive wrapping:\n%s", joined)
+}
+
+// TestRenderBodyLeavesNoStyleOpen is the same guarantee stated for every
+// style this renderer emits, not just bold: no body line may end with an
+// escape sequence still in effect.
+func TestRenderBodyLeavesNoStyleOpen(t *testing.T) {
+	r := newTestRenderer()
+	st := store.NewStore()
+
+	long := strings.Repeat("word ", 30)
+	cases := map[string]*telegram.Message{
+		"link":  entityMessage(long, &telegram.TextEntityTypeTextURL{URL: "https://example.com"}),
+		"code":  entityMessage(long, &telegram.TextEntityTypeCode{}),
+		"quote": entityMessage(long, &telegram.TextEntityTypeBlockQuote{}),
+		"pre":   entityMessage(long, &telegram.TextEntityTypePreCode{Language: "go"}),
+		"spoil": entityMessage(long, &telegram.TextEntityTypeSpoiler{}),
 	}
+
+	for name, msg := range cases {
+		for i, line := range r.RenderBody(msg, st, BodyOptions{Width: 31}) {
+			if !strings.Contains(line, "\x1b[") {
+				continue
+			}
+			if open := cell.OpenStyle(line); open != "" {
+				t.Errorf("%s: line %d leaves %q open: %q", name, i, open, line)
+			}
+		}
+	}
+}
+
+// entityMessage is a message whose whole text carries one entity.
+func entityMessage(text string, kind telegram.TextEntityType) *telegram.Message {
+	return textMessage(text, []*telegram.TextEntity{{
+		Offset: 0,
+		Length: int32(len([]rune(text))),
+		Type:   kind,
+	}})
 }
 
 // TestRenderBodyIsNeverEmpty: a message with nothing renderable still
@@ -173,7 +223,7 @@ func TestRenderBodyIsNeverEmpty(t *testing.T) {
 		"empty text":  textMessage("", nil),
 		"nil content": {ID: 1, ChatID: 1, Date: 1700000000},
 	} {
-		lines := r.RenderBody(msg, st, 31)
+		lines := r.RenderBody(msg, st, BodyOptions{Width: 31})
 		if len(lines) != 1 {
 			t.Fatalf("%s: expected exactly one line, got %d: %q", name, len(lines), lines)
 		}
@@ -188,7 +238,7 @@ func TestRenderBodyTakesTextAsWritten(t *testing.T) {
 	st := store.NewStore()
 
 	msg := textMessage("2 * 3 _ 4 # five", nil)
-	got := ansi.Strip(strings.Join(r.RenderBody(msg, st, 40), "\n"))
+	got := ansi.Strip(strings.Join(r.RenderBody(msg, st, BodyOptions{Width: 40}), "\n"))
 	if got != "2 * 3 _ 4 # five" {
 		t.Fatalf("text was reinterpreted as Markdown: %q", got)
 	}

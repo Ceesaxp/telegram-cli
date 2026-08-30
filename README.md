@@ -241,6 +241,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them) |
 | `Enter` / `o` | Open attachment |
 | `s` | Save attachment |
+| `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` / `c` | Compose a message |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
 
