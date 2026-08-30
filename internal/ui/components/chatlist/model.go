@@ -437,6 +437,35 @@ func (m Model) ActiveFolderID() int32 {
 	return m.folders[m.activeFolder].ID
 }
 
+// FolderNames returns the folder tab labels in display order.
+//
+// The tabs are DRAWN by the top bar in TUI 2.0, but selection and key
+// handling stay here — this is the projection that lets the two live in
+// different packages without the folder keymap moving with the pixels.
+func (m Model) FolderNames() []string {
+	out := make([]string, 0, len(m.folders))
+	for _, f := range m.folders {
+		out = append(out, folderLabel(f))
+	}
+	return out
+}
+
+// ActiveFolderIndex returns the selected tab's position, or 0 when no
+// folders have loaded yet — the synthesized "All" tab is always first and
+// always present, so index 0 is never wrong, only uninformative.
+func (m Model) ActiveFolderIndex() int {
+	if m.activeFolder < 0 || m.activeFolder >= len(m.folders) {
+		return 0
+	}
+	return m.activeFolder
+}
+
+// Count returns how many chats the list is currently showing, after the
+// active folder and any live filter have been applied. It is what the hint
+// bar's buffer counter reports, so it must be what the user can actually
+// see rather than the total held in the store.
+func (m Model) Count() int { return len(m.list.Items) }
+
 // CycleFolder moves the active folder tab by delta (wrapping around) and
 // refilters the chat list to match.
 func (m *Model) CycleFolder(delta int) {

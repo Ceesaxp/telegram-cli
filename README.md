@@ -20,7 +20,7 @@
 ## Features
 
 - **Chat Management** — Private chats, groups, supergroups, channels
-- **Chat Folders** — Folder tab bar above the chat list; `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
+- **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
 - **Message Bubbles** — Rounded bordered bubbles, own messages right-aligned, read status indicators, real ANSI-aware word wrap to the bubble width
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
 - **Profile Avatars** — Colored initials or rendered profile photos in chat list
@@ -40,31 +40,36 @@
 - **Authentication** — Phone/SMS code and 2FA password, plus QR login for `telegram-mcp`
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
 - **Notifications** — Desktop notifications via `notify-send` / `osascript`, gated on terminal focus for read receipts and skipped for muted chats
-- **Responsive Layout** — Dual-panel (wide) or single-panel (narrow terminals)
+- **Responsive Layout** — Borderless columns sized by terminal width: chat list 38 cells, thread flexing, dropping to a narrower list and then a single panel as space runs out. Every row is exactly the terminal width
 - **Theming** — Dark and light themes with 256-color support
 - **Persistence** — Update-sequence state and the peer access-hash cache persist to a local `state.db`, so updates missed while closed are gap-recovered on next start
 
 ## Screenshot
 
 ```
-╭─ Chat List ──────────────╮╭─ Messages ──────────────────────────────────╮
-│ AL  Alice          08:15 ││                                             │
-│     see you tomorrow     ││                     ╭─────────────────────╮ │
-│ DT  Dev Team       13:24 ││                     │ sounds good 👍      │ │
-│     deploy is green   2  ││                     │ 15:20 ✓✓            │ │
-│ TG  Telegram       08:03 ││                     ╰─────────────────────╯ │
-│     Login code: 12345    ││ ╭──────────────────╮                        │
-│ BO  BotFather      14:38 ││ │ Alice            │                        │
-│     /newbot          81  ││ │ deal!            │                        │
-│                          ││ │ 15:22            │                        │
-│                          ││ ╰──────────────────╯                        │
-╰──────────────────────────╯╰─────────────────────────────────────────────╯
-╭─ Compose ───────────────────────────────────────────────────────────────╮
-│ █                                                                       │
-│ Enter: send | Esc: cancel                                               │
-╰─────────────────────────────────────────────────────────────────────────╯
-● Connected  alice    Tab:switch │ Esc:back │ /:search │ Alt+C:contacts
+ tg │ 1:All 2:Work 3:Channels              ● connected · mtproto 2.0 │ 15:22
+                                      │ Alice
+ AL  Alice                      08:15 │                     ╭─────────────╮
+     see you tomorrow                 │                     │ sounds good │
+ DT  Dev Team                   13:24 │                     │ 15:20 ✓✓    │
+     deploy is green                2 │                     ╰─────────────╯
+ TG  Telegram                   08:03 │ ╭──────────────────╮
+     Login code: 12345                │ │ Alice            │
+ BO  BotFather                  14:38 │ │ deal!            │
+     /newbot                       81 │ │ 15:22            │
+                                      │ ╰──────────────────╯
+                                      │ Type a message...
+ q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
 ```
+
+The **frame** is TUI 2.0: a one-row top bar with folder tabs and connection
+state, borderless columns divided by single-cell rules, and a context-sensitive
+hint bar at the foot. Every row is exactly the terminal width, asserted by
+tests against [`docs/fixtures/`](docs/fixtures/).
+
+The **message bubbles inside it are not** — the thread still renders as it
+always did. Replacing bubbles with the columnar time/sender/body grid is the
+next step; see [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
@@ -791,11 +796,21 @@ decisions, phased delivery plan, and verification matrix are recorded in
 [docs/tui-2.0.md](docs/tui-2.0.md). All thirteen design decisions are now
 closed, so the document is a contract rather than a proposal.
 
-Its foundations have landed — `internal/ui/cell` (terminal geometry),
-`internal/ui/golden` (the fixture harness), and the interaction-mode resolver
-in `internal/app` — but **nothing user-visible has changed**: no renderer has
-been touched, and the sections above still describe the client exactly as it
-behaves today. The frame is the first change that will alter what you see.
+**The frame has landed.** `internal/ui/layout` (responsive budget),
+`internal/ui/frame` (borderless assembly), `topbar`, `hintbar`, and the
+semantic palette in `internal/ui/theme` now draw the screen you see in the
+screenshot above: no panel borders, single-cell rules, a top bar and a hint
+bar. Every row is exactly the terminal width, verified against the goldens.
+
+Also landed, invisibly: `internal/ui/cell` (terminal geometry),
+`internal/ui/golden` (the fixture harness), the interaction-mode resolver, and
+the `:` command palette.
+
+**Still to come:** the chat list's two-line rows with type sigils, the
+columnar message grid that replaces bubbles, and the context rail. The
+`mtproto 2.0` and `devices 1` cells in the top bar are **placeholders** with no
+real data behind them yet — they pin the layout and must be wired or removed
+before release.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a
@@ -846,6 +861,7 @@ internal/
     layout/               Responsive panel sizing
     cell/                 Terminal geometry: display-width measuring, fit/pad/wrap
     golden/               Fixture harness for the docs/fixtures frame goldens
+    frame/                Borderless screen assembly — exact-width rows
     widgets/              List, textarea, spinner, tabs, progress bar
     components/
       chatlist/           Chat list with avatars + unread badges
@@ -858,6 +874,8 @@ internal/
       statusbar/          Connection status + typing indicators
       dialog/             Modal dialogs
       palette/            `:` command palette overlay
+      topbar/             Top chrome row: folder tabs, connection, clock
+      hintbar/            Bottom chrome row: contextual hints and counters
   media/                  Image rendering (kitty/sixel/blocks)
   render/                 Message content → terminal output
   notification/           Desktop notifications

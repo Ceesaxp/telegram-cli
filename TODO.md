@@ -277,13 +277,30 @@ the primary checkout stays free for fixes against a working client.
 
       They are absent from the registry rather than stubbed: an entry that
       cannot run teaches a command that does not exist.
-- [ ] **Frame** (theme roles, layout, borderless assembly, top bar, hint bar,
-      chat list) as **one** branch — phases 1–3 are not separable, since the
-      existing components rely on Lipgloss borders to absorb width slop.
-      This is the first change that can visibly break the client, and the
-      first that `internal/ui/golden` actually judges: build it against the
-      fixtures rather than by eye. Assemble rows with `cell.Fit`/`cell.FitLine`
-      so every line is exactly the frame width by construction.
+- [x] **Frame** — theme roles (`internal/ui/theme/roles.go`), responsive
+      budget (`internal/ui/layout`), borderless assembly
+      (`internal/ui/frame`), `topbar`, `hintbar`. **The first user-visible
+      change.** No panel borders; single-cell rules; every row exactly the
+      terminal width, asserted at the five golden sizes plus a sweep of
+      widths 20–300 and heights 3–60.
+
+      The earlier claim that phases 1–3 are inseparable turned out to be
+      wrong in detail: the fix is not "land them together" but "the frame
+      fits panel output rather than trusting it". `frame.Render` fits every
+      line to its region, so panels that are not yet exact-width are padded
+      or clipped instead of shearing — which is what lets the chat list and
+      thread grid land afterwards, separately.
+
+- [ ] **Chat list rows** ← **next.** Two-line rows, type sigils (`@` DM,
+      `#` group, `!` channel, `~` saved), selection bar, muted treatment,
+      the filter header and the local footer. The column is already 38 cells
+      and exact; only its contents are still the old single-line rows.
+
+- [ ] **Byte equality against the goldens.** Only width is asserted today.
+      The fixtures are renders of a *finished* TUI 2.0, so string equality
+      cannot pass until the chat list rows, the thread grid and the rail all
+      land. That separation is deliberate and is why `golden.Compare`
+      reports width and content as different `DiffKind`s.
 - [ ] **Thread grid** — the riskiest parcel: `chatview/model.go` is ~1960
       lines against ~2000 lines of tests, and the line-index scroll
       machinery must survive behaviourally intact. Land the cursor-identity
