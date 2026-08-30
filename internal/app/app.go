@@ -233,6 +233,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// correctly in its right-hand column rather than advertising a default
 	// the user replaced.
 	m.palette.SetItems(m.paletteItems())
+	m.chatList.SetRoles(roles)
 	return m
 }
 
@@ -717,6 +718,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setScreen(ScreenMain)
 		m.myUserId = msg.UserId
 		m.chatView.SetMyUserId(msg.UserId)
+		m.chatList.SetMyUserID(msg.UserId)
 		m.statusBar.SetUserName(fmt.Sprintf("%s %s", msg.FirstName, msg.LastName))
 		// We are authorized and the client works — show Connected
 		// directly instead of relying on connection-state event timing.
@@ -1131,10 +1133,23 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	x, y := msg.X, msg.Y
 
+	// The top bar owns the folder tabs now, so a click on row 0 selects a
+	// tab. Folder state still lives in the chat list — the top bar can say
+	// WHICH tab was hit but not what that means.
+	if m.layout.TopBar && y == 0 {
+		if i := m.topBar.TabAt(x); i >= 0 && m.chatList.SelectFolderIndex(i) {
+			m.refreshChrome()
+			return m, m.chatList.FolderLoadCmd()
+		}
+		return m, nil
+	}
+
 	if m.mouseInLeftPanel(x, y) {
-		// Row and column inside the panel border — the coordinate space
-		// chatlist.ClickAtXY and contacts.ClickAt expect.
-		row, col := y-1, x-1
+		// Panel-local coordinates. The frame is borderless, so a column is
+		// the raw x and a row is y minus whatever chrome sits above it —
+		// there is no longer a border cell to subtract, and subtracting one
+		// anyway put every click a row and a column off.
+		row, col := m.bodyRow(y), x
 		if m.contacts.IsVisible() {
 			m.setFocus(PanelContacts)
 			if userID, ok := m.contacts.ClickAt(row); ok {

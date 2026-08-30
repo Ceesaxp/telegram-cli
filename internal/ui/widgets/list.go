@@ -18,10 +18,26 @@ type ListItem struct {
 	Online   bool
 	Avatar   string // 2-line rendered avatar (half-block image or initials)
 	Muted    bool   // chat notifications are muted; render dimmed
+
+	// Kind and Saved describe what the item IS, for callers whose rows
+	// show a type mark. TUI 2.0's chat list uses them for its sigil, which
+	// replaces the avatar as the identity signal — the widget itself never
+	// interprets them.
+	Kind  int
+	Saved bool
 }
 
 // List is a generic scrollable list widget with vim-style navigation.
 type List struct {
+	// RenderRow, when set, replaces this widget's own row drawing. It is
+	// given one item and must return exactly itemHeight lines, each
+	// already fitted to width. Everything else — cursor, scrolling,
+	// click-to-row mapping — is unaffected.
+	//
+	// This exists so a caller can have a bespoke row without forking the
+	// scroll machinery, which is where the fiddly arithmetic lives.
+	RenderRow func(item ListItem, selected, focused bool, width int) []string
+
 	Items   []ListItem
 	Cursor  int
 	Offset  int
@@ -197,6 +213,19 @@ func (l *List) View() string {
 	for i := l.Offset; i < end; i++ {
 		item := l.Items[i]
 		isActive := i == l.Cursor
+
+		// A caller can own the row's appearance entirely while this widget
+		// keeps the cursor, scroll offset and hit-testing — which is the
+		// part with the subtle arithmetic and the tests to match. TUI 2.0's
+		// chat list uses this to draw its own two-line rows without
+		// reimplementing any of that.
+		if l.RenderRow != nil {
+			for _, line := range l.RenderRow(item, isActive, l.Focused, l.Width) {
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+			continue
+		}
 
 		style := l.StyleNormal
 		if isActive {

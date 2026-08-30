@@ -132,6 +132,23 @@ func TestZeroWidthIsEmpty(t *testing.T) {
 	}
 }
 
+// labelColumn finds a label's starting COLUMN in a rendered row.
+//
+// strings.Index gives a byte offset, which is not the same thing: the row
+// contains multi-byte box-drawing characters, so a byte index runs ahead of
+// the column by two for every "│" already passed. Every glyph on this row is
+// one cell wide, so the rune index is the column.
+func labelColumn(view, label string) int {
+	runes := []rune(view)
+	want := []rune(label)
+	for i := 0; i+len(want) <= len(runes); i++ {
+		if string(runes[i:i+len(want)]) == label {
+			return i
+		}
+	}
+	return -1
+}
+
 func plain(s string) string {
 	var b strings.Builder
 	inEsc := false
@@ -146,4 +163,67 @@ func plain(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// TestTabAtHitsTheDrawnSpans is the folder-tab hit-test that moved here from
+// chatlist when the tabs moved to this bar. Every drawn label must be
+// clickable at every column it occupies, and nothing else may be.
+func TestTabAtHitsTheDrawnSpans(t *testing.T) {
+	m := newBar(120)
+	view := plain(m.View())
+
+	names := []string{"1:all", "2:unread", "3:work", "4:channels", "5:archive"}
+	for want, label := range names {
+		start := labelColumn(view, label)
+		if start < 0 {
+			t.Fatalf("tab %q was not drawn: %q", label, view)
+		}
+		for x := start; x < start+len([]rune(label)); x++ {
+			if got := m.TabAt(x); got != want {
+				t.Errorf("TabAt(%d) = %d, want %d (inside %q)", x, got, want, label)
+			}
+		}
+	}
+}
+
+// TestTabAtMissesTheGaps: the space between two tabs belongs to neither, so
+// a click that lands between labels does nothing rather than picking one.
+func TestTabAtMissesTheGaps(t *testing.T) {
+	m := newBar(120)
+	view := plain(m.View())
+
+	for _, label := range []string{"2:unread", "3:work"} {
+		start := labelColumn(view, label)
+		if got := m.TabAt(start - 1); got != -1 {
+			t.Errorf("TabAt(%d) = %d on the gap before %q, want -1", start-1, got, label)
+		}
+	}
+
+	if got := m.TabAt(0); got != -1 {
+		t.Errorf("TabAt(0) = %d on the app mark, want -1", got)
+	}
+	if got := m.TabAt(119); got != -1 {
+		t.Errorf("TabAt(119) = %d on the clock, want -1", got)
+	}
+}
+
+// TestTabAtIgnoresTabsThatWereNotDrawn: at a narrow width some tabs are
+// dropped, and a click must never be attributed to one the user cannot see.
+func TestTabAtIgnoresTabsThatWereNotDrawn(t *testing.T) {
+	m := newBar(40)
+	view := plain(m.View())
+
+	for i, label := range []string{"1:all", "2:unread", "3:work", "4:channels", "5:archive"} {
+		drawn := strings.Contains(view, label)
+		hit := false
+		for x := range 40 {
+			if m.TabAt(x) == i {
+				hit = true
+				break
+			}
+		}
+		if hit != drawn {
+			t.Errorf("tab %q drawn=%v but clickable=%v", label, drawn, hit)
+		}
+	}
 }

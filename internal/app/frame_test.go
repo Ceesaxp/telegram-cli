@@ -219,7 +219,65 @@ func TestLayoutMatchesTheGoldenGeometry(t *testing.T) {
 	}
 }
 
+// TestClickingATopBarTabSwitchesFolder is the other half of the folder-tab
+// click that moved out of chatlist: the top bar owns those pixels now, so
+// the app routes row 0 to it and hands the result back to the chat list,
+// which still owns folder state.
+func TestClickingATopBarTabSwitchesFolder(t *testing.T) {
+	m := framedModel(t, 120, 30)
+	m.chatList.SetFoldersForTest([]string{"All", "Work", "News"})
+	m.refreshChrome()
+
+	if got := m.chatList.ActiveFolderIndex(); got != 0 {
+		t.Fatalf("precondition: active folder = %d, want 0", got)
+	}
+
+	// Find a column inside the second tab the way a user would: by looking
+	// at what is drawn. Rune index, not byte index — the row has multi-byte
+	// box-drawing glyphs in it.
+	col := columnOf(golden.StripANSI(m.topBar.View()), "2:Work")
+	if col < 0 {
+		t.Fatalf("the Work tab was not drawn: %q", golden.StripANSI(m.topBar.View()))
+	}
+
+	updated, _ := m.Update(tea.MouseClickMsg{X: col, Y: 0, Button: tea.MouseLeft})
+	m = updated.(Model)
+
+	if got := m.chatList.ActiveFolderIndex(); got != 1 {
+		t.Errorf("clicking column %d (inside the Work tab) selected folder %d, want 1",
+			col, got)
+	}
+}
+
+// TestClickingTheFilterHeaderDoesNotSwitchFolders guards the bug the tab
+// move could have introduced: row 0 of the CHAT LIST is the filter header
+// now, where the tab bar used to be. A click there must not silently change
+// folders.
+func TestClickingTheFilterHeaderDoesNotSwitchFolders(t *testing.T) {
+	m := framedModel(t, 120, 30)
+	m.chatList.SetFoldersForTest([]string{"All", "Work", "News"})
+
+	// Body row 0 — the chat list's filter header, one row below the top bar.
+	updated, _ := m.Update(tea.MouseClickMsg{X: 10, Y: 1, Button: tea.MouseLeft})
+	m = updated.(Model)
+
+	if got := m.chatList.ActiveFolderIndex(); got != 0 {
+		t.Errorf("clicking the filter header selected folder %d, want it unchanged", got)
+	}
+}
+
 // --- helpers --------------------------------------------------------------
+
+// columnOf returns the starting column of needle in a rendered row, or -1.
+func columnOf(row, needle string) int {
+	runes, want := []rune(row), []rune(needle)
+	for i := 0; i+len(want) <= len(runes); i++ {
+		if string(runes[i:i+len(want)]) == needle {
+			return i
+		}
+	}
+	return -1
+}
 
 func assertFrameExact(t *testing.T, view string, w, h int) {
 	t.Helper()

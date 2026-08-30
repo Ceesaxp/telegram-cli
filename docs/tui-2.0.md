@@ -837,6 +837,22 @@ internal/app/app.go, and component tests.
 Exit criterion: folder selection, filtering, mouse hit-testing, unread badges,
 and every existing list/folder key continue to work with exact row widths.
 
+**Shipped.** The rows are on the grid measured out of the goldens, not the
+prose: at 38 cells the sigil sits at column 1, text starts at 3, and the
+relative time occupies a FIXED five-cell field at 32. Fixed rather than
+right-aligned, which is what the fixtures show and what keeps the times
+aligned with each other down the list — the point of giving them a column.
+
+`widgets.List` gained a pluggable `RenderRow`, so the bespoke row did not
+require forking the cursor, scroll and hit-test machinery that already has
+careful tests.
+
+The folder tabs finished moving: `topbar.TabAt` recomputes the drawn spans
+for the hit-test (so it cannot drift from what was painted) and
+`chatlist.SelectFolderIndex` is the half that knows what a tab means. The old
+tab bar, its filter chip and its hit-test are deleted, along with the seven
+tests that were keeping them alive — each guarantee re-homed first.
+
 ### 3. Thread-grid renderer and navigation preservation
 
 Primary files: internal/ui/components/chatview/model.go, new

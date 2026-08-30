@@ -23,7 +23,6 @@
 - **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
 - **Message Bubbles** — Rounded bordered bubbles, own messages right-aligned, read status indicators, real ANSI-aware word wrap to the bubble width
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
-- **Profile Avatars** — Colored initials or rendered profile photos in chat list
 - **Incoming Markdown Rendering** — Code blocks, bold, italic, links via [Glamour](https://github.com/charmbracelet/glamour)
 - **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
@@ -48,17 +47,17 @@
 
 ```
  tg │ 1:All 2:Work 3:Channels              ● connected · mtproto 2.0 │ 15:22
-                                      │ Alice
- AL  Alice                      08:15 │                     ╭─────────────╮
+ / filter chats…                  4/4 │ Alice
+▌@ Alice                        08:15 │                     ╭─────────────╮
      see you tomorrow                 │                     │ sounds good │
- DT  Dev Team                   13:24 │                     │ 15:20 ✓✓    │
-     deploy is green                2 │                     ╰─────────────╯
- TG  Telegram                   08:03 │ ╭──────────────────╮
+ # Dev Team                     13:24 │                     │ 15:20 ✓✓    │
+     deploy is green            [2]   │                     ╰─────────────╯
+ ! Telegram muted               08:03 │ ╭──────────────────╮
      Login code: 12345                │ │ Alice            │
- BO  BotFather                  14:38 │ │ deal!            │
-     /newbot                       81 │ │ 15:22            │
+ @ BotFather                    14:38 │ │ deal!            │
+     /newbot                    [81]  │ │ 15:22            │
                                       │ ╰──────────────────╯
-                                      │ Type a message...
+ j/k move  g/G ends  u unread         │ Type a message...
  q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
 ```
 
@@ -67,9 +66,13 @@ state, borderless columns divided by single-cell rules, and a context-sensitive
 hint bar at the foot. Every row is exactly the terminal width, asserted by
 tests against [`docs/fixtures/`](docs/fixtures/).
 
-The **message bubbles inside it are not** — the thread still renders as it
-always did. Replacing bubbles with the columnar time/sender/body grid is the
-next step; see [TUI 2.0 design](#tui-20-design).
+The **chat list** is TUI 2.0 too: two-line rows, a type sigil instead of an
+avatar (`@` DM, `#` group, `!` channel, `~` saved messages), a filter header
+and a contextual footer.
+
+The **message bubbles inside the thread are not** — that pane still renders
+as it always did. Replacing bubbles with the columnar time/sender/body grid
+is the next step; see [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
