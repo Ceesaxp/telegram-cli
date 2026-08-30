@@ -99,6 +99,15 @@ func (m Model) IsVisible() bool {
 	return m.visible
 }
 
+// Kind reports which sort of dialog this is.
+//
+// The distinction that matters to callers is [KindPrompt] versus the rest: a
+// prompt collects text, so printable keys are typed into it, while a confirm
+// or an alert treats the same keys as navigation. The app's interaction-mode
+// resolver needs exactly that difference to say whether the next letter will
+// type or navigate.
+func (m Model) Kind() Kind { return m.kind }
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.visible {
