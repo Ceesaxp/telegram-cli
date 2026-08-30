@@ -36,12 +36,16 @@
 - **Group Info** — Member list, admin roles, group description (component exists; not yet reachable from a keybinding — see [TODO.md](TODO.md))
 - **Help Overlay** — `?` opens a scrollable, lazygit-style keybinding cheat sheet built from the same bindings the app dispatches on, so it can't drift out of sync
 - **Composer Editing Modes** — emacs (readline) or vi (modal, real cursor semantics) line editing, selectable or auto-detected from `$VISUAL`/`$EDITOR`; `Ctrl+O` edits the draft in a full external editor
+- **Mode Badge** — NORMAL / INSERT / COMMAND at the head of the composer row, derived from what the next key will actually do rather than from a separate flag, so it cannot contradict the keymap
+- **Split Compose Preview** — `Ctrl+P` opens a two-column view: your source with line numbers on the left, what will actually be sent on the right, rendered by the same code that draws received messages
+- **Per-Chat Drafts** — switching chats parks the draft and restores that chat’s own, reply target and staged attachment included; the chat list shows `draft: saved locally` where the preview would be. In memory for the session, never synced to Telegram
 - **Config Migration** — `-migrate-config` upgrades an existing `config.toml` to current defaults, with a timestamped backup and a change report
 - **Authentication** — Phone/SMS code and 2FA password, plus QR login for `telegram-mcp`
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
 - **Notifications** — Desktop notifications via `notify-send` / `osascript`, gated on terminal focus for read receipts and skipped for muted chats
 - **Responsive Layout** — Borderless columns sized by terminal width: chat list 38 cells, thread flexing, dropping to a narrower list and then a single panel as space runs out. Every row is exactly the terminal width
 - **Theming** — Dark and light themes with 256-color support
+- **Inline Images** — `ui.inline_images` chooses when a photo is drawn as art rather than as a metadata card: `never`, `on_open` (the default), or `always`
 - **Persistence** — Update-sequence state and the peer access-hash cache persist to a local `state.db`, so updates missed while closed are gap-recovered on next start
 
 ## Screenshot
@@ -62,7 +66,7 @@
                                       │   15:18         Alice  ▤ notes.md  6 KB · md
                                       │ ▌ 15:20           you  perfect ✓
                                       │                   ···  Alice is typi…
- j/k move  g/G ends  u unread         │ Type a message...
+ j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for command
  q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
 ```
 
@@ -83,10 +87,17 @@ Inside a message, code fences are framed and numbered, quotes get a rule,
 lists get a hanging indent, attachments get a metadata card, and spoilers
 stay hidden until `x`.
 
-What is **not** there yet: the right-hand context rail, the composer's mode
-badge, and four blocks whose data this client does not map — reactions, poll
-results, link previews, and a voice note's waveform. Those are Telegram
-mapping work rather than rendering; see [TUI 2.0 design](#tui-20-design).
+The **composer** carries an always-visible mode badge — NORMAL, INSERT or
+COMMAND — so one glance answers whether the next letter types or navigates.
+`Ctrl+P` expands it to a split view with your source on the left and what
+will actually be sent on the right. Drafts are per chat: switching away parks
+one and switching back restores it, reply target and staged attachment
+included.
+
+What is **not** there yet: the right-hand context rail, and four blocks whose
+data this client does not map — reactions, poll results, link previews, and a
+voice note's waveform. Those are Telegram mapping work rather than rendering;
+see [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
@@ -628,6 +639,8 @@ api_hash = "your_api_hash"
 
 [ui]
 theme = "dark"           # "dark" or "light"
+inline_images = "on_open" # "never", "on_open", "always"
+rail = false             # right-hand context rail (not implemented yet)
 
 [media]
 image_protocol = "auto"  # "auto", "kitty", "sixel", "blocks"
@@ -667,6 +680,15 @@ What one run does:
   migration and the change is reported, on the reasoning that an existing
   user already has a working setup and the feature is worth having —
   brand-new configs still default to `false` (see Outgoing Markdown below).
+  TUI 2.0 adds `ui.inline_images` (`"on_open"`) and `ui.rail` (`false`).
+- **Names the fields this version removed**, as `field   old -> (removed)`.
+  `ui.chat_list_width` and `ui.show_avatars` are gone: the chat list is a
+  fixed 38 cells because the grid inside it is measured in display cells,
+  and avatars are an explicit TUI 2.0 non-goal — the type sigil replaced
+  them. Reported as removals rather than as unrecognized keys, because
+  they are different news: an unrecognized key reads as a typo you should
+  fix, a removed one is a setting that used to work. The old values are in
+  the backup.
 - **Reports what it did**, field by field, as `field   old -> new`; any
   config *section* your file didn't have at all, now added in full with
   defaults; any key your file had that this version no longer recognizes
