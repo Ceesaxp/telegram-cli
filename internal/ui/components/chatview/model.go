@@ -148,11 +148,33 @@ type Model struct {
 	chatID       int64
 	chatTitle    string
 	scrollOffset int
-	loading      bool
-	loadStatus   string // honest stage label, e.g. "Loading messages..."
-	notice       string // transient notice shown in the header
-	myUserId     int64
-	mediaStatus  string
+
+	// cursorID is the message the action keys (reply, edit, delete,
+	// enter/o, s) act on, held as an identity rather than recomputed from
+	// the scroll position on every read.
+	//
+	// It used to be derived: "the message containing the last visible
+	// line". That is a position, and positions move on their own here —
+	// a photo thumbnail landing turns a one-line placeholder into twenty
+	// lines of art, and the message under the old rule silently changed
+	// between the user reading the screen and pressing r. An identity
+	// cannot drift that way.
+	//
+	// The cursor is not free-moving: there is no message-wise motion key
+	// in TUI 2.0 (j/k scroll lines, as they always have), so it is
+	// anchored back into the visible window by syncCursor whenever the
+	// viewport moves. What it buys is stickiness — while the message
+	// stays on screen, the target stays that message no matter what
+	// re-renders around it.
+	//
+	// Zero means "not anchored yet"; the next read or sync adopts the
+	// newest visible message.
+	cursorID    int64
+	loading     bool
+	loadStatus  string // honest stage label, e.g. "Loading messages..."
+	notice      string // transient notice shown in the header
+	myUserId    int64
+	mediaStatus string
 
 	// metaBusy is the trailing meta pipeline (sender names, photo
 	// thumbnails). It runs *after* first paint and must never take a
@@ -687,6 +709,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.chatID = chatID
 	m.chatTitle = title
 	m.scrollOffset = 0
+	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
 	m.loading = true
 	m.loadStatus = "Loading messages..."
 	m.mediaStatus = ""
@@ -1175,6 +1198,10 @@ func (m *Model) scrollToMessage(id int64) bool {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
+	// A jump is the one movement that says which message it is about, so
+	// it sets the cursor outright: land on a search hit and r replies to
+	// the hit, not to whatever happens to sit at the edge of the window.
+	m.cursorID = id
 	return true
 }
 
@@ -1195,13 +1222,15 @@ func (m *Model) settleJump() {
 // scrollOffset stays past the end and View draws a blank body until the
 // next scroll keypress.
 func (m *Model) clampScroll() {
-	if m.scrollOffset < 0 {
+	switch {
+	case m.scrollOffset < 0:
 		m.scrollOffset = 0
-		return
+	default:
+		if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
+			m.scrollOffset = maxOffset
+		}
 	}
-	if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
-		m.scrollOffset = maxOffset
-	}
+	m.syncCursor()
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -1525,8 +1554,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	// Any key that moved the viewport may have brought photos whose
-	// thumbnails were skipped by the open-time prefetch cap into view.
+	// thumbnails were skipped by the open-time prefetch cap into view,
+	// and may have carried the cursor off the visible window.
 	if isScroll {
+		m.syncCursor()
 		cmd := m.lazyPhotoCmd()
 		return m, cmd
 	}
@@ -1554,6 +1585,7 @@ func (m *Model) clampScrollUp() tea.Cmd {
 	}
 	// At the top of what is loaded: pull in an older page.
 	m.scrollOffset = maxOffset
+	m.syncCursor()
 	oldest := m.store.Messages.OldestMessageId(m.chatID)
 	if oldest != 0 && !m.loading && m.tg != nil {
 		m.loading = true
@@ -1563,36 +1595,135 @@ func (m *Model) clampScrollUp() tea.Cmd {
 	return nil
 }
 
-// getTargetMessage returns the message the scroll position is currently
-// "on" — used by the r/e/d/enter/o/s action keys. View() shows lines
-// [total-bodyH-scrollOffset : total-scrollOffset) of the full rendered
-// history (oldest message first), so scrollOffset counts rendered lines up
-// from the bottom (newest) message. Walk messages newest-to-oldest,
-// consuming each one's rendered line count, until scrollOffset is used up —
-// that message is the target. Line counts come from the bubble cache, so
-// this costs no extra rendering.
-func (m Model) getTargetMessage() *telegram.Message {
+// visibleMessages returns the index range [first, last] of the messages
+// that have at least one line inside the body window, and whether any do.
+//
+// View() shows lines [total-bodyH-scrollOffset : total-scrollOffset) of the
+// full rendered history (oldest message first), so scrollOffset counts
+// rendered lines up from the bottom (newest) message. Line counts come from
+// the render cache, so this costs no extra rendering.
+func (m Model) visibleMessages() (first, last int, ok bool) {
+	msgs := m.store.Messages.Get(m.chatID)
+	if len(msgs) == 0 {
+		return 0, 0, false
+	}
+
+	counts := m.lineCounts()
+	total := totalRenderedLines(counts)
+	end := total - m.scrollOffset
+	if end > total {
+		end = total
+	}
+	start := end - m.bodyHeight()
+	if start < 0 {
+		start = 0
+	}
+	if end <= start {
+		// Scrolled past the top of the history: the window shows the
+		// oldest message and nothing else can be acted on.
+		return 0, 0, true
+	}
+
+	first, last, found := 0, 0, false
+	pos := 0
+	for i, c := range counts {
+		if pos < end && pos+c > start {
+			if !found {
+				first, found = i, true
+			}
+			last = i
+		}
+		pos += c
+	}
+	if !found {
+		return 0, 0, true
+	}
+	return first, last, true
+}
+
+// cursorMessage resolves cursorID against the loaded history, falling back
+// to the newest visible message when the cursor has not been anchored yet
+// or its message is gone (deleted, or dropped by a chat switch).
+//
+// Reads never mutate — syncCursor owns the anchoring — so a value copy of
+// the model cannot silently disagree with the one Update is holding.
+func (m Model) cursorMessage() *telegram.Message {
 	msgs := m.store.Messages.Get(m.chatID)
 	if len(msgs) == 0 {
 		return nil
 	}
+	// Tail mode is resolved here as well as in syncCursor, so a message
+	// arriving between two keypresses cannot leave a stale identity
+	// behind: at the bottom of the history the cursor IS the newest
+	// message, with nothing stored to go out of date.
 	if m.scrollOffset <= 0 {
 		return msgs[len(msgs)-1]
 	}
-
-	counts := m.lineCounts()
-	remaining := m.scrollOffset
-	for i := len(msgs) - 1; i >= 0; i-- {
-		remaining -= counts[i]
-		if remaining < 0 {
-			return msgs[i]
+	if m.cursorID != 0 {
+		for _, msg := range msgs {
+			if msg.ID == m.cursorID {
+				return msg
+			}
 		}
 	}
-	return msgs[0]
+	_, last, ok := m.visibleMessages()
+	if !ok {
+		return nil
+	}
+	return msgs[last]
+}
+
+// syncCursor anchors the cursor back into the visible window: it is left
+// alone while its message is on screen, and clamped to the nearest visible
+// message when a scroll has carried it off.
+//
+// Clamping to the *nearest* end rather than to a fixed one is what makes
+// the two directions feel the same: scrolling towards older messages leaves
+// the cursor riding the bottom of the window, scrolling back towards newer
+// leaves it riding the top, and in both cases it is the message the reader
+// last had their eye on.
+//
+// Pinned to the bottom (scrollOffset 0) the cursor is simply the newest
+// message, and it follows each arrival. Stickiness there would be a bug,
+// not a feature: sitting in a live chat, r has to reply to the message that
+// just came in, not to whichever one the cursor was resting on when the
+// conversation moved. Scrolling up leaves tail mode, and from that point
+// the cursor holds its message.
+func (m *Model) syncCursor() {
+	msgs := m.store.Messages.Get(m.chatID)
+	if len(msgs) == 0 {
+		m.cursorID = 0
+		return
+	}
+	if m.scrollOffset <= 0 {
+		m.cursorID = msgs[len(msgs)-1].ID
+		return
+	}
+	first, last, ok := m.visibleMessages()
+	if !ok {
+		m.cursorID = 0
+		return
+	}
+
+	if m.cursorID != 0 {
+		for i, msg := range msgs {
+			if msg.ID != m.cursorID {
+				continue
+			}
+			switch {
+			case i < first:
+				m.cursorID = msgs[first].ID
+			case i > last:
+				m.cursorID = msgs[last].ID
+			}
+			return
+		}
+	}
+	m.cursorID = msgs[last].ID
 }
 
 func (m Model) messageAction(action string) tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil {
 		return nil
 	}
@@ -1606,7 +1737,7 @@ func (m Model) messageAction(action string) tea.Cmd {
 
 // playMedia downloads and plays the media in the target message.
 func (m Model) playMedia() tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil || msg.Content == nil {
 		return nil
 	}
@@ -1676,7 +1807,7 @@ func bestPhotoSizeFile(photo *telegram.Photo) *telegram.File {
 
 // downloadFile saves the file from the target message.
 func (m Model) downloadFile() tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil || msg.Content == nil {
 		return nil
 	}

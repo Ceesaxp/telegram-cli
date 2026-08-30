@@ -200,7 +200,7 @@ func TestLineIndexConsistency(t *testing.T) {
 
 // TestGetTargetMessageBoundaries walks the exact scrollOffset boundaries
 // between messages of unequal height.
-func TestGetTargetMessageBoundaries(t *testing.T) {
+func TestCursorFallsBackToTheBottomVisibleMessage(t *testing.T) {
 	m := newTestModel()
 	m.store.Messages.Append(testChatID, textMessage(1, 100, "one"))
 	m.store.Messages.Append(testChatID, textMessage(2, 100, strings.Repeat("wrap me please ", 8)))
@@ -228,7 +228,7 @@ func TestGetTargetMessageBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		m.scrollOffset = tc.offset
-		got := m.getTargetMessage()
+		got := m.cursorMessage()
 		if got == nil || got.ID != tc.want {
 			t.Fatalf("offset %d: want message %d, got %v (counts=%v, msgs=%d)",
 				tc.offset, tc.want, got, counts, len(msgs))
@@ -1623,7 +1623,7 @@ func dispatchedAction(t *testing.T, cmd tea.Cmd) MessageActionMsg {
 // keysTestModel builds a model with history tall enough that a scroll
 // keypress actually moves scrollOffset instead of being immediately
 // reclamped to 0 by clampScrollUp, and a newest message (ID 1, sent by the
-// local user, so "edit" is accepted) that getTargetMessage resolves to at
+// local user, so "edit" is accepted) that the cursor resolves to at
 // scrollOffset 0 for the mnemonic-dispatch assertions.
 func keysTestModel() Model {
 	m := newTestModel()
