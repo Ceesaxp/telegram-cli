@@ -21,9 +21,9 @@
 
 - **Chat Management** — Private chats, groups, supergroups, channels
 - **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
-- **Message Bubbles** — Rounded bordered bubbles, own messages right-aligned, read status indicators, real ANSI-aware word wrap to the bubble width
+- **Thread Grid** — Messages on a fixed time / sender / body grid rather than bubbles: one body column the whole conversation aligns to, deterministic per-sender colours, day and unread dividers, single-row reply quotes, and delivery marks read from the chat's read markers. Real ANSI-aware word wrap, measured in display cells
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
-- **Incoming Markdown Rendering** — Code blocks, bold, italic, links via [Glamour](https://github.com/charmbracelet/glamour)
+- **Incoming Rich Text** — Bold, italic, underline, strikethrough, code and links rendered from Telegram's own text entities, so what you see is what was sent rather than a Markdown round-trip
 - **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
 - **Voice/Audio Playback** — Play voice messages and audio inline via `mpv` / `ffplay`
@@ -47,16 +47,21 @@
 
 ```
  tg │ 1:All 2:Work 3:Channels              ● connected · mtproto 2.0 │ 15:22
- / filter chats…                  4/4 │ Alice
-▌@ Alice                        08:15 │                     ╭─────────────╮
-     see you tomorrow                 │                     │ sounds good │
- # Dev Team                     13:24 │                     │ 15:20 ✓✓    │
-     deploy is green            [2]   │                     ╰─────────────╯
- ! Telegram muted               08:03 │ ╭──────────────────╮
-     Login code: 12345                │ │ Alice            │
- @ BotFather                    14:38 │ │ deal!            │
-     /newbot                    [81]  │ │ 15:22            │
-                                      │ ╰──────────────────╯
+ / filter chats…                  4/4 │ @ Alice │ direct              ln 10/10
+▌@ Alice                        08:15 │
+     see you tomorrow                 │ TODAY ──────────────────────────────
+ # Dev Team                     13:24 │   15:02         Alice  the deploy is
+     deploy is green            [2]   │                        green, tagging
+ ! Telegram muted               08:03 │                        v0.4.1 now
+     Login code: 12345                │   15:11           you  nice. I will
+ @ BotFather                    14:38 │                        write the
+     /newbot                    [81]  │                        changelog ✓✓
+                                      │ 2 NEW ──────────────────────────────
+                                      │   15:18         Alice  already did —
+                                      │                        see the draft
+                                      │ ▌ 15:20           you  ↳ Alice alrea…
+                                      │                        perfect ✓
+                                      │                   ···  Alice is typi…
  j/k move  g/G ends  u unread         │ Type a message...
  q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
 ```
@@ -70,9 +75,14 @@ The **chat list** is TUI 2.0 too: two-line rows, a type sigil instead of an
 avatar (`@` DM, `#` group, `!` channel, `~` saved messages), a filter header
 and a contextual footer.
 
-The **message bubbles inside the thread are not** — that pane still renders
-as it always did. Replacing bubbles with the columnar time/sender/body grid
-is the next step; see [TUI 2.0 design](#tui-20-design).
+The **thread** is TUI 2.0 as well: a fixed time / sender / body grid in place
+of bubbles, with a 24-cell gutter that compresses to 20 on a narrow pane, day
+and unread dividers, a cursor bar marking the message the action keys act on,
+and delivery marks read from the chat's own read markers rather than assumed.
+
+What is **not** there yet is the content inside a message — code blocks,
+media cards, polls, link previews and reactions still render as plain text —
+and the right-hand context rail. See [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
@@ -584,7 +594,7 @@ the unmuted count, with the true total in parentheses when it differs, e.g.
 
 ## Message Rendering & UX
 
-- **Word wrap** — message bubbles use real ANSI-aware word wrapping to the
+- **Word wrap** — the thread body uses real ANSI-aware word wrapping to the
   bubble's inner width, instead of hard truncation; a single unbroken token
   longer than the width still hard-wraps so it can't blow past the border.
 - **Jump to search result** — picking a chat or message search hit opens the
@@ -831,7 +841,7 @@ review has since overturned several of its points.
 │                   Bubbletea v2                        │
 │  ╭────────╮  ╭──────────────╮  ╭──────────────────╮  │
 │  │  Chat  │  │   Messages   │  │    Composer       │  │
-│  │  List  │  │   (bubbles)  │  │  (text input)    │  │
+│  │  List  │  │    (grid)    │  │  (text input)    │  │
 │  ╰────────╯  ╰──────────────╯  ╰──────────────────╯  │
 │  ╭──────────────────────────────────────────────────╮ │
 │  │              Status Bar + Help                   │ │
@@ -868,7 +878,7 @@ internal/
     widgets/              List, textarea, spinner, tabs, progress bar
     components/
       chatlist/           Chat list with avatars + unread badges
-      chatview/           Message bubbles + media playback
+      chatview/           Thread grid + media playback
       composer/           Text input with reply/edit modes
       auth/               Auth flow screens
       search/             Tabbed search overlay

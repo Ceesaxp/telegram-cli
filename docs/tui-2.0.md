@@ -552,6 +552,44 @@ This is the same class of conflict as divergence 1 (`s` for spoilers versus
 `s` for save): a binding specified without checking what else already claims
 that key in the same mode.
 
+### 10. The thread header omits the buffer number and the bot mark
+
+The goldens draw the header's right group as `buf 2 │ ln 214/214  bot`. Only
+`ln 214/214` is rendered.
+
+`buf N` is a chat's index among the open buffers, which the thread panel does
+not know — the app does. `bot` needs a flag on the chat that the client does
+not map today. Both are omitted rather than filled with a plausible number,
+for the same reason the top bar's placeholders are a recorded release
+blocker: a false fact stated in fixed-width type is worse than a missing one.
+
+They come back when the data reaches the panel, and the right group is
+measured first, so widening it will not cost the position cell.
+
+### 11. Outgoing state has three marks, not four
+
+The design record lists "faint dot, one check, two checks, or a red failure
+mark". The first three are drawn. Nothing in the client reports a send
+failure, so the fourth would be a glyph for a state that cannot be reached —
+decoration pretending to be information, and the one kind of UI element that
+teaches a user to distrust the rest.
+
+The three that ship are real: pending is a message with no server ID, and the
+difference between sent and read comes from the chat's
+`LastReadOutboxMessageID`. The bubble renderer this replaces drew two checks
+on everything it had sent, which told people their messages had been read
+whenever they had merely left.
+
+### 12. A reply to an unloaded message says so in words
+
+The goldens show reply quotes citing messages that are in the loaded window.
+When the cited message is not loaded — which happens constantly, since a
+reply can point at anything in the chat's history — the row reads
+`↳ earlier message` rather than showing the message ID.
+
+The bubble renderer showed `┃ reply #4412`. An ID is not something a reader
+can act on or recognise; the relationship is, and that is what is left.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
@@ -816,7 +854,7 @@ is exactly what `golden.Compare`'s DiffKind split was for.
 
 ### 2. Top bar, hint bar, and chat list
 
-Primary files: new internal/ui/components/topbar, internal/ui/components/statusbar,
+Primary files: new internal/ui/components/topbar, internal/ui/components/hintbar,
 internal/ui/components/chatlist/model.go, internal/ui/widgets/tabs.go,
 internal/app/app.go, and component tests.
 
@@ -831,8 +869,9 @@ internal/app/app.go, and component tests.
 - Render the per-chat draft state in the preview row (decision 13); the
   storage behind it lands with the composer in phase 5, so this phase can read
   an empty draft map and still match the goldens.
-- Convert statusbar to a width-aware contextual hint bar and retain typing and
-  transient notice routing.
+- Replace the status bar with a width-aware contextual hint bar, and retain
+  transient notice routing. (Typing moved to the thread grid in phase 3, and
+  the status bar was deleted there once nothing read it.)
 
 Exit criterion: folder selection, filtering, mouse hit-testing, unread badges,
 and every existing list/folder key continue to work with exact row widths.
@@ -873,6 +912,58 @@ internal/app/keymap.go, internal/app/keys_test.go, and chatview tests.
 
 Exit criterion: a 50-message fixture aligns sender and body columns on every
 line and preserves search, reply, edit, delete, read, scroll, and file actions.
+
+**Shipped.** The gutter arithmetic is pinned against the thread widths the
+five goldens actually draw at, two of which are on the narrow side of the
+compression threshold — which is why that rule exists and why both sides of
+it are tested.
+
+The scroll machinery survived because dividers are attached to the message
+below them rather than being separate history entries: the line index stays
+one count per message, and `scrollToMessage`, `sliceLines` and
+`visibleMessages` are unchanged. Selection is deliberately **not** part of the
+render cache key — `View` redraws the one selected message over the cached,
+unselected ones — because caching it would make the line index depend on
+where the cursor is, and every scroll, jump and hit-test is built on that
+index.
+
+The cursor landed first, on its own. It is now a message identity that
+sticks while its message is on screen, clamps to the nearest visible message
+when a scroll carries it off, and follows the newest message while the view
+is pinned to the bottom. The old rule — "the message containing the last
+visible line" — was a position, and positions move on their own here: a
+photo below the fold finishing its download changed which message `r` would
+reply to without the user touching anything.
+
+Three things in this section were **not** built, because the data for them
+does not exist:
+
+- **Reactions** have no field on `telegram.Message`. Phase 4 adds them with
+  the mapping.
+- **The red failure mark** has no source: nothing in the client reports a
+  send failure. Pending, sent and read are real and are drawn; a glyph for
+  an unreachable state would be decoration pretending to be information.
+- **Spoiler reveal** (`x`) needs the spoiler entity, which arrives with the
+  content blocks.
+
+Two checks now mean what they say. The bubble renderer drew `✓✓` on every
+message it had sent; the grid reads the chat's `LastReadOutboxMessageID`, so
+one check means sent and two mean read.
+
+Glamour is gone from `go.mod`. Entities are rendered directly as ANSI spans,
+which also removes the `WithAutoStyle` hazard — the OSC 11 background probe
+whose reply Bubble Tea delivered to the composer as keystrokes is now
+impossible rather than guarded. The rule it taught is restated on
+`theme.SupportsTrueColor`.
+
+The typing indicator moved into the thread as the bottom row of the
+scroller, with its marker in the sender column. That took the last live
+responsibility off `internal/ui/components/statusbar`, which the frame had
+already replaced and which is now deleted — every one of its guarantees
+re-homed to `hintbar` or the top bar first. Re-homing found a real hole:
+`ConnectionStateMsg` had exactly one consumer, that unrendered bar, so the
+connection dot only learned the truth twice in a session. It handles the
+message directly now.
 
 ### 4. Content blocks and supporting data
 
