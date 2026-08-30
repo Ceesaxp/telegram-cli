@@ -376,7 +376,7 @@ need no changes cannot hold if every named feature is shipped faithfully.
 | Voice waveform and pause | external player can play or stop audio | no amplitude extraction, progress, pause, or transcript data |
 | Link previews and poll results | text and poll question only | preview metadata and poll options/results are not represented |
 | Context rail — members | group-info can fetch members | current member query is limited |
-| Context rail — pinned | `ChannelsGetFullChannel` is **already called** in `internal/telegram/groups.go` and already returns `pinned_msg_id`; the mapping into `SupergroupFullInfo` simply drops it | cheap: one field on the mapping plus the existing `GetMessage` call |
+| Context rail — pinned | `ChannelsGetFullChannel` is **already called** in `internal/telegram/groups.go` and already returns `pinned_msg_id`; the mapping into `SupergroupFullInfo` simply drops it | cheaper still, as built: `messages.search` with `InputMessagesFilterPinned` returns ALL pins in one request, and is the same call the files and links sections needed anyway — see divergence 18 |
 | Context rail — shared files/links | no data path | genuinely new: needs a `messages.search` call with a media filter, capped and cached per chat |
 | Top-bar transport/devices | connection state is available | no transport version or device/session count in the UI state |
 | Expanded composer | textarea and outgoing Markdown parser exist | only one attachment; preview semantics conflict with optional parse_markdown |
@@ -677,6 +677,28 @@ ladder, and the ladder is untouched.
 The badge is also strictly more than the indicator was: `-- INSERT --` only
 appeared in vi mode, leaving emacs users with nothing on screen saying whether
 the next letter would be typed.
+
+### 18. The rail's pinned messages cost less than the reconciliation assumed
+
+The reconciliation table costs the rail's pinned section at "one field on the
+`SupergroupFullInfo` mapping plus the existing `GetMessage` call" — recovering
+`pinned_msg_id` from a `ChannelsGetFullChannel` result that is already
+fetched.
+
+That returns exactly one pinned message. The goldens draw two, and a chat can
+have many.
+
+`messages.search` with `InputMessagesFilterPinned` returns all of them in one
+request, and it is the same call shape the section already needed for files
+and links. So the pinned section is one filter value on an adapter that had to
+exist anyway, rather than a field on a different mapping plus a second call —
+cheaper than the estimate and more complete than what the estimate would have
+bought.
+
+`SupergroupFullInfo` is still consulted, for the member TOTAL rather than the
+pin: `ChannelsGetParticipants` returns a page and not a count, and a
+remainder row computed from the page misstates the size of any group larger
+than one page.
 
 ## Decisions
 
@@ -1215,6 +1237,36 @@ groupinfo migration/removal, and data adapters approved in phase 0.
 
 Exit criterion: rail toggling never corrupts the frame at any threshold and
 member/file data does not block chat opening.
+
+**Shipped** as `internal/ui/components/rail`, plus one Telegram adapter.
+
+**Nothing is fetched until the rail is opened**, and a chat whose data is
+already cached is not refetched — toggling it off and on is free. Every
+result carries the generation it was started for, and the cache entry's own
+generation is what decides staleness. A late result for a chat that is no
+longer open IS cached, deliberately: it is still correct for the chat that
+asked, and `Sections` only ever reads the open chat's entry, so it cannot
+appear under the wrong heading.
+
+**Every section says what state it is in.** Not asked, waiting, refused, and
+genuinely empty would otherwise all render as blank space — and only the last
+of them means "this chat has no files". Every section is present in every
+state, because one that vanished while loading and reappeared when it
+finished would make the rail jump under the reader.
+
+The member remainder counts the chat's total, which costs a second call:
+`ChannelsGetParticipants` returns a page, not a count, and "+24 more"
+computed from the page is a lie about a group of two hundred. A heading's
+count appears only when rows were actually elided.
+
+`groupinfo` is deleted. Like the status bar before it, it had been built,
+sized and fed on every message since the frame landed and never drawn —
+neither its `View` nor its `OpenGroupInfo` had a caller. Its one guarantee is
+what the rail's members section does. `PanelGroupInfo` went with it.
+
+`senderColour` moved to `theme.SenderColour`: the rail names the same people
+the thread grid does, and a person shown mauve in one and blue in the other
+is two people as far as the reader is concerned.
 
 ### 7. Command palette and command services
 

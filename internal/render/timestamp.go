@@ -116,6 +116,31 @@ func FormatRelativeTime(ts int32) string {
 	}
 }
 
+// FormatRelativeShort is a relative time in the smallest space that still
+// says something: "now", "4m", "4h", "2d", or a date once weeks have passed.
+//
+// The rail's right-hand field is four cells. "4h ago" does not fit beside a
+// name and the "ago" is the half that carries no information — a relative
+// time is already relative.
+func FormatRelativeShort(ts int32) string {
+	if ts == 0 {
+		return ""
+	}
+	d := time.Since(time.Unix(int64(ts), 0))
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	default:
+		return time.Unix(int64(ts), 0).Local().Format("2 Jan")
+	}
+}
+
 // FormatLastSeen formats a user's last seen timestamp.
 func FormatLastSeen(ts int32) string {
 	if ts == 0 {

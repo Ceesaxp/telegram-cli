@@ -43,6 +43,9 @@ var AppFixed = []string{
 	// composer types a colon as text — but from a browsing panel it is
 	// always the app's, so a component that bound it would never fire.
 	":",
+	// The context rail toggle. Same rule as the colon: claimed only from
+	// NORMAL, so a focused composer types a backtick as text.
+	"`",
 }
 
 // AppReserved returns the complete set of keys internal/app claims from a

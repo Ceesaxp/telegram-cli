@@ -232,7 +232,7 @@ func TestOwnMessagesAreYou(t *testing.T) {
 
 	// And it is green regardless of what the hash would have said for that
 	// user ID: "mine" is a fixed role, not a bucket.
-	if colour == senderColour(m.myUserId, m.roles) && m.roles.Green != senderColour(m.myUserId, m.roles) {
+	if colour == theme.SenderColour(m.myUserId, m.roles) && m.roles.Green != theme.SenderColour(m.myUserId, m.roles) {
 		t.Fatal("own sender fell through to the hashed palette")
 	}
 }
@@ -245,14 +245,14 @@ func TestSenderColoursAreStableAndSpread(t *testing.T) {
 	roles := theme.DarkRoles(false)
 
 	for _, id := range []int64{1, 7, 12345, -9, 1 << 40} {
-		if senderColour(id, roles) != senderColour(id, roles) {
+		if theme.SenderColour(id, roles) != theme.SenderColour(id, roles) {
 			t.Fatalf("colour for %d is not stable", id)
 		}
 	}
 
 	seen := map[string]int{}
 	for id := int64(1000); id < 1064; id++ {
-		seen[string(senderColour(id, roles))]++
+		seen[string(theme.SenderColour(id, roles))]++
 	}
 	if len(seen) != 4 {
 		t.Fatalf("64 consecutive IDs used %d of 4 colours: %v", len(seen), seen)

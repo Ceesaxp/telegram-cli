@@ -278,6 +278,13 @@ func canonicalSection(title string) string {
 // codeSpan matches a markdown `code span`.
 var codeSpan = regexp.MustCompile("`([^`]+)`")
 
+// doubleCodeSpan matches Markdown's escape hatch for a code span that
+// contains a backtick: ``` “ ` “ ```. It is the only way to write a
+// literal backtick as code, so the rail's toggle has no other spelling —
+// and the single-span pattern above reads it as a space, which is how a
+// documented key can look undocumented.
+var doubleCodeSpan = regexp.MustCompile("``\\s*(.+?)\\s*``")
+
 // digitRange collapses the README's "`1`–`9`" idiom (any dash) into the
 // single "1-9" token the help card uses for the folder jump.
 var digitRange = regexp.MustCompile("`1`\\s*[-–—]\\s*`9`")
@@ -356,9 +363,20 @@ func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 		}
 
 		cell = digitRange.ReplaceAllString(cell, "`1-9`")
+
+		// Double-backtick spans first, and removed from the cell before the
+		// single-span pass: leaving them in means matching their inner
+		// backticks as the delimiters of a span that is not there.
+		var spans [][]string
+		cell = doubleCodeSpan.ReplaceAllStringFunc(cell, func(match string) string {
+			spans = append(spans, doubleCodeSpan.FindStringSubmatch(match))
+			return " "
+		})
+		spans = append(spans, codeSpan.FindAllStringSubmatch(cell, -1)...)
+
 		// One code span is one key: the README always backticks each key
 		// separately, including in runs like "`h`/`l`/`j`/`k`".
-		for _, span := range codeSpan.FindAllStringSubmatch(cell, -1) {
+		for _, span := range spans {
 			k := normalizeKeyToken(span[1])
 			if k == "" {
 				continue

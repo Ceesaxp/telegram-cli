@@ -57,6 +57,10 @@ func (m Model) renderMainScreen() string {
 			Width: l.ThreadWidth,
 			Lines: threadLines,
 		},
+		Rail: frame.Column{
+			Width: l.RailWidth,
+			Lines: frame.Lines(m.rail.View()),
+		},
 	}
 
 	// In single-panel mode one column owns the width, and which one depends

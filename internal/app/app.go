@@ -20,10 +20,10 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/contacts"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/groupinfo"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/rail"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
@@ -36,18 +36,18 @@ import (
 const paletteTopMargin = 8
 
 type Model struct {
-	auth      auth.Model
-	chatList  chatlist.Model
-	chatView  chatview.Model
-	composer  composer.Model
-	contacts  contacts.Model
-	search    search.Model
-	help      help.Model
-	palette   palette.Model
-	topBar    topbar.Model
-	hintBar   hintbar.Model
-	groupInfo groupinfo.Model
-	dialog    *dialog.Model
+	auth     auth.Model
+	chatList chatlist.Model
+	chatView chatview.Model
+	composer composer.Model
+	contacts contacts.Model
+	search   search.Model
+	help     help.Model
+	palette  palette.Model
+	topBar   topbar.Model
+	hintBar  hintbar.Model
+	rail     rail.Model
+	dialog   *dialog.Model
 
 	screen     ScreenState
 	focus      FocusPanel
@@ -67,6 +67,12 @@ type Model struct {
 	// pasteInFlight is set while a clipboard paste command is running, so a
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
+
+	// railOpen is whether the user wants the context rail. Whether it is
+	// actually drawn is layout's decision — below 118 columns there is no
+	// room for it and the preference is kept rather than overwritten, so
+	// widening the terminal brings it back.
+	railOpen bool
 
 	// fatalError holds the reason the Telegram client died for good — a
 	// telegram.ClientErrorMsg with Terminal set, or the authorizer
@@ -187,7 +193,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		palette:    palette.New(th),
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
-		groupInfo:  groupinfo.New(s, tg, th),
+		rail:       rail.New(roles),
 		screen:     ScreenLoading,
 		focus:      PanelChatList,
 		tg:         tg,
@@ -234,6 +240,11 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	m.chatList.SetRoles(roles)
 	m.chatView.SetRoles(roles)
 	m.composer.SetRoles(roles)
+	m.rail.SetStore(s, tg)
+	// The rail's default visibility is the user's preference; the backtick
+	// toggles it from there. Decision 6: opening it is what starts the
+	// fetching, so a config that leaves it off costs nothing at all.
+	m.railOpen = cfg.UI.Rail
 	m.composer.SetParseMarkdown(cfg.UI.ParseMarkdown)
 	return m
 }
@@ -502,6 +513,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key.Matches(":") && noOverlay && m.Mode() == ModeNormal {
 				m.palette.Open()
 				return m, nil
+			}
+
+			// The context rail. From NORMAL only, for the same reason as
+			// the colon: a backtick is a character somebody may well want
+			// to type into a message, and the composer owns it there.
+			if key.Matches("`") && noOverlay && m.Mode() == ModeNormal {
+				return m, m.toggleRail()
 			}
 
 			if key.Matches(m.keys.prevFolder) && noOverlay {
@@ -784,7 +802,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.chatView.OpenChat(msg.ChatId, title)
 		m.switchComposerTo(msg.ChatId)
 		m.setFocus(PanelChatView)
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, cmd, m.openRailFor(msg.ChatId))
 
 	case contacts.ContactSelectedMsg:
 		m.contacts.SetVisible(false)
@@ -801,7 +819,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.chatView.OpenChatAt(msg.ChatId, title, msg.MessageId)
 		m.switchComposerTo(msg.ChatId)
 		m.setFocus(PanelChatView)
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, cmd, m.openRailFor(msg.ChatId))
 
 	case composer.MessageSubmittedMsg:
 		// Focus deliberately stays on the composer after a send. Chatting
@@ -961,8 +979,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search, cmd = m.search.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		if !blockedByDialog && (!isInputEvent || m.focus == PanelGroupInfo) {
-			m.groupInfo, cmd = m.groupInfo.Update(msg)
+		// The rail takes no input of its own — it is a reading surface, not
+		// a panel you focus — so it sees every non-input message and no
+		// keys at all.
+		if !isInputEvent {
+			m.rail, cmd = m.rail.Update(msg)
 			cmds = append(cmds, cmd)
 		}
 
@@ -1093,9 +1114,6 @@ func (m Model) helpLine(focusName string) string {
 			"j/k:move", "Enter:open chat",
 			eitherKey(k.contacts, k.contactsAlt) + ":close", "Esc:close",
 		}
-
-	case PanelGroupInfo:
-		parts = []string{"j/k:scroll", "Esc:back"}
 
 	default: // PanelChatList
 		// No Esc:back — the chat list is where back goes. No n/N — the
@@ -1365,7 +1383,6 @@ func (m *Model) setFocus(panel FocusPanel) {
 	m.chatView.SetFocused(panel == PanelChatView)
 	m.composer.SetFocused(panel == PanelComposer)
 	m.contacts.SetFocused(panel == PanelContacts)
-	m.groupInfo.SetFocused(panel == PanelGroupInfo)
 }
 
 // switchComposerTo points the composer at another chat, parking the draft it
@@ -1383,13 +1400,37 @@ func (m *Model) switchComposerTo(chatID int64) {
 	m.updateLayout()
 }
 
+// openRailFor points the rail at a chat, but only when it is actually on
+// screen.
+//
+// Decision 6: opening a chat costs no rail request. The primary history paint
+// never competes with rail work, and a user who keeps the rail closed — or
+// whose terminal is too narrow for it — never pays for it at all.
+func (m *Model) openRailFor(chatID int64) tea.Cmd {
+	if !m.railOpen || m.layout.RailWidth == 0 || chatID == 0 {
+		return nil
+	}
+	return m.rail.Open(chatID)
+}
+
+// toggleRail is the backtick binding.
+//
+// The preference survives a terminal too narrow to honour it: layout decides
+// whether the rail is drawn, this decides whether it is wanted. Overwriting
+// the preference on a narrow terminal would mean a user who widened their
+// window had to ask again for something they never turned off.
+func (m *Model) toggleRail() tea.Cmd {
+	m.railOpen = !m.railOpen
+	m.updateLayout()
+	if !m.railOpen {
+		m.rail.Close()
+		return nil
+	}
+	return m.openRailFor(m.chatView.ChatId())
+}
+
 func (m *Model) updateLayout() {
-	// ui.rail is read here, but the rail itself is phase 6: asking for it
-	// today would reserve thirty columns and draw nothing in them. The
-	// preference is honoured the moment there is something to put there.
-	const railImplemented = false
-	l := layout.Compute(m.width, m.height, m.composer.Rows(),
-		railImplemented && m.config != nil && m.config.UI.Rail)
+	l := layout.Compute(m.width, m.height, m.composer.Rows(), m.railOpen)
 	m.layout = l
 	m.auth.SetSize(m.width, m.height)
 	// Borderless: panels get their whole region. The frame fits each line
@@ -1403,7 +1444,7 @@ func (m *Model) updateLayout() {
 	// window dimensions.
 	m.search.SetSize(m.width, m.height)
 	m.help.SetSize(m.width, m.height)
-	m.groupInfo.SetSize(l.ChatListWidth, l.ChatListHeight)
+	m.rail.SetSize(l.RailWidth, l.BodyHeight)
 	m.refreshChrome()
 }
 

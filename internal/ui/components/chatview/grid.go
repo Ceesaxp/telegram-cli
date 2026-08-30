@@ -94,30 +94,6 @@ func gridGeometryFor(width int) gridGeometry {
 	}
 }
 
-// senderColour is the deterministic colour of a sender's name.
-//
-// Deterministic, because the colour is an identity cue: the same person has
-// to be the same colour on every line of every session, or it is noise
-// rather than information. The hash is FNV-1a over the ID's bytes so that
-// consecutive user IDs — which is what a small group of colleagues who
-// signed up together actually have — do not land in one bucket.
-func senderColour(id int64, r theme.Roles) lipgloss.Color {
-	palette := [...]lipgloss.Color{r.Mauve, r.Cyan, r.Blue, r.Amber}
-
-	const (
-		offset64 = uint64(14695981039346656037)
-		prime64  = uint64(1099511628211)
-	)
-	h := offset64
-	u := uint64(id)
-	for i := 0; i < 8; i++ {
-		h ^= u & 0xff
-		h *= prime64
-		u >>= 8
-	}
-	return palette[h%uint64(len(palette))]
-}
-
 // senderIdentity is the ID a sender's colour is hashed from. Chats that
 // post as themselves (channels, anonymous admins) hash from the chat.
 func senderIdentity(msg *telegram.Message) int64 {
@@ -252,7 +228,7 @@ func (m Model) senderFor(msg *telegram.Message) (string, lipgloss.Color) {
 	if name == "" {
 		name = "—"
 	}
-	return name, senderColour(senderIdentity(msg), m.roles)
+	return name, theme.SenderColour(senderIdentity(msg), m.roles)
 }
 
 // gridReplyRow is the one body-aligned row a reply gets: the quoted sender

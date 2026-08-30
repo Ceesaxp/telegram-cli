@@ -46,6 +46,7 @@
 - **Responsive Layout** — Borderless columns sized by terminal width: chat list 38 cells, thread flexing, dropping to a narrower list and then a single panel as space runs out. Every row is exactly the terminal width
 - **Theming** — Dark and light themes with 256-color support
 - **Inline Images** — `ui.inline_images` chooses when a photo is drawn as art rather than as a metadata card: `never`, `on_open` (the default), or `always`
+- **Context Rail** — A thirty-cell column beside the thread with the chat's pinned messages, members, and shared files or links, chosen by chat type. Toggled with `` ` ``, defaulted by `ui.rail`, and shown only at 118 columns or wider. Nothing is fetched until you open it, and every section says whether it is loading, empty, or unavailable rather than leaving you to guess
 - **Persistence** — Update-sequence state and the peer access-hash cache persist to a local `state.db`, so updates missed while closed are gap-recovered on next start
 
 ## Screenshot
@@ -94,10 +95,16 @@ will actually be sent on the right. Drafts are per chat: switching away parks
 one and switching back restores it, reply target and staged attachment
 included.
 
-What is **not** there yet: the right-hand context rail, and four blocks whose
-data this client does not map — reactions, poll results, link previews, and a
-voice note's waveform. Those are Telegram mapping work rather than rendering;
-see [TUI 2.0 design](#tui-20-design).
+The **context rail** is the last panel: pinned messages, members and shared
+files in a thirty-cell column beside the thread, on a terminal 118 columns or
+wider. Backtick toggles it, `ui.rail` sets the default. Nothing about it is
+fetched until you open it, so a chat you open with the rail closed costs
+exactly what it did before the rail existed.
+
+What is **not** there yet: the full-pane image overlay, `y` to copy, and four
+blocks whose data this client does not map — reactions, poll results, link
+previews, and a voice note's waveform. Those are Telegram mapping work rather
+than rendering; see [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
@@ -219,6 +226,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `Alt+C` / `F4` | Toggle contacts overlay |
 | `Ctrl+G` | Search all chats (not while composing) |
 | `:` | Command palette (not while composing) |
+| `` ` `` | Toggle the context rail — pinned messages, members, shared files (not while composing; needs 118 columns) |
 | `Ctrl+V` | Paste a clipboard image |
 
 ### Chat list
@@ -911,7 +919,7 @@ internal/
       auth/               Auth flow screens
       search/             Tabbed search overlay
       contacts/           Contact list
-      groupinfo/          Group/channel info panel
+      rail/               Context rail: pinned, members, shared files
       statusbar/          Connection status + typing indicators
       dialog/             Modal dialogs
       palette/            `:` command palette overlay

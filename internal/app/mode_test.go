@@ -106,7 +106,7 @@ func TestResolveMode(t *testing.T) {
 func TestResolveModeIsTotal(t *testing.T) {
 	screens := []ScreenState{ScreenAuth, ScreenLoading, ScreenMain}
 	panels := []FocusPanel{PanelChatList, PanelChatView, PanelComposer,
-		PanelSearch, PanelContacts, PanelGroupInfo}
+		PanelSearch, PanelContacts}
 	bools := []bool{false, true}
 
 	for _, screen := range screens {
