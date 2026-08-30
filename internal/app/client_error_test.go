@@ -41,7 +41,7 @@ func send(t *testing.T, m Model, msg any) Model {
 
 func TestTerminalClientErrorIsUnmissable(t *testing.T) {
 	m := sizedMainModel(t)
-	m.statusBar.SetConnected(true)
+	m = send(t, m, telegram.ConnectionStateMsg{State: telegram.ConnectionStateReady})
 
 	m = send(t, m, telegram.ClientErrorMsg{
 		Err:      errors.New("session revoked from another device"),
@@ -65,9 +65,13 @@ func TestTerminalClientErrorIsUnmissable(t *testing.T) {
 		}
 	}
 
-	// Nothing left on screen may keep claiming the app is connected.
-	if bar := m.statusBar.View(); strings.Contains(bar, "● Connected") {
-		t.Error("status bar still reports Connected after a terminal error")
+	// Nothing left on screen may keep claiming the app is connected. The
+	// error panel replaces the whole frame, so the top bar is not drawn at
+	// all — but the state behind it must have moved too, or dismissing the
+	// panel would reveal a bar still saying "connected".
+	if m.topBar.View() != "" && strings.Contains(m.topBar.View(), "connected") &&
+		!strings.Contains(m.topBar.View(), "disconnected") {
+		t.Error("the top bar still reports connected after a terminal error")
 	}
 
 	// And the panels behind it stop taking input — acting on a key would
@@ -169,21 +173,23 @@ func TestTerminalClientErrorWithoutAnError(t *testing.T) {
 	}
 }
 
-// TestStatusBarRendersDisconnected verifies the statusbar side of the
-// contract (that package belongs to another agent — this only checks it,
-// it does not change it).
-func TestStatusBarRendersDisconnected(t *testing.T) {
+// TestTopBarRendersDisconnected: the connection dot is the only standing
+// statement about whether this client is talking to Telegram, so a dropped
+// connection has to reach it. This guarantee used to live on the status
+// bar, which the frame replaced.
+func TestTopBarRendersDisconnected(t *testing.T) {
 	m := sizedMainModel(t)
-	m.statusBar.SetConnected(true)
-	if !strings.Contains(m.statusBar.View(), "Connected") {
-		t.Fatal("precondition: status bar does not render a connected state")
+	m = send(t, m, telegram.ConnectionStateMsg{State: telegram.ConnectionStateReady})
+	if !strings.Contains(m.topBar.View(), "connected") {
+		t.Fatalf("precondition: top bar does not render a connected state: %q", m.topBar.View())
 	}
+
 	m = send(t, m, telegram.ConnectionStateMsg{State: telegram.ConnectionStateDisconnected})
-	bar := m.statusBar.View()
-	if !strings.Contains(bar, "Disconnected") {
-		t.Errorf("status bar does not render ConnectionStateDisconnected: %q", bar)
+	bar := m.topBar.View()
+	if !strings.Contains(bar, "disconnected") {
+		t.Errorf("top bar does not render ConnectionStateDisconnected: %q", bar)
 	}
-	if strings.Contains(bar, "● Connected") {
-		t.Error("status bar still reports Connected while disconnected")
+	if !strings.Contains(m.View().Content, "disconnected") {
+		t.Errorf("the disconnected state never reaches the screen")
 	}
 }

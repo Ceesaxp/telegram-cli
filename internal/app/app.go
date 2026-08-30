@@ -24,7 +24,6 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/statusbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
@@ -47,7 +46,6 @@ type Model struct {
 	topBar    topbar.Model
 	hintBar   hintbar.Model
 	groupInfo groupinfo.Model
-	statusBar statusbar.Model
 	dialog    *dialog.Model
 
 	screen     ScreenState
@@ -189,7 +187,6 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
 		groupInfo:  groupinfo.New(s, tg, th),
-		statusBar:  statusbar.New(s, th),
 		screen:     ScreenLoading,
 		focus:      PanelChatList,
 		tg:         tg,
@@ -228,7 +225,6 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// all four of these would have to be re-set with them.
 	m.help.SetSections(m.helpSections())
 	m.help.SetFooter(m.helpFooter())
-	m.statusBar.SetHints(m.statusHints())
 	// The palette reads the same resolved bindings, so a rebound key shows
 	// correctly in its right-hand column rather than advertising a default
 	// the user replaced.
@@ -720,14 +716,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.myUserId = msg.UserId
 		m.chatView.SetMyUserId(msg.UserId)
 		m.chatList.SetMyUserID(msg.UserId)
-		m.statusBar.SetUserName(fmt.Sprintf("%s %s", msg.FirstName, msg.LastName))
 		// We are authorized and the client works — show Connected
 		// directly instead of relying on connection-state event timing.
-		m.statusBar.SetConnected(true)
 		m.topBar.SetConnection(topBarConnState(telegram.ConnectionStateReady))
 		m.setFocus(PanelChatList)
 		m.updateLayout()
 		return m, m.chatList.Init()
+
+	case telegram.ConnectionStateMsg:
+		// The dot is the only standing statement about whether this client
+		// is talking to Telegram, so every connection-state change has to
+		// reach it. This used to be consumed by the status bar, which was
+		// built but never drawn — so a reconnect was tracked and shown to
+		// nobody. AuthenticatedMsg still sets Connected outright rather
+		// than waiting for one of these, because the client demonstrably
+		// works by then and the event timing is not guaranteed.
+		m.topBar.SetConnection(topBarConnState(msg.State))
+		return m, nil
 
 	case telegram.ClientErrorMsg:
 		// Terminal means the run loop has exited: nothing will arrive
@@ -775,7 +780,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.chatView.OpenChat(msg.ChatId, title)
 		// Switching chats drops the draft, attachment included.
 		clipboard.Remove(m.composer.SetChatId(msg.ChatId))
-		m.statusBar.SetActiveChatId(msg.ChatId)
 		m.setFocus(PanelChatView)
 		cmds = append(cmds, cmd)
 
@@ -952,10 +956,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 
-		// Status bar always gets all events (non-interactive).
-		m.statusBar, cmd = m.statusBar.Update(msg)
-		cmds = append(cmds, cmd)
-
 		if m.dialog != nil {
 			var d dialog.Model
 			d, cmd = m.dialog.Update(msg)
@@ -1032,7 +1032,6 @@ func (m Model) enterFatalError(reason string) Model {
 	if m.fatalError == "" {
 		m.fatalError = reason
 	}
-	m.statusBar.SetConnected(false)
 	m.topBar.SetConnection(topBarConnState(telegram.ConnectionStateDisconnected))
 	return m
 }
@@ -1049,7 +1048,7 @@ func (m Model) enterFatalError(reason string) Model {
 // no hint bar: it is read by exactly the user who does not yet know which
 // ones are real.
 //
-// Built from the resolved bindings, like helpSections, statusHints and
+// Built from the resolved bindings, like helpSections, hintsForMode and
 // helpFooter — the same rule applies here, and this is the line that is on
 // screen at all times. It returns finished text rather than a format
 // string so that a binding containing a "%" cannot be read as a verb.
@@ -1368,7 +1367,6 @@ func (m *Model) updateLayout() {
 	m.search.SetSize(m.width, m.height)
 	m.help.SetSize(m.width, m.height)
 	m.groupInfo.SetSize(l.ChatListWidth, l.ChatListHeight)
-	m.statusBar.SetSize(m.width)
 	m.refreshChrome()
 }
 
