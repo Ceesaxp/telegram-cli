@@ -31,6 +31,15 @@ func newTestModel() Model {
 	return m
 }
 
+// renderOne renders a single message the way the view does, returning the
+// joined lines and the line count. Tests older than the grid were written
+// against the bubble renderer's (string, int) shape; this keeps them
+// readable without pretending the grid has that shape.
+func renderOne(m Model, msg *telegram.Message) (string, int) {
+	lines := m.gridBlock(msg, nil)
+	return strings.Join(lines, "\n"), len(lines)
+}
+
 func textMessage(id, senderID int64, text string) *telegram.Message {
 	return &telegram.Message{
 		ID:       id,
@@ -46,7 +55,7 @@ func TestBubbleCacheHitAndInvalidate(t *testing.T) {
 	msg := textMessage(10, 100, "hello")
 	m.store.Messages.Append(testChatID, msg)
 
-	first, lines := m.bubble(msg)
+	first, lines := renderOne(m, msg)
 	if lines < 1 {
 		t.Fatalf("expected at least one line, got %d", lines)
 	}
@@ -57,7 +66,7 @@ func TestBubbleCacheHitAndInvalidate(t *testing.T) {
 	// Mutate the message behind the cache's back: a cache hit must return
 	// the previously rendered bubble unchanged.
 	msg.Content = &telegram.MessageText{Text: &telegram.FormattedText{Text: "completely different text that is much longer"}}
-	cached, cachedLines := m.bubble(msg)
+	cached, cachedLines := renderOne(m, msg)
 	if cached != first || cachedLines != lines {
 		t.Fatalf("expected cache hit to return the original bubble")
 	}
@@ -67,7 +76,7 @@ func TestBubbleCacheHitAndInvalidate(t *testing.T) {
 	if got := m.cache.len(); got != 0 {
 		t.Fatalf("expected empty cache after invalidate, got %d", got)
 	}
-	fresh, _ := m.bubble(msg)
+	fresh, _ := renderOne(m, msg)
 	if fresh == first {
 		t.Fatalf("expected a re-render after invalidation")
 	}
@@ -78,7 +87,7 @@ func TestCacheClearedOnWidthChange(t *testing.T) {
 	msg := textMessage(10, 100, strings.Repeat("word ", 40))
 	m.store.Messages.Append(testChatID, msg)
 
-	wide, wideLines := m.bubble(msg)
+	wide, wideLines := renderOne(m, msg)
 	entry, ok := m.cache.get(msg.ID)
 	if !ok || entry.width != 60 {
 		t.Fatalf("expected cache entry rendered at width 60, got %+v (ok=%v)", entry, ok)
@@ -89,7 +98,7 @@ func TestCacheClearedOnWidthChange(t *testing.T) {
 		t.Fatalf("expected cache cleared on width change, got %d entries", got)
 	}
 
-	narrow, narrowLines := m.bubble(msg)
+	narrow, narrowLines := renderOne(m, msg)
 	entry, ok = m.cache.get(msg.ID)
 	if !ok || entry.width != 40 {
 		t.Fatalf("expected cache entry rendered at width 40, got %+v (ok=%v)", entry, ok)
@@ -109,7 +118,7 @@ func TestCacheInvalidatedOnEdit(t *testing.T) {
 	m := newTestModel()
 	msg := textMessage(10, 100, "original")
 	m.store.Messages.Append(testChatID, msg)
-	before, _ := m.bubble(msg)
+	before, _ := renderOne(m, msg)
 
 	edited := textMessage(10, 100, "edited text")
 	m, _ = m.Update(messageFetchedMsg{chatID: testChatID, message: edited})
@@ -117,7 +126,7 @@ func TestCacheInvalidatedOnEdit(t *testing.T) {
 	if _, ok := m.cache.get(10); ok {
 		t.Fatalf("expected the edited message's cache entry to be dropped")
 	}
-	after, _ := m.bubble(m.store.Messages.Get(testChatID)[0])
+	after, _ := renderOne(m, m.store.Messages.Get(testChatID)[0])
 	if after == before {
 		t.Fatalf("expected the edited message to render differently")
 	}
@@ -127,7 +136,7 @@ func TestCacheInvalidatedOnDeleteAndSendSucceeded(t *testing.T) {
 	m := newTestModel()
 	msg := textMessage(10, 100, "one")
 	m.store.Messages.Append(testChatID, msg)
-	m.bubble(msg)
+	renderOne(m, msg)
 
 	m, _ = m.Update(telegram.MessageDeletedMsg{ChatId: testChatID, MessageIds: []int64{10}})
 	if m.cache.len() != 0 {
@@ -136,7 +145,7 @@ func TestCacheInvalidatedOnDeleteAndSendSucceeded(t *testing.T) {
 
 	pending := textMessage(11, 100, "sending")
 	m.store.Messages.Append(testChatID, pending)
-	m.bubble(pending)
+	renderOne(m, pending)
 	confirmed := textMessage(12, 100, "sent")
 	m, _ = m.Update(telegram.MessageSendSucceededMsg{Message: confirmed, OldMessageId: 11})
 	if _, ok := m.cache.get(11); ok {
@@ -162,27 +171,28 @@ func TestLineIndexConsistency(t *testing.T) {
 	}
 
 	msgs := m.store.Messages.Get(testChatID)
-	bubbles, counts := m.renderedBubbles(msgs)
+	blocks, counts := m.renderedMessages(msgs)
 	total := totalRenderedLines(counts)
 
-	joined := strings.Split(strings.Join(bubbles, "\n"), "\n")
+	var joined []string
+	for i, block := range blocks {
+		if counts[i] != len(block) {
+			t.Fatalf("message %d: cached line count %d != %d", i, counts[i], len(block))
+		}
+		joined = append(joined, block...)
+	}
 	if len(joined) != total {
 		t.Fatalf("cumulative index %d != laid out lines %d", total, len(joined))
 	}
-	for i, b := range bubbles {
-		if want := strings.Count(b, "\n") + 1; counts[i] != want {
-			t.Fatalf("message %d: cached line count %d != %d", i, counts[i], want)
-		}
-	}
 
-	// The whole window must reproduce the joined layout exactly.
-	all := sliceLines(bubbles, counts, 0, total)
-	if strings.Join(all, "\n") != strings.Join(bubbles, "\n") {
+	// The whole window must reproduce the layout exactly.
+	all := sliceLines(blocks, counts, 0, total)
+	if strings.Join(all, "\n") != strings.Join(joined, "\n") {
 		t.Fatalf("sliceLines(0,total) does not reproduce the full layout")
 	}
 	// And an arbitrary interior window must match the same lines.
 	if total > 4 {
-		got := sliceLines(bubbles, counts, 2, total-2)
+		got := sliceLines(blocks, counts, 2, total-2)
 		want := joined[2 : total-2]
 		if strings.Join(got, "\n") != strings.Join(want, "\n") {
 			t.Fatalf("sliceLines interior window mismatch")
@@ -190,7 +200,7 @@ func TestLineIndexConsistency(t *testing.T) {
 	}
 
 	// The line index must survive a second pass unchanged (cache hits).
-	_, again := m.renderedBubbles(msgs)
+	_, again := m.renderedMessages(msgs)
 	for i := range counts {
 		if counts[i] != again[i] {
 			t.Fatalf("line count changed between passes at %d: %d != %d", i, counts[i], again[i])
@@ -198,8 +208,8 @@ func TestLineIndexConsistency(t *testing.T) {
 	}
 }
 
-// TestGetTargetMessageBoundaries walks the exact scrollOffset boundaries
-// between messages of unequal height.
+// TestCursorFallsBackToTheBottomVisibleMessage walks the exact scrollOffset
+// boundaries between messages of unequal height, with no cursor anchored.
 func TestCursorFallsBackToTheBottomVisibleMessage(t *testing.T) {
 	m := newTestModel()
 	m.store.Messages.Append(testChatID, textMessage(1, 100, "one"))
@@ -427,13 +437,67 @@ func TestViewUsesCachedLineIndex(t *testing.T) {
 		t.Fatalf("expected all five bubbles cached after one View, got %d", m.cache.len())
 	}
 
-	// A second View must not need to render anything again: mutate every
-	// message behind the cache's back and check the output is identical.
-	for _, msg := range m.store.Messages.Get(testChatID) {
+	// A second View must not re-render the history: mutate every message
+	// behind the cache's back and check the output is identical.
+	//
+	// Every message EXCEPT the one under the cursor, which View re-renders
+	// on purpose so that selection stays out of the cache key — see
+	// gridEntry. That is one message per frame, against a cache that
+	// exists to keep the other several hundred off the hot path.
+	msgs := m.store.Messages.Get(testChatID)
+	cursor := m.cursorMessage()
+	if cursor == nil {
+		t.Fatal("expected a cursor")
+	}
+	for _, msg := range msgs {
+		if msg == cursor {
+			continue
+		}
 		msg.Content = &telegram.MessageText{Text: &telegram.FormattedText{Text: "MUTATED"}}
 	}
 	if m.View() != view {
-		t.Fatalf("expected the second View to be served entirely from the cache")
+		t.Fatalf("expected the second View to be served from the cache")
+	}
+}
+
+// TestViewRedrawsTheCursorMessage is the other half of the cache contract:
+// selection is deliberately NOT part of the cache key, so the selected
+// message is redrawn each frame and its colours can never be stale.
+func TestViewRedrawsTheCursorMessage(t *testing.T) {
+	m := newTestModel()
+	for i := 1; i <= 5; i++ {
+		m.store.Messages.Append(testChatID, textMessage(int64(i), 100, "body"))
+	}
+	view := m.View()
+
+	cursor := m.cursorMessage()
+	if cursor == nil {
+		t.Fatal("expected a cursor")
+	}
+	cursor.Content = &telegram.MessageText{Text: &telegram.FormattedText{Text: "MUTATED"}}
+
+	if m.View() == view {
+		t.Fatal("expected the cursor message to be redrawn rather than served from the cache")
+	}
+}
+
+// TestSelectionDoesNotChangeLineCount pins why that is safe. The line index
+// is built from unselected renders; if selecting a message changed its
+// height, every scroll offset, jump and hit-test in this package would be
+// computed against a layout that is not the one on screen.
+func TestSelectionDoesNotChangeLineCount(t *testing.T) {
+	m := newTestModel()
+	for _, text := range []string{
+		"short",
+		strings.Repeat("a longer message that has to wrap several times ", 3),
+		"multi\nline\nbody",
+	} {
+		msg := textMessage(1, 100, text)
+		plain := m.gridMessageLines(msg, nil, false)
+		selected := m.gridMessageLines(msg, nil, true)
+		if len(plain) != len(selected) {
+			t.Fatalf("%q: %d lines unselected, %d selected", text, len(plain), len(selected))
+		}
 	}
 }
 
@@ -674,7 +738,7 @@ func TestDeletionReclampsScroll(t *testing.T) {
 	if m2.scrollOffset > m2.maxScrollOffset() {
 		t.Fatalf("scroll not re-clamped after deletion: %d > %d", m2.scrollOffset, m2.maxScrollOffset())
 	}
-	if strings.TrimSpace(m2.View()) == strings.TrimSpace(m2.theme.ChatViewHeader.Width(m2.width).Render("  "+m2.chatTitle)) {
+	if body := strings.Join(strings.Split(m2.View(), "\n")[1:], ""); strings.TrimSpace(body) == "" {
 		t.Fatalf("expected a non-blank body after deletion")
 	}
 

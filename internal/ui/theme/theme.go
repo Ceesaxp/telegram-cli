@@ -30,7 +30,6 @@ type Theme struct {
 	ChatListOnline     lipgloss.Style
 
 	// Chat view
-	ChatViewHeader     lipgloss.Style
 	MessageBubbleOwn   lipgloss.Style
 	MessageBubbleOther lipgloss.Style
 	MessageSender      lipgloss.Style
@@ -132,11 +131,6 @@ func DarkTheme() *Theme {
 
 		ChatListOnline: lipgloss.NewStyle().
 			Foreground(success),
-
-		ChatViewHeader: lipgloss.NewStyle().
-			Foreground(text).Bold(true).
-			PaddingLeft(1).PaddingRight(1).
-			Background(lipgloss.Color("236")),
 
 		MessageBubbleOwn: lipgloss.NewStyle().
 			Foreground(text).

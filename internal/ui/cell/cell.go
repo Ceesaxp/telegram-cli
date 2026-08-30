@@ -119,6 +119,17 @@ func Pad(s string, width int) string {
 	return s + strings.Repeat(" ", width-w)
 }
 
+// PadLeft left-pads s with spaces to width cells, i.e. right-aligns it in
+// a field of that width. A string already at or over width is returned
+// unchanged — [Truncate] first if it must also be capped.
+func PadLeft(s string, width int) string {
+	w := Width(s)
+	if w >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-w) + s
+}
+
 // Fit clamps s to exactly width cells: truncated without an ellipsis if
 // wider, space-padded if narrower.
 //

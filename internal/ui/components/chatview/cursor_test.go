@@ -105,33 +105,54 @@ func TestCursorHoldsItsMessageWhenSomethingElseGrows(t *testing.T) {
 // gives way to the nearest message that is on screen. Nearest, not a fixed
 // end — that is what makes the two scroll directions feel the same.
 func TestCursorIsClampedBackIntoTheWindow(t *testing.T) {
-	m := cursorTestModel(t)
-	m.scrollOffset = 2
+	// A long history, entered half way up: both directions then have room
+	// to carry the cursor out of the window without running into the tail,
+	// where a different rule takes over.
+	m := newTestModel()
+	m.SetSize(60, 12)
+	for i := int64(1); i <= 100; i++ {
+		m.store.Messages.Append(testChatID, textMessage(i, 100, "line"))
+	}
+	m.scrollOffset = m.maxScrollOffset() / 2
 	m.syncCursor()
-	held := m.cursorID
-	if held == 0 {
+	if m.cursorID == 0 {
 		t.Fatalf("expected an anchored cursor")
 	}
 
-	// Towards older messages: the cursor falls off the bottom.
-	m.ScrollByLines(20)
-	if m.cursorID == held {
-		t.Fatalf("expected the cursor to move once message %d left the window", held)
-	}
+	// Towards older messages: scroll until the cursor is carried off the
+	// bottom. The step count is discovered rather than assumed, so the
+	// test does not quietly stop exercising the clamp when message heights
+	// change.
+	scrollUntilCursorMoves(t, &m, 3)
 	if got, want := m.cursorID, bottomVisibleID(m); got != want {
 		t.Fatalf("expected the cursor clamped to the bottom of the window (%d), got %d", want, got)
 	}
 
 	// Back towards newer messages: it falls off the top and clamps to that
 	// end rather than jumping across the window.
-	held = m.cursorID
-	m.ScrollByLines(-18)
-	if m.cursorID == held {
-		t.Fatalf("expected the cursor to move once message %d left the window", held)
-	}
+	scrollUntilCursorMoves(t, &m, -3)
 	if got, want := m.cursorID, topVisibleID(m); got != want {
 		t.Fatalf("expected the cursor clamped to the top of the window (%d), got %d", want, got)
 	}
+}
+
+// scrollUntilCursorMoves scrolls in steps of n lines until the anchored
+// cursor is pushed out of the window, failing if it never is.
+func scrollUntilCursorMoves(t *testing.T, m *Model, n int) {
+	t.Helper()
+	held := m.cursorID
+	for range 40 {
+		m.ScrollByLines(n)
+		if m.scrollOffset == 0 {
+			// Tail mode owns the cursor there, so anything that happened
+			// is not the clamp this is trying to observe.
+			t.Fatalf("reached the bottom of the history before the clamp fired")
+		}
+		if m.cursorID != held {
+			return
+		}
+	}
+	t.Fatalf("scrolling by %d never carried message %d out of the window", n, held)
 }
 
 // TestCursorFollowsTheTail pins that stickiness stops at the bottom of the

@@ -115,9 +115,12 @@ func LightRoles(trueColor bool) Roles {
 // Environment only, never a runtime query. This app learned that lesson
 // already: termenv's background probe writes an OSC 11 sequence and reads
 // the reply off stdin, which under Bubble Tea's raw-mode input loop is
-// delivered to the program as keystrokes and typed into the composer. See
-// render.glamourStyleName's doc comment for the same rule stated at its
-// original crime scene.
+// delivered to the program as keystrokes and typed into the composer.
+//
+// The original crime scene was glamour's WithAutoStyle, which resolved to
+// that probe. glamour is no longer a dependency — the thread grid renders
+// entities directly — so the hazard is gone rather than guarded. This
+// function is where the rule now lives, and it must stay environment-only.
 func SupportsTrueColor() bool {
 	switch strings.ToLower(os.Getenv("COLORTERM")) {
 	case "truecolor", "24bit":

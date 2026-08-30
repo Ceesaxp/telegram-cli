@@ -234,6 +234,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// the user replaced.
 	m.palette.SetItems(m.paletteItems())
 	m.chatList.SetRoles(roles)
+	m.chatView.SetRoles(roles)
 	return m
 }
 

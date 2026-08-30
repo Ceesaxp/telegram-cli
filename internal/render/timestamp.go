@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,41 @@ func FormatTimestampSmart(ts int32) string {
 	default:
 		return t.Format("2006-01-02")
 	}
+}
+
+// FormatClock is the thread grid's time column: bare wall-clock, always
+// five cells, no date part. The grid puts the date in a day divider
+// instead, so repeating it on every row would only cost body width.
+func FormatClock(ts int32) string {
+	return time.Unix(int64(ts), 0).Local().Format("15:04")
+}
+
+// FormatDayLabel is the label of a thread grid day divider. It is upper
+// case because a divider is a rule with a word set into it, not a sentence.
+//
+// The year is dropped within the current year: the divider's job is to say
+// which day the messages under it belong to, and "12 AUG" answers that for
+// anything recent while "12 AUG 2024" is what you need once it does not.
+func FormatDayLabel(ts int32) string {
+	t := time.Unix(int64(ts), 0).Local()
+	now := time.Now().Local()
+
+	switch {
+	case sameDay(t, now):
+		return "TODAY"
+	case sameDay(t, now.AddDate(0, 0, -1)):
+		return "YESTERDAY"
+	case t.Year() == now.Year():
+		return strings.ToUpper(t.Format("2 Jan"))
+	default:
+		return strings.ToUpper(t.Format("2 Jan 2006"))
+	}
+}
+
+// SameDay reports whether two Unix timestamps fall on the same local
+// calendar day. The thread grid uses it to decide where day dividers go.
+func SameDay(a, b int32) bool {
+	return sameDay(time.Unix(int64(a), 0).Local(), time.Unix(int64(b), 0).Local())
 }
 
 // FormatRelativeTime returns a relative time string (e.g., "2m ago").
