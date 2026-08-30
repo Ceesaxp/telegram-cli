@@ -7,10 +7,10 @@ import (
 	"github.com/charmbracelet/glamour"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
@@ -207,7 +207,7 @@ func (r *MessageRenderer) RenderMessage(msg *telegram.Message, s *store.Store, i
 		}
 	}
 
-	// Real ANSI-aware wrapping to the bubble's inner width. ansi.Wrap word
+	// Real ANSI-aware wrapping to the bubble's inner width. cell.Wrap word
 	// wraps on whitespace but also hard-wraps any single unbroken token
 	// (e.g. a long URL or a wall of text with no spaces) that would
 	// otherwise overflow the line on its own, and it preserves the SGR
@@ -222,17 +222,17 @@ func (r *MessageRenderer) RenderMessage(msg *telegram.Message, s *store.Store, i
 	// that's what the MaxWidth safety net below is for.
 	var blocks []string
 	if len(headerLines) > 0 {
-		blocks = append(blocks, ansi.Wrap(strings.Join(headerLines, "\n"), innerWidth, ""))
+		blocks = append(blocks, cell.Wrap(strings.Join(headerLines, "\n"), innerWidth))
 	}
 	if rc.art != "" {
 		blocks = append(blocks, rc.art)
 		if rc.text != "" {
-			blocks = append(blocks, ansi.Wrap(rc.text, innerWidth, ""))
+			blocks = append(blocks, cell.Wrap(rc.text, innerWidth))
 		}
 	} else {
-		blocks = append(blocks, ansi.Wrap(rc.text, innerWidth, ""))
+		blocks = append(blocks, cell.Wrap(rc.text, innerWidth))
 	}
-	blocks = append(blocks, ansi.Wrap(footer, innerWidth, ""))
+	blocks = append(blocks, cell.Wrap(footer, innerWidth))
 
 	inner := strings.Join(blocks, "\n")
 
@@ -249,7 +249,7 @@ func (r *MessageRenderer) RenderMessage(msg *telegram.Message, s *store.Store, i
 		}
 		bubble = style.Render(inner)
 
-		w := lipgloss.Width(bubble)
+		w := cell.MaxWidth(bubble)
 		pad := maxWidth - w
 		if pad > 0 {
 			var padded []string
@@ -315,7 +315,7 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 			// RenderMessage) so this function honors the maxWidth it is
 			// given on its own. Wrapping twice at the same width is a
 			// no-op for already-wrapped text, so this is safe.
-			text = ansi.Wrap(text, maxWidth, "")
+			text = cell.Wrap(text, maxWidth)
 		}
 		return renderedContent{text: text}
 

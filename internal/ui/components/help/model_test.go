@@ -265,18 +265,10 @@ func TestKeysColumnWidthCapsForLongKeys(t *testing.T) {
 	}
 }
 
-func TestTruncatePlainAndPadPlainAreCellAccurate(t *testing.T) {
-	wide := "📢📢📢📢📢" // 5 runes, 10 display cells
-	got := truncatePlain(wide, 4)
-	if w := ansi.StringWidth(got); w > 4 {
-		t.Fatalf("truncatePlain(%q, 4) = %q, display width %d > 4", wide, got, w)
-	}
-
-	padded := padPlain("hi", 5)
-	if w := ansi.StringWidth(padded); w != 5 {
-		t.Fatalf("padPlain(\"hi\", 5) = %q, display width %d, want 5", padded, w)
-	}
-}
+// Cell-accuracy of the truncate/pad primitives is covered in
+// internal/ui/cell, where help.truncatePlain and help.padPlain were folded
+// into cell.Truncate and cell.Pad. The emoji case from this file's original
+// test moved with them.
 
 // Helpers to build real tea.KeyPressMsg values, mirroring the pattern
 // used by chatlist/chatview's own test helpers (different packages, not

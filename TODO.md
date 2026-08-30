@@ -104,9 +104,9 @@ immediately undoes.
       `timeformat.go`). Worse than unused: `Truncate`, `TruncateMiddle`, and
       `PadRight` are all **rune-count** geometry, exactly what TUI 2.0 phase 0
       prohibits, so they are a trap for anyone who reaches for them while
-      building the new layout. Delete the package as part of the phase 0
-      width standardisation rather than finding it callers. Inbound text stays
-      sanitized in `telegram.sanitizeTerminal`.
+      building the new layout. **Deleted** in the phase 0 width
+      standardisation rather than given callers. Inbound text stays sanitized
+      in `telegram.sanitizeTerminal`.
 
 ### Absorbed into TUI 2.0 — fix there, not separately
 
@@ -159,13 +159,22 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
-## TUI 2.0 — design closed, implementation not started
+## TUI 2.0 — design closed, phase 0 shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
 thirteen decisions are resolved. Handoff archived in
 [docs/handoff/](docs/handoff/). Goldens in
-[docs/fixtures/](docs/fixtures/). **No code has been written yet**; the design
-phase is what is complete.
+[docs/fixtures/](docs/fixtures/).
+
+**State of play.** Phase 0 (foundations) is complete: the golden harness and
+the shared geometry package both exist and are green. Nothing user-visible
+has changed yet — no renderer has been touched, and the client looks and
+behaves exactly as it did. The next commit that changes a pixel is the frame,
+and it is the first one that can break the app.
+
+Implementation happens in a **separate worktree**, not the primary checkout —
+the redesign spans several phases that are not individually shippable, and
+the primary checkout stays free for fixes against a working client.
 
 - [x] **Visual sign-off (decision 11)** — `docs/fixtures/` holds cell-exact
       goldens at 80×24, 100×30, 120×40, 137×29, 200×60, plus a
@@ -222,18 +231,33 @@ phase is what is complete.
 
 ### First code, in this order
 
-- [ ] **Golden harness** (~60 lines): fixture loader, ANSI stripper, per-line
-      width assertion, row-count assertion. Build it before any renderer —
-      it turns the frame work into red/green.
-- [ ] **Width standardisation**: use `ansi.StringWidth`, promote
-      `widgets.FitLine` to a shared package. Do **not** add a new
-      display-width utility or promote `uniseg` to a direct dependency.
-- [ ] **Mode resolver + command registry + palette** — no dependency on the
-      frame redesign, so it can run in parallel from day one, and phase 2's
-      hint bar should read from the registry rather than hardcode hints.
+- [x] **Golden harness** — `internal/ui/golden` (PR #8). Loads a fixture,
+      strips ANSI, asserts row count and per-line display width separately
+      from byte equality so the width gate can be hard while copy churns.
+      Also validates the shipped fixtures themselves on every run.
+- [x] **Width standardisation** — `internal/ui/cell` is now the single
+      source of terminal geometry: `Width`, `MaxWidth`, `Truncate`, `Clamp`,
+      `ClampLeft`, `Pad`, `Fit`, `Wrap`, `FitLine`. No production code
+      measures or cuts text any other way. Folded in three copies of the
+      same truncate (`widgets.truncate`, `chatlist.truncateLabel`,
+      `help.truncatePlain`) plus `widgets.fitCell` and `help.padPlain`, and
+      deleted `pkg/utils` outright. `golden.Width` delegates to `cell.Width`
+      so the harness cannot disagree with the renderer it judges.
+      Net −246 lines in existing files.
+- [ ] **Mode resolver + command registry + palette** ← **next.** No
+      dependency on the frame redesign, so it can run in parallel from day
+      one, and phase 2's hint bar should read from the registry rather than
+      hardcode hints. Constrained by D3: the badge is additive and
+      `keys_test` must pass unmodified. Registry contents are fixed by D8 —
+      pin/unpin, mute/unmute, reload-config, plus the read-only commands;
+      secret chat and export must not be registered at all.
 - [ ] **Frame** (theme roles, layout, borderless assembly, top bar, hint bar,
       chat list) as **one** branch — phases 1–3 are not separable, since the
       existing components rely on Lipgloss borders to absorb width slop.
+      This is the first change that can visibly break the client, and the
+      first that `internal/ui/golden` actually judges: build it against the
+      fixtures rather than by eye. Assemble rows with `cell.Fit`/`cell.FitLine`
+      so every line is exactly the frame width by construction.
 - [ ] **Thread grid** — the riskiest parcel: `chatview/model.go` is ~1960
       lines against ~2000 lines of tests, and the line-index scroll
       machinery must survive behaviourally intact. Land the cursor-identity
