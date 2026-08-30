@@ -741,9 +741,13 @@ and the peer cache in `state.db` having belonged to a different account
 The terminal-native redesign, repository reconciliation, resolved product
 decisions, phased delivery plan, and verification matrix are recorded in
 [docs/tui-2.0.md](docs/tui-2.0.md). All thirteen design decisions are now
-closed, so the document is a contract rather than a proposal — but it is still
-only a document: **nothing described there is implemented yet**, and the
-sections above document the client as it actually behaves today.
+closed, so the document is a contract rather than a proposal.
+
+Its foundations have landed — `internal/ui/cell` (terminal geometry),
+`internal/ui/golden` (the fixture harness), and the interaction-mode resolver
+in `internal/app` — but **nothing user-visible has changed**: no renderer has
+been touched, and the sections above still describe the client exactly as it
+behaves today. The frame is the first change that will alter what you see.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a
@@ -792,6 +796,8 @@ internal/
   ui/
     theme/                256-color dark/light themes
     layout/               Responsive panel sizing
+    cell/                 Terminal geometry: display-width measuring, fit/pad/wrap
+    golden/               Fixture harness for the docs/fixtures frame goldens
     widgets/              List, textarea, spinner, tabs, progress bar
     components/
       chatlist/           Chat list with avatars + unread badges
@@ -807,7 +813,6 @@ internal/
   render/                 Message content → terminal output
   notification/           Desktop notifications
   store/                  Thread-safe in-memory caches
-pkg/utils/                String/time/sanitize utilities
 ```
 
 ## Building from Source
