@@ -635,6 +635,42 @@ func (m *Model) ScrollByLines(n int) {
 // drives ScrollByLines and would otherwise never trigger a lazy load.
 func (m *Model) LazyMediaCmd() tea.Cmd { return m.lazyPhotoCmd() }
 
+// MarkReadCmd marks the open chat read up to its newest loaded message,
+// without moving the scroll position — the point of an explicit mark-read is
+// to clear the badge while you keep reading where you are.
+//
+// Unlike the automatic read receipts in Update, this does NOT wait for
+// terminal focus. Those are inferred from "the user is looking at it", which
+// is only true when the terminal has focus; this one was asked for
+// explicitly, so deferring it would just make the command look broken.
+//
+// Returns nil when there is nothing to mark, so a caller can treat a nil Cmd
+// as "no chat open or no messages loaded".
+func (m *Model) MarkReadCmd() tea.Cmd {
+	if m.chatID == 0 {
+		return nil
+	}
+	msgs := m.store.Messages.Get(m.chatID)
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	chatID, msgID := m.chatID, msgs[len(msgs)-1].ID
+	tg := m.tg
+	if tg == nil {
+		return nil
+	}
+
+	// A pending blurred-focus receipt is now redundant: this marks at least
+	// as far. Clearing it stops FocusMsg re-sending an older message ID.
+	m.pendingReadID = 0
+
+	return func() tea.Msg {
+		tg.ViewMessages(chatID, []int64{msgID})
+		return nil
+	}
+}
+
 // OpenChat opens a chat scrolled to its newest message.
 func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 	return m.OpenChatAt(chatID, title, 0)

@@ -252,13 +252,31 @@ the primary checkout stays free for fixes against a working client.
       every combination is testable without a Model, and a new overlay has
       to decide its effect rather than inherit one. `keys_test` passes
       unmodified, per D3.
-- [ ] **Command registry + palette** ← **next.** No dependency on the frame
-      redesign, so it can run in parallel from day one, and phase 2's hint
-      bar should read from the registry rather than hardcode hints. Registry
-      contents are fixed by D8 — pin/unpin, mute/unmute, reload-config, plus
-      the read-only commands; secret chat and export must not be registered
-      at all. Wiring COMMAND is a one-line change: set `paletteOpen` in
-      `Model.modeInputs()`, and delete `TestModeIsNotCommandYet`.
+- [x] **Command registry + palette** — `internal/ui/components/palette` (the
+      overlay) and `internal/app/commands.go` (the typed registry, one source
+      for name, argument shape, description, key equivalent, and behaviour).
+      `:` routes through `Model.Mode()`, so a focused emacs composer types a
+      colon while a vi composer in command state opens the palette. Shipped
+      with `mark-read`, `search <query>`, `keymap`, `quit`.
+
+      **Navigation is arrows and ctrl+n/p, not j/k** — the handoff specified
+      j/k, but `:jump`, `:keymap`, and `:mark-read` all contain one of those
+      letters and could never be typed. Recorded as divergence 9.
+
+- [ ] **Remaining palette commands** ← **next, and each is a service, not a
+      palette change.** All are authorised by D8; none are blocked on
+      permission:
+      - `pin` / `unpin` — needs a Telegram RPC and domain mapping
+      - `mute <duration>` / `unmute` — needs notification-settings RPCs
+      - `reload-config` — needs runtime config reload; confirm first when the
+        composer holds a draft or attachment (D8)
+      - `theme <name>` — needs every component to accept a theme at runtime;
+        probably falls out of phase 1's theme rework rather than being done
+        separately
+      - `jump <date>` — needs history-by-date
+
+      They are absent from the registry rather than stubbed: an entry that
+      cannot run teaches a command that does not exist.
 - [ ] **Frame** (theme roles, layout, borderless assembly, top bar, hint bar,
       chat list) as **one** branch — phases 1–3 are not separable, since the
       existing components rely on Lipgloss borders to absorb width slop.

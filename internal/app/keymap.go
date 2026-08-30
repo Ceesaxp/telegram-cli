@@ -423,7 +423,21 @@ func (m Model) helpSections() []help.Section {
 			{Keys: or(k.nextFolder, k.prevFolder), Desc: "Next / previous folder"},
 			{Keys: or(k.contacts, k.contactsAlt), Desc: "Contacts overlay"},
 			{Keys: k.globalSearch, Desc: "Search all chats (not while composing)"},
+			{Keys: ":", Desc: "Command palette (not while composing)"},
 			{Keys: "ctrl+v", Desc: "Paste a clipboard image"},
+		}},
+		// The palette's own keys. `:` itself is a Global binding (it is
+		// the opener, like ctrl+g for search); these are what it accepts
+		// once it is up. Movement is deliberately arrows-only — every
+		// printable key has to reach the query, or ":keymap" and
+		// ":mark-read" could not be typed.
+		{Title: "Command palette", Bindings: []help.Binding{
+			{Keys: "up / down", Desc: "Move the selection"},
+			{Keys: "ctrl+p / ctrl+n", Desc: "Move the selection"},
+			{Keys: "tab", Desc: "Complete the highlighted command"},
+			{Keys: "enter", Desc: "Run the command"},
+			{Keys: "esc", Desc: "Cancel without running"},
+			{Keys: "ctrl+u", Desc: "Clear the query"},
 		}},
 		{Title: "Chat list", Bindings: []help.Binding{
 			{Keys: "j / k", Desc: "Next / previous chat"},
