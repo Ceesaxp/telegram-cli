@@ -288,6 +288,21 @@ independent boolean beside FocusPanel. The resolver must be the source for the
 badge, key routing, and the context-sensitive hint bar. Colon is routed to the
 palette only when this resolver reports NORMAL.
 
+**Shipped** as `internal/app/mode.go`. `Model.Mode()` derives the mode from
+focus, the composer's vi submode, and which overlay owns the keyboard; there
+is no mode field to set, so nothing can contradict what `Update` does with a
+key. Two consequences worth knowing before building on it:
+
+- **It is not a drop-in for the existing focus guards.** NORMAL includes a vi
+  composer in its command state, so a guard rewritten as "mode is NORMAL"
+  would let `?` open the help overlay while the composer holds a draft, where
+  today's "focus is not the composer" correctly does not. Decision 3 requires
+  the badge to describe key routing, not alter it, and a test pins exactly
+  that case.
+- **COMMAND is specified and tested but not yet reachable.** The palette does
+  not exist; wiring it means setting `paletteOpen` in the single place that
+  fills the resolver's input struct.
+
 New bindings proposed by the handoff are:
 
 | Binding | Context | Action |

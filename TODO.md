@@ -244,13 +244,21 @@ the primary checkout stays free for fixes against a working client.
       deleted `pkg/utils` outright. `golden.Width` delegates to `cell.Width`
       so the harness cannot disagree with the renderer it judges.
       Net −246 lines in existing files.
-- [ ] **Mode resolver + command registry + palette** ← **next.** No
-      dependency on the frame redesign, so it can run in parallel from day
-      one, and phase 2's hint bar should read from the registry rather than
-      hardcode hints. Constrained by D3: the badge is additive and
-      `keys_test` must pass unmodified. Registry contents are fixed by D8 —
-      pin/unpin, mute/unmute, reload-config, plus the read-only commands;
-      secret chat and export must not be registered at all.
+- [x] **Mode resolver** — `internal/app/mode.go`. `Model.Mode()` derives
+      NORMAL/INSERT/COMMAND from focus, the composer's vi submode, and which
+      overlay owns the keyboard. Derived, never stored: there is no mode
+      field, so nothing can contradict what `Update` actually does with a
+      key. Rules are a pure function of an explicit `modeInputs` struct, so
+      every combination is testable without a Model, and a new overlay has
+      to decide its effect rather than inherit one. `keys_test` passes
+      unmodified, per D3.
+- [ ] **Command registry + palette** ← **next.** No dependency on the frame
+      redesign, so it can run in parallel from day one, and phase 2's hint
+      bar should read from the registry rather than hardcode hints. Registry
+      contents are fixed by D8 — pin/unpin, mute/unmute, reload-config, plus
+      the read-only commands; secret chat and export must not be registered
+      at all. Wiring COMMAND is a one-line change: set `paletteOpen` in
+      `Model.modeInputs()`, and delete `TestModeIsNotCommandYet`.
 - [ ] **Frame** (theme roles, layout, borderless assembly, top bar, hint bar,
       chat list) as **one** branch — phases 1–3 are not separable, since the
       existing components rely on Lipgloss borders to absorb width slop.
