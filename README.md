@@ -219,6 +219,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `Alt+C` / `F4` | Toggle contacts overlay |
 | `Ctrl+G` | Search all chats (not while composing) |
 | `:` | Command palette (not while composing) |
+| `` ` `` | Toggle the context rail — pinned messages, members, shared files (not while composing; needs 118 columns) |
 | `Ctrl+V` | Paste a clipboard image |
 
 ### Chat list

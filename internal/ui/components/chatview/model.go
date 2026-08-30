@@ -326,6 +326,9 @@ func (m *Model) ApplyMedia(cfg config.MediaConfig) {
 	}
 }
 
+// ChatId is the chat currently open in this panel, 0 when none.
+func (m Model) ChatId() int64 { return m.chatID }
+
 // SearchActive reports whether the in-chat search input is open. While it
 // is, every key belongs to the input: the host must route input events to
 // this panel without consuming them first (esc, quick-type, etc.).

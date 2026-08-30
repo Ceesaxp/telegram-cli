@@ -332,6 +332,10 @@ func (m Model) Attachment() string { return m.attachment }
 // ChatId returns the chat the composer is currently sending to, 0 when none.
 func (m Model) ChatId() int64 { return m.chatID }
 
+// Draft is the text currently in the composer, for a host that needs to see
+// what was typed rather than only whether anything was.
+func (m Model) Draft() string { return m.textarea.Value }
+
 // HasDraft reports whether the composer holds unsent text.
 //
 // It exists for app.go's quit-confirm rule: "q" from a browsing panel quits

@@ -139,3 +139,32 @@ func RolesFor(name string, trueColor bool) Roles {
 	}
 	return DarkRoles(trueColor)
 }
+
+// SenderColour is the deterministic colour of a person's name.
+//
+// Deterministic because the colour is an identity cue: the same person has to
+// be the same colour on every line of every session, or it is noise rather
+// than information. The hash is FNV-1a over the ID's bytes so that
+// consecutive user IDs — which is what a small group of colleagues who signed
+// up together actually have — do not land in one bucket.
+//
+// It lives here rather than in the thread grid because the rail names the
+// same people. Two implementations that agree today are two implementations
+// that can stop agreeing, and a person shown mauve in the thread and blue in
+// the rail beside it is two people as far as the reader is concerned.
+func SenderColour(id int64, r Roles) lipgloss.Color {
+	palette := [...]lipgloss.Color{r.Mauve, r.Cyan, r.Blue, r.Amber}
+
+	const (
+		offset64 = uint64(14695981039346656037)
+		prime64  = uint64(1099511628211)
+	)
+	h := offset64
+	u := uint64(id)
+	for range 8 {
+		h ^= u & 0xff
+		h *= prime64
+		u >>= 8
+	}
+	return palette[h%uint64(len(palette))]
+}

@@ -44,6 +44,7 @@ import (
 //	alt+c, f4          toggle contacts overlay       [keys.contacts, keys.contacts_alt]
 //	ctrl+g             search all chats              [keys.global_search], not from the composer
 //	?                  toggle the help overlay       [keys.help]
+//	`                  toggle the context rail       (not while composing)
 //	ctrl+v             paste clipboard image
 //
 // ## Chat list
@@ -187,7 +188,6 @@ const (
 	PanelComposer
 	PanelSearch
 	PanelContacts
-	PanelGroupInfo
 )
 
 // ScreenState identifies the current top-level screen.
@@ -400,6 +400,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: or(k.contacts, k.contactsAlt), Desc: "Contacts overlay"},
 			{Keys: k.globalSearch, Desc: "Search all chats (not while composing)"},
 			{Keys: ":", Desc: "Command palette (not while composing)"},
+			{Keys: "`", Desc: "Toggle the context rail (not while composing)"},
 			{Keys: "ctrl+v", Desc: "Paste a clipboard image"},
 		}},
 		// The palette's own keys. `:` itself is a Global binding (it is

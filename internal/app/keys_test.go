@@ -116,7 +116,7 @@ func TestUpdateFocusBindingsFromRawSequences(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Start from a panel other than the target so a no-op cannot pass.
-			start := PanelGroupInfo
+			start := PanelContacts
 			m := update(t, mainModel(t, start), tc.seq)
 			if m.focus != tc.want {
 				t.Errorf("focus = %v, want %v", m.focus, tc.want)
@@ -1673,7 +1673,6 @@ func TestHelpLineComesFromResolvedKeys(t *testing.T) {
 		}{
 			{PanelSearch, "SEARCH", "Esc:close"},
 			{PanelContacts, "CONTACTS", "Esc:close"},
-			{PanelGroupInfo, "INFO", "Esc:back"},
 		} {
 			got := line(t, tc.panel, tc.name)
 			if !strings.Contains(got, tc.want) {
