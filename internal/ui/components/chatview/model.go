@@ -9,13 +9,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/keys"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -1936,7 +1936,7 @@ func (m Model) renderHeader() string {
 	// rendered block to width+padding and wrap right back.
 	style := m.theme.ChatViewHeader
 	if inner := m.width - style.GetHorizontalFrameSize(); inner > 0 {
-		text = ansi.Truncate(text, inner, "")
+		text = cell.Clamp(text, inner)
 	}
 	return style.Width(m.width).Render(text)
 }
@@ -1956,7 +1956,7 @@ func (m Model) renderStatusLine() string {
 	// stay that way.
 	style := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
 	if inner := m.width - style.GetHorizontalFrameSize(); inner > 0 {
-		line = ansi.Truncate(line, inner, "")
+		line = cell.Clamp(line, inner)
 	}
 	return style.Width(m.width).Render(line)
 }

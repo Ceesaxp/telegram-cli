@@ -36,6 +36,8 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // ruleRune is the box-drawing rune used for the delimiter lines that fence
@@ -138,16 +140,13 @@ func (d Diff) String() string {
 // Error lets a Diff be used where an error is expected.
 func (d Diff) Error() string { return d.String() }
 
-// Width returns the display width of s in terminal cells, ignoring ANSI
-// escape sequences and counting grapheme clusters rather than runes.
+// Width returns the display width of s in terminal cells.
 //
-// This is the one measurement the layout code may use. Summing
-// runewidth.RuneWidth over a string's runes is NOT equivalent and is wrong
-// in exactly the case the wide-runes fixture exists to catch: a ZWJ family
-// emoji sums to 8 that way, while every grapheme-aware measurement — this
-// one included — reports 2. That mistake is what produced the only defect
-// found when the fixtures were first reviewed.
-func Width(s string) int { return ansi.StringWidth(s) }
+// This deliberately delegates to [cell.Width] rather than measuring
+// independently: the harness must agree with the renderer it judges, and
+// two measurement implementations would eventually disagree about some
+// grapheme and make a real shear look like a passing test.
+func Width(s string) int { return cell.Width(s) }
 
 // StripANSI removes escape sequences, leaving the plain text a fixture
 // stores. Rendered output is styled; fixtures are not, so every comparison

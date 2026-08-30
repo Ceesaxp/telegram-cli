@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // ListItem represents a single item in a scrollable list.
@@ -219,7 +219,7 @@ func (l *List) View() string {
 		}
 
 		// Title line: prefix + title + right-aligned meta. Every width
-		// computed below is in display cells (ansi.StringWidth), never
+		// computed below is in display cells (cell.Width), never
 		// runes: emoji (🔕 📢 👥), flag sequences, and CJK/Cyrillic text
 		// all commonly differ from their rune count.
 		//
@@ -236,17 +236,17 @@ func (l *List) View() string {
 		if item.Muted {
 			prefix += "🔕 "
 		}
-		prefixW := ansi.StringWidth(prefix)
+		prefixW := cell.Width(prefix)
 		titleBudget := textW - prefixW - 8
 		if titleBudget < 0 {
 			titleBudget = 0
 		}
-		plainTitle := prefix + truncate(item.Title, titleBudget)
+		plainTitle := prefix + cell.Truncate(item.Title, titleBudget)
 		titleLine := titleStyle.Render(plainTitle)
 		if item.Meta != "" {
-			metaW := textW - ansi.StringWidth(plainTitle) - 2
+			metaW := textW - cell.Width(plainTitle) - 2
 			if metaW > 0 {
-				meta := FitLine(l.StyleMeta.Align(lipgloss.Right), truncate(item.Meta, metaW), metaW)
+				meta := cell.FitLine(l.StyleMeta.Align(lipgloss.Right), cell.Truncate(item.Meta, metaW), metaW)
 				titleLine += meta
 			}
 		}
@@ -268,11 +268,11 @@ func (l *List) View() string {
 		if subBudget < 0 {
 			subBudget = 0
 		}
-		plainSub := truncate(item.Subtitle, subBudget)
+		plainSub := cell.Truncate(item.Subtitle, subBudget)
 		subLine := l.StyleSub.Render(plainSub)
 		if item.Badge != "" {
-			badge := badgeStyle.Render(truncate(item.Badge, 6))
-			gap := textW - ansi.StringWidth(subLine) - ansi.StringWidth(badge)
+			badge := badgeStyle.Render(cell.Truncate(item.Badge, 6))
+			gap := textW - cell.Width(subLine) - cell.Width(badge)
 			if gap >= 1 {
 				subLine = subLine + strings.Repeat(" ", gap) + badge
 			}
@@ -295,9 +295,9 @@ func (l *List) View() string {
 
 		var rowLines []string
 		for ri := 0; ri < 2; ri++ {
-			av := fitCell(avatarLines[ri], avatarColW)
+			av := cell.Fit(avatarLines[ri], avatarColW)
 			content := av + " " + textLines[ri]
-			rowLines = append(rowLines, FitLine(style, content, l.Width))
+			rowLines = append(rowLines, cell.FitLine(style, content, l.Width))
 		}
 
 		b.WriteString(strings.Join(rowLines, "\n"))
@@ -352,45 +352,6 @@ func renderInitials(title string, active bool) string {
 	line2 := style.Render("  ")
 
 	return line1 + "\n" + line2
-}
-
-// truncate truncates s to at most maxWidth display cells (ansi.StringWidth),
-// not runes, appending an ellipsis when it actually had to cut something.
-// Counting runes instead of cells would under-truncate any string
-// containing double-width glyphs (emoji, CJK, flag sequences) — common in
-// real chat titles and subtitles — rendering the row wider than intended.
-func truncate(s string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	if ansi.StringWidth(s) <= maxWidth {
-		return s
-	}
-	return ansi.Truncate(s, maxWidth, "…")
-}
-
-// fitCell clamps s to exactly width display cells: truncating (ANSI-escape
-// safe, so already-styled/colored strings are not corrupted — see
-// ansi.Truncate) if wider, padding with spaces if narrower. It is the final
-// guarantee that an assembled row line — after avatar/title/meta/badge
-// composition, whose individual budgets are each best-effort — can never
-// end up wider than the column it was budgeted for.
-func fitCell(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	w := ansi.StringWidth(s)
-	if w > width {
-		// No extra "…" here: truncate() above already added one where it
-		// matters (title/subtitle text); this is a rare-case safety net,
-		// not the primary truncation UX.
-		s = ansi.Truncate(s, width, "")
-		w = ansi.StringWidth(s)
-	}
-	if w < width {
-		s += strings.Repeat(" ", width-w)
-	}
-	return s
 }
 
 func min(a, b int) int {

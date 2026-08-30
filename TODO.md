@@ -104,9 +104,9 @@ immediately undoes.
       `timeformat.go`). Worse than unused: `Truncate`, `TruncateMiddle`, and
       `PadRight` are all **rune-count** geometry, exactly what TUI 2.0 phase 0
       prohibits, so they are a trap for anyone who reaches for them while
-      building the new layout. Delete the package as part of the phase 0
-      width standardisation rather than finding it callers. Inbound text stays
-      sanitized in `telegram.sanitizeTerminal`.
+      building the new layout. **Deleted** in the phase 0 width
+      standardisation rather than given callers. Inbound text stays sanitized
+      in `telegram.sanitizeTerminal`.
 
 ### Absorbed into TUI 2.0 — fix there, not separately
 
@@ -222,12 +222,19 @@ phase is what is complete.
 
 ### First code, in this order
 
-- [ ] **Golden harness** (~60 lines): fixture loader, ANSI stripper, per-line
-      width assertion, row-count assertion. Build it before any renderer —
-      it turns the frame work into red/green.
-- [ ] **Width standardisation**: use `ansi.StringWidth`, promote
-      `widgets.FitLine` to a shared package. Do **not** add a new
-      display-width utility or promote `uniseg` to a direct dependency.
+- [x] **Golden harness** — `internal/ui/golden` (PR #8). Loads a fixture,
+      strips ANSI, asserts row count and per-line display width separately
+      from byte equality so the width gate can be hard while copy churns.
+      Also validates the shipped fixtures themselves on every run.
+- [x] **Width standardisation** — `internal/ui/cell` is now the single
+      source of terminal geometry: `Width`, `MaxWidth`, `Truncate`, `Clamp`,
+      `ClampLeft`, `Pad`, `Fit`, `Wrap`, `FitLine`. No production code
+      measures or cuts text any other way. Folded in three copies of the
+      same truncate (`widgets.truncate`, `chatlist.truncateLabel`,
+      `help.truncatePlain`) plus `widgets.fitCell` and `help.padPlain`, and
+      deleted `pkg/utils` outright. `golden.Width` delegates to `cell.Width`
+      so the harness cannot disagree with the renderer it judges.
+      Net −246 lines in existing files.
 - [ ] **Mode resolver + command registry + palette** — no dependency on the
       frame redesign, so it can run in parallel from day one, and phase 2's
       hint bar should read from the registry rather than hardcode hints.

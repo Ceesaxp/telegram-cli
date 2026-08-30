@@ -5,11 +5,10 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
-	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 // Model is the status bar component.
@@ -187,14 +186,14 @@ func (m Model) View() string {
 	}
 
 	center := typingText
-	centerW := lipgloss.Width(center)
+	centerW := cell.MaxWidth(center)
 
 	// Every width computed and fitted below targets innerWidth — m.width
 	// minus StatusBar's own horizontal padding — never m.width itself.
 	// StatusBar carries PaddingLeft(1)+PaddingRight(1); content built to
 	// fill m.width exactly and then handed to THAT style's Width(m.width)
 	// silently word-wraps instead of rendering as one line (see
-	// widgets.FitLine's doc comment for the lipgloss behavior behind
+	// cell.FitLine's doc comment for the lipgloss behavior behind
 	// this). Piling MaxHeight(1) on top of that wrap, as this function
 	// used to, is what produced the actual visible bug: it kept only the
 	// wrapped line's first fragment, chopping the hints off mid-token
@@ -209,7 +208,7 @@ func (m Model) View() string {
 		if innerWidth <= 0 {
 			return true
 		}
-		return lipgloss.Width(left)+centerW+lipgloss.Width(right) <= innerWidth
+		return cell.MaxWidth(left)+centerW+cell.MaxWidth(right) <= innerWidth
 	}
 
 	// Assemble the bar at decreasing levels of detail — full, then with
@@ -248,8 +247,8 @@ func (m Model) View() string {
 	}
 
 	// Calculate padding
-	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(right)
+	leftW := cell.MaxWidth(left)
+	rightW := cell.MaxWidth(right)
 	padding := innerWidth - leftW - centerW - rightW
 	if padding < 0 {
 		padding = 0
@@ -266,5 +265,5 @@ func (m Model) View() string {
 	// StatusBar.Width, since it budgets against the style's own frame
 	// size first — the same shared helper list.go's rows and the folder
 	// tab bar use to avoid this exact class of bug.
-	return widgets.FitLine(m.theme.StatusBar, bar, m.width)
+	return cell.FitLine(m.theme.StatusBar, bar, m.width)
 }

@@ -10,9 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
-	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 // Section is one titled group of key bindings shown in the overlay (e.g.
@@ -211,7 +210,7 @@ func keysColumnWidth(sections []Section, innerWidth int) int {
 	widest := 0
 	for _, sec := range sections {
 		for _, b := range sec.Bindings {
-			if w := ansi.StringWidth(b.Keys); w > widest {
+			if w := cell.Width(b.Keys); w > widest {
 				widest = w
 			}
 		}
@@ -234,44 +233,19 @@ func keysColumnWidth(sections []Section, innerWidth int) int {
 // padded to keysW, followed by a 2-cell gap and the (possibly truncated)
 // description. keys and desc are rendered through their own styles (no
 // padding on either, so no lipgloss Width()-wrap risk — see
-// widgets.FitLine's doc comment) and concatenated; the combined,
-// already-styled string is then passed through widgets.FitLine with a
+// cell.FitLine's doc comment) and concatenated; the combined,
+// already-styled string is then passed through cell.FitLine with a
 // bare style as the final ANSI-safe pad-to-width/truncate guarantee.
 func bindingLine(b Binding, keysW, innerWidth int, keysStyle, descStyle lipgloss.Style) string {
-	keys := padPlain(truncatePlain(b.Keys, keysW), keysW)
+	keys := cell.Pad(cell.Truncate(b.Keys, keysW), keysW)
 	keysRendered := keysStyle.Render(keys)
 
 	combined := keysRendered
 	if descBudget := innerWidth - keysW - 2; descBudget > 0 && b.Desc != "" {
-		combined += "  " + descStyle.Render(truncatePlain(b.Desc, descBudget))
+		combined += "  " + descStyle.Render(cell.Truncate(b.Desc, descBudget))
 	}
 
-	return widgets.FitLine(lipgloss.NewStyle(), combined, innerWidth)
-}
-
-// truncatePlain truncates s to at most maxWidth display cells
-// (ansi.StringWidth, not runes — this content is expected to be plain
-// emoji-free text, but is measured cell-accurately anyway rather than
-// trusting that).
-func truncatePlain(s string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	if ansi.StringWidth(s) <= maxWidth {
-		return s
-	}
-	return ansi.Truncate(s, maxWidth, "…")
-}
-
-// padPlain right-pads s with spaces to exactly width display cells. If s
-// is already at or over width, it is returned unchanged (callers that
-// need a hard cap truncate first).
-func padPlain(s string, width int) string {
-	w := ansi.StringWidth(s)
-	if w >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-w)
+	return cell.FitLine(lipgloss.NewStyle(), combined, innerWidth)
 }
 
 // bodyLines renders the full (unscrolled) section content as individual
@@ -280,7 +254,7 @@ func (m Model) bodyLines(innerWidth int) []string {
 	mutedStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
 
 	if len(m.sections) == 0 {
-		return []string{widgets.FitLine(mutedStyle, "No key bindings to show.", innerWidth)}
+		return []string{cell.FitLine(mutedStyle, "No key bindings to show.", innerWidth)}
 	}
 
 	keysW := keysColumnWidth(m.sections, innerWidth)
@@ -292,7 +266,7 @@ func (m Model) bodyLines(innerWidth int) []string {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, widgets.FitLine(sectionTitleStyle, sec.Title, innerWidth))
+		lines = append(lines, cell.FitLine(sectionTitleStyle, sec.Title, innerWidth))
 		for _, b := range sec.Bindings {
 			lines = append(lines, bindingLine(b, keysW, innerWidth, keysStyle, mutedStyle))
 		}
@@ -387,7 +361,7 @@ func (m Model) View() string {
 	g := computeGeometry(m.width, m.height)
 
 	titleStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-	title := widgets.FitLine(titleStyle, "Keyboard Shortcuts", g.innerWidth)
+	title := cell.FitLine(titleStyle, "Keyboard Shortcuts", g.innerWidth)
 
 	body := m.visibleBodyLines(g.innerWidth, g.contentH)
 	// Pad the body out to exactly contentH lines so the box height stays
@@ -401,7 +375,7 @@ func (m Model) View() string {
 		footerText = defaultFooter
 	}
 	footerStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
-	footer := widgets.FitLine(footerStyle, footerText, g.innerWidth)
+	footer := cell.FitLine(footerStyle, footerText, g.innerWidth)
 
 	rows := make([]string, 0, len(body)+3)
 	rows = append(rows, title, "")

@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
@@ -191,7 +192,7 @@ func (m Model) View() string {
 	// under a message that is usually wider.
 	width := 0
 	for _, r := range rows {
-		if w := lipgloss.Width(r); w > width {
+		if w := cell.MaxWidth(r); w > width {
 			width = w
 		}
 	}

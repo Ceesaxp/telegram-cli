@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // searchResultsMsg carries the outcome of an in-chat search. It is guarded
@@ -238,7 +238,7 @@ func (m Model) renderSearchLine() string {
 
 	style := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
 	inner := m.width - style.GetHorizontalFrameSize()
-	budget := inner - ansi.StringWidth(prefix)
+	budget := inner - cell.Width(prefix)
 	if budget < 1 {
 		budget = 1
 	}
@@ -254,12 +254,12 @@ func (m Model) renderSearchLine() string {
 	head, tail := string(runes[:at]), string(runes[at:])
 
 	// Scroll the window right so the cursor always stays inside it.
-	if over := ansi.StringWidth(head) + ansi.StringWidth(cursor) - budget; over > 0 {
-		head = ansi.TruncateLeft(head, over, "")
+	if over := cell.Width(head) + cell.Width(cursor) - budget; over > 0 {
+		head = cell.ClampLeft(head, over)
 	}
 	line := prefix + head + cursor + tail
 	if inner > 0 {
-		line = ansi.Truncate(line, inner, "")
+		line = cell.Clamp(line, inner)
 	}
 	return style.Width(m.width).Render(line)
 }

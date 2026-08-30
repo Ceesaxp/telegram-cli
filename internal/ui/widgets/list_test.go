@@ -224,26 +224,13 @@ func TestBadgeSurvivesLongSubtitle(t *testing.T) {
 	}
 }
 
-// TestTruncateIsCellAware directly checks the helper that used to be
-// rune-counting: a string made entirely of double-width runes must be
-// truncated by display width, not rune count.
-func TestTruncateIsCellAware(t *testing.T) {
-	s := "📢📢📢📢📢📢📢📢📢📢" // 10 runes, 20 display cells
-	got := truncate(s, 10)
-	if w := ansi.StringWidth(got); w > 10 {
-		t.Fatalf("truncate(%q, 10) = %q, display width %d > 10", s, got, w)
-	}
-}
-
-// TestFitCellPadsAndClamps checks the final-guarantee helper pads short
-// content and truncates (without corrupting ANSI codes) long content to
-// exactly the requested width.
-func TestFitCellPadsAndClamps(t *testing.T) {
-	if got := fitCell("ab", 5); ansi.StringWidth(got) != 5 {
-		t.Fatalf("fitCell(%q, 5) = %q, display width %d, want 5", "ab", got, ansi.StringWidth(got))
-	}
-	wide := "📢📢📢📢📢" // 5 runes, 10 display cells
-	if got := fitCell(wide, 5); ansi.StringWidth(got) > 5 {
-		t.Fatalf("fitCell(%q, 5) = %q, display width %d > 5", wide, got, ansi.StringWidth(got))
-	}
-}
+// The former TestTruncateIsCellAware and TestFitCellPadsAndClamps moved to
+// internal/ui/cell along with the helpers themselves: this package's
+// truncate() and fitCell() were duplicates of chatlist.truncateLabel and
+// help.truncatePlain/padPlain, and all of them are now cell.Truncate,
+// cell.Pad, and cell.Fit. The double-width-rune cases they guarded moved
+// with them; see TestTruncateNeverExceedsBudgetOnWideRunes and
+// TestFitIsExact there.
+//
+// The row-composition tests above still exercise those helpers through
+// List.View(), which is what actually matters here.

@@ -6,12 +6,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -1086,14 +1086,14 @@ func (m Model) renderFolderTabs() string {
 		// here would paint fewer columns than the hit-test believes are
 		// clickable. It stays only to keep the CHIP — the one thing on
 		// this row explaining why chats are missing — from being the
-		// piece FitLine drops if some future change reintroduces an
+		// piece cell.FitLine drops if some future change reintroduces an
 		// overflow.
 		tabsBudget := m.tabsAvailWidth()
 		tabsText := b.String()
-		if ansi.StringWidth(tabsText) > tabsBudget {
-			tabsText = ansi.Truncate(tabsText, tabsBudget, "")
+		if cell.Width(tabsText) > tabsBudget {
+			tabsText = cell.Clamp(tabsText, tabsBudget)
 		}
-		pad := m.width - ansi.StringWidth(tabsText) - ansi.StringWidth(chip)
+		pad := m.width - cell.Width(tabsText) - cell.Width(chip)
 		if pad < 0 {
 			pad = 0
 		}
@@ -1110,10 +1110,10 @@ func (m Model) renderFolderTabs() string {
 	// serves as a defense-in-depth truncation safety net against any
 	// future off-by-one in that budgeting. This is the same shared
 	// helper list.go's rows and the status bar use, deliberately in
-	// place of a bare lipgloss Width() call: see FitLine's doc comment
+	// place of a bare lipgloss Width() call: see cell.FitLine's doc comment
 	// for why Width() on padded content is exactly what wrapped this bar
 	// onto an invisible second line in the first place.
-	return widgets.FitLine(lipgloss.NewStyle(), b.String(), m.width)
+	return cell.FitLine(lipgloss.NewStyle(), b.String(), m.width)
 }
 
 // filterClearHint is the text that makes clearing the filter
@@ -1128,11 +1128,11 @@ const filterClearHint = " esc:clear"
 // filter is applied and the input is closed, which is what keeps the tab
 // bar unchanged in the common case.
 //
-// Everything here is measured in display cells (ansi.StringWidth) and cut
-// with ansi.Truncate, never by rune or byte count, so an emoji or CJK
+// Everything here is measured in display cells (cell.Width) and cut
+// with cell.Truncate/cell.Clamp, never by rune or byte count, so an emoji or CJK
 // query cannot shear the row: the chip's own width is what
 // tabsAvailWidth hands to the folder tabs, and a wrong number there would
-// overflow the one-line bar exactly the way FitLine exists to prevent.
+// overflow the one-line bar exactly the way cell.FitLine exists to prevent.
 func (m Model) renderFilterChip() string {
 	if !m.filtering && m.filter == "" {
 		return ""
@@ -1154,11 +1154,11 @@ func (m Model) renderFilterChip() string {
 	if m.width <= 0 {
 		return chip
 	}
-	if ansi.StringWidth(chip)+ansi.StringWidth(hint) <= m.width {
+	if cell.Width(chip)+cell.Width(hint) <= m.width {
 		return chip + hint
 	}
-	if ansi.StringWidth(chip) > m.width {
-		return ansi.Truncate(chip, m.width, "")
+	if cell.Width(chip) > m.width {
+		return cell.Clamp(chip, m.width)
 	}
 	return chip
 }
@@ -1169,7 +1169,7 @@ func (m Model) renderFilterChip() string {
 // budget against this single number so the painted row and the column
 // ranges clicks are resolved against can never disagree.
 func (m Model) tabsAvailWidth() int {
-	avail := m.width - ansi.StringWidth(m.renderFilterChip())
+	avail := m.width - cell.Width(m.renderFilterChip())
 	if avail < 0 {
 		avail = 0
 	}
@@ -1204,7 +1204,7 @@ type folderTab struct {
 // since the column ranges used for hit-testing don't match what's
 // painted) and, in aggregate, lets more tabs through the width budget
 // than actually fit once their padding is added — overflowing the bar
-// and forcing exactly the kind of wrap FitLine exists to prevent (see
+// and forcing exactly the kind of wrap cell.FitLine exists to prevent (see
 // its doc comment), which pushed a folder tab the model considered
 // "visible" off-screen entirely.
 func (m Model) visibleFolderTabs() []folderTab {
@@ -1229,12 +1229,10 @@ func (m Model) visibleFolderTabs() []folderTab {
 		if budget < 0 {
 			budget = 0
 		}
-		if ansi.StringWidth(label) > budget {
-			label = truncateLabel(label, budget)
-		}
+		label = cell.Truncate(label, budget)
 
 		rendered := style.Render(label)
-		w := ansi.StringWidth(rendered)
+		w := cell.Width(rendered)
 		// A tab that does not fit is DROPPED, including the first one.
 		// This used to admit the first tab unconditionally ("&& used >
 		// 0"), on the theory that showing one truncated tab beats
@@ -1288,18 +1286,4 @@ func folderLabel(f *telegram.ChatFolder) string {
 		return f.Emoticon + " " + title
 	}
 	return title
-}
-
-// truncateLabel truncates plain (unstyled) text to at most maxWidth
-// display cells (ansi.StringWidth), not runes — folder emoticons are
-// frequently double-width — appending an ellipsis when it actually had
-// to cut something.
-func truncateLabel(s string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	if ansi.StringWidth(s) <= maxWidth {
-		return s
-	}
-	return ansi.Truncate(s, maxWidth, "…")
 }

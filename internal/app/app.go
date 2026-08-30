@@ -13,6 +13,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/notification"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
@@ -1476,7 +1477,7 @@ func (m Model) renderMainScreen() string {
 	help := helpStyle.Render(m.helpLine(focusName[fi]))
 
 	// Pad help to full width
-	helpW := lipgloss.Width(help)
+	helpW := cell.MaxWidth(help)
 	if helpW < m.width {
 		help += strings.Repeat(" ", m.width-helpW)
 	}
