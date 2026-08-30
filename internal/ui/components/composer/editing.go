@@ -227,30 +227,27 @@ func (m Model) handleViNormal(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 // viIndicator returns the modal-state banner for the hint line, empty in
 // emacs mode.
-func (m Model) viIndicator() string {
-	if m.editing != ModeVi {
-		return ""
-	}
-	if m.vi == viNormal {
-		return "-- NORMAL --"
-	}
-	return "-- INSERT --"
-}
-
-// hint returns the composer's hint line. It always names the newline chord —
-// "how do I write a second line" is the first thing a chat composer with an
-// Enter-sends binding has to answer.
-func (m Model) hint() string {
-	parts := make([]string, 0, 6)
-	if indicator := m.viIndicator(); indicator != "" {
-		parts = append(parts, indicator)
-	}
-	parts = append(parts, "Enter: send")
+// expandedHint is the expanded composer's footer: the chords that do
+// something here, in the order they matter.
+//
+// Enter and the way back out come first because the footer is cut from the
+// right on a narrow pane, and "how do I leave this view" is the one binding
+// with nowhere else to be discovered — it is in no help section, because it
+// only exists while this form is open.
+//
+// The mode is NOT repeated here. The badge at the head of the same row says
+// it, in both keymaps rather than only in vi.
+//
+// Divergence 4: these are the bindings that already exist. The handoff's
+// proposed footer claimed ctrl+a, ctrl+d and ctrl+e, all of which emacs line
+// editing owns, against its own promise that both keymaps keep working here.
+func (m Model) expandedHint() string {
+	parts := []string{"Enter: send", "Ctrl+P: inline"}
 	// ctrl+j is inert in normal mode (see isNewlineChord), so it is not
 	// advertised there; o/O are how a normal-mode user opens a line.
 	if !m.IsViNormalMode() {
 		parts = append(parts, "Ctrl+J: newline")
 	}
-	parts = append(parts, "Ctrl+O: $EDITOR", "Ctrl+T: attach", "Ctrl+V: paste")
-	return strings.Join(parts, " | ")
+	parts = append(parts, "Ctrl+T: attach", "Ctrl+O: $EDITOR", "Ctrl+V: paste")
+	return strings.Join(parts, " · ")
 }

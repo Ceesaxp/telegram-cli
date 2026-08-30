@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -47,6 +48,11 @@ type MessageRenderer struct {
 	roles    theme.Roles
 	imgCache *media.Cache
 	imgRend  *media.ImageRenderer
+
+	// inlineImages is the resolved ui.inline_images policy. Defaults to the
+	// permissive one so a renderer built without config behaves as it did
+	// before the setting existed.
+	inlineImages string
 }
 
 func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
@@ -56,10 +62,24 @@ func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 		// A default palette, not a zero one: a renderer whose output
 		// depends on the host remembering to call SetRoles is a renderer
 		// with two behaviours, and its own tests construct it directly.
-		roles:    theme.DarkRoles(false),
-		imgCache: media.NewCache(50),
-		imgRend:  media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
+		roles:        theme.DarkRoles(false),
+		inlineImages: config.InlineImagesOnOpen,
+		imgCache:     media.NewCache(50),
+		imgRend:      media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
 	}
+}
+
+// SetInlineImages sets the resolved ui.inline_images policy: whether a photo
+// is drawn as art or as a metadata card.
+//
+// "never" is the setting that matters. A terminal whose image support was
+// guessed wrong turns every photo into a screenful of garbage, and the user
+// needs a way to say so that does not also turn off downloading.
+func (r *MessageRenderer) SetInlineImages(policy string) {
+	if r == nil {
+		return
+	}
+	r.inlineImages = config.ResolveInlineImages(policy)
 }
 
 // SetRoles supplies the TUI 2.0 semantic palette used for entity styling,
@@ -174,7 +194,8 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 	// description of it.
 	if card, ok := mediaCardFor(content); ok {
 		rc := renderedContent{text: captionOf(content)}
-		if photo, isPhoto := content.(*telegram.MessagePhoto); isPhoto {
+		if photo, isPhoto := content.(*telegram.MessagePhoto); isPhoto &&
+			r.inlineImages != config.InlineImagesNever {
 			if art, isArt := r.renderPhoto(photo.Photo, s); isArt {
 				rc.art = art
 				return rc

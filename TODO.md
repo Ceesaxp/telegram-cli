@@ -159,7 +159,7 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
-## TUI 2.0 — design closed, the shell, both panels and the blocks shipped
+## TUI 2.0 — design closed, everything but the rail shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
 thirteen decisions are resolved. Handoff archived in
@@ -171,10 +171,9 @@ borderless frame with its top and hint bars, the two-line chat rows, the
 command palette, and the thread grid have all landed; bubbles, avatars,
 Glamour and the status bar are gone with them.
 
-What is left is the composer's mode badge and per-chat drafts, the context
-rail, the media overlay, and the four content blocks whose data the client
-does not yet map. Until those land, the goldens are asserted on width only —
-see "Byte equality against the goldens" below.
+What is left is the context rail, the media overlay, and the four content
+blocks whose data the client does not yet map. Until those land, the goldens
+are asserted on width only — see "Byte equality against the goldens" below.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
 the redesign spans several phases that are not individually shippable, and
@@ -385,17 +384,50 @@ the primary checkout stays free for fixes against a working client.
       - voice waveform — `DocumentAttributeAudio.Waveform` is not mapped
       - voice transcript — a premium RPC this client does not make
 
-- [ ] **Composer and app modes** ← **next.** The inline mode badge, the
-      expanded eight-row form, per-chat drafts (decision 13), and the
-      configuration migration (decision 10): remove `ui.chat_list_width` and
-      `ui.show_avatars`, add `ui.inline_images` and `ui.rail`, never add
-      `ui.mode_indicator`. `Model.Mode()` already exists and is tested; this
-      is the phase that draws it.
+- [x] **Composer and app modes** — the mode badge, the inline row, the
+      expanded Ctrl+P form, per-chat drafts, and the decision 10 config
+      migration.
+
+      The badge is **derived, not set**: a focused composer knows whether the
+      next printable key will be inserted, so it says so without being told,
+      and only COMMAND has to come from the host. It covers emacs, which the
+      old `-- INSERT --` indicator never did.
+
+      The composer's rows come out of the thread's budget explicitly now —
+      `layout.Compute` takes what it asked for, and a `ResizedMsg` tells the
+      host when that changes.
+
+      Drafts park per chat and the map means "unsent work in chats that are
+      not open", so restoring consumes the entry. The chat list shows
+      `draft: saved locally` in place of the last-message preview.
+
+      `ui.chat_list_width` and `ui.show_avatars` are reported as *removed*
+      rather than as unrecognised keys; `ui.inline_images` is added and
+      wired, `ui.rail` added and read but not honoured until the rail exists.
+      `ui.mode_indicator` is absent, with a test that says so.
+
+      One divergence recorded (17): four view assertions in the composer's
+      tests moved, because the view is the thing this phase replaces. Every
+      behavioural test and `keys_test` pass unmodified, which is what the
+      exit criterion was protecting.
+
+- [ ] **Context rail** ← **next.** `internal/ui/components/rail`: pinned
+      message, members, shared files and links, 30 cells, shown at 118
+      columns and wider. Decision 6 is the policy — nothing is fetched on
+      chat open, only when the rail is opened, cached per chat and load
+      generation. Recovering the current pin is one field on the
+      `SupergroupFullInfo` mapping plus the `GetMessage` call that already
+      exists; shared files and links need a `messages.search` with a media
+      filter. Retires `internal/ui/components/groupinfo`, whose guarantees
+      have to be re-homed first.
+
+      `ui.rail` is already parsed, defaulted and read — this is the phase
+      that honours it.
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality
-      cannot pass until the composer, the rail, and the blocks that are
-      waiting on data all land. That separation is deliberate and is why
+      cannot pass until the rail and the blocks that are waiting on data
+      both land. That separation is deliberate and is why
       `golden.Compare` reports width and content as different `DiffKind`s.
 
 ### Documentation debt that comes due when code ships

@@ -658,6 +658,26 @@ question, a voice note its duration. A poll drawn with empty bars would state
 a result, and a waveform drawn from nothing would be the one part of the card
 that looks like measurement and is not.
 
+### 17. The composer's view tests moved; its behaviour tests did not
+
+Phase 5's exit criterion asks that "all existing composer tests pass
+**unmodified** — a diff there means the badge changed behaviour instead of
+describing it".
+
+`keys_test` and every behavioural composer test do. Four assertions about the
+composer's *rendering* could not, because the rendering is the thing the
+phase replaces: a one-row inline composer cannot show both lines of a
+two-line draft or a five-chord hint list, and `-- INSERT --` is a badge now.
+
+Each moved rather than being dropped — the multi-line draft and the chord
+list to the expanded form, the vi indicator to the badge — and each carries a
+note saying where its guarantee went. The criterion was protecting the Escape
+ladder, and the ladder is untouched.
+
+The badge is also strictly more than the indicator was: `-- INSERT --` only
+appeared in vi mode, leaving emacs users with nothing on screen saying whether
+the next letter would be typed.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
@@ -1131,6 +1151,53 @@ Exit criterion: one glance determines whether printables navigate or type;
 means the badge changed behaviour instead of describing it — and new tests
 cover the emacs and vi mode transitions, including the two-step vi Escape with
 a reply, an edit, and an attachment pending.
+
+**Shipped.** `internal/ui/components/composer/view.go` (the inline row and
+the expanded form) and `drafts.go` (decision 13), plus the decision 10
+configuration migration.
+
+The badge is **derived, not set**. A focused composer knows whether the next
+printable key will be inserted — that is precisely its vi state — so it says
+so without being told, and a Model constructed directly by a test reports the
+truth rather than whatever the host last set. COMMAND is the one exception:
+the palette owns the keyboard over everything, and only the host can see it
+is up. The host projects `Model.Mode()` in the same call that fills the hint
+bar, so the two surfaces cannot disagree.
+
+It covers emacs too, which the old indicator did not. `-- INSERT --` only
+ever appeared in vi mode, so an emacs user had nothing on screen saying
+whether the next letter would be typed. That is the same question in both
+keymaps, and it is the one this phase exists to answer at a glance.
+
+**On the exit criterion's "unmodified".** `keys_test` and every behavioural
+composer test do pass unmodified. Four VIEW assertions did not, and could
+not: the view is the thing being replaced. Both lines of a multi-line draft
+and the Ctrl+J chord list live in the expanded form now, and the vi indicator
+became the badge. Each moved with a note saying where it went, and none of
+them was about the Escape ladder — which is what the criterion was protecting.
+
+The composer's rows come out of the thread's budget explicitly:
+`layout.Compute` takes what the composer asked for rather than assuming one.
+A reply bar, an attachment chip and the expanded form each change that
+number, and the composer emits a `ResizedMsg` rather than resizing itself,
+because only the host knows what the rest of the screen is doing.
+
+The expanded form's preview goes through `telegram.PreviewMarkdown` — the
+same `parseMarkdown` the send path uses, through the same entity mapping,
+rendered by the same block renderer that draws received messages. A preview
+with its own parser is one that is right until the day it is not.
+
+Drafts are parked per chat and the map means "unsent work in chats that are
+not open", so restoring **consumes** the entry. Leaving a copy behind would
+make the map disagree with itself the moment the draft was sent, and the chat
+list reads the map.
+
+`ui.chat_list_width` and `ui.show_avatars` are reported as **removed** rather
+than as unrecognised keys — different news: an unrecognised key reads as a
+typo the user should fix, a removed one is a setting that used to work.
+`ui.inline_images` is added and wired; `ui.rail` is added and read but not
+honoured, because asking for the rail today would reserve thirty columns and
+draw nothing in them. `ui.mode_indicator` is absent, with a test that says so.
 
 ### 6. Context rail
 

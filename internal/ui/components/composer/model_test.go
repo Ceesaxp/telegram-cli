@@ -262,29 +262,121 @@ func TestEnterEditModeWithoutAttachment(t *testing.T) {
 	}
 }
 
-// A pasted attachment belongs to the chat it was pasted into — switching
-// chats discards it and returns the path for cleanup.
-func TestSetChatIdReturnsDisplacedAttachment(t *testing.T) {
+// Switching chats parks the draft rather than discarding it (decision 13).
+//
+// This reverses the old behaviour, which threw the draft and any staged
+// attachment away and handed the path back for cleanup. It made the chat
+// list unusable half-way through a message: checking who else had written
+// cost you what you had typed.
+func TestSetChatIdParksTheDraft(t *testing.T) {
 	m := newFocused()
+	m.SetChatId(42)
+	m.textarea.Value = "half a thought"
+	m.textarea.Cursor = m.textarea.Len()
 	m.SetAttachment("/tmp/paste-1.png", true)
 
-	discarded := m.SetChatId(43)
-	if discarded != "/tmp/paste-1.png" {
-		t.Errorf("SetChatId returned %q, want /tmp/paste-1.png", discarded)
-	}
-	if m.Attachment() != "" {
-		t.Errorf("Attachment = %q, want it cleared", m.Attachment())
+	if discarded := m.SetChatId(43); discarded != "" {
+		t.Errorf("SetChatId discarded %q; drafts are parked now", discarded)
 	}
 	if m.ChatId() != 43 {
 		t.Errorf("ChatId = %d, want 43", m.ChatId())
 	}
-	if view := m.View(); !strings.Contains(view, "attachment discarded") {
-		t.Errorf("discard notice missing from view:\n%s", view)
+	if m.textarea.Value != "" || m.Attachment() != "" {
+		t.Errorf("the new chat inherited the old chat's draft: %q / %q",
+			m.textarea.Value, m.Attachment())
 	}
 
-	// Switching again has nothing left to discard.
-	if discarded := m.SetChatId(44); discarded != "" {
-		t.Errorf("second SetChatId returned %q, want empty", discarded)
+	m.SetChatId(42)
+	if m.textarea.Value != "half a thought" {
+		t.Errorf("draft came back as %q", m.textarea.Value)
+	}
+	if m.Attachment() != "/tmp/paste-1.png" {
+		t.Errorf("attachment came back as %q", m.Attachment())
+	}
+	if m.textarea.Cursor != len("half a thought") {
+		t.Errorf("cursor came back at %d, want %d", m.textarea.Cursor, len("half a thought"))
+	}
+}
+
+// A reply target is part of the draft. Restoring the words without it would
+// send them to the right chat and the wrong message.
+func TestParkedDraftKeepsItsReplyTarget(t *testing.T) {
+	m := newFocused()
+	m.SetChatId(42)
+	m.EnterReplyMode(7, "nadia: rebased")
+	m.textarea.Value = "on it"
+
+	m.SetChatId(43)
+	if m.mode != ModeNormal || m.replyToID != 0 {
+		t.Fatalf("reply state leaked into the new chat: mode=%v replyTo=%d", m.mode, m.replyToID)
+	}
+
+	m.SetChatId(42)
+	if m.mode != ModeReply || m.replyToID != 7 {
+		t.Errorf("reply target lost: mode=%v replyTo=%d", m.mode, m.replyToID)
+	}
+	if m.replyText != "nadia: rebased" {
+		t.Errorf("reply preview = %q", m.replyText)
+	}
+}
+
+// A sent or cleared draft is gone: parking it again on the next chat switch
+// would resurrect what the user just got rid of.
+func TestResetForgetsTheParkedDraft(t *testing.T) {
+	m := newFocused()
+	m.SetChatId(42)
+	m.textarea.Value = "typed"
+	m.SetChatId(43)
+	m.SetChatId(42)
+	if m.textarea.Value != "typed" {
+		t.Fatalf("precondition: draft was not parked, got %q", m.textarea.Value)
+	}
+
+	m.Reset()
+	m.SetChatId(43)
+	m.SetChatId(42)
+	if m.textarea.Value != "" {
+		t.Errorf("a cleared draft came back as %q", m.textarea.Value)
+	}
+}
+
+// HasDraftFor is what the chat list reads. The OPEN chat never reports one:
+// its draft is already on screen in the composer, and saying "draft: saved
+// locally" about the thing you are looking at costs the message preview and
+// tells the reader nothing.
+func TestHasDraftForExcludesTheOpenChat(t *testing.T) {
+	m := newFocused()
+	m.SetChatId(42)
+	m.textarea.Value = "parked"
+	m.SetChatId(43)
+
+	if !m.HasDraftFor(42) {
+		t.Error("chat 42 holds a draft and does not report one")
+	}
+	if m.HasDraftFor(43) {
+		t.Error("the open chat reports a draft")
+	}
+	if m.HasDraftFor(99) {
+		t.Error("a chat with no draft reports one")
+	}
+
+	m.SetChatId(42)
+	if m.HasDraftFor(42) {
+		t.Error("the now-open chat still reports a parked draft")
+	}
+	if got := m.DraftChats(); len(got) != 0 {
+		t.Errorf("DraftChats = %v, want empty once the only draft is open", got)
+	}
+}
+
+// Whitespace is not work, and neither is an empty composer: neither parks.
+func TestEmptyDraftsAreNotParked(t *testing.T) {
+	m := newFocused()
+	m.SetChatId(42)
+	m.textarea.Value = "   \n  "
+	m.SetChatId(43)
+	if m.HasDraftFor(42) {
+		t.Error("whitespace was parked as a draft")
 	}
 }
 

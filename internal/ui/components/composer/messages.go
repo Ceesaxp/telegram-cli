@@ -22,3 +22,12 @@ type PasteRequestedMsg struct{}
 type AttachmentDiscardedMsg struct {
 	Path string
 }
+
+// ResizedMsg is emitted when the composer's row count changes, so the host
+// can recompute the layout before the next paint.
+//
+// The composer cannot resize itself: the rows it takes come out of the
+// thread's budget, and only the host knows what the rest of the screen is
+// doing. Emitting rather than assuming is what keeps the two from disagreeing
+// about where the composer starts.
+type ResizedMsg struct{}

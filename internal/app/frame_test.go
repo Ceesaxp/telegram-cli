@@ -201,7 +201,7 @@ func TestLayoutMatchesTheGoldenGeometry(t *testing.T) {
 				t.Fatalf("loading fixture: %v", err)
 			}
 
-			l := layout.Compute(f.Width, f.Height, true)
+			l := layout.Compute(f.Width, f.Height, 1, true)
 			if l.TotalWidth() != f.Width {
 				t.Errorf("layout regions sum to %d, fixture is %d wide",
 					l.TotalWidth(), f.Width)

@@ -93,6 +93,7 @@ import (
 //	ctrl+t             attach a file
 //	ctrl+v             paste a clipboard image
 //	ctrl+o             edit the draft in $VISUAL/$EDITOR
+//	ctrl+p             expand the composer, and back
 //	ctrl+a, ctrl+e     start / end of line           (emacs mode)
 //	ctrl+b, ctrl+f     back / forward one character  (emacs mode)
 //	ctrl+u, ctrl+k     kill to start / end of line   (emacs mode)
@@ -240,6 +241,7 @@ func (m Model) composerHelpSection() help.Section {
 		{Keys: "ctrl+t", Desc: "Attach a file"},
 		{Keys: "ctrl+v", Desc: "Paste a clipboard image"},
 		{Keys: "ctrl+o", Desc: "Edit the draft in $VISUAL/$EDITOR"},
+		{Keys: "ctrl+p", Desc: "Expand the composer, and back"},
 	}
 
 	if m.composer.EditingMode() == composer.ModeVi {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,6 +30,11 @@ type MigrationChange struct {
 	Absent bool
 	// New is the value written in its place.
 	New string
+	// Removed marks a field the client no longer has. The key is dropped
+	// from the rewritten file rather than replaced, and the summary says so
+	// — a user who tuned it deserves to learn it stopped doing anything,
+	// which is not the same news as a value being changed.
+	Removed bool
 }
 
 // String renders a change for the migration summary.
@@ -39,6 +45,9 @@ func (c MigrationChange) String() string {
 		old = "(absent)"
 	case old == "":
 		old = `("")`
+	}
+	if c.Removed {
+		return fmt.Sprintf("%-22s %s -> (removed)", c.Field, old)
 	}
 	return fmt.Sprintf("%-22s %s -> %s", c.Field, old, c.New)
 }
@@ -244,6 +253,33 @@ func Migrate(cfg *Config, raw *RawFile) []MigrationChange {
 		})
 	}
 
+	// Fields TUI 2.0 removed (decision 10). The chat list is a fixed 38
+	// cells wide because the grid inside it is measured in cells, and
+	// avatars are an explicit non-goal — the type sigil replaced them. Both
+	// keys were still being parsed and had already stopped doing anything,
+	// so the honest migration is to drop them and say so. The backup the
+	// rewrite leaves behind still has the old values.
+	for _, field := range slices.Sorted(maps.Keys(raw.Removed())) {
+		changes = append(changes, MigrationChange{
+			Field: field, Old: raw.Removed()[field], Removed: true,
+		})
+	}
+
+	// Fields TUI 2.0 added (decision 10). Written with their defaults so an
+	// upgraded config lists every knob the client actually reads, rather
+	// than leaving the user to find them in the example file.
+	if !hasField(raw, "ui", "inline_images", cfg.UI.InlineImages != "") {
+		cfg.UI.InlineImages = def.UI.InlineImages
+		changes = append(changes, MigrationChange{
+			Field: "ui.inline_images", Absent: true, New: def.UI.InlineImages,
+		})
+	}
+	// ui.rail is NOT reported. Its default is the zero value, so there is
+	// nothing to tell anyone: the rewrite writes the whole struct, the key
+	// appears in the new file, and nothing about the client's behaviour
+	// changed. Reporting it would also be non-idempotent — with no raw file
+	// to consult, "absent" and "set to false" are the same observation.
+
 	// state_file is only derived when the file left it out entirely. A
 	// config that explicitly sets session_file = "" has opted out of on-disk
 	// state, and inventing a path next to a session file that does not exist
@@ -287,6 +323,34 @@ type RawFile struct {
 	// unknown holds "section.key" entries the current schema does not
 	// recognize. A rewrite drops them, so the user has to be told.
 	unknown []string
+	// removed holds "section.key" -> value for keys this version dropped on
+	// purpose. Kept apart from unknown because they are different news: an
+	// unrecognized key reads as a typo the user should fix, while a removed
+	// one is a setting that used to work and now does not.
+	removed map[string]string
+}
+
+// removedFields are keys the schema dropped deliberately, with the version's
+// reason. They are reported as removals rather than as unrecognized keys.
+//
+// TUI 2.0 (decision 10): the chat list is a fixed 38 cells because the grid
+// inside it is measured in cells, and avatars are an explicit non-goal — the
+// type sigil replaced them. Both keys were already being parsed and ignored.
+//
+// ui.mode_indicator is deliberately NOT a config key at all, here or in
+// Config. A modal client whose mode indicator can be switched off is a modal
+// client that will be used with it switched off.
+var removedFields = map[string]map[string]bool{
+	"ui": {"chat_list_width": true, "show_avatars": true},
+}
+
+// Removed returns the deliberately-dropped keys the file carried, as
+// "section.key" -> the value it had.
+func (r *RawFile) Removed() map[string]string {
+	if r == nil {
+		return nil
+	}
+	return r.removed
 }
 
 // Has reports whether the file contained section.field.
@@ -347,6 +411,7 @@ func LoadRawFile(path string) (*RawFile, error) {
 		Config:   &cfg,
 		sections: map[string]bool{},
 		keys:     map[string]map[string]bool{},
+		removed:  map[string]string{},
 	}
 	for section, body := range tree {
 		raw.sections[section] = true
@@ -356,11 +421,16 @@ func LoadRawFile(path string) (*RawFile, error) {
 			continue
 		}
 		raw.keys[section] = map[string]bool{}
-		for field := range table {
+		for field, value := range table {
 			raw.keys[section][field] = true
-			if !known[section][field] {
-				raw.unknown = append(raw.unknown, section+"."+field)
+			if known[section][field] {
+				continue
 			}
+			if removedFields[section][field] {
+				raw.removed[section+"."+field] = fmt.Sprint(value)
+				continue
+			}
+			raw.unknown = append(raw.unknown, section+"."+field)
 		}
 	}
 	sort.Strings(raw.unknown)

@@ -117,7 +117,7 @@ type Layout struct {
 //	>= 20    full frame
 //	12..19   top bar kept, hint bar dropped, composer forced inline
 //	<  12    thread and its inline composer only
-func Compute(width, height int, railEnabled bool) Layout {
+func Compute(width, height, composerRows int, railEnabled bool) Layout {
 	l := Layout{Width: width, Height: height}
 
 	// --- Vertical ---------------------------------------------------
@@ -146,7 +146,18 @@ func Compute(width, height int, railEnabled bool) Layout {
 	l.ChatListHeight = l.BodyHeight
 	// The composer keeps its row even in a very short terminal: a client you
 	// cannot type into is worse than one with no room to read.
-	l.ComposerHeight = InlineComposerHeight
+	//
+	// composerRows is what the composer asked for — one for the inline row,
+	// more for a reply bar, an attachment chip, or the expanded form. It is
+	// taken from the caller rather than derived here because only the
+	// composer knows what it is about to draw, and a layout that guessed
+	// would leave a hole under it or push the thread off the bottom.
+	l.ComposerHeight = max(composerRows, InlineComposerHeight)
+	if l.InlineComposerOnly {
+		// Too few rows to give the expanded form its eight: the thread would
+		// have nothing left. The composer is told, and stays inline.
+		l.ComposerHeight = InlineComposerHeight
+	}
 	if l.ComposerHeight > l.BodyHeight {
 		l.ComposerHeight = l.BodyHeight
 	}

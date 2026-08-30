@@ -16,10 +16,18 @@ files_dir = "~/.local/share/tele-tui/files"
 # UI preferences
 [ui]
 theme = "dark"               # "dark" or "light"
-chat_list_width = 30         # percentage of terminal width
-show_avatars = true
 timestamp_format = "15:04"   # Go time format
 date_format = "2006-01-02"
+
+# When a photo is drawn as art rather than as a metadata card:
+#   "never"    always the card — right over a slow link
+#   "on_open"  art for photos already downloaded, cards for the rest (default)
+#   "always"   fetch and draw every photo in view
+inline_images = "on_open"
+
+# Show the right-hand context rail on a wide terminal. It costs 30 columns,
+# and they come out of the thread.
+rail = false
 
 # Line editing in the composer: "emacs" (readline chords), "vi" (modal),
 # or "auto" to follow $VISUAL/$EDITOR.

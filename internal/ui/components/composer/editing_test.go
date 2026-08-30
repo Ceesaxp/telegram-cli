@@ -289,23 +289,50 @@ func TestArrowKeysMoveBetweenLines(t *testing.T) {
 }
 
 // The rendered composer shows both lines of a two-line draft.
+//
+// The inline row is one row and shows the cursor's line, with the prompt
+// turning into a chevron so a multi-line draft cannot look like a one-line
+// one that lost its tail. Seeing all of it is what the expanded form is for,
+// so that is where this guarantee now lives.
 func TestMultiLineRenders(t *testing.T) {
 	m := newFocused()
 	m.SetSize(60, 5)
 	m.textarea.Value = "first line\nsecond line"
 	m.textarea.Cursor = m.textarea.Len()
+
+	if view := m.View(); !strings.Contains(view, "second line") {
+		t.Errorf("cursor's line missing from the inline composer:\n%s", view)
+	}
+
+	m.SetExpanded(true)
 	view := m.View()
 	if !strings.Contains(view, "first line") || !strings.Contains(view, "second line") {
-		t.Errorf("multi-line draft missing from view:\n%s", view)
+		t.Errorf("multi-line draft missing from the expanded view:\n%s", view)
 	}
 }
 
-// The hint line has to name the newline chord — with Enter bound to send, "how
-// do I write a second line" is the first question the composer must answer.
+// The composer has to name the newline chord — with Enter bound to send, "how
+// do I write a second line" is the first question it must answer.
+//
+// The inline row is one row and spends it on the draft, so the chord list
+// moved to the expanded form's footer. Divergence 4: that footer advertises
+// the bindings that already exist, because the handoff's proposed four are
+// all claimed by emacs line editing.
 func TestHintMentionsNewlineChord(t *testing.T) {
-	view := newFocused().View()
-	if !strings.Contains(view, "Ctrl+J") {
-		t.Errorf("hint does not mention the newline chord:\n%s", view)
+	m := newFocused()
+	m.SetExpanded(true)
+	if view := m.View(); !strings.Contains(view, "Ctrl+J") {
+		t.Errorf("expanded footer does not mention the newline chord:\n%s", view)
+	}
+}
+
+// And it advertises the inline/expanded toggle, which is otherwise the one
+// binding with nowhere to be discovered.
+func TestExpandedFooterAdvertisesTheToggle(t *testing.T) {
+	m := newFocused()
+	m.SetExpanded(true)
+	if view := m.View(); !strings.Contains(view, "Ctrl+P") {
+		t.Errorf("expanded footer does not mention Ctrl+P:\n%s", view)
 	}
 }
 
@@ -674,6 +701,7 @@ func TestViNormalModeIgnoresNewlineChords(t *testing.T) {
 // where it works.
 func TestViHintAdvertisesNewlineOnlyWhereItWorks(t *testing.T) {
 	m := viComposer(t)
+	m.SetExpanded(true)
 	if !strings.Contains(m.View(), "Ctrl+J") {
 		t.Error("insert mode does not advertise the newline chord")
 	}
@@ -683,26 +711,31 @@ func TestViHintAdvertisesNewlineOnlyWhereItWorks(t *testing.T) {
 	}
 }
 
-// The mode indicator is always on screen in vi mode — not knowing which mode
-// you are in is what makes modal editing hostile.
+// The mode indicator is always on screen — not knowing which mode you are in
+// is what makes modal editing hostile.
+//
+// It is the badge now, at the far left of the composer row, and it covers
+// emacs too: "-- INSERT --" only ever appeared in vi mode, so an emacs user
+// had nothing on screen saying whether the next letter would be typed or
+// would navigate. That is the same question in both keymaps.
 func TestViHintShowsMode(t *testing.T) {
 	m := viComposer(t)
-	if view := m.View(); !strings.Contains(view, "-- INSERT --") {
-		t.Errorf("insert-mode indicator missing:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "INSERT") {
+		t.Errorf("insert-mode badge missing:\n%s", view)
 	}
 	m, _ = send(t, m, "\x1b")
-	if view := m.View(); !strings.Contains(view, "-- NORMAL --") {
-		t.Errorf("normal-mode indicator missing:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "NORMAL") {
+		t.Errorf("normal-mode badge missing:\n%s", view)
 	}
-	// It survives a notice, which would otherwise replace the whole hint.
+	// It survives a notice, which takes the rest of the row.
 	m.SetNotice("⚠ something happened")
 	view := m.View()
-	if !strings.Contains(view, "-- NORMAL --") || !strings.Contains(view, "something happened") {
-		t.Errorf("notice hid the mode indicator:\n%s", view)
+	if !strings.Contains(view, "NORMAL") || !strings.Contains(view, "something happened") {
+		t.Errorf("notice hid the mode badge:\n%s", view)
 	}
-	// Emacs mode shows no indicator at all.
-	if view := newFocused().View(); strings.Contains(view, "-- INSERT --") {
-		t.Errorf("emacs composer shows a vi indicator:\n%s", view)
+	// A focused emacs composer inserts, and says so.
+	if view := newFocused().View(); !strings.Contains(view, "INSERT") {
+		t.Errorf("emacs composer shows no mode badge:\n%s", view)
 	}
 }
 
