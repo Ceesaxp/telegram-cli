@@ -159,7 +159,7 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
-## TUI 2.0 — design closed, the shell and both panels shipped
+## TUI 2.0 — design closed, the shell, both panels and the blocks shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
 thirteen decisions are resolved. Handoff archived in
@@ -171,10 +171,9 @@ borderless frame with its top and hint bars, the two-line chat rows, the
 command palette, and the thread grid have all landed; bubbles, avatars,
 Glamour and the status bar are gone with them.
 
-What is left is what goes *inside* a message and what sits beside it: the
-content blocks (code, quotes, media cards, polls, reactions), the context
-rail, the composer's mode badge and per-chat drafts, and the media overlay.
-Until the blocks and the rail land, the goldens are asserted on width only —
+What is left is the composer's mode badge and per-chat drafts, the context
+rail, the media overlay, and the four content blocks whose data the client
+does not yet map. Until those land, the goldens are asserted on width only —
 see "Byte equality against the goldens" below.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
@@ -346,18 +345,58 @@ the primary checkout stays free for fixes against a working client.
       The chat-type sigil moved to `internal/ui/sigil`, shared by the list
       and the thread header, which are peers.
 
+- [x] **Content blocks** — code frames, quotes, list indentation, inline
+      entity styling, media cards and spoilers. `internal/render/blocks.go`,
+      `internal/render/media.go`, and a rewritten `entities.go`.
+
+      Entities are a per-rune style table now rather than a walk in offset
+      order. The old walk printed every overlapped run once per entity
+      covering it, so a link inside a bold sentence arrived on screen with
+      its text twice.
+
+      Code is truncated horizontally, never wrapped, and the frame caps at
+      84 cells with a gutter that compresses on a narrow pane — both forms
+      are drawn in the goldens. Media cards collapse to one line below a
+      40-cell body, dropping the actions rather than the facts. Spoilers are
+      drawn in their own background and `x` toggles them on the cursor
+      message; moving the cursor or opening a chat closes them.
+
+      **Fixing this phase found a bug in the last one.** `ansi.Wrap` does not
+      reopen a style after a break, so a styled run spanning a wrap painted
+      the rest of the row — trailing padding, panel rule and the whole next
+      column — in that run's style. `cell.WrapLines` makes each wrapped line
+      self-contained, and `cell.OpenStyle` is exported so any component can
+      assert it leaves nothing open.
+
+      Both test packages now pin a colour profile in `TestMain`: lipgloss
+      resolves to Ascii under `go test`, which makes every styling assertion
+      pass whatever the style was — and a hidden spoiler IS its colour.
+
+      One fixture defect found and fixed: `blocks-100x52.txt` drew its list,
+      quote, link-preview and poll continuations at column 19 instead of the
+      body column, while drawing the code block and media card in the same
+      fixture at 24. Recorded as divergence 13.
+
+- [ ] **Content that still has no data source.** Each is a mapping change in
+      `internal/telegram`, not a renderer (divergence 16):
+      - reactions — `Message.Reactions` is not mapped
+      - poll options, counts and closing time — `Poll` carries the question
+      - link previews — no web-page type at all
+      - voice waveform — `DocumentAttributeAudio.Waveform` is not mapped
+      - voice transcript — a premium RPC this client does not make
+
+- [ ] **Composer and app modes** ← **next.** The inline mode badge, the
+      expanded eight-row form, per-chat drafts (decision 13), and the
+      configuration migration (decision 10): remove `ui.chat_list_width` and
+      `ui.show_avatars`, add `ui.inline_images` and `ui.rail`, never add
+      `ui.mode_indicator`. `Model.Mode()` already exists and is tested; this
+      is the phase that draws it.
+
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality
-      cannot pass until the chat list rows, the thread grid and the rail all
-      land. That separation is deliberate and is why `golden.Compare`
-      reports width and content as different `DiffKind`s.
-- [ ] **Content blocks** ← **next.** Code frames, quotes, lists, media
-      cards, voice waveforms, link previews and polls, each starting at the
-      body column and capped to the smaller of body width and 84 columns.
-      Three things the goldens draw are waiting on this phase because they
-      have no data source yet: reactions (no field on `telegram.Message`),
-      spoiler reveal (`x` needs the spoiler entity), and the media card's
-      three-row and collapsed forms.
+      cannot pass until the composer, the rail, and the blocks that are
+      waiting on data all land. That separation is deliberate and is why
+      `golden.Compare` reports width and content as different `DiffKind`s.
 
 ### Documentation debt that comes due when code ships
 

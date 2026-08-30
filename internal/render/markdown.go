@@ -11,23 +11,40 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
-// renderedContent separates a message's textual content (which is
-// word-wrapped to the body width) from any pre-rendered raster/block art
-// (which must never be re-flowed — art is only ever cropped, never
-// wrapped, or it comes out scrambled).
+// renderedContent is a message's content taken apart into the pieces that
+// have to be laid out differently.
+//
+//   - art is pre-rendered raster or block art. It is a grid of cells at
+//     fixed column positions and is only ever CROPPED, never wrapped: a
+//     word wrapper run over it reflows the rows into noise.
+//   - card is a metadata card, already exact-width.
+//   - text is the message body or an attachment's caption, with its
+//     entities intact, so blocks and inline spans can be rendered from it.
+//   - note is plain text with no entities: service events, and the honest
+//     placeholders for content this client cannot render.
 type renderedContent struct {
-	text string
 	art  string
+	card []string
+	text *telegram.FormattedText
+	note string
 }
 
 func (rc renderedContent) empty() bool {
-	return rc.text == "" && rc.art == ""
+	return rc.art == "" && len(rc.card) == 0 && rc.note == "" &&
+		(rc.text == nil || rc.text.Text == "")
+}
+
+// plain wraps a note in a FormattedText so it can go through the same
+// rendering path as a message body.
+func plain(text string) *telegram.FormattedText {
+	return &telegram.FormattedText{Text: text}
 }
 
 // MessageRenderer turns message content into terminal lines. It holds the
 // image renderer and its cache; everything else it does is stateless.
 type MessageRenderer struct {
 	theme    *theme.Theme
+	roles    theme.Roles
 	imgCache *media.Cache
 	imgRend  *media.ImageRenderer
 }
@@ -35,10 +52,23 @@ type MessageRenderer struct {
 func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 	protocol := media.DetectProtocol()
 	return &MessageRenderer{
-		theme:    th,
+		theme: th,
+		// A default palette, not a zero one: a renderer whose output
+		// depends on the host remembering to call SetRoles is a renderer
+		// with two behaviours, and its own tests construct it directly.
+		roles:    theme.DarkRoles(false),
 		imgCache: media.NewCache(50),
 		imgRend:  media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
 	}
+}
+
+// SetRoles supplies the TUI 2.0 semantic palette used for entity styling,
+// code frames, quotes and media cards.
+func (r *MessageRenderer) SetRoles(roles theme.Roles) {
+	if r == nil {
+		return
+	}
+	r.roles = roles
 }
 
 const (
@@ -61,14 +91,33 @@ func (r *MessageRenderer) SetImageProtocol(protocol media.Protocol, maxCols, max
 	r.imgRend = media.NewImageRenderer(protocol, maxCols, maxRows)
 }
 
-func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, width int) []string {
+// BodyOptions is how a message is to be laid out for the thread grid.
+type BodyOptions struct {
+	// Width is the body column's width in display cells.
+	Width int
+
+	// RevealSpoilers un-hides spoiler spans. True only for the message
+	// under the cursor, and only after x.
+	RevealSpoilers bool
+}
+
+// RenderBody lays a message's content out for the TUI 2.0 thread grid's
+// body column: one string per terminal line, with no frame of its own. The
+// grid owns everything to the left of the body column, so this returns
+// content and nothing else.
+//
+// The result is never empty — a message with nothing renderable still
+// occupies one line, because a zero-line message would make the scroll
+// index disagree with what is on screen.
+func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts BodyOptions) []string {
+	width := opts.Width
 	if msg == nil || width < 1 {
 		return []string{""}
 	}
 
 	rc := r.renderContent(msg.Content, s, width)
 	if rc.empty() {
-		rc.text = "[empty]"
+		rc.note = "[empty]"
 	}
 
 	var out []string
@@ -77,8 +126,12 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, widt
 			out = append(out, cell.Clamp(line, width))
 		}
 	}
-	if rc.text != "" {
-		out = append(out, strings.Split(cell.Wrap(rc.text, width), "\n")...)
+	out = append(out, rc.card...)
+	if rc.note != "" {
+		out = append(out, renderBlocks(plain(rc.note), r.roles, width, false)...)
+	}
+	if rc.text != nil && rc.text.Text != "" {
+		out = append(out, renderBlocks(rc.text, r.roles, width, opts.RevealSpoilers)...)
 	}
 	if len(out) == 0 {
 		return []string{""}
@@ -107,113 +160,87 @@ func SenderName(msg *telegram.Message, s *store.Store) string {
 	return ""
 }
 
-func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *store.Store, maxWidth int) renderedContent {
+// renderContent takes a message's payload apart into the pieces RenderBody
+// lays out. It renders the attachment, if there is one, and hands back the
+// text with its entities intact rather than a styled string — the block
+// splitter needs the entities, and it runs after this.
+func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *store.Store, width int) renderedContent {
 	if content == nil {
-		return renderedContent{text: "[unsupported]"}
+		return renderedContent{note: "[unsupported]"}
+	}
+
+	// Anything with an attachment gets a card, except a photo whose art is
+	// already downloaded: the picture is strictly more informative than a
+	// description of it.
+	if card, ok := mediaCardFor(content); ok {
+		rc := renderedContent{text: captionOf(content)}
+		if photo, isPhoto := content.(*telegram.MessagePhoto); isPhoto {
+			if art, isArt := r.renderPhoto(photo.Photo, s); isArt {
+				rc.art = art
+				return rc
+			}
+		}
+		rc.card = card.render(r.roles, width)
+		return rc
 	}
 
 	switch c := content.(type) {
 	case *telegram.MessageText:
 		if c.Text == nil || c.Text.Text == "" {
-			return renderedContent{text: "[empty]"}
+			return renderedContent{note: "[empty]"}
 		}
-		// Entities, not Markdown: Telegram sends the formatting as
-		// entity ranges, and round-tripping them through a Markdown
-		// renderer means re-parsing text the user wrote as prose. A
-		// message containing a literal asterisk came out emphasised.
-		text := EntitiesToANSI(c.Text)
-		if maxWidth > 0 {
-			// Wrap here too (not just the final bubble-level wrap in
-			// RenderMessage) so this function honors the maxWidth it is
-			// given on its own. Wrapping twice at the same width is a
-			// no-op for already-wrapped text, so this is safe.
-			text = cell.Wrap(text, maxWidth)
-		}
-		return renderedContent{text: text}
-
-	case *telegram.MessagePhoto:
-		art, isArt := r.renderPhoto(c.Photo, s)
-		caption := ""
-		if c.Caption != nil && c.Caption.Text != "" {
-			caption = c.Caption.Text
-		}
-		if isArt {
-			// art is pre-rendered block/raster art at fixed cell
-			// positions: it must never be re-wrapped, only cropped.
-			// The caption (plain text) is fine to wrap normally.
-			return renderedContent{art: art, text: caption}
-		}
-		// Not real art yet (placeholder/"not downloaded" text) — treat as
-		// ordinary wrappable text, same as before.
-		text := art
-		if caption != "" {
-			text += "\n" + caption
-		}
-		return renderedContent{text: text}
-
-	case *telegram.MessageVideo:
-		s := fmt.Sprintf("🎥 Video [%s]", fmtDur(c.Video.Duration))
-		if c.Caption != nil && c.Caption.Text != "" {
-			s += "\n" + c.Caption.Text
-		}
-		return renderedContent{text: s}
-
-	case *telegram.MessageDocument:
-		s := fmt.Sprintf("📎 %s (%s)", c.Document.FileName, fmtSize(c.Document.File.Size))
-		if c.Caption != nil && c.Caption.Text != "" {
-			s += "\n" + c.Caption.Text
-		}
-		return renderedContent{text: s}
-
-	case *telegram.MessageVoiceNote:
-		s := fmt.Sprintf("🎤 Voice [%s]", fmtDur(c.VoiceNote.Duration))
-		if c.Caption != nil && c.Caption.Text != "" {
-			s += "\n" + c.Caption.Text
-		}
-		return renderedContent{text: s}
-
-	case *telegram.MessageVideoNote:
-		return renderedContent{text: fmt.Sprintf("📹 Video msg [%s]", fmtDur(c.VideoNote.Duration))}
+		return renderedContent{text: c.Text}
 
 	case *telegram.MessageSticker:
-		return renderedContent{text: c.Sticker.Emoji + " Sticker"}
-
-	case *telegram.MessageAnimation:
-		return renderedContent{text: "🎬 GIF"}
-
-	case *telegram.MessageAudio:
-		title := c.Audio.Title
-		if title == "" {
-			title = c.Audio.FileName
-		}
-		return renderedContent{text: fmt.Sprintf("🎵 %s [%s]", title, fmtDur(c.Audio.Duration))}
+		return renderedContent{note: c.Sticker.Emoji + " sticker"}
 
 	case *telegram.MessageLocation:
-		return renderedContent{text: fmt.Sprintf("📍 %.4f, %.4f", c.Location.Latitude, c.Location.Longitude)}
+		return renderedContent{note: fmt.Sprintf("location %.4f, %.4f",
+			c.Location.Latitude, c.Location.Longitude)}
 
 	case *telegram.MessageContact:
-		return renderedContent{text: fmt.Sprintf("👤 %s %s", c.Contact.FirstName, c.Contact.LastName)}
+		return renderedContent{note: strings.TrimSpace(
+			"contact " + c.Contact.FirstName + " " + c.Contact.LastName)}
 
 	case *telegram.MessagePoll:
-		return renderedContent{text: fmt.Sprintf("📊 %s", c.Poll.Question)}
+		// The question and nothing else. Telegram sends options, vote
+		// counts and the closing time; the domain type carries none of
+		// them, and a poll drawn with empty bars would state a result.
+		// Recorded as a divergence — the goldens draw the full poll.
+		return renderedContent{note: "poll · " + c.Poll.Question}
 
 	case *telegram.MessagePinMessage:
-		return renderedContent{text: "📌 Pinned"}
+		return renderedContent{note: "pinned a message"}
 	case *telegram.MessageChatAddMembers:
-		return renderedContent{text: "➕ Members added"}
+		return renderedContent{note: "members added"}
 	case *telegram.MessageChatDeleteMember:
-		return renderedContent{text: "➖ Member left"}
+		return renderedContent{note: "member left"}
 	case *telegram.MessageChatChangeTitle:
-		return renderedContent{text: "✏ " + c.Title}
+		return renderedContent{note: "renamed the chat to " + c.Title}
 	case *telegram.MessageChatChangePhoto:
-		return renderedContent{text: "🖼 Photo changed"}
+		return renderedContent{note: "changed the chat photo"}
 	case *telegram.MessageChatJoinByLink:
-		return renderedContent{text: "🔗 Joined via link"}
+		return renderedContent{note: "joined via invite link"}
 	case *telegram.MessageUnsupported:
-		return renderedContent{text: fmt.Sprintf("[%s]", c.Type)}
+		return renderedContent{note: fmt.Sprintf("[%s]", c.Type)}
 	default:
-		return renderedContent{text: "[unsupported]"}
+		return renderedContent{note: "[unsupported]"}
 	}
+}
+
+// captionOf is an attachment's caption, or nil when it has none.
+func captionOf(content telegram.MessageContent) *telegram.FormattedText {
+	switch c := content.(type) {
+	case *telegram.MessagePhoto:
+		return c.Caption
+	case *telegram.MessageVideo:
+		return c.Caption
+	case *telegram.MessageDocument:
+		return c.Caption
+	case *telegram.MessageVoiceNote:
+		return c.Caption
+	}
+	return nil
 }
 
 // renderPhoto returns the rendered representation of a photo, plus whether
@@ -264,15 +291,20 @@ func fmtDur(s int32) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
+// fmtSize is a byte count at the precision a reader actually uses it at.
+// Kilobytes are whole numbers — nobody decides anything on the strength of
+// 184.3 versus 184 KB — and the larger units keep one decimal, where the
+// difference between 1.2 and 1.9 GB is the difference between downloading
+// it and not.
 func fmtSize(b int64) string {
 	switch {
 	case b >= 1<<30:
-		return fmt.Sprintf("%.1fGB", float64(b)/(1<<30))
+		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
 	case b >= 1<<20:
-		return fmt.Sprintf("%.1fMB", float64(b)/(1<<20))
+		return fmt.Sprintf("%.1f MB", float64(b)/(1<<20))
 	case b >= 1<<10:
-		return fmt.Sprintf("%.1fKB", float64(b)/(1<<10))
+		return fmt.Sprintf("%d KB", b/(1<<10))
 	default:
-		return fmt.Sprintf("%dB", b)
+		return fmt.Sprintf("%d B", b)
 	}
 }

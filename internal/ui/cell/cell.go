@@ -99,13 +99,95 @@ func ClampLeft(s string, width int) string {
 // than allowed to overflow, since a row wider than its column shears the
 // frame.
 //
-// Wrapping is ANSI-aware: styles spanning a break are preserved on both
-// lines rather than being lost or leaking.
+// Wrapping is ANSI-aware in the sense that escape sequences are not counted
+// as cells and are not cut in half. It does NOT make each line
+// independently styled — see [WrapLines], which is what a caller composing
+// rows out of the result almost always wants.
 func Wrap(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
 	return ansi.Wrap(s, width, "")
+}
+
+// WrapLines wraps s to width and returns lines that are each self-contained:
+// a style spanning a break is closed at the end of one line and reopened at
+// the start of the next.
+//
+// [Wrap] alone is not enough for anything drawn into a column. It leaves the
+// opening sequence on the first line and the reset on the last, so the lines
+// between carry no styling of their own — and a terminal does not reset at a
+// newline. In a multi-column frame the rows of one panel are not adjacent on
+// screen: whatever a body line leaves open bleeds through its own trailing
+// padding, across the panel rule, and into the next column, for as many rows
+// as it takes to reach the reset.
+//
+// This is the ONLY correct way to wrap styled text into rows. There is no
+// version of the bug that shows up in a single-column layout, which is why
+// it survives review so easily.
+func WrapLines(s string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	lines := strings.Split(Wrap(s, width), "\n")
+
+	open := ""
+	for i, line := range lines {
+		if open != "" {
+			line = open + line
+		}
+		open = OpenStyle(line)
+		if open != "" {
+			line += "\x1b[0m"
+		}
+		lines[i] = line
+	}
+	return lines
+}
+
+// OpenStyle returns the SGR state left active at the end of s: the
+// concatenation of the sequences that have not been cancelled by a reset,
+// and "" when s closes everything it opens.
+//
+// [WrapLines] uses it to reopen a run on the next line. It is exported
+// because "this row leaves no style open" is an invariant every component
+// that draws into a column has to hold, and asserting it is the only way to
+// catch a leak that is invisible in a single-column dump.
+//
+// Accumulating rather than keeping only the last sequence, because a styled
+// run can be opened in pieces — lipgloss emits one combined sequence, but
+// nested renders produce several — and dropping the earlier ones would
+// reopen a continuation line in half its original style.
+func OpenStyle(s string) string {
+	if !strings.Contains(s, "\x1b[") {
+		return ""
+	}
+
+	var open strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != 0x1b || i+1 >= len(s) || s[i+1] != '[' {
+			i++
+			continue
+		}
+		j := i + 2
+		for j < len(s) && s[j] != 'm' && s[j] != 0x1b {
+			j++
+		}
+		if j >= len(s) || s[j] != 'm' {
+			// Not an SGR sequence (a cursor move, say). Nothing here
+			// styles text, so it cannot be part of the open state.
+			i++
+			continue
+		}
+		seq := s[i : j+1]
+		if seq == "\x1b[0m" || seq == "\x1b[m" {
+			open.Reset()
+		} else {
+			open.WriteString(seq)
+		}
+		i = j + 1
+	}
+	return open.String()
 }
 
 // Pad right-pads s with spaces to width cells. A string already at or over

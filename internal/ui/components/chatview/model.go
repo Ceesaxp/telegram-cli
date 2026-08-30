@@ -200,6 +200,13 @@ type Model struct {
 	unreadFromID  int64
 	unreadCount   int
 
+	// revealedID is the message whose spoilers are currently open. Zero
+	// means none, which is the state every chat opens in and the state a
+	// cursor move returns to: a spoiler that stayed open after the reader
+	// scrolled away would be revealed to whoever looks at the screen next,
+	// which is the one thing a spoiler exists to prevent.
+	revealedID int64
+
 	// typing is the set of user IDs currently composing in the open chat.
 	// The thread owns this because TUI 2.0 draws the indicator as the
 	// bottom row of the scroller, aligned with the message grid, rather
@@ -289,6 +296,7 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 // SetRoles supplies the TUI 2.0 semantic palette used by the thread grid.
 func (m *Model) SetRoles(r theme.Roles) {
 	m.roles = r
+	m.renderer.SetRoles(r)
 	// Every cached line carries its colours baked in, so a palette change
 	// invalidates all of them.
 	m.cache.clear()
@@ -414,7 +422,7 @@ func chatViewFixedKeys() map[string]bool {
 		"ctrl+u": true, "ctrl+d": true,
 		"esc": true, "ctrl+f": true,
 		"n": true, "N": true,
-		"enter": true, "o": true, "s": true,
+		"enter": true, "o": true, "s": true, "x": true,
 	}
 }
 
@@ -789,6 +797,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.chatTitle = title
 	m.scrollOffset = 0
 	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
+	m.revealedID = 0
 	m.loading = true
 	m.loadStatus = "Loading messages..."
 	m.mediaStatus = ""
@@ -1295,7 +1304,7 @@ func (m *Model) scrollToMessage(id int64) bool {
 	// A jump is the one movement that says which message it is about, so
 	// it sets the cursor outright: land on a search hit and r replies to
 	// the hit, not to whatever happens to sit at the edge of the window.
-	m.cursorID = id
+	m.setCursor(id)
 	return true
 }
 
@@ -1655,6 +1664,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// 's' saves/downloads file
 	case kp.Matches("s"):
 		return m, m.downloadFile()
+
+	// 'x' opens the spoilers in the message under the cursor, and closes
+	// them again. A toggle rather than a one-way reveal: having looked, the
+	// reader may well want the screen safe again, and there is otherwise no
+	// way back short of leaving the chat.
+	case kp.Matches("x"):
+		if msg := m.cursorMessage(); msg != nil && msg.ID != 0 {
+			if m.revealedID == msg.ID {
+				m.revealedID = 0
+			} else {
+				m.revealedID = msg.ID
+			}
+		}
+		return m, nil
 	}
 
 	// Any key that moved the viewport may have brought photos whose
@@ -1800,7 +1823,7 @@ func (m *Model) syncCursor() {
 		return
 	}
 	if m.scrollOffset <= 0 {
-		m.cursorID = msgs[len(msgs)-1].ID
+		m.setCursor(msgs[len(msgs)-1].ID)
 		return
 	}
 	first, last, ok := m.visibleMessages()
@@ -1816,14 +1839,22 @@ func (m *Model) syncCursor() {
 			}
 			switch {
 			case i < first:
-				m.cursorID = msgs[first].ID
+				m.setCursor(msgs[first].ID)
 			case i > last:
-				m.cursorID = msgs[last].ID
+				m.setCursor(msgs[last].ID)
 			}
 			return
 		}
 	}
-	m.cursorID = msgs[last].ID
+	m.setCursor(msgs[last].ID)
+}
+
+// setCursor moves the cursor and closes any spoilers it leaves behind.
+func (m *Model) setCursor(id int64) {
+	if m.cursorID != id {
+		m.revealedID = 0
+	}
+	m.cursorID = id
 }
 
 func (m Model) messageAction(action string) tea.Cmd {

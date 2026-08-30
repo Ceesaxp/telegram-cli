@@ -73,6 +73,7 @@ import (
 //	r, e, d            reply / edit / delete message [keys.reply, keys.edit_message, keys.delete_message]
 //	enter, o           open attachment
 //	s                  save attachment
+//	x                  reveal spoilers in the selected message
 //	i, c               focus the composer
 //	q                  quit                          [keys.quit_browsing]
 //
@@ -446,6 +447,7 @@ func (m Model) helpSections() []help.Section {
 			}, " / "), Desc: "Reply / edit / delete message"},
 			{Keys: "enter / o", Desc: "Open attachment"},
 			{Keys: "s", Desc: "Save attachment"},
+			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
 			{Keys: "i / c", Desc: "Compose a message"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 		}},

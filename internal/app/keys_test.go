@@ -1484,7 +1484,7 @@ func TestChatViewKeysComeFromConfig(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Keys.Reply = "y"
 	cfg.Keys.EditMessage = "Option+E"
-	cfg.Keys.DeleteMessage = "x"
+	cfg.Keys.DeleteMessage = "v"
 	cfg.Keys.ScrollUp = "u"
 	cfg.Keys.ScrollDown = "n" // collides with chatview's next-match key
 	cfg.Keys.PageUp = "b"
@@ -1501,7 +1501,7 @@ func TestChatViewKeysComeFromConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("no reply/edit/delete row")
 	}
-	if row.Keys != "y / alt+e / x" {
+	if row.Keys != "y / alt+e / v" {
 		t.Errorf("reply row = %q, want the configured \"y / alt+e / x\"", row.Keys)
 	}
 

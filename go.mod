@@ -10,6 +10,7 @@ require (
 	github.com/gotd/contrib v0.25.0
 	github.com/gotd/td v0.161.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.etcd.io/bbolt v1.5.0
@@ -49,7 +50,6 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a // indirect
 	github.com/ogen-go/ogen v1.23.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

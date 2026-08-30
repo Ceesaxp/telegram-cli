@@ -590,6 +590,74 @@ reply can point at anything in the chat's history — the row reads
 The bubble renderer showed `┃ reply #4412`. An ID is not something a reader
 can act on or recognise; the relationship is, and that is what is left.
 
+### 13. The block gallery drew continuations at the wrong column
+
+`blocks-100x52.txt` put the continuation rows of its list, quote, link
+preview and poll at column 19 rather than at the body column, 24 — while
+drawing the code block, the media card and the reactions in the same fixture
+at 24.
+
+Nineteen is where `you` starts when it is right-aligned in a twelve-cell
+sender field. That is not a rule: `nadia` would start at 17. The gallery was
+hand-drawn and this is a drawing error of the same kind as the ZWJ padding
+defect found in decision 11, and it disagrees with all three frame goldens as
+well as with this document, which says the body starts at the same column on
+every continuation and all content blocks.
+
+**Fixed in the fixture**, which now draws every continuation at 24. Eight
+rows moved; each stayed exactly 100 cells.
+
+### 14. No OSC 8 hyperlinks
+
+The design record asks for terminal hyperlinks on links "where supported".
+They are not emitted, for a reason found by trying.
+
+Width is not the obstacle — `ansi.StringWidth` measures an OSC 8 sequence as
+zero cells. `ansi.Wrap` is: it breaks a line in the middle of a hyperlink
+without closing and reopening it, so the opening sequence is left dangling on
+the first line and the closing one arrives on the second having opened
+nothing. Every terminal that supports OSC 8 then treats the rest of that
+first row — its trailing padding and the panel rule — as part of the link.
+
+This is the same class of fault as the SGR leak fixed in `cell.WrapLines`,
+but it cannot be fixed the same way: reopening a hyperlink means knowing
+which runes belong to it *after* wrapping, which means wrapping before
+styling, which means owning a grapheme-aware wrapper instead of using the
+tested one. Links are cyan and underlined meanwhile, which is the affordance;
+OSC 8 only adds click-to-open. It belongs with phase 8's hardening, together
+with the wrapper that would make it safe.
+
+### 15. Inline code is coloured, not padded
+
+The design record specifies "amber padded inline code". The padding is not
+drawn: a code span is amber on the selection background, with no inserted
+spaces.
+
+Padding a chip means putting characters into the message that the sender did
+not send. That is a small thing on a badge in the chat list, where the
+content is a number this client computed, and a different thing inside
+somebody's sentence — where `use ` foo ` here` is not what they wrote. The
+background is what separates the chip; the spaces only widen it.
+
+### 16. Four blocks the goldens draw have no data behind them
+
+Reactions, poll results, link previews, and a voice note's waveform and
+transcript are all in the fixtures and none of them are rendered. Each is
+waiting on a data source, not on a renderer:
+
+| Block | What is missing | What it would take |
+| --- | --- | --- |
+| Reactions | no field on `telegram.Message` | map `Message.Reactions` from gotd, and a domain type |
+| Poll options, counts, closing time | `Poll` carries the question only | map `MessageMediaPoll`'s answers and results |
+| Link preview | no web-page type at all | map `messageMediaWebPage` |
+| Voice waveform | no amplitude data | map `DocumentAttributeAudio.Waveform` |
+| Voice transcript | no transcription call | a Telegram premium RPC this client does not make |
+
+What IS rendered from each is the part that exists: a poll shows its
+question, a voice note its duration. A poll drawn with empty bars would state
+a result, and a waveform drawn from nothing would be the one part of the card
+that looks like measurement and is not.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
@@ -980,6 +1048,59 @@ store updates.
 
 Exit criterion: each supported block starts in the body column, respects the
 84-column cap, is ANSI/wide-rune safe, and has a fixture test.
+
+**Shipped.** `internal/render/blocks.go` (the block splitter, code frames,
+quotes and list indentation), `internal/render/media.go` (the metadata
+cards), and a rewritten `internal/render/entities.go`.
+
+Entities are now a per-rune style table rather than a walk in offset order.
+The old walk emitted "the gap before this entity, then this entity", which
+printed every overlapped run once per entity covering it — a link inside a
+bold sentence arrived on screen with its text twice. Formatting is a set of
+overlapping ranges, so modelling it as "what is true of this rune" makes
+nesting fall out rather than needing a case.
+
+Code blocks are truncated horizontally, never wrapped: code is a grid whose
+indentation carries the structure, and a wrapped line puts a fragment at
+column zero where a new statement belongs. The frame caps at 84 cells and its
+gutter compresses from `" 1   "` to `"1  "` on a narrow pane — both forms are
+drawn in the goldens, at 137 and 120 columns respectively.
+
+Lists get a hanging indent. The marker is recognised, never rewritten:
+Telegram has no list entity, so anything more would be this client deciding
+what somebody meant, and the recogniser is conservative enough that a
+sentence with a dash in it is not a bullet.
+
+Media cards collapse to one line below a 40-cell body, dropping the ACTIONS
+rather than the facts — a reader who cannot see "enter open" can press enter
+and find out, while a reader who cannot see the size has no way to learn it
+from this screen.
+
+Spoilers are drawn in their own background and `x` opens them on the message
+under the cursor, as a toggle. Moving the cursor or opening a chat closes
+them; a spoiler left open after the reader scrolled away is revealed to
+whoever looks at the screen next.
+
+**Fixing this phase found a bug in the previous one.** `ansi.Wrap` does not
+reopen a style after a break, so a styled run spanning a wrap left the rest
+of the row — trailing padding, panel rule, and the whole next column —
+painted in whatever the run's style was. `cell.WrapLines` makes each wrapped
+line self-contained. It is invisible in a single-column dump, which is why
+`cell.OpenStyle` is exported: "this row leaves no style open" is an invariant
+every component drawing into a column has to hold.
+
+Both `internal/render` and `internal/ui/components/chatview` now pin a colour
+profile in `TestMain`. lipgloss probes the output for a terminal, finds none
+under `go test`, and resolves to Ascii — `Render` becomes the identity
+function and every style disappears, so an assertion on styled output passes
+whatever the style was. For a hidden spoiler, which IS its colour, that
+assertion could only ever pass, on a screen showing the text in plain sight.
+
+Reactions, poll results, link previews and voice waveforms are not here
+because their data is not; see divergence 16 for what each would take. Media
+rendering is metadata-only for everything except a photo whose thumbnail has
+already been downloaded, which still draws — `ui.inline_images` (decision 10)
+lands with the rest of the config migration in phase 5.
 
 ### 5. Composer and app modes
 

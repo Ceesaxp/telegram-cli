@@ -1749,7 +1749,7 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	m := keysTestModel()
 	m.SetKeys(Keys{
 		Reply:      "ctrl+r",
-		Edit:       "x",
+		Edit:       "v",
 		Delete:     "y",
 		ScrollUp:   "w",
 		ScrollDown: "z",
@@ -1760,8 +1760,8 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	if _, cmd := m.handleKey(ctrlKey('r')); dispatchedAction(t, cmd).Action != "reply" {
 		t.Fatalf("expected configured ctrl+r to reply")
 	}
-	if _, cmd := m.handleKey(key('x')); dispatchedAction(t, cmd).Action != "edit" {
-		t.Fatalf("expected configured 'x' to edit")
+	if _, cmd := m.handleKey(key('v')); dispatchedAction(t, cmd).Action != "edit" {
+		t.Fatalf("expected configured 'v' to edit")
 	}
 	if _, cmd := m.handleKey(key('y')); dispatchedAction(t, cmd).Action != "delete" {
 		t.Fatalf("expected configured 'y' to delete")
@@ -1891,7 +1891,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	accepted := keysTestModel()
 	accepted.SetKeys(Keys{
 		Reply:      "ctrl+r",
-		Edit:       "x",
+		Edit:       "v",
 		Delete:     "y",
 		ScrollUp:   "w",
 		ScrollDown: "z",
@@ -1900,7 +1900,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	})
 	got = accepted.ActiveKeys()
 	want = Keys{
-		Reply: "ctrl+r", Edit: "x", Delete: "y",
+		Reply: "ctrl+r", Edit: "v", Delete: "y",
 		ScrollUp: "w", ScrollDown: "z", PageUp: "u", PageDown: "i",
 	}
 	if got != want {
