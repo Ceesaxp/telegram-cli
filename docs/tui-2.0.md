@@ -795,6 +795,25 @@ internal/app/app.go, internal/ui/widgets/style.go, new layout/theme tests.
 Exit criterion: the five target frame sizes have exact display width on every
 row, no accidental extra rows, and deterministic 256-colour output.
 
+**Shipped.** `internal/ui/theme/roles.go` (semantic palette, truecolour and
+256 resolved once at startup from the environment only), `internal/ui/layout`
+(the responsive budget, pinned against the goldens' measured region widths),
+`internal/ui/frame` (borderless assembly), plus `topbar` and `hintbar`.
+
+One correction to this document's own reasoning. It claimed phases 1–3 could
+not be separated, because the existing components rely on Lipgloss borders to
+absorb width slop. The premise was right and the conclusion was wrong: the
+fix is not to land them together but to make **the frame fit panel output
+rather than trust it**. `frame.Render` fits every line to its region, so a
+panel that is not yet exact-width is padded or clipped instead of shearing.
+That is what lets the chat list rows and the thread grid follow separately,
+and it is why phase 1 shipped alone.
+
+Width is asserted; byte equality is not yet. The fixtures are renders of a
+finished TUI 2.0, so string equality cannot pass until the chat list rows,
+the thread grid and the rail land. Separating the two assertions by lifetime
+is exactly what `golden.Compare`'s DiffKind split was for.
+
 ### 2. Top bar, hint bar, and chat list
 
 Primary files: new internal/ui/components/topbar, internal/ui/components/statusbar,

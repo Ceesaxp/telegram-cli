@@ -13,7 +13,6 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/notification"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
@@ -22,9 +21,11 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/groupinfo"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/statusbar"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
@@ -43,6 +44,8 @@ type Model struct {
 	search    search.Model
 	help      help.Model
 	palette   palette.Model
+	topBar    topbar.Model
+	hintBar   hintbar.Model
 	groupInfo groupinfo.Model
 	statusBar statusbar.Model
 	dialog    *dialog.Model
@@ -54,6 +57,7 @@ type Model struct {
 	store      *store.Store
 	config     *config.Config
 	theme      *theme.Theme
+	roles      theme.Roles
 	notifier   *notification.Notifier
 	sound      *notification.SoundPlayer
 	authorizer *telegram.TUIAuthorizer
@@ -169,6 +173,10 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 
 func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer) Model {
 	th := theme.ForName(cfg.UI.Theme)
+	// Colour depth is resolved once, here, from the environment only —
+	// never by querying the terminal, whose reply would arrive as
+	// keystrokes. See theme.SupportsTrueColor.
+	roles := theme.RolesFor(cfg.UI.Theme, theme.SupportsTrueColor())
 	m := Model{
 		auth:       auth.New(th, authorizer),
 		chatList:   chatlist.New(s, tg, th),
@@ -178,6 +186,8 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		search:     search.New(s, tg, th),
 		help:       help.New(th),
 		palette:    palette.New(th),
+		topBar:     topbar.New(roles),
+		hintBar:    hintbar.New(roles),
 		groupInfo:  groupinfo.New(s, tg, th),
 		statusBar:  statusbar.New(s, th),
 		screen:     ScreenLoading,
@@ -186,6 +196,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		store:      s,
 		config:     cfg,
 		theme:      th,
+		roles:      roles,
 		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
@@ -296,7 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					updated, cmd, notice := m.runCommandLine(line)
 					m = updated
 					if notice != "" {
-						m.composer.SetNotice(notice)
+						m.notify(notice)
 					}
 					return m, cmd
 				}
@@ -629,7 +640,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// An edit cannot carry an attachment — pasting one would be
 				// silently dropped at submit time.
 				if m.composer.IsEditing() {
-					m.composer.SetNotice(noticeEditAttach)
+					m.notify(noticeEditAttach)
 					return m, nil
 				}
 				// One paste at a time: concurrent pastes race to set the
@@ -639,7 +650,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.pasteInFlight = true
 				m.setFocus(PanelComposer)
-				m.composer.SetNotice("pasting from clipboard...")
+				m.notify("pasting from clipboard...")
 				// Capture the active chat now — the paste runs async, and
 				// the user may switch chats before it lands.
 				return m, pasteFromClipboard(m.composer.ChatId())
@@ -710,6 +721,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// We are authorized and the client works — show Connected
 		// directly instead of relying on connection-state event timing.
 		m.statusBar.SetConnected(true)
+		m.topBar.SetConnection(topBarConnState(telegram.ConnectionStateReady))
 		m.setFocus(PanelChatList)
 		m.updateLayout()
 		return m, m.chatList.Init()
@@ -722,12 +734,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Terminal {
 			return m.enterFatalError(clientErrorReason(msg.Err)), nil
 		}
-		m.composer.SetNotice(fmt.Sprintf("⚠ telegram: %v", msg.Err))
+		m.notify(fmt.Sprintf("⚠ telegram: %v", msg.Err))
 
 	case telegram.ClientWarningMsg:
 		// A permanent but non-fatal degradation — the client works, just
 		// with less capability. Worth telling the user once.
-		m.composer.SetNotice(fmt.Sprintf("⚠ %s", msg.Text))
+		m.notify(fmt.Sprintf("⚠ %s", msg.Text))
 
 	case telegram.NewMessageMsg:
 		// Never notify for our own messages — they arrive as updates too
@@ -802,14 +814,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// silently misattach the file, so discard it instead.
 		if m.composer.ChatId() != msg.ChatId {
 			clipboard.Remove(msg.Path)
-			m.composer.SetNotice("⚠ paste discarded — chat changed")
+			m.notify("⚠ paste discarded — chat changed")
 			break
 		}
 		if m.composer.IsEditing() {
 			// Edit mode was entered while the paste was running; the file
 			// can never be sent, so drop it now.
 			clipboard.Remove(msg.Path)
-			m.composer.SetNotice(noticeEditAttach)
+			m.notify(noticeEditAttach)
 			break
 		}
 		m.replaceAttachment(msg.Path, msg.IsImage)
@@ -817,7 +829,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ClipboardPasteFailedMsg:
 		m.pasteInFlight = false
-		m.composer.SetNotice(fmt.Sprintf("⚠ %s", msg.Err))
+		m.notify(fmt.Sprintf("⚠ %s", msg.Err))
 
 	case composer.AttachmentDiscardedMsg:
 		clipboard.Remove(msg.Path)
@@ -831,21 +843,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Attachment != "" {
 			if m.composer.ChatId() == msg.ChatId && m.composer.Attachment() == "" && !m.composer.IsEditing() {
 				m.replaceAttachment(msg.Attachment, msg.AsPhoto)
-				m.composer.SetNotice(fmt.Sprintf("⚠ send failed — attachment restored: %v", msg.Err))
+				m.notify(fmt.Sprintf("⚠ send failed — attachment restored: %v", msg.Err))
 				break
 			}
 			clipboard.Remove(msg.Attachment)
 		}
-		m.composer.SetNotice(fmt.Sprintf("⚠ send failed: %v", msg.Err))
+		m.notify(fmt.Sprintf("⚠ send failed: %v", msg.Err))
 
 	case ErrorMsg:
-		m.composer.SetNotice(fmt.Sprintf("⚠ %v", msg.Err))
+		m.notify(fmt.Sprintf("⚠ %v", msg.Err))
 
 	case composer.AttachRequestedMsg:
 		if m.composer.IsEditing() {
 			// An edit cannot carry media; do not let the dialog recreate
 			// the state the Ctrl+V guard rejects.
-			m.composer.SetNotice(noticeEditAttach)
+			m.notify(noticeEditAttach)
 			break
 		}
 		d := dialog.NewPrompt(m.theme, "attach-file", "Attach File", "Path to file:")
@@ -1018,6 +1030,7 @@ func (m Model) enterFatalError(reason string) Model {
 		m.fatalError = reason
 	}
 	m.statusBar.SetConnected(false)
+	m.topBar.SetConnection(topBarConnState(telegram.ConnectionStateDisconnected))
 	return m
 }
 
@@ -1103,7 +1116,7 @@ func eitherKey(a, b string) string {
 // mouseInLeftPanel reports whether the point is over the left panel
 // (chat list / contacts).
 func (m Model) mouseInLeftPanel(x, y int) bool {
-	if y >= m.layout.ChatListHeight {
+	if m.bodyRow(y) < 0 {
 		return false
 	}
 	if m.layout.SinglePanel {
@@ -1139,9 +1152,12 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, m.chatList.FolderLoadCmd()
 	}
 
-	if y < m.layout.ChatViewHeight {
+	switch row := m.bodyRow(y); {
+	case row < 0:
+		// Chrome row: the top and hint bars are not click targets.
+	case row < m.layout.ThreadHeight:
 		m.setFocus(PanelChatView)
-	} else if y < m.layout.ChatViewHeight+m.layout.ComposerHeight {
+	default:
 		m.setFocus(PanelComposer)
 	}
 	return m, nil
@@ -1168,7 +1184,7 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if y < m.layout.ChatViewHeight {
+	if row := m.bodyRow(y); row >= 0 && row < m.layout.ThreadHeight {
 		if up {
 			m.chatView.ScrollByLines(3)
 		} else {
@@ -1319,20 +1335,25 @@ func (m *Model) setFocus(panel FocusPanel) {
 }
 
 func (m *Model) updateLayout() {
-	l := layout.Compute(m.width, m.height, m.config.UI.ChatListWidth)
+	// The rail is not implemented yet, so it is never requested. When it
+	// lands this becomes the resolved ui.rail preference.
+	l := layout.Compute(m.width, m.height, false)
 	m.layout = l
 	m.auth.SetSize(m.width, m.height)
-	// Inner dimensions (subtract 2 for border)
-	m.chatList.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
-	m.chatView.SetSize(l.ChatViewWidth-2, l.ChatViewHeight-2)
-	m.composer.SetSize(l.ComposerWidth-2, l.ComposerHeight-2)
-	m.contacts.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
+	// Borderless: panels get their whole region. The frame fits each line
+	// to that width, so a panel that overshoots is clipped rather than
+	// shearing the screen — see internal/ui/frame.
+	m.chatList.SetSize(l.ChatListWidth, l.ChatListHeight)
+	m.chatView.SetSize(l.ThreadWidth, l.ThreadHeight)
+	m.composer.SetSize(l.ThreadWidth, l.ComposerHeight)
+	m.contacts.SetSize(l.ChatListWidth, l.ChatListHeight)
 	// The search and help overlays size their own boxes from the full
 	// window dimensions.
 	m.search.SetSize(m.width, m.height)
 	m.help.SetSize(m.width, m.height)
-	m.groupInfo.SetSize(l.ChatListWidth-2, l.ChatListHeight-2)
-	m.statusBar.SetSize(l.StatusBarWidth)
+	m.groupInfo.SetSize(l.ChatListWidth, l.ChatListHeight)
+	m.statusBar.SetSize(m.width)
+	m.refreshChrome()
 }
 
 func (m Model) View() tea.View {
@@ -1463,83 +1484,4 @@ func (m Model) renderFatalError() string {
 		Render(body)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
-
-func (m Model) renderMainScreen() string {
-	// Build left panel with rounded border
-	var leftContent string
-	if m.contacts.IsVisible() {
-		// m.chatList.View() is intentionally skipped here: its dirty flag
-		// just accumulates while contacts is shown and gets cleared the
-		// next time the chat list actually renders. Self-healing, verified
-		// harmless — do not "fix" by rendering it unseen just to clear it.
-		leftContent = m.contacts.View()
-	} else {
-		leftContent = m.chatList.View()
-	}
-
-	leftStyle := m.theme.PanelNormal
-	if m.focus == PanelChatList || m.focus == PanelContacts {
-		leftStyle = m.theme.PanelFocused
-	}
-	leftPanel := leftStyle.
-		Width(m.layout.ChatListWidth - 2).
-		Height(m.layout.ChatListHeight - 2).
-		Render(leftContent)
-
-	// Build chat view with rounded border
-	chatViewStyle := m.theme.PanelNormal
-	if m.focus == PanelChatView {
-		chatViewStyle = m.theme.PanelFocused
-	}
-	chatPanel := chatViewStyle.
-		Width(m.layout.ChatViewWidth - 2).
-		Height(m.layout.ChatViewHeight - 2).
-		Render(m.chatView.View())
-
-	// Build composer with rounded border
-	composerStyle := m.theme.PanelNormal
-	if m.focus == PanelComposer {
-		composerStyle = m.theme.PanelFocused
-	}
-	composerPanel := composerStyle.
-		Width(m.layout.ComposerWidth - 2).
-		Height(m.layout.ComposerHeight - 2).
-		Render(m.composer.View())
-
-	// Right side = chat + composer stacked
-	rightPanel := lipgloss.JoinVertical(lipgloss.Left, chatPanel, composerPanel)
-
-	// Main area = left + right
-	var mainArea string
-	if m.layout.SinglePanel {
-		switch m.focus {
-		case PanelChatList, PanelContacts:
-			mainArea = leftPanel
-		default:
-			mainArea = lipgloss.JoinVertical(lipgloss.Left, chatPanel, composerPanel)
-		}
-	} else {
-		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-	}
-
-	// Status bar
-	statusBar := m.statusBar.View()
-
-	// Keybind help line
-	helpStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
-	focusName := [...]string{"CHATS", "MESSAGES", "COMPOSE", "SEARCH", "CONTACTS", "INFO"}
-	fi := int(m.focus)
-	if fi >= len(focusName) {
-		fi = 0
-	}
-	help := helpStyle.Render(m.helpLine(focusName[fi]))
-
-	// Pad help to full width
-	helpW := cell.MaxWidth(help)
-	if helpW < m.width {
-		help += strings.Repeat(" ", m.width-helpW)
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, mainArea, statusBar, help)
 }
