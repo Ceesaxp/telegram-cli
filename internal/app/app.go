@@ -11,6 +11,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/keys"
 	"github.com/imtaqin/telegram-cli/internal/notification"
+	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
@@ -200,6 +201,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		keys:       resolveKeys(cfg.Keys),
 	}
 	m.chatView.ApplyMedia(cfg.Media)
+	m.chatView.ApplyUI(cfg.UI)
 	m.chatList.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Order matters: the chat view has to know what app.go has already
@@ -231,6 +233,8 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	m.palette.SetItems(m.paletteItems())
 	m.chatList.SetRoles(roles)
 	m.chatView.SetRoles(roles)
+	m.composer.SetRoles(roles)
+	m.composer.SetParseMarkdown(cfg.UI.ParseMarkdown)
 	return m
 }
 
@@ -778,8 +782,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			title = entry.Chat.Title
 		}
 		cmd := m.chatView.OpenChat(msg.ChatId, title)
-		// Switching chats drops the draft, attachment included.
-		clipboard.Remove(m.composer.SetChatId(msg.ChatId))
+		m.switchComposerTo(msg.ChatId)
 		m.setFocus(PanelChatView)
 		cmds = append(cmds, cmd)
 
@@ -796,7 +799,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Jump straight to the matched message rather than the bottom of
 		// the chat.
 		cmd := m.chatView.OpenChatAt(msg.ChatId, title, msg.MessageId)
-		clipboard.Remove(m.composer.SetChatId(msg.ChatId))
+		m.switchComposerTo(msg.ChatId)
 		m.setFocus(PanelChatView)
 		cmds = append(cmds, cmd)
 
@@ -869,6 +872,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		d := dialog.NewPrompt(m.theme, "attach-file", "Attach File", "Path to file:")
 		m.dialog = &d
+
+	case composer.ResizedMsg:
+		// The composer's row count comes out of the thread's budget, so a
+		// reply bar appearing or the expanded form opening is a layout
+		// change, not just a redraw.
+		m.updateLayout()
+		return m, nil
 
 	case chatview.MessageActionMsg:
 		return m.handleMessageAction(msg)
@@ -1305,14 +1315,23 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 		msgs := m.store.Messages.Get(msg.ChatId)
 		preview := ""
 		for _, message := range msgs {
-			if message.ID == msg.MessageId {
-				if text, ok := message.Content.(*telegram.MessageText); ok {
-					preview = text.Text.Text
-				} else {
-					preview = "[Media]"
-				}
-				break
+			if message.ID != msg.MessageId {
+				continue
 			}
+			// Who, then what. The name is the half that identifies the
+			// message when the quote is cut short, which on a narrow pane
+			// is most of the time.
+			who := render.SenderName(message, m.store)
+			if sender, ok := message.SenderID.(*telegram.MessageSenderUser); ok &&
+				m.myUserId != 0 && sender.UserID == m.myUserId {
+				who = "you"
+			}
+			body := "[media]"
+			if text, ok := message.Content.(*telegram.MessageText); ok {
+				body = text.Text.Text
+			}
+			preview = strings.TrimSpace(who + ": " + body)
+			break
 		}
 		m.composer.EnterReplyMode(msg.MessageId, preview)
 		m.setFocus(PanelComposer)
@@ -1349,10 +1368,28 @@ func (m *Model) setFocus(panel FocusPanel) {
 	m.groupInfo.SetFocused(panel == PanelGroupInfo)
 }
 
+// switchComposerTo points the composer at another chat, parking the draft it
+// was holding and restoring that chat's own (decision 13).
+//
+// The three things that have to happen together: the composer swaps drafts,
+// the chat list learns which chats now hold one, and the layout is recomputed
+// because a restored reply bar or attachment chip changes how many rows the
+// composer takes. Doing them in one place is what stops the list advertising
+// a draft the composer has already sent, or the thread overlapping a composer
+// that grew a row.
+func (m *Model) switchComposerTo(chatID int64) {
+	clipboard.Remove(m.composer.SetChatId(chatID))
+	m.chatList.SetDraftChats(m.composer.DraftChats())
+	m.updateLayout()
+}
+
 func (m *Model) updateLayout() {
-	// The rail is not implemented yet, so it is never requested. When it
-	// lands this becomes the resolved ui.rail preference.
-	l := layout.Compute(m.width, m.height, false)
+	// ui.rail is read here, but the rail itself is phase 6: asking for it
+	// today would reserve thirty columns and draw nothing in them. The
+	// preference is honoured the moment there is something to put there.
+	const railImplemented = false
+	l := layout.Compute(m.width, m.height, m.composer.Rows(),
+		railImplemented && m.config != nil && m.config.UI.Rail)
 	m.layout = l
 	m.auth.SetSize(m.width, m.height)
 	// Borderless: panels get their whole region. The frame fits each line

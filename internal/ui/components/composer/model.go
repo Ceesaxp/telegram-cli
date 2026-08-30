@@ -1,11 +1,9 @@
 package composer
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -50,6 +48,29 @@ type Model struct {
 	editing   EditingMode
 	vi        viState
 	viPending rune
+
+	// roles is the TUI 2.0 semantic palette. New installs a default, so a
+	// Model that never has SetRoles called still renders — this component's
+	// own tests construct it directly.
+	roles theme.Roles
+
+	// appMode is what the badge reports, set by the host from its own
+	// resolver. It is display only: nothing in this package reads it to
+	// decide what a key does.
+	appMode AppMode
+
+	// parseMarkdown mirrors ui.parse_markdown. It decides the "md" label
+	// and whether the expanded preview parses or shows the text verbatim.
+	parseMarkdown bool
+
+	// expanded is the eight-row split source-and-preview form, toggled with
+	// ctrl+p.
+	expanded bool
+
+	// drafts holds each other chat's unsent work (decision 13). Held as a
+	// map so the value copies bubbletea makes of this model all share one,
+	// the same reason chatview holds its render cache by pointer.
+	drafts map[int64]draft
 }
 
 // New creates a new composer model.
@@ -68,6 +89,13 @@ func New(th *theme.Theme) Model {
 		textarea: ta,
 		theme:    th,
 		height:   3,
+		// A placeholder width until the first WindowSizeMsg. Every row this
+		// component draws is cut to its width, and cutting to zero would
+		// make a composer that has not been laid out yet render nothing at
+		// all — including the draft somebody has already pasted into it.
+		width:  40,
+		roles:  theme.DarkRoles(false),
+		drafts: make(map[int64]draft),
 	}
 }
 
@@ -91,20 +119,6 @@ func (m *Model) SetSize(width, height int) {
 func (m *Model) SetFocused(focused bool) {
 	m.focused = focused
 	m.textarea.Focused = focused
-}
-
-// SetChatId sets the active chat for the composer. A pending attachment
-// belongs to the chat it was pasted into, so switching chats discards it
-// along with the rest of the draft; the displaced path is returned so the
-// caller can delete the spool file.
-func (m *Model) SetChatId(chatID int64) string {
-	discarded := m.attachment
-	m.chatID = chatID
-	m.Reset()
-	if discarded != "" {
-		m.notice = "⚠ attachment discarded — chat changed"
-	}
-	return discarded
 }
 
 // EnterReplyMode starts replying to a message.
@@ -201,6 +215,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, func() tea.Msg { return PasteRequestedMsg{} }
 	case "ctrl+o":
 		return m, m.editInEditor()
+	case "ctrl+p":
+		// The inline/expanded toggle. Non-destructive by construction: it
+		// changes how the same draft is drawn and touches nothing else, so
+		// there is no state to lose by looking and no reason to hesitate
+		// before pressing it.
+		m.notice = ""
+		m.expanded = !m.expanded
+		return m, func() tea.Msg { return ResizedMsg{} }
 	case "enter":
 		return m.submit()
 	}
@@ -339,64 +361,4 @@ func (m Model) IsComposing() bool {
 // SetNotice shows a transient message on the composer's hint line.
 func (m *Model) SetNotice(notice string) {
 	m.notice = notice
-}
-
-// View renders the composer.
-func (m Model) View() string {
-	var parts []string
-
-	// Reply/edit bar.
-	switch m.mode {
-	case ModeReply:
-		replyBar := m.theme.ComposerReplyBar.
-			Width(m.width).
-			Render(fmt.Sprintf("↩ Reply: %s", truncate(m.replyText, m.width-12)))
-		parts = append(parts, replyBar)
-	case ModeEdit:
-		editBar := m.theme.ComposerReplyBar.
-			Width(m.width).
-			Render("✏ Editing message")
-		parts = append(parts, editBar)
-	}
-
-	// Attachment indicator.
-	if m.attachment != "" {
-		icon := "📎"
-		if m.asPhoto {
-			icon = "🖼"
-		}
-		attBar := m.theme.ComposerHint.Render(fmt.Sprintf("%s %s", icon, m.attachment))
-		parts = append(parts, attBar)
-	}
-
-	// Input area.
-	input := m.textarea.View()
-	parts = append(parts, input)
-
-	// Hint — replaced by a notice (clipboard status, errors) when there is
-	// one. In vi mode the modal state is always shown, notice or not, since
-	// not knowing which mode you are in is what makes modal editing hostile.
-	hintText := m.hint()
-	if m.notice != "" {
-		hintText = m.notice
-		if indicator := m.viIndicator(); indicator != "" {
-			hintText = indicator + " | " + hintText
-		}
-	}
-	hint := m.theme.ComposerHint.Render(hintText)
-	parts = append(parts, hint)
-
-	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	return m.theme.ComposerPane.Width(m.width).Render(content)
-}
-
-func truncate(s string, maxWidth int) string {
-	runes := []rune(s)
-	if len(runes) <= maxWidth {
-		return s
-	}
-	if maxWidth <= 3 {
-		return string(runes[:maxWidth])
-	}
-	return string(runes[:maxWidth-3]) + "..."
 }

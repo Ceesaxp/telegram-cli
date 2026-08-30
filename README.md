@@ -270,6 +270,7 @@ messages, not one — so `Esc` is how you leave it.
 | `Ctrl+T` | Attach a file by path |
 | `Ctrl+V` | Paste a clipboard image |
 | `Ctrl+O` | Edit the draft in `$VISUAL`/`$EDITOR` |
+| `Ctrl+P` | Expand the composer to the split source/preview form, and back |
 
 Almost nothing else is claimed at app level while the composer has focus,
 so neither line-editing keymap below loses a chord. The complete exception

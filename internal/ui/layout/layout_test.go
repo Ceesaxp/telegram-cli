@@ -23,7 +23,7 @@ func TestGoldenFrameGeometry(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			l := Compute(tc.w, tc.h, true)
+			l := Compute(tc.w, tc.h, 1, true)
 
 			if l.ChatListWidth != tc.list {
 				t.Errorf("ChatListWidth = %d, want %d", l.ChatListWidth, tc.list)
@@ -53,7 +53,7 @@ func TestRegionsAlwaysSumToWidth(t *testing.T) {
 	for w := 1; w <= 400; w++ {
 		for _, h := range []int{1, 8, 12, 19, 20, 24, 60} {
 			for _, rail := range []bool{false, true} {
-				l := Compute(w, h, rail)
+				l := Compute(w, h, 1, rail)
 				if got := l.TotalWidth(); got != w {
 					t.Fatalf("Compute(%d, %d, rail=%v): regions sum to %d, want %d "+
 						"(list %d, thread %d, rail %d)",
@@ -70,7 +70,7 @@ func TestRegionsAlwaysSumToWidth(t *testing.T) {
 func TestThreadNeverGoesNegative(t *testing.T) {
 	for w := 1; w <= 400; w++ {
 		for _, rail := range []bool{false, true} {
-			if l := Compute(w, 24, rail); l.ThreadWidth < 0 {
+			if l := Compute(w, 24, 1, rail); l.ThreadWidth < 0 {
 				t.Fatalf("Compute(%d, 24, rail=%v): ThreadWidth = %d", w, rail, l.ThreadWidth)
 			}
 		}
@@ -94,7 +94,7 @@ func TestWidthPrecedence(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			l := Compute(tc.w, 24, true)
+			l := Compute(tc.w, 24, 1, true)
 			if l.SinglePanel {
 				t.Fatal("unexpectedly single-panel")
 			}
@@ -108,7 +108,7 @@ func TestWidthPrecedence(t *testing.T) {
 	}
 
 	// Dropping the rail must hand its cells to the thread, not lose them.
-	wide, narrow := Compute(118, 24, true), Compute(117, 24, true)
+	wide, narrow := Compute(118, 24, 1, true), Compute(117, 24, 1, true)
 	if narrow.ThreadWidth <= wide.ThreadWidth {
 		t.Errorf("thread got %d cells at 117 but %d at 118; dropping the rail "+
 			"must widen the thread", narrow.ThreadWidth, wide.ThreadWidth)
@@ -116,7 +116,7 @@ func TestWidthPrecedence(t *testing.T) {
 }
 
 func TestSinglePanelBelow72(t *testing.T) {
-	l := Compute(71, 24, true)
+	l := Compute(71, 24, 1, true)
 	if !l.SinglePanel {
 		t.Fatal("71 columns should be single-panel")
 	}
@@ -132,14 +132,14 @@ func TestSinglePanelBelow72(t *testing.T) {
 // TestRailPreferenceIsHonoured: width can force the rail off, but never on.
 // A user who turned it off does not get it back by widening the terminal.
 func TestRailPreferenceIsHonoured(t *testing.T) {
-	if l := Compute(200, 60, false); l.RailWidth != 0 {
+	if l := Compute(200, 60, 1, false); l.RailWidth != 0 {
 		t.Errorf("rail shown at 200 columns despite being disabled")
 	}
-	if l := Compute(200, 60, true); l.RailWidth != RailWidth {
+	if l := Compute(200, 60, 1, true); l.RailWidth != RailWidth {
 		t.Errorf("rail hidden at 200 columns despite being enabled")
 	}
 	// Disabled: those cells go to the thread.
-	on, off := Compute(200, 60, true), Compute(200, 60, false)
+	on, off := Compute(200, 60, 1, true), Compute(200, 60, 1, false)
 	if off.ThreadWidth != on.ThreadWidth+RailWidth+RuleWidth {
 		t.Errorf("disabling the rail gave the thread %d cells, want %d",
 			off.ThreadWidth-on.ThreadWidth, RailWidth+RuleWidth)
@@ -165,7 +165,7 @@ func TestHeightPrecedence(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			l := Compute(100, tc.h, true)
+			l := Compute(100, tc.h, 1, true)
 			if l.TopBar != tc.topBar || l.HintBar != tc.hintBar {
 				t.Errorf("chrome = (top %v, hint %v), want (%v, %v)",
 					l.TopBar, l.HintBar, tc.topBar, tc.hintBar)
@@ -185,7 +185,7 @@ func TestHeightPrecedence(t *testing.T) {
 // the accounting has to be exact for any height at all.
 func TestBodyHeightMatchesChromeExactly(t *testing.T) {
 	for h := 1; h <= 120; h++ {
-		l := Compute(100, h, true)
+		l := Compute(100, h, 1, true)
 		chrome := 0
 		if l.TopBar {
 			chrome++

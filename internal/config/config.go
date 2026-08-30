@@ -36,10 +36,18 @@ type StorageConfig struct {
 
 type UIConfig struct {
 	Theme           string `toml:"theme"`
-	ChatListWidth   int    `toml:"chat_list_width"`
-	ShowAvatars     bool   `toml:"show_avatars"`
 	TimestampFormat string `toml:"timestamp_format"`
 	DateFormat      string `toml:"date_format"`
+
+	// InlineImages governs when a photo is drawn as art rather than as a
+	// metadata card: [InlineImagesNever], [InlineImagesOnOpen] (the
+	// default), or [InlineImagesAlways].
+	InlineImages string `toml:"inline_images"`
+
+	// Rail shows the right-hand context rail — pinned message, members,
+	// shared files — on a terminal wide enough for it. Off by default: it
+	// costs 30 columns, and they come out of the thread.
+	Rail bool `toml:"rail"`
 	// ComposeEditing selects the composer's line-editing keymap:
 	// [ComposeEditingEmacs], [ComposeEditingVi], or [ComposeEditingAuto]
 	// (the default) to infer it from $VISUAL/$EDITOR. Resolve it with
@@ -69,6 +77,34 @@ const (
 	DefaultSessionFile = "~/.local/share/tele-tui/session.json"
 	DefaultFilesDir    = "~/.local/share/tele-tui/files"
 )
+
+// Inline-image policies for [UIConfig.InlineImages].
+const (
+	// InlineImagesNever always shows the metadata card. The right answer
+	// over a slow link, and on a terminal whose image support is a guess.
+	InlineImagesNever = "never"
+	// InlineImagesOnOpen draws art for photos whose thumbnail is already
+	// downloaded and a card for the rest. The default.
+	InlineImagesOnOpen = "on_open"
+	// InlineImagesAlways fetches and draws every photo in view.
+	InlineImagesAlways = "always"
+)
+
+// ResolveInlineImages normalises [UIConfig.InlineImages], falling back to
+// the default for an empty or unrecognised value.
+//
+// Unrecognised falls back rather than failing: a typo in this field should
+// cost the user the setting, not the client.
+func ResolveInlineImages(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case InlineImagesNever:
+		return InlineImagesNever
+	case InlineImagesAlways:
+		return InlineImagesAlways
+	default:
+		return InlineImagesOnOpen
+	}
+}
 
 // Line-editing keymaps for [UIConfig.ComposeEditing].
 const (
@@ -368,10 +404,10 @@ func defaultConfig() *Config {
 		UI: UIConfig{
 			ComposeEditing:  ComposeEditingAuto,
 			Theme:           "dark",
-			ChatListWidth:   30,
-			ShowAvatars:     true,
 			TimestampFormat: "15:04",
 			DateFormat:      "2006-01-02",
+			InlineImages:    InlineImagesOnOpen,
+			Rail:            false,
 			ParseMarkdown:   false,
 		},
 		Media: MediaConfig{

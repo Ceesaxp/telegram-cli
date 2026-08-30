@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/frame"
@@ -127,6 +128,30 @@ func (m *Model) refreshChrome() {
 	m.hintBar.SetWidth(m.width)
 	m.hintBar.SetHints(m.hintsForMode())
 	m.hintBar.SetRight(m.hintBarCounters())
+
+	// The badge and the hint bar read the same resolver, in the same place,
+	// on the same tick. Decision 3 requires the badge to describe key
+	// routing rather than alter it, and two surfaces describing it from one
+	// call is what makes disagreeing between them impossible.
+	m.composer.SetMode(composerMode(m.Mode()))
+}
+
+// composerMode projects the app's interaction mode onto the composer's own
+// badge enum.
+//
+// Two enums rather than a shared type: the app imports the composer and not
+// the other way round, and a third package existing to hold three constants
+// would cost more than this switch. TestComposerModeIsExhaustive walks every
+// InteractionMode so a fourth one cannot land here as a silent NORMAL.
+func composerMode(mode InteractionMode) composer.AppMode {
+	switch mode {
+	case ModeInsert:
+		return composer.AppInsert
+	case ModeCommand:
+		return composer.AppCommand
+	default:
+		return composer.AppNormal
+	}
 }
 
 // topBarFolders projects the chat list's folder model into the top bar's

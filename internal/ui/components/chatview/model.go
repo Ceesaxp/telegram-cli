@@ -302,6 +302,13 @@ func (m *Model) SetRoles(r theme.Roles) {
 	m.cache.clear()
 }
 
+// ApplyUI applies the [ui] settings the renderer needs. Today that is the
+// inline-image policy; the rail preference is the host's own business.
+func (m *Model) ApplyUI(cfg config.UIConfig) {
+	m.renderer.SetInlineImages(cfg.InlineImages)
+	m.cache.clear()
+}
+
 // ApplyMedia applies [media] config: image protocol and bubble size,
 // external players, and photo auto-download. Voice notes download on
 // play regardless of AutoDownloadVoice; they are not eagerly prefetched.

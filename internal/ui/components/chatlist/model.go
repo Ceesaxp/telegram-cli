@@ -28,6 +28,10 @@ type Model struct {
 	theme *theme.Theme
 	roles theme.Roles
 
+	// draftChats is the set of chats with unsent work parked in the
+	// composer, projected in by the host. Read-only here.
+	draftChats map[int64]bool
+
 	// myUserID identifies Saved Messages: Telegram models it as the chat
 	// with yourself, so it is only distinguishable from an ordinary DM by
 	// comparing IDs. Zero until the app learns who we are, which just means
@@ -170,6 +174,14 @@ type chatsLoadedMsg struct {
 }
 
 // SetSize sets the component dimensions.
+// SetDraftChats tells the list which chats hold unsent work, so their
+// preview row can say so. The composer owns the drafts; this is a projection
+// of them, refreshed by the host whenever they change.
+func (m *Model) SetDraftChats(ids map[int64]bool) {
+	m.draftChats = ids
+	*m.dirty = true
+}
+
 // SetRoles supplies the TUI 2.0 semantic palette used by the row renderer.
 // The old *theme.Theme stays for the widgets this component still borrows.
 func (m *Model) SetMyUserID(id int64) {
@@ -836,6 +848,13 @@ func (m *Model) refreshList() {
 		if entry.LastMessage != nil {
 			preview = messagePreview(entry.LastMessage)
 			meta = render.FormatTimestampSmart(entry.LastMessage.Date)
+		}
+		// A parked draft outranks the last message in the preview row
+		// (decision 13). What somebody else said is still in the chat when
+		// you open it; that you left something half-written in there is a
+		// thing you would otherwise have to remember on your own.
+		if m.draftChats[entry.Chat.ID] {
+			preview = "draft: saved locally"
 		}
 
 		badge := ""

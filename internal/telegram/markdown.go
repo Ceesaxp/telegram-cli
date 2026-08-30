@@ -365,6 +365,18 @@ func (p *mdParser) addEntity(e tg.MessageEntityClass, offset, length int32) {
 	p.entities = append(p.entities, e)
 }
 
+// PreviewMarkdown parses the outgoing markdown subset and returns the
+// FormattedText that would go on the wire.
+//
+// It is the same parseMarkdown the send path uses, converted through the same
+// entity mapping — so a composer preview built on it cannot drift from what
+// is actually sent. A preview with its own parser is a preview that is right
+// until the day it is not.
+func PreviewMarkdown(text string) *FormattedText {
+	plain, entities := parseMarkdown(text)
+	return formattedTextFromTG(plain, entities)
+}
+
 // markdownEnabled reports whether outgoing markdown parsing is on. It is
 // OFF by default and opted into via config (or the -migrate-config flag);
 // a Client without config (tests) parses nothing.

@@ -108,6 +108,18 @@ func splitBlocks(ft *telegram.FormattedText) []block {
 	return out
 }
 
+// RenderText lays formatted text out as body lines, exactly as a message
+// body is drawn: blocks split out, entities styled, everything wrapped to
+// width with each line closing its own styles.
+//
+// It is exported for the composer's preview, which has to be drawn by the
+// same code that draws received messages. A preview rendered by a second
+// implementation is a preview that can disagree with what arrives, and being
+// trusted is the entire purpose of it.
+func RenderText(ft *telegram.FormattedText, roles theme.Roles, width int) []string {
+	return renderBlocks(ft, roles, width, false)
+}
+
 // renderBlocks lays a message's text out as body lines.
 func renderBlocks(ft *telegram.FormattedText, roles theme.Roles, width int, reveal bool) []string {
 	if ft == nil || ft.Text == "" || width < 1 {
