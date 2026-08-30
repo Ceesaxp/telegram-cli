@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
+	"github.com/imtaqin/telegram-cli/internal/ui/sigil"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -52,56 +54,64 @@ const (
 	searchResultLimit = 20
 )
 
-// bubbleEntry is one cached rendered message bubble together with the
-// inputs it was rendered from. RenderMessage is deterministic for a given
-// (message, isOwn, width) with two exceptions, both covered here:
+// gridEntry is one message's rendered grid lines together with the inputs
+// they were rendered from. Rendering is deterministic for a given message
+// at a given width, with the exceptions listed here — each is compared on
+// lookup so a stale entry is re-rendered rather than silently reused:
 //
-//   - the footer timestamp comes from render.FormatTimestamp, which is
-//     *now*-dependent at day granularity ("15:04" today, "Yesterday 15:04",
-//     "Mon 15:04", "Jan 02", "2006-01-02"). The formatted stamp is stored
-//     alongside the bubble and compared on lookup, so a bubble rendered
-//     before midnight is re-rendered the first time it is looked up after
-//     the label changes. There is no sub-day ("2m ago") component in the
-//     bubble footer, so no per-frame churn.
-//   - the sender name (store.Users) and photo art (store.Files) can change
-//     as async fetches land. Those are handled by explicit invalidation
-//     from Update, not by re-checking on every lookup.
-type bubbleEntry struct {
+//   - the day divider label is *now*-dependent ("TODAY" becomes
+//     "YESTERDAY" at midnight), and which message carries a divider
+//     depends on the message before it, so both the label and the previous
+//     message's date are part of the key.
+//   - an outgoing message's delivery mark changes when the chat's
+//     last-read-outbox marker moves.
+//   - the sender name (store.Users) and photo art (store.Files) change as
+//     async fetches land. Those are handled by explicit invalidation from
+//     Update, not by re-checking on every lookup.
+//
+// Selection is deliberately NOT part of the key: entries are always the
+// unselected rendering, and View re-renders the one selected message on top
+// of them. Caching per selection state would double the cache and, worse,
+// make the line index depend on where the cursor is — and the line index is
+// what every scroll, jump and hit-test in this package is built on.
+type gridEntry struct {
 	width    int
 	isOwn    bool
-	stamp    string
-	rendered string
-	lines    int
+	dayLabel string
+	prevDate int32
+	unread   bool
+	state    sendState
+	lines    []string
 }
 
-// bubbleCache maps message ID -> rendered bubble. It is held by pointer in
+// gridCache maps message ID -> rendered grid lines. It is held by pointer in
 // Model so that the value copies bubbletea makes of the model (Update has a
 // value receiver) all share one cache.
-type bubbleCache struct {
-	entries map[int64]bubbleEntry
+type gridCache struct {
+	entries map[int64]gridEntry
 }
 
-func newBubbleCache() *bubbleCache {
-	return &bubbleCache{entries: make(map[int64]bubbleEntry)}
+func newGridCache() *gridCache {
+	return &gridCache{entries: make(map[int64]gridEntry)}
 }
 
-func (c *bubbleCache) get(id int64) (bubbleEntry, bool) {
+func (c *gridCache) get(id int64) (gridEntry, bool) {
 	if c == nil {
-		return bubbleEntry{}, false
+		return gridEntry{}, false
 	}
 	e, ok := c.entries[id]
 	return e, ok
 }
 
-func (c *bubbleCache) put(id int64, e bubbleEntry) {
+func (c *gridCache) put(id int64, e gridEntry) {
 	if c == nil {
 		return
 	}
 	c.entries[id] = e
 }
 
-// invalidate drops the cached bubbles of the given message IDs.
-func (c *bubbleCache) invalidate(ids ...int64) {
+// invalidate drops the cached lines of the given message IDs.
+func (c *gridCache) invalidate(ids ...int64) {
 	if c == nil {
 		return
 	}
@@ -112,14 +122,14 @@ func (c *bubbleCache) invalidate(ids ...int64) {
 
 // clear empties the cache in place (in place, so every value copy of the
 // model observes it).
-func (c *bubbleCache) clear() {
+func (c *gridCache) clear() {
 	if c == nil {
 		return
 	}
 	clear(c.entries)
 }
 
-func (c *bubbleCache) len() int {
+func (c *gridCache) len() int {
 	if c == nil {
 		return 0
 	}
@@ -131,7 +141,7 @@ type Model struct {
 	tg       *telegram.Client
 	theme    *theme.Theme
 	renderer *render.MessageRenderer
-	cache    *bubbleCache
+	cache    *gridCache
 
 	voice *media.VoicePlayer
 	video *media.VideoPlayer
@@ -148,11 +158,58 @@ type Model struct {
 	chatID       int64
 	chatTitle    string
 	scrollOffset int
-	loading      bool
-	loadStatus   string // honest stage label, e.g. "Loading messages..."
-	notice       string // transient notice shown in the header
-	myUserId     int64
-	mediaStatus  string
+
+	// cursorID is the message the action keys (reply, edit, delete,
+	// enter/o, s) act on, held as an identity rather than recomputed from
+	// the scroll position on every read.
+	//
+	// It used to be derived: "the message containing the last visible
+	// line". That is a position, and positions move on their own here —
+	// a photo thumbnail landing turns a one-line placeholder into twenty
+	// lines of art, and the message under the old rule silently changed
+	// between the user reading the screen and pressing r. An identity
+	// cannot drift that way.
+	//
+	// The cursor is not free-moving: there is no message-wise motion key
+	// in TUI 2.0 (j/k scroll lines, as they always have), so it is
+	// anchored back into the visible window by syncCursor whenever the
+	// viewport moves. What it buys is stickiness — while the message
+	// stays on screen, the target stays that message no matter what
+	// re-renders around it.
+	//
+	// Zero means "not anchored yet"; the next read or sync adopts the
+	// newest visible message.
+	cursorID int64
+
+	// roles is the TUI 2.0 semantic palette the grid draws with. New
+	// installs a default so a Model that never has SetRoles called still
+	// renders — this panel's own tests construct it directly, and a
+	// component whose output depends on the host remembering a setter is
+	// a component with two behaviours.
+	roles theme.Roles
+
+	// unreadFromID is the first message that was unread when the chat
+	// opened, and unreadCount how many there were. The divider is drawn
+	// from these rather than from the live marker so that it STAYS where
+	// the reader found it while they read past it — a divider that
+	// retreats as you read never tells you where you were.
+	// unreadAfterID is the last-read-inbox marker as it stood at open
+	// time; unreadFromID is the first loaded message past it, resolved
+	// once history arrives.
+	unreadAfterID int64
+	unreadFromID  int64
+	unreadCount   int
+
+	// typing is the set of user IDs currently composing in the open chat.
+	// The thread owns this because TUI 2.0 draws the indicator as the
+	// bottom row of the scroller, aligned with the message grid, rather
+	// than as a line in a status bar.
+	typing      []int64
+	loading     bool
+	loadStatus  string // honest stage label, e.g. "Loading messages..."
+	notice      string // transient notice shown in the header
+	myUserId    int64
+	mediaStatus string
 
 	// metaBusy is the trailing meta pipeline (sender names, photo
 	// thumbnails). It runs *after* first paint and must never take a
@@ -218,12 +275,23 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		tg:                 tg,
 		theme:              th,
 		renderer:           render.NewMessageRenderer(th),
-		cache:              newBubbleCache(),
+		cache:              newGridCache(),
 		searchInput:        input,
 		autoDownloadPhotos: true,
 	}
+	// A default palette, not a zero one: see the roles field. 256-colour
+	// is the safe assumption when nobody has told us otherwise.
+	m.roles = theme.DarkRoles(false)
 	m.SetKeys(Keys{})
 	return m
+}
+
+// SetRoles supplies the TUI 2.0 semantic palette used by the thread grid.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	// Every cached line carries its colours baked in, so a palette change
+	// invalidates all of them.
+	m.cache.clear()
 }
 
 // ApplyMedia applies [media] config: image protocol and bubble size,
@@ -542,66 +610,99 @@ func (m Model) bodyHeight() int {
 	return h
 }
 
-// bubble returns the rendered bubble for a message and the number of
-// terminal lines it occupies, rendering only on a cache miss or when the
-// cached entry is stale (different width, own-ness, or timestamp label).
+// resolveUnreadDivider finds the first loaded message past the open-time
+// read marker and pins the divider there.
+//
+// It runs on every page load rather than once, because the first page of a
+// chat with a long unread run does not necessarily contain the boundary:
+// the divider appears as soon as paging backwards reaches it, and never
+// moves afterwards.
+//
+// Own messages cannot start the unread run — you have read what you sent —
+// so the marker walks past them.
+func (m *Model) resolveUnreadDivider() {
+	if m.unreadAfterID == 0 || m.unreadFromID != 0 {
+		return
+	}
+	for _, msg := range m.store.Messages.Get(m.chatID) {
+		if msg.ID > m.unreadAfterID && !isOwnMessage(msg, m.myUserId) {
+			m.unreadFromID = msg.ID
+			return
+		}
+	}
+}
+
+// gridBlock returns a message's rendered grid lines, drawing them only on a
+// cache miss or when the cached entry is stale.
+//
+// prev is the message before it in the history, which is what decides
+// whether this one carries a day divider — dividers belong to the message
+// under them rather than being separate history entries, so the scroll
+// index stays exactly one count per message.
 //
 // Messages with ID 0 are unconfirmed outgoing sends: they are never cached
-// because their ID is not yet unique and their footer shows a pending mark
-// that flips once the server assigns the real ID.
-func (m Model) bubble(msg *telegram.Message) (string, int) {
+// because their ID is not yet unique and their delivery mark flips once the
+// server assigns the real one.
+func (m Model) gridBlock(msg, prev *telegram.Message) []string {
 	if msg == nil {
-		return "", 0
+		return nil
 	}
 	isOwn := isOwnMessage(msg, m.myUserId)
-	stamp := render.FormatTimestamp(msg.Date)
+	dayLabel := render.FormatDayLabel(msg.Date)
+	state := m.sendStateFor(msg)
+	unread := m.unreadFromID != 0 && msg.ID == m.unreadFromID
+	prevDate := int32(0)
+	if prev != nil {
+		prevDate = prev.Date
+	}
 
 	if msg.ID != 0 {
-		if e, ok := m.cache.get(msg.ID); ok && e.width == m.width && e.isOwn == isOwn && e.stamp == stamp {
-			return e.rendered, e.lines
+		if e, ok := m.cache.get(msg.ID); ok &&
+			e.width == m.width && e.isOwn == isOwn && e.dayLabel == dayLabel &&
+			e.prevDate == prevDate && e.unread == unread && e.state == state {
+			return e.lines
 		}
 	}
 
-	rendered := m.renderer.RenderMessage(msg, m.store, isOwn, false, m.width)
-	lines := strings.Count(rendered, "\n") + 1
+	lines := m.gridMessageLines(msg, prev, false)
 	if msg.ID != 0 {
-		m.cache.put(msg.ID, bubbleEntry{
+		m.cache.put(msg.ID, gridEntry{
 			width:    m.width,
 			isOwn:    isOwn,
-			stamp:    stamp,
-			rendered: rendered,
+			dayLabel: dayLabel,
+			prevDate: prevDate,
+			unread:   unread,
+			state:    state,
 			lines:    lines,
 		})
 	}
-	return rendered, lines
+	return lines
 }
 
-// renderedBubbles returns every message's cached bubble plus its line
-// count, in store order (oldest first).
-func (m Model) renderedBubbles(msgs []*telegram.Message) ([]string, []int) {
-	bubbles := make([]string, len(msgs))
+// renderedMessages returns every message's grid lines plus its line count,
+// in store order (oldest first).
+func (m Model) renderedMessages(msgs []*telegram.Message) ([][]string, []int) {
+	blocks := make([][]string, len(msgs))
 	counts := make([]int, len(msgs))
+	var prev *telegram.Message
 	for i, msg := range msgs {
-		bubbles[i], counts[i] = m.bubble(msg)
+		blocks[i] = m.gridBlock(msg, prev)
+		counts[i] = len(blocks[i])
+		prev = msg
 	}
-	return bubbles, counts
+	return blocks, counts
 }
 
-// lineCounts is renderedBubbles when only the line index is needed. It
-// serves every hit from the cache once the bubbles have been drawn, so
+// lineCounts is renderedMessages when only the line index is needed. It
+// serves every hit from the cache once the messages have been drawn, so
 // scrolling no longer re-renders the history on each keypress.
 func (m Model) lineCounts() []int {
-	msgs := m.store.Messages.Get(m.chatID)
-	counts := make([]int, len(msgs))
-	for i, msg := range msgs {
-		_, counts[i] = m.bubble(msg)
-	}
+	_, counts := m.renderedMessages(m.store.Messages.Get(m.chatID))
 	return counts
 }
 
 // totalRenderedLines sums per-message line counts, i.e. the total number
-// of lines View() draws for the whole loaded history (bubbles are joined
-// with a single "\n", so the total is the exact sum).
+// of lines View() draws for the whole loaded history.
 func totalRenderedLines(counts []int) int {
 	total := 0
 	for _, c := range counts {
@@ -687,6 +788,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.chatID = chatID
 	m.chatTitle = title
 	m.scrollOffset = 0
+	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
 	m.loading = true
 	m.loadStatus = "Loading messages..."
 	m.mediaStatus = ""
@@ -697,8 +799,23 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.pendingMeta = nil
 	m.pendingReadID = 0
 	m.metaBusy = false
+	m.typing = nil
 	m.clearSearch()
 	m.cache.clear()
+
+	// Snapshot where the unread run starts, once, here. The live marker
+	// moves as read receipts are sent; this one must not, or the divider
+	// walks down the screen ahead of the reader and they never see the
+	// boundary they opened the chat to find. It is resolved to a message
+	// ID by historyLoadedMsg, once there is history to resolve it against.
+	m.unreadFromID = 0
+	m.unreadCount = 0
+	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
+		m.unreadCount = int(entry.UnreadCount)
+		m.unreadAfterID = entry.Chat.LastReadInboxMessageID
+	} else {
+		m.unreadAfterID = 0
+	}
 
 	gen, tg := m.gen, m.tg
 	return tea.Batch(
@@ -1175,6 +1292,10 @@ func (m *Model) scrollToMessage(id int64) bool {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
+	// A jump is the one movement that says which message it is about, so
+	// it sets the cursor outright: land on a search hit and r replies to
+	// the hit, not to whatever happens to sit at the edge of the window.
+	m.cursorID = id
 	return true
 }
 
@@ -1195,13 +1316,15 @@ func (m *Model) settleJump() {
 // scrollOffset stays past the end and View draws a blank body until the
 // next scroll keypress.
 func (m *Model) clampScroll() {
-	if m.scrollOffset < 0 {
+	switch {
+	case m.scrollOffset < 0:
 		m.scrollOffset = 0
-		return
+	default:
+		if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
+			m.scrollOffset = maxOffset
+		}
 	}
-	if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
-		m.scrollOffset = maxOffset
-	}
+	m.syncCursor()
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -1236,6 +1359,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.store.Messages.Prepend(m.chatID, reversed)
 		m.pendingMeta = append(m.pendingMeta, reversed...)
+		m.resolveUnreadDivider()
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1333,6 +1457,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				tg.ViewMessages(chatID, []int64{msgID})
 				return nil
 			}
+		}
+
+	case telegram.ChatActionMsg:
+		// The typing indicator is a row of the thread grid in TUI 2.0, so
+		// the thread is what tracks who is typing. Actions for other chats
+		// are dropped rather than accumulated: nothing shows them, and a
+		// map keyed by chat would grow for the life of the session.
+		if msg.ChatId == m.chatID && msg.UserId != 0 {
+			m.typing = applyChatAction(m.typing, msg)
 		}
 
 	case tea.FocusMsg:
@@ -1525,8 +1658,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	// Any key that moved the viewport may have brought photos whose
-	// thumbnails were skipped by the open-time prefetch cap into view.
+	// thumbnails were skipped by the open-time prefetch cap into view,
+	// and may have carried the cursor off the visible window.
 	if isScroll {
+		m.syncCursor()
 		cmd := m.lazyPhotoCmd()
 		return m, cmd
 	}
@@ -1554,6 +1689,7 @@ func (m *Model) clampScrollUp() tea.Cmd {
 	}
 	// At the top of what is loaded: pull in an older page.
 	m.scrollOffset = maxOffset
+	m.syncCursor()
 	oldest := m.store.Messages.OldestMessageId(m.chatID)
 	if oldest != 0 && !m.loading && m.tg != nil {
 		m.loading = true
@@ -1563,36 +1699,135 @@ func (m *Model) clampScrollUp() tea.Cmd {
 	return nil
 }
 
-// getTargetMessage returns the message the scroll position is currently
-// "on" — used by the r/e/d/enter/o/s action keys. View() shows lines
-// [total-bodyH-scrollOffset : total-scrollOffset) of the full rendered
-// history (oldest message first), so scrollOffset counts rendered lines up
-// from the bottom (newest) message. Walk messages newest-to-oldest,
-// consuming each one's rendered line count, until scrollOffset is used up —
-// that message is the target. Line counts come from the bubble cache, so
-// this costs no extra rendering.
-func (m Model) getTargetMessage() *telegram.Message {
+// visibleMessages returns the index range [first, last] of the messages
+// that have at least one line inside the body window, and whether any do.
+//
+// View() shows lines [total-bodyH-scrollOffset : total-scrollOffset) of the
+// full rendered history (oldest message first), so scrollOffset counts
+// rendered lines up from the bottom (newest) message. Line counts come from
+// the render cache, so this costs no extra rendering.
+func (m Model) visibleMessages() (first, last int, ok bool) {
+	msgs := m.store.Messages.Get(m.chatID)
+	if len(msgs) == 0 {
+		return 0, 0, false
+	}
+
+	counts := m.lineCounts()
+	total := totalRenderedLines(counts)
+	end := total - m.scrollOffset
+	if end > total {
+		end = total
+	}
+	start := end - m.bodyHeight()
+	if start < 0 {
+		start = 0
+	}
+	if end <= start {
+		// Scrolled past the top of the history: the window shows the
+		// oldest message and nothing else can be acted on.
+		return 0, 0, true
+	}
+
+	first, last, found := 0, 0, false
+	pos := 0
+	for i, c := range counts {
+		if pos < end && pos+c > start {
+			if !found {
+				first, found = i, true
+			}
+			last = i
+		}
+		pos += c
+	}
+	if !found {
+		return 0, 0, true
+	}
+	return first, last, true
+}
+
+// cursorMessage resolves cursorID against the loaded history, falling back
+// to the newest visible message when the cursor has not been anchored yet
+// or its message is gone (deleted, or dropped by a chat switch).
+//
+// Reads never mutate — syncCursor owns the anchoring — so a value copy of
+// the model cannot silently disagree with the one Update is holding.
+func (m Model) cursorMessage() *telegram.Message {
 	msgs := m.store.Messages.Get(m.chatID)
 	if len(msgs) == 0 {
 		return nil
 	}
+	// Tail mode is resolved here as well as in syncCursor, so a message
+	// arriving between two keypresses cannot leave a stale identity
+	// behind: at the bottom of the history the cursor IS the newest
+	// message, with nothing stored to go out of date.
 	if m.scrollOffset <= 0 {
 		return msgs[len(msgs)-1]
 	}
-
-	counts := m.lineCounts()
-	remaining := m.scrollOffset
-	for i := len(msgs) - 1; i >= 0; i-- {
-		remaining -= counts[i]
-		if remaining < 0 {
-			return msgs[i]
+	if m.cursorID != 0 {
+		for _, msg := range msgs {
+			if msg.ID == m.cursorID {
+				return msg
+			}
 		}
 	}
-	return msgs[0]
+	_, last, ok := m.visibleMessages()
+	if !ok {
+		return nil
+	}
+	return msgs[last]
+}
+
+// syncCursor anchors the cursor back into the visible window: it is left
+// alone while its message is on screen, and clamped to the nearest visible
+// message when a scroll has carried it off.
+//
+// Clamping to the *nearest* end rather than to a fixed one is what makes
+// the two directions feel the same: scrolling towards older messages leaves
+// the cursor riding the bottom of the window, scrolling back towards newer
+// leaves it riding the top, and in both cases it is the message the reader
+// last had their eye on.
+//
+// Pinned to the bottom (scrollOffset 0) the cursor is simply the newest
+// message, and it follows each arrival. Stickiness there would be a bug,
+// not a feature: sitting in a live chat, r has to reply to the message that
+// just came in, not to whichever one the cursor was resting on when the
+// conversation moved. Scrolling up leaves tail mode, and from that point
+// the cursor holds its message.
+func (m *Model) syncCursor() {
+	msgs := m.store.Messages.Get(m.chatID)
+	if len(msgs) == 0 {
+		m.cursorID = 0
+		return
+	}
+	if m.scrollOffset <= 0 {
+		m.cursorID = msgs[len(msgs)-1].ID
+		return
+	}
+	first, last, ok := m.visibleMessages()
+	if !ok {
+		m.cursorID = 0
+		return
+	}
+
+	if m.cursorID != 0 {
+		for i, msg := range msgs {
+			if msg.ID != m.cursorID {
+				continue
+			}
+			switch {
+			case i < first:
+				m.cursorID = msgs[first].ID
+			case i > last:
+				m.cursorID = msgs[last].ID
+			}
+			return
+		}
+	}
+	m.cursorID = msgs[last].ID
 }
 
 func (m Model) messageAction(action string) tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil {
 		return nil
 	}
@@ -1606,7 +1841,7 @@ func (m Model) messageAction(action string) tea.Cmd {
 
 // playMedia downloads and plays the media in the target message.
 func (m Model) playMedia() tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil || msg.Content == nil {
 		return nil
 	}
@@ -1676,7 +1911,7 @@ func bestPhotoSizeFile(photo *telegram.Photo) *telegram.File {
 
 // downloadFile saves the file from the target message.
 func (m Model) downloadFile() tea.Cmd {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil || msg.Content == nil {
 		return nil
 	}
@@ -1869,7 +2104,28 @@ func (m Model) View() string {
 		return header + "\n" + body
 	}
 
-	bubbles, counts := m.renderedBubbles(messages)
+	blocks, counts := m.renderedMessages(messages)
+
+	// The cursor is resolved AFTER the line index, and the selected block
+	// is re-rendered on top of it rather than being cached in its selected
+	// form. Selection changes colour, never height — so the index, and
+	// every scroll and jump built on it, stays independent of where the
+	// cursor happens to be. cursorMessage reads that same index, which is
+	// why the order here matters rather than being a style choice.
+	if cursor := m.cursorMessage(); cursor != nil {
+		for i, msg := range messages {
+			if msg != cursor {
+				continue
+			}
+			var prev *telegram.Message
+			if i > 0 {
+				prev = messages[i-1]
+			}
+			blocks[i] = m.gridMessageLines(msg, prev, true)
+			break
+		}
+	}
+
 	total := totalRenderedLines(counts)
 
 	end := total - m.scrollOffset
@@ -1884,9 +2140,17 @@ func (m Model) View() string {
 		start = 0
 	}
 
-	visible := sliceLines(bubbles, counts, start, end)
+	visible := sliceLines(blocks, counts, start, end)
+	if typing := m.gridTypingRow(); typing != "" {
+		visible = append(visible, typing)
+	}
+	// Pad the top with full-width blanks rather than empty strings: every
+	// row this panel emits is exactly the pane width, so a caller can
+	// overlay or background it without discovering that some rows are
+	// shorter than others.
+	blank := strings.Repeat(" ", max(m.width, 0))
 	for len(visible) < bodyH {
-		visible = append([]string{""}, visible...)
+		visible = append([]string{blank}, visible...)
 	}
 	if len(visible) > bodyH {
 		visible = visible[len(visible)-bodyH:]
@@ -1899,17 +2163,17 @@ func (m Model) View() string {
 	return header + "\n" + body
 }
 
-// sliceLines returns lines [start, end) of the history that bubbles/counts
-// describe, splitting only the bubbles that actually intersect the window
-// (counts is the exact per-bubble line index, so the rest are skipped by
+// sliceLines returns lines [start, end) of the history that blocks/counts
+// describe, cutting only the blocks that actually intersect the window
+// (counts is the exact per-message line index, so the rest are skipped by
 // arithmetic alone).
-func sliceLines(bubbles []string, counts []int, start, end int) []string {
+func sliceLines(blocks [][]string, counts []int, start, end int) []string {
 	if start >= end {
 		return nil
 	}
 	var out []string
 	pos := 0
-	for i, bubble := range bubbles {
+	for i, lines := range blocks {
 		n := counts[i]
 		if pos+n <= start {
 			pos += n
@@ -1918,7 +2182,6 @@ func sliceLines(bubbles []string, counts []int, start, end int) []string {
 		if pos >= end {
 			break
 		}
-		lines := strings.Split(bubble, "\n")
 		lo, hi := 0, n
 		if start > pos {
 			lo = start - pos
@@ -1940,41 +2203,113 @@ func sliceLines(bubbles []string, counts []int, start, end int) []string {
 	return out
 }
 
-// renderHeader draws the one-line chat header: title, plus whatever
-// transient context is worth a few columns. It is hard-truncated to the
-// panel width — lipgloss would otherwise WRAP a long title (or a long
-// notice) onto a second row and push the body one line off the bottom.
+// renderHeader draws the one-line thread header (docs/tui-2.0.md, "Thread
+// grid"): sigil, bright title, ghost separator, dim subtitle on the left;
+// the scroll position on the right.
+//
+// The right group is measured and claimed FIRST, and only the subtitle is
+// elided. That order is the whole design of the row: "where am I in this
+// history" is fixed-width and always true, while the subtitle is the part a
+// reader can lose without losing their place. Budgeting the left side first
+// would drop the position off a narrow pane, which is exactly the cell you
+// cannot do without.
+//
+// Everything is cut by CELLS, not runes: a CJK title is one rune and two
+// cells, and a rune-count cut overflows, at which point lipgloss WRAPS the
+// header onto a second row and pushes the body off the bottom.
 func (m Model) renderHeader() string {
-	text := "  " + m.chatTitle
+	r := m.roles
+
+	mark, markColour := "@", r.Blue
+	kind := ""
+	if entry, ok := m.store.Chats.Get(m.chatID); ok && entry.Chat != nil {
+		// Saved Messages is the chat whose ID is your own user ID —
+		// Telegram models it as a private chat with yourself.
+		saved := m.myUserId != 0 && entry.Chat.ID == m.myUserId
+		mark, markColour = sigil.For(entry.Chat.Type, saved, r)
+		kind = sigil.Kind(entry.Chat.Type, saved)
+	}
+
+	// The right group: line position, and the meta glyph when names and
+	// thumbnails are still filling in. The glyph is deliberately tiny —
+	// the messages are already readable, it only says more is coming.
+	right := m.headerPosition()
 	if m.metaBusy {
-		// Deliberately tiny: the messages are readable already, this only
-		// says that names/thumbnails are still filling in.
-		text += " ⟳"
+		right += " ⟳"
 	}
-	if m.mediaStatus != "" {
-		text += "  │  " + m.mediaStatus
+	right = " " + right + " "
+	rightW := cell.Width(right)
+
+	// The subtitle carries whatever is most worth knowing about this
+	// thread right now. A transient — a media status, a search position, a
+	// media affordance — outranks the standing description, because the
+	// standing description is still true a second later and the transient
+	// is the thing that just changed.
+	subtitle := kind
+	switch {
+	case m.mediaStatus != "":
+		subtitle = m.mediaStatus
+	case m.notice != "":
+		subtitle = m.notice
+	case m.mediaHint() != "":
+		subtitle = m.mediaHint()
 	}
-	if m.notice != "" {
-		text += "  │  " + m.notice
+
+	title := m.chatTitle
+	if title == "" {
+		title = "—"
 	}
-	if hint := m.mediaHint(); hint != "" {
-		text += "  │  " + hint
+
+	// " " + sigil + " " + title, then " │ " + subtitle.
+	const lead = 3
+	titleW := m.width - lead - rightW
+	if titleW < 1 {
+		titleW = 1
 	}
-	// Truncate by CELLS, not runes: a CJK title is one rune but two cells
-	// wide, so a rune-count cut still overflows and lipgloss then *wraps*
-	// the header onto extra rows, pushing the body off the bottom.
-	// Style.MaxWidth wraps too — ansi.Truncate is the tool that genuinely
-	// clips a single line, and it is ANSI- and wide-rune-aware. Same fix
-	// as internal/ui/components/statusbar.
-	//
-	// The budget is the panel width minus the style's own padding: this
-	// header is padded, and content filling the full width would push the
-	// rendered block to width+padding and wrap right back.
-	style := m.theme.ChatViewHeader
-	if inner := m.width - style.GetHorizontalFrameSize(); inner > 0 {
-		text = cell.Clamp(text, inner)
+	title = cell.Truncate(title, titleW)
+
+	line := " " +
+		lipgloss.NewStyle().Foreground(markColour).Render(mark) + " " +
+		lipgloss.NewStyle().Foreground(r.Bright).Bold(true).Render(title)
+
+	if subtitle != "" {
+		subW := m.width - cell.Width(line) - 3 - rightW
+		if subW > 0 {
+			line += lipgloss.NewStyle().Foreground(r.Ghost).Render(" │ ") +
+				lipgloss.NewStyle().Foreground(r.Dim).Render(cell.Truncate(subtitle, subW))
+		}
 	}
-	return style.Width(m.width).Render(text)
+
+	pad := m.width - cell.Width(line) - rightW
+	if pad < 0 {
+		pad = 0
+	}
+	line += strings.Repeat(" ", pad) +
+		lipgloss.NewStyle().Foreground(r.Faint).Render(right)
+
+	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, m.width))
+}
+
+// headerPosition is the "ln 214/214" cell: the last visible rendered line
+// and the total, which is what tells a reader whether there is more history
+// below them.
+//
+// Lines rather than messages, because lines are what the scroll position
+// actually is — a message count would jump by one while the screen moved by
+// twenty.
+func (m Model) headerPosition() string {
+	total := totalRenderedLines(m.lineCounts())
+	if total == 0 {
+		return "ln 0/0"
+	}
+	at := total - m.scrollOffset
+	if at > total {
+		at = total
+	}
+	if at < 0 {
+		at = 0
+	}
+	return "ln " + strconv.Itoa(at) + "/" + strconv.Itoa(total)
 }
 
 // renderStatusLine draws the current loading stage label. It is one line

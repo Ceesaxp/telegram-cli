@@ -159,18 +159,23 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
-## TUI 2.0 — design closed, phase 0 shipped
+## TUI 2.0 — design closed, the shell and both panels shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
 thirteen decisions are resolved. Handoff archived in
 [docs/handoff/](docs/handoff/). Goldens in
 [docs/fixtures/](docs/fixtures/).
 
-**State of play.** Phase 0 (foundations) is complete: the golden harness and
-the shared geometry package both exist and are green. Nothing user-visible
-has changed yet — no renderer has been touched, and the client looks and
-behaves exactly as it did. The next commit that changes a pixel is the frame,
-and it is the first one that can break the app.
+**State of play.** The shape of TUI 2.0 is on screen. Foundations, the
+borderless frame with its top and hint bars, the two-line chat rows, the
+command palette, and the thread grid have all landed; bubbles, avatars,
+Glamour and the status bar are gone with them.
+
+What is left is what goes *inside* a message and what sits beside it: the
+content blocks (code, quotes, media cards, polls, reactions), the context
+rail, the composer's mode badge and per-chat drafts, and the media overlay.
+Until the blocks and the rail land, the goldens are asserted on width only —
+see "Byte equality against the goldens" below.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
 the redesign spans several phases that are not individually shippable, and
@@ -304,29 +309,58 @@ the primary checkout stays free for fixes against a working client.
       dead — along with the seven tests that were keeping them alive, each
       guarantee re-homed to topbar or the app first.
 
-- [ ] **Thread grid** ← **next, and the last big one.** Replace bubbles with
-      the columnar time/sender/body grid: 24-cell gutter (20 when the body
-      would fall below 32), deterministic sender colours, day and unread
-      dividers, reply quotes, outgoing state glyphs. `chatview/model.go` is
-      ~2000 lines against ~2000 lines of tests and the line-index scroll
-      machinery must survive behaviourally intact. Land the cursor-identity
-      fix (`getTargetMessage` is a bottom-visible approximation) as its own
-      commit first.
+- [x] **Thread grid** — the columnar time/sender/body grid replaces bubbles.
+      24-cell gutter compressing to 20 when the body would fall below 32
+      (two of the five goldens are on the narrow side, so both sides of the
+      threshold are tested), deterministic sender colours, day and unread
+      dividers, single-row reply quotes, delivery marks read from the chat's
+      own read markers.
+
+      The line index survived intact: dividers are attached to the message
+      below them rather than being separate history entries, so it stays one
+      count per message and `scrollToMessage`, `sliceLines` and
+      `visibleMessages` are unchanged. Selection is not part of the render
+      cache key — caching it would make the line index depend on where the
+      cursor is, and every scroll and jump is built on that index.
+
+      The **cursor-identity fix landed first**, on its own. The action keys
+      now act on a stored message identity that sticks while its message is
+      visible, clamps to the nearest visible message when a scroll carries
+      it off, and follows the newest while the view is pinned to the bottom.
+      The old rule was a position, and positions moved on their own: a photo
+      below the fold finishing its download changed which message `r` would
+      reply to.
+
+      glamour left `go.mod` with the bubbles. Entities render as ANSI spans
+      directly, which also removes the `WithAutoStyle` OSC 11 hazard rather
+      than guarding it.
+
+      Deleted rather than left dead: `RenderMessage` and its bubble-width
+      helpers, `EntitiesToMarkdown`, `theme.ChatViewHeader`, and
+      `internal/ui/components/statusbar` — the last of which the frame had
+      already replaced and whose final live job (typing) moved into the
+      thread. Every guarantee re-homed first; re-homing found that
+      `ConnectionStateMsg` had no consumer anyone drew, so the connection dot
+      only learned the truth twice in a session. It is live now.
+
+      The chat-type sigil moved to `internal/ui/sigil`, shared by the list
+      and the thread header, which are peers.
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality
       cannot pass until the chat list rows, the thread grid and the rail all
       land. That separation is deliberate and is why `golden.Compare`
       reports width and content as different `DiffKind`s.
-- [ ] **Thread grid** — the riskiest parcel: `chatview/model.go` is ~1960
-      lines against ~2000 lines of tests, and the line-index scroll
-      machinery must survive behaviourally intact. Land the cursor-identity
-      fix (`getTargetMessage` is a bottom-visible approximation) as its own
-      commit first.
+- [ ] **Content blocks** ← **next.** Code frames, quotes, lists, media
+      cards, voice waveforms, link previews and polls, each starting at the
+      body column and capped to the smaller of body width and 84 columns.
+      Three things the goldens draw are waiting on this phase because they
+      have no data source yet: reactions (no field on `telegram.Message`),
+      spoiler reveal (`x` needs the spoiler entity), and the media card's
+      three-row and collapsed forms.
 
 ### Documentation debt that comes due when code ships
 
-- [ ] README "Features" still advertises **Message Bubbles** and **Profile
-      Avatars**; both are explicit TUI 2.0 non-goals.
-- [ ] README "Screenshot" block is drawn in bubbles with rounded borders.
-- [ ] README "Architecture" diagram labels the message panel `(bubbles)`.
+- [x] README no longer advertises Message Bubbles or Profile Avatars, its
+      screenshot is drawn as the grid, and the architecture diagram labels
+      the message panel `(grid)`.

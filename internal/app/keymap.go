@@ -301,33 +301,6 @@ func (m Model) reservedKeys() []string {
 	)
 }
 
-// statusHints is the abbreviated key strip along the bottom bar.
-//
-// Built from the same resolvedKeys the dispatcher matches, for the reason
-// helpSections is: a rebound key must not leave the bar advertising the one
-// it replaced. Nothing here is hardcoded except keys that are themselves
-// hardcoded in Update (h/l) or in chatlist ([ and ]).
-//
-// It is an abbreviation, not a reference. The one row that has to be there
-// is the help key — it is what turns a stranded user into a reading one,
-// and every other binding is one keystroke behind it. The rest is the
-// shortest path back to moving: the panels, the folder tabs, find, and the
-// way out. The bar drops the whole strip rather than truncate it on a
-// narrow terminal, so keeping it short is what keeps it visible.
-//
-// Set once, in New. Bindings resolve at startup and never change while the
-// program runs; if they ever become rebindable at runtime, this has to be
-// re-set alongside the help sections and footer.
-func (m Model) statusHints() string {
-	return strings.Join([]string{
-		m.keys.help + ":Help",
-		"h/l:Panels",
-		m.keys.search + ":Find",
-		"[/]:Folders",
-		m.keys.quitBrowsing + ":Quit",
-	}, "  ")
-}
-
 // unboundKey is what the help card shows where a binding should be but
 // there is none — a mnemonic whose key a configuration handed to something
 // else, leaving the action with no way to reach it (see

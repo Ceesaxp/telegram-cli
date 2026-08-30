@@ -269,7 +269,7 @@ func (m Model) renderSearchLine() string {
 // key help lives in the host's help line, but the chat view is the only
 // place that knows *which* message is currently targeted.
 func (m Model) mediaHint() string {
-	msg := m.getTargetMessage()
+	msg := m.cursorMessage()
 	if msg == nil || msg.Content == nil {
 		return ""
 	}

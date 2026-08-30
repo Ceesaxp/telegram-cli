@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/imtaqin/telegram-cli/internal/ui/sigil"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
@@ -34,27 +34,6 @@ const (
 	rowTrailW   = 1 // blank cell at the right edge
 )
 
-// sigilFor returns the one-glyph chat-type mark and its semantic colour.
-//
-// The sigil IS the identity in TUI 2.0 — avatars are an explicit non-goal —
-// so the glyph and colour carry the whole "what kind of thing is this"
-// signal that a picture used to.
-func sigilFor(t telegram.ChatType, saved bool, roles theme.Roles) (string, lipgloss.Color) {
-	if saved {
-		return "~", roles.Green
-	}
-	switch t {
-	case telegram.ChatTypePrivate:
-		return "@", roles.Blue
-	case telegram.ChatTypeBasicGroup, telegram.ChatTypeSupergroup:
-		return "#", roles.Mauve
-	case telegram.ChatTypeChannel:
-		return "!", roles.Amber
-	default:
-		return "@", roles.Blue
-	}
-}
-
 // renderRow draws one chat as two exact-width lines.
 //
 // Every field has a budget and every budget is in display cells, so a title
@@ -80,7 +59,7 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 		}
 	}
 
-	sigil, sigilColour := sigilFor(telegram.ChatType(item.Kind), item.Saved, r)
+	mark, markColour := sigil.For(telegram.ChatType(item.Kind), item.Saved, r)
 
 	title := item.Title
 	// A muted chat says so in words rather than only by being dimmer,
@@ -103,7 +82,7 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	}
 
 	line1 := barStyle.Render(bar) +
-		lipgloss.NewStyle().Foreground(sigilColour).Render(sigil) +
+		lipgloss.NewStyle().Foreground(markColour).Render(mark) +
 		" " +
 		lipgloss.NewStyle().Foreground(titleColour).Render(cell.Fit(title, textW)) +
 		lipgloss.NewStyle().Foreground(r.Faint).Render(cell.Fit(item.Meta, rowTimeW))

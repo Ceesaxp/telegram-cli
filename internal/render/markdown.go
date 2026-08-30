@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	glamourstyles "github.com/charmbracelet/glamour/styles"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -14,47 +11,10 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
-// defaultGlamourWrap is the word-wrap width the glamour renderer is built
-// with before the first call to RenderMessage supplies a real bubble width.
-const defaultGlamourWrap = 80
-
-// maxGlamourWrap caps how wide glamour will ever word-wrap code blocks to,
-// even if the chat panel is very wide.
-const maxGlamourWrap = 100
-
-// bubbleFrameStyle mirrors the border+padding used by the actual message
-// bubble styles below. It exists only so we can ask lipgloss for the exact
-// horizontal frame size (border + padding) instead of hard-coding it.
-var bubbleFrameStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	PaddingLeft(1).PaddingRight(1)
-
-// bubbleWidth computes the outer bubble width for a given panel maxWidth.
-// It's a small named function (rather than inlined math duplicated at each
-// call site, including tests) so RenderMessage and its tests always agree
-// on what "the bubble width" means.
-func bubbleWidth(maxWidth int) int {
-	w := maxWidth * 65 / 100
-	if w < 15 {
-		w = 15
-	}
-	return w
-}
-
-// contentInnerWidth returns the usable content width inside a bubble of the
-// given outer width, accounting for the real border+padding frame size.
-func contentInnerWidth(bubbleW int) int {
-	w := bubbleW - bubbleFrameStyle.GetHorizontalFrameSize()
-	if w < 1 {
-		w = 1
-	}
-	return w
-}
-
-// renderedContent separates a message's textual content (which should be
-// word-wrapped to the bubble width) from any pre-rendered raster/block art
-// (which must never be re-flowed — art is only ever cropped by lipgloss's
-// MaxWidth safety net, never wrapped, or it comes out scrambled).
+// renderedContent separates a message's textual content (which is
+// word-wrapped to the body width) from any pre-rendered raster/block art
+// (which must never be re-flowed — art is only ever cropped, never
+// wrapped, or it comes out scrambled).
 type renderedContent struct {
 	text string
 	art  string
@@ -64,55 +24,20 @@ func (rc renderedContent) empty() bool {
 	return rc.text == "" && rc.art == ""
 }
 
-// glamourStyleName picks glamour's built-in "dark" or "light" standard
-// style for th, without ever asking glamour.WithAutoStyle() to do so.
-//
-// WithAutoStyle() resolves to termenv.HasDarkBackground(), which queries the
-// terminal by writing an OSC 11 "what's your background color?" escape
-// sequence and then reading the reply off stdin. Under Bubble Tea's raw-mode
-// input loop that reply (a fragment like ";1rgb:2020/2020/2020") has nowhere
-// else to go — it gets delivered to the program as regular keystrokes and
-// ends up typed into whatever's focused (the composer, on chat open). See
-// glamourStyle's two call sites for where this bites.
-//
-// theme.Theme has no explicit dark/light flag, and we don't own that
-// package here, so this compares against theme.LightTheme()'s canonical
-// Background color — the only two Theme values ever constructed at runtime
-// are theme.DarkTheme() and theme.LightTheme() (see theme.ForName), and
-// LightTheme() is the only one that sets this particular Background, so the
-// comparison is exact for how the app actually builds a Theme today. If
-// that ever stops holding (theme starts exposing its own dark/light flag,
-// or gains more variants), default to dark — the app's built-in default is
-// dark — and thread the real signal through instead of extending this.
-func glamourStyleName(th *theme.Theme) string {
-	if th != nil && th.Background == theme.LightTheme().Background {
-		return glamourstyles.LightStyle
-	}
-	return glamourstyles.DarkStyle
-}
-
+// MessageRenderer turns message content into terminal lines. It holds the
+// image renderer and its cache; everything else it does is stateless.
 type MessageRenderer struct {
-	theme     *theme.Theme
-	glamour   *glamour.TermRenderer
-	wrapWidth int // word-wrap width the current glamour renderer was built with
-	imgCache  *media.Cache
-	imgRend   *media.ImageRenderer
+	theme    *theme.Theme
+	imgCache *media.Cache
+	imgRend  *media.ImageRenderer
 }
 
 func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
-	// Deterministic style, not WithAutoStyle() — see glamourStyleName's doc
-	// comment for why WithAutoStyle() is forbidden in this codebase.
-	r, _ := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(glamourStyleName(th)),
-		glamour.WithWordWrap(defaultGlamourWrap),
-	)
 	protocol := media.DetectProtocol()
 	return &MessageRenderer{
-		theme:     th,
-		glamour:   r,
-		wrapWidth: defaultGlamourWrap,
-		imgCache:  media.NewCache(50),
-		imgRend:   media.NewImageRenderer(protocol, 50, 25),
+		theme:    th,
+		imgCache: media.NewCache(50),
+		imgRend:  media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
 	}
 }
 
@@ -136,145 +61,35 @@ func (r *MessageRenderer) SetImageProtocol(protocol media.Protocol, maxCols, max
 	r.imgRend = media.NewImageRenderer(protocol, maxCols, maxRows)
 }
 
-// ensureGlamourWidth rebuilds the glamour renderer only when the desired
-// word-wrap width actually changed, so repeated calls with the same panel
-// width are cheap.
-func (r *MessageRenderer) ensureGlamourWidth(width int) {
-	if width < 1 {
-		width = 1
-	}
-	if r.glamour != nil && r.wrapWidth == width {
-		return
-	}
-	// Deterministic style, not WithAutoStyle() — see glamourStyleName's doc
-	// comment for why WithAutoStyle() is forbidden in this codebase.
-	gr, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(glamourStyleName(r.theme)),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return
-	}
-	r.glamour = gr
-	r.wrapWidth = width
-}
-
-func (r *MessageRenderer) RenderMessage(msg *telegram.Message, s *store.Store, isOwn, isSelected bool, maxWidth int) string {
-	if msg == nil {
-		return ""
+func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, width int) []string {
+	if msg == nil || width < 1 {
+		return []string{""}
 	}
 
-	bubbleW := bubbleWidth(maxWidth)
-
-	// innerWidth is the space available for content once the bubble's
-	// border and padding are accounted for (verified against the style's
-	// actual frame size rather than assumed).
-	innerWidth := contentInnerWidth(bubbleW)
-
-	r.ensureGlamourWidth(min(innerWidth, maxGlamourWrap))
-
-	// Sender name
-	senderName := r.getSenderName(msg, s)
-
-	// Content
-	rc := r.renderContent(msg.Content, s, innerWidth)
+	rc := r.renderContent(msg.Content, s, width)
 	if rc.empty() {
 		rc.text = "[empty]"
 	}
 
-	timeStr := FormatTimestamp(msg.Date)
-
-	var headerLines []string
-
-	if msg.IsForwarded {
-		headerLines = append(headerLines, lipgloss.NewStyle().Foreground(r.theme.TextMuted).Italic(true).Render("↪ Forwarded"))
-	}
-
-	if msg.ReplyToMessageID != 0 {
-		headerLines = append(headerLines, lipgloss.NewStyle().Foreground(r.theme.Primary).Italic(true).Render(fmt.Sprintf("┃ reply #%d", msg.ReplyToMessageID)))
-	}
-
-	if !isOwn && senderName != "" {
-		headerLines = append(headerLines, lipgloss.NewStyle().Foreground(r.theme.Accent).Bold(true).Render(senderName))
-	}
-
-	footer := lipgloss.NewStyle().Foreground(r.theme.TextMuted).Render(timeStr)
-	if isOwn {
-		if msg.ID == 0 {
-			footer += " " + lipgloss.NewStyle().Foreground(r.theme.Warning).Render("⏳")
-		} else {
-			footer += " " + lipgloss.NewStyle().Foreground(r.theme.Success).Render("✓✓")
-		}
-	}
-
-	// Real ANSI-aware wrapping to the bubble's inner width. cell.Wrap word
-	// wraps on whitespace but also hard-wraps any single unbroken token
-	// (e.g. a long URL or a wall of text with no spaces) that would
-	// otherwise overflow the line on its own, and it preserves the SGR
-	// escape codes emitted by EntitiesToANSI/glamour across the wrap
-	// points. lipgloss's MaxWidth below is kept only as a final safety
-	// net.
-	//
-	// Pre-rendered image/block art (rc.art) is deliberately kept OUT of
-	// this wrap: art is a grid of cells at fixed column positions, and
-	// running a text wrapper over it reflows/scrambles the rows instead
-	// of cropping them cleanly. Art is only ever cropped, never wrapped —
-	// that's what the MaxWidth safety net below is for.
-	var blocks []string
-	if len(headerLines) > 0 {
-		blocks = append(blocks, cell.Wrap(strings.Join(headerLines, "\n"), innerWidth))
-	}
+	var out []string
 	if rc.art != "" {
-		blocks = append(blocks, rc.art)
-		if rc.text != "" {
-			blocks = append(blocks, cell.Wrap(rc.text, innerWidth))
+		for _, line := range strings.Split(rc.art, "\n") {
+			out = append(out, cell.Clamp(line, width))
 		}
-	} else {
-		blocks = append(blocks, cell.Wrap(rc.text, innerWidth))
 	}
-	blocks = append(blocks, cell.Wrap(footer, innerWidth))
-
-	inner := strings.Join(blocks, "\n")
-
-	var bubble string
-	if isOwn {
-		style := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("252")).
-			PaddingLeft(1).PaddingRight(1).
-			MaxWidth(bubbleW)
-		if isSelected {
-			style = style.BorderForeground(lipgloss.Color("214"))
-		}
-		bubble = style.Render(inner)
-
-		w := cell.MaxWidth(bubble)
-		pad := maxWidth - w
-		if pad > 0 {
-			var padded []string
-			for _, line := range strings.Split(bubble, "\n") {
-				padded = append(padded, strings.Repeat(" ", pad)+line)
-			}
-			bubble = strings.Join(padded, "\n")
-		}
-	} else {
-		style := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("245")).
-			Foreground(lipgloss.Color("252")).
-			PaddingLeft(1).PaddingRight(1).
-			MaxWidth(bubbleW)
-		if isSelected {
-			style = style.BorderForeground(lipgloss.Color("214"))
-		}
-		bubble = style.Render(inner)
+	if rc.text != "" {
+		out = append(out, strings.Split(cell.Wrap(rc.text, width), "\n")...)
 	}
-
-	return bubble
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
-func (r *MessageRenderer) getSenderName(msg *telegram.Message, s *store.Store) string {
+// SenderName is the display name of a message's sender, resolved through
+// the store. It is exported because the thread grid gives the sender its
+// own column and therefore has to measure the name before drawing it.
+func SenderName(msg *telegram.Message, s *store.Store) string {
 	switch sender := msg.SenderID.(type) {
 	case *telegram.MessageSenderUser:
 		name := s.Users.DisplayName(sender.UserID)
@@ -302,13 +117,10 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 		if c.Text == nil || c.Text.Text == "" {
 			return renderedContent{text: "[empty]"}
 		}
-		md := EntitiesToMarkdown(c.Text)
-		if r.glamour != nil && strings.Contains(md, "```") {
-			rendered, err := r.glamour.Render(md)
-			if err == nil {
-				return renderedContent{text: strings.TrimSpace(rendered)}
-			}
-		}
+		// Entities, not Markdown: Telegram sends the formatting as
+		// entity ranges, and round-tripping them through a Markdown
+		// renderer means re-parsing text the user wrote as prose. A
+		// message containing a literal asterisk came out emphasised.
 		text := EntitiesToANSI(c.Text)
 		if maxWidth > 0 {
 			// Wrap here too (not just the final bubble-level wrap in

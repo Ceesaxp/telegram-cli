@@ -1431,42 +1431,44 @@ func TestQuitFromBrowsingPanels(t *testing.T) {
 	})
 }
 
-// TestStatusHintsComeFromResolvedKeys is the status bar's half of the rule
+// TestHintBarKeysComeFromResolvedKeys is the hint bar's half of the rule
 // helpSections already follows: a rebound key must not leave the bar
-// advertising the one it replaced. The review's specific complaint was the
-// missing "?" — the one key that unlocks every other key.
-func TestStatusHintsComeFromResolvedKeys(t *testing.T) {
+// advertising the one it replaced.
+//
+// The guarantee was written against the status bar's key strip. The frame
+// replaced that bar, and the hint bar inherited both the job and this test.
+func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
+	labels := func(m Model) map[string]string {
+		out := map[string]string{}
+		for _, h := range m.hintsForMode() {
+			out[h.Label] = h.Key
+		}
+		return out
+	}
+
 	m := mainModel(t, PanelChatList)
-	hints := m.statusHints()
-	for _, want := range []string{"?:Help", "h/l", "q:Quit"} {
-		if !strings.Contains(hints, want) {
-			t.Errorf("hints %q omit %q", hints, want)
+	for label, want := range map[string]string{"keymap": "?", "quit": "q", "reply": "r", "edit": "e"} {
+		if got := labels(m)[label]; got != want {
+			t.Errorf("default hint for %q is %q, want %q", label, got, want)
 		}
 	}
 
 	cfg := &config.Config{}
 	cfg.Keys.Help = "f12"
 	cfg.Keys.QuitBrowsing = "ctrl+x"
-	cfg.Keys.Search = "ctrl+f"
-	rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
-	got := rebound.statusHints()
-	for _, want := range []string{"f12:Help", "ctrl+x:Quit", "ctrl+f:Find"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("rebound hints %q omit %q", got, want)
-		}
-	}
-	for _, gone := range []string{"?:Help", "q:Quit", "/:Find"} {
-		if strings.Contains(got, gone) {
-			t.Errorf("rebound hints %q still advertise %q", got, gone)
+	cfg.Keys.Reply = "ctrl+r"
+	rebound := labels(New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg)))
+	for label, want := range map[string]string{"keymap": "f12", "quit": "ctrl+x", "reply": "ctrl+r"} {
+		if got := rebound[label]; got != want {
+			t.Errorf("rebound hint for %q is %q, want %q", label, got, want)
 		}
 	}
 
-	// The strip is an abbreviation that points at "?", not a second help
-	// card. The status bar drops it whole rather than truncate it, so length
-	// is what decides whether it is on screen at all.
-	if len(hints) > 60 {
-		t.Errorf("hints are %d chars, too long to survive a narrow terminal: %q",
-			len(hints), hints)
+	// The bar is an abbreviation that points at the help card, not a second
+	// copy of it: it drops hints from the right when they do not fit, so a
+	// long list means the ones that matter go missing on a narrow terminal.
+	if got := len(m.hintsForMode()); got > 8 {
+		t.Errorf("%d hints is too many to survive a narrow terminal", got)
 	}
 }
 
