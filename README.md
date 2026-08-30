@@ -22,8 +22,9 @@
 - **Chat Management** — Private chats, groups, supergroups, channels
 - **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
 - **Thread Grid** — Messages on a fixed time / sender / body grid rather than bubbles: one body column the whole conversation aligns to, deterministic per-sender colours, day and unread dividers, single-row reply quotes, and delivery marks read from the chat's read markers. Real ANSI-aware word wrap, measured in display cells
+- **Content Blocks** — Framed, numbered code fences with diff and comment colouring and horizontal truncation (code is never re-wrapped); ruled block quotes; hanging-indent lists; metadata cards for attachments that collapse to one line on a narrow pane; spoilers drawn in their own background until `x` reveals them
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
-- **Incoming Rich Text** — Bold, italic, underline, strikethrough, code and links rendered from Telegram's own text entities, so what you see is what was sent rather than a Markdown round-trip
+- **Incoming Rich Text** — Bold, italic, underline, strikethrough, inline code, links, mentions and spoilers rendered from Telegram's own text entities in a semantic palette, so what you see is what was sent rather than a Markdown round-trip. Overlapping and nested spans are layered rather than replayed
 - **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
 - **Voice/Audio Playback** — Play voice messages and audio inline via `mpv` / `ffplay`
@@ -47,20 +48,19 @@
 
 ```
  tg │ 1:All 2:Work 3:Channels              ● connected · mtproto 2.0 │ 15:22
- / filter chats…                  4/4 │ @ Alice │ direct              ln 10/10
-▌@ Alice                        08:15 │
-     see you tomorrow                 │ TODAY ──────────────────────────────
- # Dev Team                     13:24 │   15:02         Alice  the deploy is
-     deploy is green            [2]   │                        green, tagging
- ! Telegram muted               08:03 │                        v0.4.1 now
-     Login code: 12345                │   15:11           you  nice. I will
- @ BotFather                    14:38 │                        write the
-     /newbot                    [81]  │                        changelog ✓✓
+ / filter chats…                  4/4 │ # infra-oncall │ group        ln 22/22
+▌# infra-oncall                 08:15 │ TODAY ──────────────────────────────
+     sam: the offending query   [2]   │   15:02           sam  the offending
+ @ Alice                        13:24 │                        query, for the
+     see you tomorrow                 │                        record:
+ ! Telegram muted               08:03 │                        ┌ sql ── 4 li…
+     Login code: 12345                │                        │1  SELECT s.…
+ @ BotFather                    14:38 │                        │2  - WHERE s…
+     /newbot                    [81]  │                        │3  + WHERE s…
+                                      │                        └────────────┘
                                       │ 2 NEW ──────────────────────────────
-                                      │   15:18         Alice  already did —
-                                      │                        see the draft
-                                      │ ▌ 15:20           you  ↳ Alice alrea…
-                                      │                        perfect ✓
+                                      │   15:18         Alice  ▤ notes.md  6 KB · md
+                                      │ ▌ 15:20           you  perfect ✓
                                       │                   ···  Alice is typi…
  j/k move  g/G ends  u unread         │ Type a message...
  q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
@@ -79,10 +79,14 @@ The **thread** is TUI 2.0 as well: a fixed time / sender / body grid in place
 of bubbles, with a 24-cell gutter that compresses to 20 on a narrow pane, day
 and unread dividers, a cursor bar marking the message the action keys act on,
 and delivery marks read from the chat's own read markers rather than assumed.
+Inside a message, code fences are framed and numbered, quotes get a rule,
+lists get a hanging indent, attachments get a metadata card, and spoilers
+stay hidden until `x`.
 
-What is **not** there yet is the content inside a message — code blocks,
-media cards, polls, link previews and reactions still render as plain text —
-and the right-hand context rail. See [TUI 2.0 design](#tui-20-design).
+What is **not** there yet: the right-hand context rail, the composer's mode
+badge, and four blocks whose data this client does not map — reactions, poll
+results, link previews, and a voice note's waveform. Those are Telegram
+mapping work rather than rendering; see [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
