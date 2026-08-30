@@ -246,6 +246,22 @@ func (m *Model) SetVisible(visible bool) {
 	}
 }
 
+// SetQuery pre-fills the search input, leaving the cursor at the end so the
+// user can keep typing. It does not run the search — the overlay searches on
+// Enter, and a command that both opened the overlay and fired a network
+// request would be doing two things the caller only asked once for.
+//
+// Call it AFTER SetVisible(true): making the overlay visible deliberately
+// resets the query, so the reverse order silently discards the prefill.
+func (m *Model) SetQuery(q string) {
+	m.query = q
+	m.input.Value = q
+	m.input.Cursor = len([]rune(q))
+}
+
+// Query returns the current search text, whether typed or pre-filled.
+func (m Model) Query() string { return m.query }
+
 // IsVisible returns whether the search is visible.
 func (m Model) IsVisible() bool {
 	return m.visible

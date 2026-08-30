@@ -26,8 +26,7 @@ const (
 	// with an editor that will accept them, a text-collecting overlay, or
 	// the auth form.
 	ModeInsert
-	// ModeCommand means the command palette owns input. It is the only mode
-	// that is not reachable yet — see [modeInputs].paletteOpen.
+	// ModeCommand means the command palette owns input.
 	ModeCommand
 )
 
@@ -51,11 +50,8 @@ type modeInputs struct {
 	screen ScreenState
 	focus  FocusPanel
 
-	// paletteOpen is the command palette owning input. It is always false
-	// today: the palette does not exist yet (docs/tui-2.0.md phase 7). It is
-	// modelled here rather than added later so COMMAND is specified and
-	// tested from the start, and so wiring the palette is a one-line change
-	// at the single place that fills this struct.
+	// paletteOpen is the command palette owning input. It outranks every
+	// other clause: while the palette is up, nothing behind it sees a key.
 	paletteOpen bool
 
 	// textOverlayOpen is an overlay that COLLECTS text — the search box, or
@@ -136,8 +132,7 @@ func (m Model) modeInputs() modeInputs {
 		screen: m.screen,
 		focus:  m.focus,
 
-		// No palette yet; see modeInputs.paletteOpen.
-		paletteOpen: false,
+		paletteOpen: m.palette.IsVisible(),
 
 		textOverlayOpen: m.search.IsVisible() || promptOpen,
 		navOverlayOpen: m.help.IsVisible() ||

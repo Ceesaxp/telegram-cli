@@ -250,16 +250,37 @@ func TestModeForOverlays(t *testing.T) {
 	})
 }
 
-// TestModeIsNotCommandYet documents that COMMAND is specified and tested but
-// unreachable through a live Model until the palette lands. If this starts
-// failing, the palette is wired and this assertion should go.
-func TestModeIsNotCommandYet(t *testing.T) {
+// TestCommandModeMeansThePaletteIsOpen pins the biconditional: COMMAND
+// exactly when the palette owns input, never as a side effect of focus.
+//
+// This replaced TestModeIsNotCommandYet when the palette landed. The mode
+// existed and was tested before it was reachable, so wiring it was a one-line
+// change at the single place that fills the resolver's inputs.
+func TestCommandModeMeansThePaletteIsOpen(t *testing.T) {
 	m := mainModel(t, PanelChatList)
+
 	for _, panel := range []FocusPanel{PanelChatList, PanelChatView, PanelComposer} {
 		m.setFocus(panel)
 		if got := m.Mode(); got == ModeCommand {
-			t.Errorf("focus %v reported COMMAND, but no palette exists yet", panel)
+			t.Errorf("focus %v reported COMMAND with the palette closed", panel)
 		}
+	}
+
+	m.setFocus(PanelChatList)
+	m.palette.Open()
+	if got := m.Mode(); got != ModeCommand {
+		t.Errorf("Mode() = %v with the palette open, want COMMAND", got)
+	}
+
+	// And it outranks whatever is behind it.
+	m.setFocus(PanelComposer)
+	if got := m.Mode(); got != ModeCommand {
+		t.Errorf("Mode() = %v with the palette open over a composer, want COMMAND", got)
+	}
+
+	m.palette.Close()
+	if got := m.Mode(); got == ModeCommand {
+		t.Error("Mode() stayed COMMAND after the palette closed")
 	}
 }
 

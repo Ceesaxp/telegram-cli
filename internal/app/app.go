@@ -22,11 +22,17 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/groupinfo"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/statusbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
+
+// paletteTopMargin is how far down the command palette sits, per
+// docs/tui-2.0.md: "positioned about eight rows from the top". Anchored
+// rather than centred so the chat it acts on stays readable behind it.
+const paletteTopMargin = 8
 
 type Model struct {
 	auth      auth.Model
@@ -36,6 +42,7 @@ type Model struct {
 	contacts  contacts.Model
 	search    search.Model
 	help      help.Model
+	palette   palette.Model
 	groupInfo groupinfo.Model
 	statusBar statusbar.Model
 	dialog    *dialog.Model
@@ -170,6 +177,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		contacts:   contacts.New(s, tg, th),
 		search:     search.New(s, tg, th),
 		help:       help.New(th),
+		palette:    palette.New(th),
 		groupInfo:  groupinfo.New(s, tg, th),
 		statusBar:  statusbar.New(s, th),
 		screen:     ScreenLoading,
@@ -210,6 +218,10 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	m.help.SetSections(m.helpSections())
 	m.help.SetFooter(m.helpFooter())
 	m.statusBar.SetHints(m.statusHints())
+	// The palette reads the same resolved bindings, so a rebound key shows
+	// correctly in its right-hand column rather than advertising a default
+	// the user replaced.
+	m.palette.SetItems(m.paletteItems())
 	return m
 }
 
@@ -267,6 +279,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.screen == ScreenMain {
+			// The palette owns the keyboard outright while it is open,
+			// ahead of every other overlay. It is a text surface: every
+			// printable has to reach the query or a command whose name
+			// contains that letter could never be typed. Nothing below
+			// runs until it closes.
+			if m.palette.IsVisible() {
+				var action palette.Action
+				m.palette, action = m.palette.Update(msg)
+				switch action {
+				case palette.ActionCancel:
+					m.palette.Close()
+				case palette.ActionRun:
+					line := m.palette.Query()
+					m.palette.Close()
+					updated, cmd, notice := m.runCommandLine(line)
+					m = updated
+					if notice != "" {
+						m.composer.SetNotice(notice)
+					}
+					return m, cmd
+				}
+				return m, nil
+			}
+
 			// The help overlay is a modal reference card. While it is up
 			// it owns the keyboard: closing keys are handled here (the
 			// component never closes itself), scrolling goes to the
@@ -443,6 +479,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// chatlist copy would be dead code that still has to be kept
 			// in step.
 			noOverlay := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
+
+			// Colon opens the command palette, and only from NORMAL — the
+			// interaction-mode resolver is the authority, so a focused
+			// emacs composer (INSERT) types a colon as text while a vi
+			// composer in its command state opens the palette. Consulting
+			// the mode rather than the focus panel is what keeps that
+			// distinction honest.
+			if key.Matches(":") && noOverlay && m.Mode() == ModeNormal {
+				m.palette.Open()
+				return m, nil
+			}
+
 			if key.Matches(m.keys.prevFolder) && noOverlay {
 				m.chatList.CycleFolder(-1)
 				return m, m.chatList.FolderLoadCmd()
@@ -1361,6 +1409,17 @@ func (m Model) View() tea.View {
 		content = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
 			m.help.View())
+	}
+
+	// The palette is drawn last because it owns the keyboard last: while it
+	// is open, Update returns before anything behind it sees a key, so
+	// anything drawn over it would be inert decoration. It sits about eight
+	// rows down rather than centred, so the chat it is acting on stays
+	// visible underneath.
+	if m.palette.IsVisible() && m.screen == ScreenMain {
+		content = lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Top,
+			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.palette.View()))
 	}
 
 	v := tea.NewView(content)

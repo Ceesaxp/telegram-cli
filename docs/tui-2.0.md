@@ -317,8 +317,9 @@ New bindings proposed by the handoff are:
 | M | chat view | mark read while preserving scroll |
 
 The command palette is a 60-column dimmed-frame overlay positioned about
-eight rows from the top. It supports fuzzy prefix matching, j/k/arrows,
-Tab completion, Enter execution, and Escape cancellation. A single registry
+eight rows from the top. It supports fuzzy prefix matching, arrow-key
+movement (see [divergence 9](#9-the-palette-navigates-with-arrows-not-jk) for
+why not j/k), Tab completion, Enter execution, and Escape cancellation. A single registry
 supplies the command, argument shape, description, command constructor, help,
 and palette display.
 
@@ -534,6 +535,22 @@ genuine scope addition — per-chat draft storage and a chat-list preview state
 — and decision 13 resolved it **in scope**: the goldens stand, drafts survive
 a chat switch, and the chat list shows the draft state. Persistence across
 restarts is explicitly excluded.
+
+### 9. The palette navigates with arrows, not `j`/`k`
+
+The handoff specifies "`j/k` or arrows move" inside the command palette, and
+this document repeated it. That cannot work: the palette is a text surface
+whose query is a command name, and `:jump`, `:keymap`, and `:mark-read` all
+contain a `j` or a `k`. Binding those letters to movement would make three
+commands impossible to type.
+
+**Resolved:** every printable key goes into the query. Movement is the arrow
+keys, plus `ctrl+n`/`ctrl+p` for hands that do not want to leave the home row.
+Tab completes, Enter runs, Escape cancels — all unchanged from the handoff.
+
+This is the same class of conflict as divergence 1 (`s` for spoilers versus
+`s` for save): a binding specified without checking what else already claims
+that key in the same mode.
 
 ## Decisions
 
@@ -898,6 +915,19 @@ registry, internal/app/app.go, config/keymap/help integration, and tests.
   keymap, theme, quit), then add the three authorised by decision 8:
   pin/unpin, mute/unmute, and reload-config. Secret chat and Markdown export
   are deferred and must not be registered at all.
+
+**Shipped**: `internal/ui/components/palette` (the overlay) and
+`internal/app/commands.go` (the registry), with `mark-read`, `search`,
+`keymap`, and `quit`. `:` is routed through `Model.Mode()`, so a focused
+emacs composer types a colon while a vi composer in command state opens the
+palette.
+
+Still to register, each blocked on a service this build does not have rather
+than on authority: `pin`/`unpin` and `mute`/`unmute` need Telegram RPCs,
+`reload-config` needs runtime config reload, `theme` needs every component to
+accept a new theme at runtime, and `jump` needs history-by-date. They are
+absent rather than stubbed, because a palette entry that cannot run teaches
+the user a command that does not exist.
 - Derive keymap/help content from the registry where possible, so it cannot
   drift.
 

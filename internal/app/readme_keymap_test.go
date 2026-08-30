@@ -159,6 +159,12 @@ var sectionPlacementAllowed = map[string]string{
 		"card has no room for the note and repeats the row instead",
 	"esc": "the README spells out what Esc does in the chat view (drop the " +
 		"find results first) where the card leaves it to the global row",
+	"up": "arrow synonym for k in the browsing panels and the overlays, " +
+		"where the card names only the vi spelling — but NOT in the " +
+		"command palette, which has no vi spelling to name: every " +
+		"printable goes into the query, so the arrows are the only way " +
+		"to move and both surfaces have to say so",
+	"down": "arrow synonym for j; see \"up\"",
 }
 
 // flatten collapses a key -> sections index into the plain key set.
@@ -200,10 +206,7 @@ var onlyInHelpSections = map[string]string{
 
 // onlyInReadme lists keys the README documents that the help card
 // deliberately does not name.
-var onlyInReadme = map[string]string{
-	"down": "arrow synonym for j; the card names only the vi spelling",
-	"up":   "arrow synonym for k; the card names only the vi spelling",
-}
+var onlyInReadme = map[string]string{}
 
 // helpSectionTokens indexes every key the help overlay names by the
 // canonical section it appears in. Built once per composer editing mode,
@@ -266,6 +269,8 @@ func canonicalSection(title string) string {
 		return "composer"
 	case strings.HasPrefix(title, "Overlays"):
 		return "overlays"
+	case strings.HasPrefix(title, "Command palette"):
+		return "palette"
 	}
 	return ""
 }

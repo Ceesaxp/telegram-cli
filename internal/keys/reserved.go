@@ -39,6 +39,10 @@ var AppFixed = []string{
 	"i", "c",
 	// Clipboard paste, from whichever panel has focus.
 	"ctrl+v",
+	// The command palette. Claimed only from NORMAL — a focused emacs
+	// composer types a colon as text — but from a browsing panel it is
+	// always the app's, so a component that bound it would never fire.
+	":",
 }
 
 // AppReserved returns the complete set of keys internal/app claims from a

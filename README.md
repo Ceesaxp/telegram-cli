@@ -185,6 +185,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `Alt+L` / `Alt+H` | Next / previous folder |
 | `Alt+C` / `F4` | Toggle contacts overlay |
 | `Ctrl+G` | Search all chats (not while composing) |
+| `:` | Command palette (not while composing) |
 | `Ctrl+V` | Paste a clipboard image |
 
 ### Chat list
@@ -320,6 +321,53 @@ shell command line, so flags work (`nvim -u NONE`) exactly as they do for
 keeps your original draft untouched; a clean exit replaces it, trims the
 trailing newline editors add, and drops you back into insert mode if
 you're in vi mode.
+
+### Command palette (`:`)
+
+`:` opens a filtered list of commands from the chat list or chat view. It is
+the first piece of the [TUI 2.0](#tui-20-design) design to reach the client,
+and it does not change anything that already worked.
+
+`:` opens it (see the Global table above). Once it's up:
+
+| Key | Action |
+|-----|--------|
+| `up` / `down` | Move the selection |
+| `ctrl+p` / `ctrl+n` | Move the selection |
+| `tab` | Complete the highlighted command |
+| `enter` | Run the command |
+| `esc` | Cancel without running |
+| `ctrl+u` | Clear the query |
+
+Every other printable key goes into the query — that's how you filter and how
+you type arguments.
+
+Matching is prefix-first, then fuzzy: `mkrd` finds `mark-read`, while an
+exactly-typed name always sorts to the top so `Enter` runs what you typed.
+
+**Navigation is the arrows, not `j`/`k`** — every printable key has to reach
+the query, or commands whose names contain those letters (`keymap`,
+`mark-read`) could not be typed at all.
+
+`:` only opens the palette where a bare letter is not text. With the composer
+focused it types a colon like any other character; the sole exception is vi
+editing in normal mode, where the composer is not accepting text either, so
+`:` opens the palette there too.
+
+Commands available now:
+
+| Command | Action |
+|---|---|
+| `:mark-read` | Mark the open chat read, keeping your scroll position |
+| `:search <query>` | Open the cross-chat search, pre-filled |
+| `:keymap` | Open the help overlay |
+| `:quit` | Quit |
+
+An unknown command or a surplus argument reports on the composer's hint line
+rather than failing silently. More commands (`pin`, `mute`, `reload-config`,
+`theme`, `jump`) are designed but not yet registered — each needs a service
+this build doesn't have, and a palette entry that can't run would be worse
+than an absent one. See [TODO.md](TODO.md).
 
 ### Overlays — search, contacts, dialogs
 
@@ -809,6 +857,7 @@ internal/
       groupinfo/          Group/channel info panel
       statusbar/          Connection status + typing indicators
       dialog/             Modal dialogs
+      palette/            `:` command palette overlay
   media/                  Image rendering (kitty/sixel/blocks)
   render/                 Message content → terminal output
   notification/           Desktop notifications
