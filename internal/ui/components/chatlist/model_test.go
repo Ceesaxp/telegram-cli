@@ -1,7 +1,6 @@
 package chatlist
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -395,48 +394,6 @@ func TestNormalizeFoldersFillsServerProvidedAllTitle(t *testing.T) {
 	}
 }
 
-// TestClickAtAccountsForTabBar covers the regression where ClickAt passed
-// the raw panel-local row straight into ItemAtRow without allowing for
-// the folder tab bar occupying row 0: clicks on the tab bar opened the
-// first chat, and clicks on a row's second (subtitle) line opened the
-// chat below it.
-func TestClickAtAccountsForTabBar(t *testing.T) {
-	m := newTestModel()
-	m.loading = false // ClickAt is a no-op while the initial load is in flight
-	if got := m.tabBarHeight(); got != 1 {
-		t.Fatalf("tabBarHeight() = %d, want 1 (default All folder always present)", got)
-	}
-
-	m.list.SetItems([]widgets.ListItem{
-		{ID: "10"},
-		{ID: "11"},
-		{ID: "12"},
-	})
-	m.list.Height = 20 // tall enough to show every item without scrolling
-
-	// Row 0 is the tab bar: must not resolve to any chat.
-	if _, ok := m.ClickAt(0); ok {
-		t.Fatal("ClickAt(0) on the tab bar row should not select a chat")
-	}
-
-	// Chat 0 (ID 10) occupies rows 1 (title) and 2 (subtitle), i.e. the
-	// two rows right after the 1-row tab bar.
-	if id, ok := m.ClickAt(1); !ok || id != 10 {
-		t.Fatalf("ClickAt(1) = (%d, %v), want (10, true)", id, ok)
-	}
-	if id, ok := m.ClickAt(2); !ok || id != 10 {
-		t.Fatalf("ClickAt(2) = (%d, %v), want (10, true)", id, ok)
-	}
-
-	// Chat 1 (ID 11) occupies rows 3-4.
-	if id, ok := m.ClickAt(3); !ok || id != 11 {
-		t.Fatalf("ClickAt(3) = (%d, %v), want (11, true)", id, ok)
-	}
-	if id, ok := m.ClickAt(4); !ok || id != 11 {
-		t.Fatalf("ClickAt(4) = (%d, %v), want (11, true)", id, ok)
-	}
-}
-
 // TestClickAtWithScrollOffset covers the same tab-bar row math combined
 // with a non-zero list scroll offset.
 func TestClickAtWithScrollOffset(t *testing.T) {
@@ -738,33 +695,15 @@ func TestJumpToFolderClampsAndNoopsOnEmpty(t *testing.T) {
 // TestClickAtXYSwitchesFolderOnTabBarClick covers the mouse path: a click
 // on the tab bar row switches to whichever folder tab the column falls
 // within, and never selects a chat.
-func TestClickAtXYSwitchesFolderOnTabBarClick(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.SetSize(60, 20)
-	m.folders = []*telegram.ChatFolder{
-		defaultAllFolder(),
-		{ID: 1, Title: "Work"},
-		{ID: 2, Title: "Family"},
-	}
-	m.activeFolder = 0
+// Folder-tab clicking moved out of this package with TUI 2.0: the tabs are
+// drawn by the frame's top bar now, so the hit-test lives there
+// (topbar.TabAt) and the app routes row 0 to it. The guarantee is unchanged
+// and still covered — see TestTabAtHitsTheDrawnSpans in internal/ui/
+// components/topbar and TestClickingATopBarTabSwitchesFolder in internal/app.
+//
+// What this package still owns, and still tests below: everything BELOW the
+// header row, plus SelectFolderIndex, which is the other half of that click.
 
-	tabs := m.visibleFolderTabs()
-	if len(tabs) != 3 {
-		t.Fatalf("expected 3 visible tabs at width 60, got %d", len(tabs))
-	}
-
-	x := tabs[1].start
-	if chatID, ok := m.ClickAtXY(x, 0); ok || chatID != 0 {
-		t.Fatalf("a tab-bar click should never select a chat, got (%d, %v)", chatID, ok)
-	}
-	if m.activeFolder != tabs[1].index {
-		t.Fatalf("ClickAtXY(%d, 0) should switch to folder index %d, got %d", x, tabs[1].index, m.activeFolder)
-	}
-}
-
-// TestClickAtXYBelowTabBarSelectsChat covers the row-below-the-tab-bar
-// path, which must behave exactly like the existing ClickAt.
 func TestClickAtXYBelowTabBarSelectsChat(t *testing.T) {
 	m := newTestModel()
 	m.loading = false
@@ -773,143 +712,6 @@ func TestClickAtXYBelowTabBarSelectsChat(t *testing.T) {
 
 	if chatID, ok := m.ClickAtXY(0, 1); !ok || chatID != 42 {
 		t.Fatalf("ClickAtXY below the tab bar = (%d, %v), want (42, true)", chatID, ok)
-	}
-}
-
-// TestClickAtXYMissBetweenTabsIsNoop covers a click on the tab bar row
-// that lands past every tab: it must not select a chat and must not
-// change the active folder.
-func TestClickAtXYMissBetweenTabsIsNoop(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.SetSize(60, 20)
-	m.folders = []*telegram.ChatFolder{defaultAllFolder(), {ID: 1, Title: "Work"}}
-	m.activeFolder = 0
-
-	tabs := m.visibleFolderTabs()
-	last := tabs[len(tabs)-1]
-	if chatID, ok := m.ClickAtXY(last.end+50, 0); ok || chatID != 0 {
-		t.Fatalf("click past all tabs should not select a chat, got (%d, %v)", chatID, ok)
-	}
-	if m.activeFolder != 0 {
-		t.Fatalf("click past all tabs should not change the active folder, got %d", m.activeFolder)
-	}
-}
-
-// TestClickAtXYPinnedSecondTabHit pins a concrete panel-local x/y click on
-// the second folder tab to a known folder switch — but critically,
-// against renderFolderTabs()'s ACTUAL rendered/styled output, not
-// against visibleFolderTabs()'s internal bookkeeping. An earlier version
-// of this test located "Work"'s column via visibleFolderTabs() and then
-// clicked that same column — self-referential, so it could not catch (and
-// didn't: see FINDING 2/7) a bug where visibleFolderTabs()'s reported
-// boundaries didn't match what renderFolderTabs() actually painted (the
-// bare label was measured, but Tab/TabActive's own Padding(0,2) widens
-// each tab by 4 cells once rendered). Finding "Work"'s column in the
-// styled string itself — the same thing a real mouse click would be
-// aimed at — is what makes this a genuine regression test.
-func TestClickAtXYPinnedSecondTabHit(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.SetSize(60, 20)
-	m.folders = []*telegram.ChatFolder{
-		{ID: telegram.AllChatsFolderID, Title: "All"},
-		{ID: 1, Title: "Work"},
-		{ID: 2, Title: "Family"},
-	}
-	m.activeFolder = 0
-
-	rendered := m.renderFolderTabs()
-	plain := ansi.Strip(rendered)
-	col := strings.Index(plain, "Work")
-	if col < 0 {
-		t.Fatalf("rendered tab bar does not contain %q at all: %q", "Work", plain)
-	}
-
-	if chatID, ok := m.ClickAtXY(col, 0); ok || chatID != 0 {
-		t.Fatalf("ClickAtXY(%d, 0) should not select a chat, got (%d, %v)", col, chatID, ok)
-	}
-	if m.activeFolder != 1 {
-		t.Fatalf("clicking column %d (inside the rendered %q label) should switch to folder index 1 (Work), got %d",
-			col, "Work", m.activeFolder)
-	}
-}
-
-// TestVisibleFolderTabsAccountForStylePadding is FINDING 2's direct
-// regression test: Tab/TabActive carry their own horizontal padding
-// (Padding(0,2), a 4-cell frame in the shipped theme), so each tab's
-// on-screen width must be (at least) the label's width plus that frame —
-// not just the bare label's width, which is what originally caused every
-// tab's hit-test column range to undercount by 4 cells.
-func TestVisibleFolderTabsAccountForStylePadding(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.SetSize(60, 20)
-	m.folders = []*telegram.ChatFolder{
-		{ID: telegram.AllChatsFolderID, Title: "All"},
-		{ID: 1, Title: "Work"},
-	}
-	m.activeFolder = 0
-
-	tabs := m.visibleFolderTabs()
-	if len(tabs) != 2 {
-		t.Fatalf("expected 2 visible tabs, got %d", len(tabs))
-	}
-
-	frame := m.theme.Tab.GetHorizontalFrameSize()
-	if frame == 0 {
-		t.Skip("theme.Tab has no horizontal padding in this build; the bug this test guards against can't manifest")
-	}
-	for _, tb := range tabs {
-		labelW := ansi.StringWidth(folderLabel(m.folders[tb.index]))
-		gotW := tb.end - tb.start
-		if gotW < labelW+frame {
-			t.Errorf("tab %d: hit-test width %d, want >= label width %d + style frame %d = %d (rendered=%q)",
-				tb.index, gotW, labelW, frame, labelW+frame, tb.rendered)
-		}
-		// And the reported width must match what's actually rendered —
-		// the whole point of measuring the styled text.
-		if gotW != ansi.StringWidth(tb.rendered) {
-			t.Errorf("tab %d: hit-test width %d does not match rendered width %d",
-				tb.index, gotW, ansi.StringWidth(tb.rendered))
-		}
-	}
-}
-
-// TestRenderFolderTabsNeverWraps is FINDING 2's second regression test:
-// the tab bar must never spill onto a second line — a folder tab the
-// model reports as "visible" (via visibleFolderTabs) must actually be
-// painted, not silently wrapped off-screen by the old bare
-// Width(m.width) call on the concatenated tab text.
-func TestRenderFolderTabsNeverWraps(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.SetSize(28, 20) // the app's default ChatListWidth-ish geometry
-	m.folders = []*telegram.ChatFolder{
-		{ID: telegram.AllChatsFolderID, Title: "All"},
-		{ID: 1, Title: "Work"},
-		{ID: 2, Title: "Family"},
-		{ID: 3, Title: "Channels"},
-	}
-	m.activeFolder = 0
-
-	rendered := m.renderFolderTabs()
-	if n := lipgloss.Height(rendered); n != 1 {
-		t.Fatalf("renderFolderTabs() produced %d lines, want exactly 1: %q", n, rendered)
-	}
-	if w := ansi.StringWidth(rendered); w > m.width {
-		t.Fatalf("renderFolderTabs() has display width %d > panel width %d: %q", w, m.width, rendered)
-	}
-
-	// Every tab visibleFolderTabs() reports must actually appear in the
-	// rendered text — "visible" and "painted" must agree.
-	plain := ansi.Strip(rendered)
-	for _, tb := range m.visibleFolderTabs() {
-		label := folderLabel(m.folders[tb.index])
-		if !strings.Contains(plain, label) {
-			t.Errorf("folder %d (%q) is reported visible but not present in the rendered tab bar: %q",
-				tb.index, label, plain)
-		}
 	}
 }
 
@@ -974,10 +776,10 @@ func newLoadedModel(t *testing.T, names ...string) Model {
 func listTitles(m Model) []string {
 	out := make([]string, 0, len(m.list.Items))
 	for _, it := range m.list.Items {
-		if _, rest, ok := strings.Cut(it.Title, " "); ok {
-			out = append(out, rest)
-			continue
-		}
+		// Titles are bare. The chat-type mark used to be a glyph glued to
+		// the front of the title and had to be stripped here; TUI 2.0 draws
+		// it as a sigil in its own column instead, so it never enters the
+		// title string and cannot be truncated away with a long name.
 		out = append(out, it.Title)
 	}
 	return out
@@ -1070,8 +872,9 @@ func TestFilterTypedWhileLoadingAppliesOnceChatsArrive(t *testing.T) {
 	if got := listTitles(m); len(got) != 2 || got[0] != "Alice" || got[1] != "Carol Alpha" {
 		t.Fatalf("the query typed while loading was not applied: list = %v, want [Alice, Carol Alpha]", got)
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "/al") {
-		t.Fatalf("the filter chip is missing once the chats arrived: %q", ansi.Strip(m.View()))
+	if !strings.Contains(ansi.Strip(m.View()), "/ al") {
+		t.Fatalf("the filter query is missing from the header once the chats "+
+			"arrived: %q", ansi.Strip(m.View()))
 	}
 }
 
@@ -1388,10 +1191,14 @@ func TestFilterIndicatorVisibleWhileFiltered(t *testing.T) {
 	m = typeFilter(m, "al")
 
 	open := ansi.Strip(m.View())
-	if !strings.Contains(open, "/al") {
+	if !strings.Contains(open, "/ al") {
 		t.Fatalf("View() while typing does not show the query: %q", open)
 	}
-	if !strings.Contains(open, strings.TrimSpace(filterClearHint)) {
+	// The clear hint moved from the filter chip to the list footer when the
+	// chip was replaced by the header row, but it must still be somewhere:
+	// a user who cannot see how to clear a filter is left staring at a
+	// partial list.
+	if !strings.Contains(open, "esc") {
 		t.Fatalf("View() while typing does not advertise how to clear the filter: %q", open)
 	}
 
@@ -1399,52 +1206,17 @@ func TestFilterIndicatorVisibleWhileFiltered(t *testing.T) {
 	// user has no input line to remind them a filter is on.
 	m, _ = m.Update(specialKey(tea.KeyEnter))
 	closed := ansi.Strip(m.View())
-	if !strings.Contains(closed, "/al") {
+	if !strings.Contains(closed, "/ al") {
 		t.Fatalf("View() with the input closed does not show the applied filter: %q", closed)
 	}
-	if !strings.Contains(closed, strings.TrimSpace(filterClearHint)) {
+	if !strings.Contains(closed, "esc") {
 		t.Fatalf("View() with the input closed does not advertise how to clear: %q", closed)
 	}
 
 	// And it must disappear once the filter is gone.
 	m.ClearFilter()
-	if strings.Contains(ansi.Strip(m.View()), "/al") {
-		t.Fatal("the filter chip outlived the filter")
-	}
-}
-
-// TestFilterChipIsCellAccurate: the chip shares the tab bar row, so its
-// width is what the folder tabs are budgeted against. A query of wide
-// (CJK) or emoji graphemes must not shear that one-line row at any
-// width.
-func TestFilterChipIsCellAccurate(t *testing.T) {
-	for _, query := range []string{"al", "日本語のチャット", "🎉🎉🎉", "Ünïcödé"} {
-		for _, width := range []int{80, 40, 20, 12, 6, 1} {
-			m := newLoadedModel(t, "Alice", "日本語のチャット", "🎉 party")
-			m.folders = []*telegram.ChatFolder{
-				defaultAllFolder(),
-				{ID: 7, Title: "Work", Emoticon: "💼"},
-				{ID: 8, Title: "日本語", Emoticon: "🗾"},
-			}
-			m.SetSize(width, 20)
-			m.OpenFilter()
-			m = typeFilter(m, query)
-
-			row := m.renderFolderTabs()
-			if h := lipgloss.Height(row); h != 1 {
-				t.Fatalf("query=%q width=%d: tab bar row is %d lines, want 1: %q", query, width, h, row)
-			}
-			if w := ansi.StringWidth(row); w != width {
-				t.Fatalf("query=%q width=%d: tab bar row is %d cells, want exactly %d: %q",
-					query, width, w, width, row)
-			}
-
-			for _, line := range strings.Split(m.View(), "\n") {
-				if w := ansi.StringWidth(line); w > width {
-					t.Fatalf("query=%q width=%d: View() line is %d cells: %q", query, width, w, line)
-				}
-			}
-		}
+	if strings.Contains(ansi.Strip(m.View()), "/ al") {
+		t.Fatal("the filter query outlived the filter")
 	}
 }
 
@@ -1457,126 +1229,5 @@ func tabTestFolders() []*telegram.ChatFolder {
 		{ID: 1, Title: "Work", Emoticon: "💼"},
 		{ID: 2, Title: "Family", Emoticon: "👨‍👩‍👧"},
 		{ID: 3, Title: "日本語のグループ", Emoticon: "🗾"},
-	}
-}
-
-// TestFolderTabHitTestMatchesPaintedRow is the invariant behind this
-// component's third layout-vs-hit-test bug: visibleFolderTabs is the
-// single source of truth for BOTH what renderFolderTabs paints and what
-// clickFolderTabAt resolves a click to, so every column it reports as
-// belonging to a tab must actually be painted with that tab's text, and
-// every column the filter chip occupies must belong to no tab at all.
-//
-// The bug this pins down: the loop admitted the first tab even when it
-// alone exceeded the budget, the renderer then truncated it away, and
-// the invisible tab's columns — which the filter query was painted over
-// — still switched folders when clicked.
-func TestFolderTabHitTestMatchesPaintedRow(t *testing.T) {
-	queries := []struct{ name, query string }{
-		{"none", ""},
-		{"short", "al"},
-		{"long", "project-kickoff"},
-		{"cjk", "日本語のチャット"},
-		{"emoji", "🎉🎉🎉"},
-	}
-
-	for _, q := range queries {
-		for _, width := range []int{20, 26, 28, 30, 40, 80} {
-			for _, active := range []int{0, 2, 3} {
-				name := fmt.Sprintf("%s/w%d/folder%d", q.name, width, active)
-				t.Run(name, func(t *testing.T) {
-					m := newLoadedModel(t, "Alice", "Bob")
-					m.folders = tabTestFolders()
-					m.activeFolder = active
-					m.SetSize(width, 20)
-					m.refreshList()
-					if q.query != "" {
-						m.OpenFilter()
-						m = typeFilter(m, q.query)
-					}
-
-					row := m.renderFolderTabs()
-					if h := lipgloss.Height(row); h != 1 {
-						t.Fatalf("tab bar row is %d lines, want 1: %q", h, row)
-					}
-					if w := ansi.StringWidth(row); w != width {
-						t.Fatalf("tab bar row is %d cells, want exactly %d: %q", w, width, row)
-					}
-
-					tabs := m.visibleFolderTabs()
-					for _, tb := range tabs {
-						// The columns the hit-test hands out must hold
-						// this tab's painted text — not the chip's, and
-						// not nothing.
-						got := ansi.Strip(ansi.Cut(row, tb.start, tb.end))
-						want := ansi.Strip(tb.rendered)
-						if got != want {
-							t.Fatalf("tab %d claims columns [%d,%d) but the row paints %q there, want %q\nrow: %q",
-								tb.index, tb.start, tb.end, got, want, ansi.Strip(row))
-						}
-						// And a click anywhere in that range resolves to
-						// this tab.
-						for x := tb.start; x < tb.end; x++ {
-							c := m
-							if !c.clickFolderTabAt(x) {
-								t.Fatalf("click at x=%d inside tab %d's range [%d,%d) hit nothing",
-									x, tb.index, tb.start, tb.end)
-							}
-							if c.activeFolder != tb.index {
-								t.Fatalf("click at x=%d selected folder %d, want %d",
-									x, c.activeFolder, tb.index)
-							}
-						}
-					}
-
-					// Every column the chip occupies belongs to no tab:
-					// clicking one's own filter query must never switch
-					// folders.
-					chipW := ansi.StringWidth(m.renderFilterChip())
-					for x := width - chipW; x < width; x++ {
-						c := m
-						if c.clickFolderTabAt(x) {
-							t.Fatalf("click at x=%d (filter chip territory, chip is %d cells of %d) hit a folder tab",
-								x, chipW, width)
-						}
-						if c.activeFolder != active {
-							t.Fatalf("click at x=%d changed the folder from %d to %d",
-								x, active, c.activeFolder)
-						}
-					}
-				})
-			}
-		}
-	}
-}
-
-// TestClickingTheFilterQueryDoesNotSwitchFolders is the reviewer's exact
-// repro: the default 30-column chat list, the "Family" folder, and a
-// query wide enough that no tab text is visible at all.
-func TestClickingTheFilterQueryDoesNotSwitchFolders(t *testing.T) {
-	m := newLoadedModel(t, "Alice")
-	m.folders = tabTestFolders()
-	m.activeFolder = 2 // "Family"
-	m.SetSize(30, 20)
-	m.refreshList()
-	m.OpenFilter()
-	m = typeFilter(m, "project-kickoff")
-
-	row := ansi.Strip(m.renderFolderTabs())
-	if !strings.Contains(row, "/project-kickoff") {
-		t.Fatalf("setup: the query is not painted across the row: %q", row)
-	}
-	if got := m.visibleFolderTabs(); len(got) != 0 {
-		t.Fatalf("with the chip filling the row, %d tabs claim columns, want none: %+v", len(got), got)
-	}
-
-	for x := 0; x < 30; x++ {
-		c := m
-		if c.clickFolderTabAt(x) {
-			t.Fatalf("click at x=%d hit a folder tab that is not painted anywhere", x)
-		}
-		if c.activeFolder != 2 {
-			t.Fatalf("click at x=%d moved the folder from Family(2) to %d", x, c.activeFolder)
-		}
 	}
 }

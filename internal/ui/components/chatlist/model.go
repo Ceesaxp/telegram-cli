@@ -11,7 +11,6 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -23,13 +22,20 @@ type Model struct {
 	// value) and View (a read-only render pass on its own local copy):
 	// mutating through the pointer is visible from every copy of Model,
 	// value-receiver or not.
-	list    *widgets.List
-	store   *store.Store
-	tg      *telegram.Client
-	theme   *theme.Theme
-	width   int
-	height  int
-	focused bool
+	list  *widgets.List
+	store *store.Store
+	tg    *telegram.Client
+	theme *theme.Theme
+	roles theme.Roles
+
+	// myUserID identifies Saved Messages: Telegram models it as the chat
+	// with yourself, so it is only distinguishable from an ordinary DM by
+	// comparing IDs. Zero until the app learns who we are, which just means
+	// the row shows the DM sigil until then.
+	myUserID int64
+	width    int
+	height   int
+	focused  bool
 
 	// filter is the applied local filter — a case-insensitive substring
 	// match on the chat title, applied by refreshList within the active
@@ -90,7 +96,7 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 	fi := widgets.NewTextArea()
 	fi.MultiLine = false
 
-	return Model{
+	m := Model{
 		list:        &l,
 		filterInput: fi,
 		store:       s,
@@ -103,6 +109,14 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
 		dirty:       &dirty,
 	}
+	// The TUI 2.0 row renderer is installed unconditionally, with a usable
+	// default palette. Installing it only in SetRoles would make the
+	// component render two different ways depending on whether the caller
+	// remembered to call it — and tests, which construct the model directly,
+	// would silently exercise the old rows.
+	m.roles = theme.DarkRoles(false)
+	l.RenderRow = m.renderRow
+	return m
 }
 
 // ApplyMedia sets the avatar image protocol from [media] config.
@@ -156,16 +170,46 @@ type chatsLoadedMsg struct {
 }
 
 // SetSize sets the component dimensions.
+// SetRoles supplies the TUI 2.0 semantic palette used by the row renderer.
+// The old *theme.Theme stays for the widgets this component still borrows.
+func (m *Model) SetMyUserID(id int64) {
+	m.myUserID = id
+	*m.dirty = true
+}
+
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.list.RenderRow = m.renderRow
+}
+
 func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.list.Width = width
 
-	listHeight := height - m.tabBarHeight()
+	listHeight := height - m.headerHeight() - m.footerHeight()
 	if listHeight < 0 {
 		listHeight = 0
 	}
 	m.list.Height = listHeight
+}
+
+// headerHeight and footerHeight are the chat list's own chrome rows: the
+// filter header above and the motion hints below.
+//
+// Unlike the folder tab bar they replaced, both are ALWAYS one row. The tab
+// bar was 0 rows before folders loaded, which meant the list's height budget
+// and ClickAt's row arithmetic changed underneath a running app; a constant
+// removes that whole class of off-by-one.
+func (m Model) headerHeight() int { return 1 }
+func (m Model) footerHeight() int { return 1 }
+
+// storeChatCount is the unfiltered total, for the header's "shown/total".
+func (m Model) storeChatCount() int {
+	if m.store == nil {
+		return 0
+	}
+	return len(m.store.Chats.OrderedChats())
 }
 
 // tabBarHeight returns the number of rows reserved for the folder tab
@@ -207,7 +251,7 @@ func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
 	if m.loading {
 		return 0, false
 	}
-	row := localY - m.tabBarHeight()
+	row := localY - m.headerHeight()
 	if row < 0 {
 		return 0, false
 	}
@@ -247,8 +291,12 @@ func (m *Model) ClickAtXY(x, y int) (chatID int64, ok bool) {
 	if m.loading {
 		return 0, false
 	}
-	if y < m.tabBarHeight() {
-		m.clickFolderTabAt(x)
+	// Row 0 is the filter header now, not the folder tab bar — the tabs
+	// moved to the frame's top bar with TUI 2.0. Clicking here must NOT
+	// fall through to folder selection, or clicking the filter row would
+	// silently switch folders. Click-to-select-a-tab needs re-wiring at the
+	// top bar, which owns those pixels now; until then this row is inert.
+	if y < m.headerHeight() {
 		return 0, false
 	}
 	return m.ClickAt(y)
@@ -468,6 +516,33 @@ func (m Model) Count() int { return len(m.list.Items) }
 
 // CycleFolder moves the active folder tab by delta (wrapping around) and
 // refilters the chat list to match.
+// SetFoldersForTest installs folders by title. It exists so tests in other
+// packages — the app's top-bar click routing, chiefly — can set up a folder
+// list without constructing telegram.ChatFolder values or faking a server
+// response.
+func (m *Model) SetFoldersForTest(titles []string) {
+	folders := make([]*telegram.ChatFolder, 0, len(titles))
+	for i, title := range titles {
+		folders = append(folders, &telegram.ChatFolder{ID: int32(i), Title: title})
+	}
+	m.setFolders(folders)
+}
+
+// SelectFolderIndex activates the folder at index, reporting whether it
+// actually changed anything.
+//
+// It exists because the folder TABS are drawn by the frame's top bar now,
+// while folder STATE still lives here. The top bar can say which tab was
+// clicked but not what that means; this is the other half.
+func (m *Model) SelectFolderIndex(index int) bool {
+	if index < 0 || index >= len(m.folders) || index == m.activeFolder {
+		return false
+	}
+	m.activeFolder = index
+	m.refreshList()
+	return true
+}
+
 func (m *Model) CycleFolder(delta int) {
 	n := len(m.folders)
 	if n == 0 {
@@ -781,8 +856,13 @@ func (m *Model) refreshList() {
 		}
 
 		items = append(items, widgets.ListItem{
-			ID:       fmt.Sprintf("%d", entry.Chat.ID),
-			Title:    chatIcon(entry.Chat) + " " + entry.Chat.Title,
+			ID: fmt.Sprintf("%d", entry.Chat.ID),
+			// The title is bare now: the type mark is the sigil the row
+			// renderer draws in its own column, not a prefix glued to the
+			// text, so it cannot be truncated away with a long name.
+			Title:    entry.Chat.Title,
+			Kind:     int(entry.Chat.Type),
+			Saved:    entry.Chat.ID == m.myUserID,
 			Subtitle: preview,
 			Badge:    badge,
 			Meta:     meta,
@@ -1062,246 +1142,21 @@ func (m Model) View() string {
 		m.refreshList()
 	}
 
-	tabBar := m.renderFolderTabs()
-	listView := m.list.View()
-
-	content := listView
-	if tabBar != "" {
-		content = lipgloss.JoinVertical(lipgloss.Left, tabBar, listView)
-	}
-
-	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
-		Render(content)
+	// Folder tabs used to live at the top of this column; TUI 2.0 moves
+	// them to the frame's top bar and gives this row to the filter instead.
+	// Selection and key handling stayed here — only the drawing moved.
+	return strings.Join([]string{
+		m.renderFilterHeader(m.width),
+		m.list.View(),
+		m.renderListFooter(m.width),
+	}, "\n")
 }
 
-// renderFolderTabs renders a one-line tab bar of folder emoticon+title
-// pairs, highlighting the active tab. Tabs that do not fit the available
-// width are dropped from the end; a tab whose label alone is too wide has
-// the label truncated with an ellipsis, and a tab that cannot fit even
-// then (its style's padding already exceeds what is left) is dropped
-// too — including the first one, so that no tab ever claims columns it
-// is not painted in.
-//
-// When a filter is applied (or being typed) the filter chip is pinned to
-// the right end of this same row — the chat list panel budgets its rows
-// once, in SetSize, so the filter cannot claim a row of its own without
-// desynchronizing the list height and ClickAt's row math (see
-// tabBarHeight). The tabs get whatever width the chip leaves them.
-func (m Model) renderFolderTabs() string {
-	// The row is painted whenever tabBarHeight() reserves one, even when
-	// nothing fits in it. Returning "" while tabBarHeight() still says 1
-	// would shift every list row up by one against the height budget
-	// SetSize computed and against ClickAt's row math — the same
-	// off-by-one-row bug the tabBarHeight comment exists to prevent — and
-	// a wide filter chip can now legitimately squeeze every tab out.
-	if m.tabBarHeight() == 0 || m.width <= 0 {
-		return ""
-	}
-
-	tabs := m.visibleFolderTabs()
-	chip := m.renderFilterChip()
-
-	var b strings.Builder
-	for _, t := range tabs {
-		b.WriteString(t.rendered)
-	}
-
-	if chip != "" {
-		// visibleFolderTabs budgets against tabsAvailWidth and now drops
-		// every tab that does not fit within it, so this truncation is a
-		// no-op safety net: it must never actually cut, because a cut
-		// here would paint fewer columns than the hit-test believes are
-		// clickable. It stays only to keep the CHIP — the one thing on
-		// this row explaining why chats are missing — from being the
-		// piece cell.FitLine drops if some future change reintroduces an
-		// overflow.
-		tabsBudget := m.tabsAvailWidth()
-		tabsText := b.String()
-		if cell.Width(tabsText) > tabsBudget {
-			tabsText = cell.Clamp(tabsText, tabsBudget)
-		}
-		pad := m.width - cell.Width(tabsText) - cell.Width(chip)
-		if pad < 0 {
-			pad = 0
-		}
-		b.Reset()
-		b.WriteString(tabsText)
-		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(chip)
-	}
-
-	// visibleFolderTabs's own per-tab budgeting (below) already
-	// guarantees the concatenated, already-styled tabs total at most
-	// m.width display cells; FitLine — with a bare, unpadded style, so
-	// its own frame size is 0 — pads that out to exactly m.width and
-	// serves as a defense-in-depth truncation safety net against any
-	// future off-by-one in that budgeting. This is the same shared
-	// helper list.go's rows and the status bar use, deliberately in
-	// place of a bare lipgloss Width() call: see cell.FitLine's doc comment
-	// for why Width() on padded content is exactly what wrapped this bar
-	// onto an invisible second line in the first place.
-	return cell.FitLine(lipgloss.NewStyle(), b.String(), m.width)
-}
-
-// filterClearHint is the text that makes clearing the filter
-// discoverable from the indicator itself: whatever else gets dropped at
-// narrow widths, a user who can see the chip can read how to get their
-// chats back.
-const filterClearHint = " esc:clear"
-
-// renderFilterChip renders the filter indicator — "/query" as a badge,
-// with a trailing cursor block while the input is open and the
-// esc-clears hint whenever the row can afford it. It returns "" when no
-// filter is applied and the input is closed, which is what keeps the tab
-// bar unchanged in the common case.
-//
-// Everything here is measured in display cells (cell.Width) and cut
-// with cell.Truncate/cell.Clamp, never by rune or byte count, so an emoji or CJK
-// query cannot shear the row: the chip's own width is what
-// tabsAvailWidth hands to the folder tabs, and a wrong number there would
-// overflow the one-line bar exactly the way cell.FitLine exists to prevent.
-func (m Model) renderFilterChip() string {
-	if !m.filtering && m.filter == "" {
-		return ""
-	}
-
-	query := m.filter
-	if m.filtering {
-		query = m.filterInput.Value
-	}
-
-	body := "/" + query
-	if m.filtering {
-		body += "█"
-	}
-
-	chip := m.theme.Badge.Render(body)
-	hint := lipgloss.NewStyle().Foreground(m.theme.TextMuted).Render(filterClearHint)
-
-	if m.width <= 0 {
-		return chip
-	}
-	if cell.Width(chip)+cell.Width(hint) <= m.width {
-		return chip + hint
-	}
-	if cell.Width(chip) > m.width {
-		return cell.Clamp(chip, m.width)
-	}
-	return chip
-}
-
-// tabsAvailWidth is the width the folder tabs may occupy: the whole bar,
-// less whatever the filter chip has pinned to its right end. Both
-// visibleFolderTabs (layout AND click hit-testing) and renderFolderTabs
-// budget against this single number so the painted row and the column
-// ranges clicks are resolved against can never disagree.
-func (m Model) tabsAvailWidth() int {
-	avail := m.width - cell.Width(m.renderFilterChip())
-	if avail < 0 {
-		avail = 0
-	}
-	return avail
-}
-
-// folderTab is one rendered folder tab: its folder index, the fully
-// STYLED text exactly as it will be painted (Tab or TabActive already
-// applied), and the half-open column range [start, end) — in the same
-// display-cell units as that styled text's width — it occupies within
-// the tab bar.
-type folderTab struct {
-	index      int
-	rendered   string
-	start, end int
-}
-
-// visibleFolderTabs computes the folder tab bar layout: each folder's
-// label, styled through Tab or TabActive (whichever m.activeFolder makes
-// it), left to right, dropping tabs once the running total would exceed
-// the available width. renderFolderTabs and clickFolderTabAt both
-// consume this slice directly — never recomputing anything themselves —
-// so they can never drift out of sync with each other or with what's
-// actually painted.
-//
-// Measuring and truncating the STYLED text (not the bare label) matters:
-// Tab/TabActive carry their own horizontal padding (Padding(0,2) in the
-// shipped theme, i.e. a 4-cell frame), so a tab's actual on-screen width
-// is the label's width PLUS that padding. Budgeting against the bare
-// label alone undercounts every tab by its frame size, which both
-// mis-hit-tests clicks (a click meant for one tab lands on its neighbor,
-// since the column ranges used for hit-testing don't match what's
-// painted) and, in aggregate, lets more tabs through the width budget
-// than actually fit once their padding is added — overflowing the bar
-// and forcing exactly the kind of wrap cell.FitLine exists to prevent (see
-// its doc comment), which pushed a folder tab the model considered
-// "visible" off-screen entirely.
-func (m Model) visibleFolderTabs() []folderTab {
-	if len(m.folders) == 0 || m.width <= 0 {
-		return nil
-	}
-
-	// The tabs get the row less the filter chip, not the whole row (see
-	// tabsAvailWidth).
-	avail := m.tabsAvailWidth()
-
-	var tabs []folderTab
-	used := 0
-	for i, f := range m.folders {
-		style := m.theme.Tab
-		if i == m.activeFolder {
-			style = m.theme.TabActive
-		}
-
-		label := folderLabel(f)
-		budget := avail - used - style.GetHorizontalFrameSize()
-		if budget < 0 {
-			budget = 0
-		}
-		label = cell.Truncate(label, budget)
-
-		rendered := style.Render(label)
-		w := cell.Width(rendered)
-		// A tab that does not fit is DROPPED, including the first one.
-		// This used to admit the first tab unconditionally ("&& used >
-		// 0"), on the theory that showing one truncated tab beats
-		// showing none. But the label truncation above can only shrink
-		// the label, never the style's own frame (Padding(0,2) = 4
-		// cells), so at a narrow width — or with a wide filter chip
-		// holding the right end of the row — that first tab claimed
-		// columns the renderer then truncated away. The hit-test reads
-		// these ranges (clickFolderTabAt) and the renderer paints from
-		// them, so the two disagreed exactly where the tab was invisible:
-		// clicking the filter query itself switched folders. Dropping
-		// the tab keeps every reported range painted, and leaves the
-		// chip's columns belonging to nobody.
-		if used+w > avail {
-			break
-		}
-
-		tabs = append(tabs, folderTab{index: i, rendered: rendered, start: used, end: used + w})
-		used += w
-	}
-	return tabs
-}
-
-// clickFolderTabAt switches the active folder to whichever tab occupies
-// column x in the tab bar (a click between/past tabs is a no-op).
-// Reports whether a tab was hit, purely for callers that want to know;
-// ClickAtXY does not need it since a tab-bar click never selects a chat
-// either way.
-func (m *Model) clickFolderTabAt(x int) bool {
-	for _, t := range m.visibleFolderTabs() {
-		if x >= t.start && x < t.end {
-			if t.index != m.activeFolder {
-				m.activeFolder = t.index
-				m.refreshList()
-			}
-			return true
-		}
-	}
-	return false
-}
+// Folder-tab rendering and its hit-test used to live here. They moved to
+// internal/ui/components/topbar with TUI 2.0, which draws the tabs in the
+// frame's top chrome row; this column's first row is the filter header now.
+// Folder STATE is still owned here — see SelectFolderIndex and CycleFolder,
+// which is the half the top bar calls back into.
 
 func folderLabel(f *telegram.ChatFolder) string {
 	if f == nil {

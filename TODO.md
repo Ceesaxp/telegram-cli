@@ -291,10 +291,27 @@ the primary checkout stays free for fixes against a working client.
       or clipped instead of shearing — which is what lets the chat list and
       thread grid land afterwards, separately.
 
-- [ ] **Chat list rows** ← **next.** Two-line rows, type sigils (`@` DM,
-      `#` group, `!` channel, `~` saved), selection bar, muted treatment,
-      the filter header and the local footer. The column is already 38 cells
-      and exact; only its contents are still the old single-line rows.
+- [x] **Chat list rows** — two-line rows on the golden's measured grid, type
+      sigils (`@` DM, `#` group, `!` channel, `~` saved), selection bar,
+      muted rows that say "muted" in words, the filter header and a
+      contextual footer. `widgets.List` gained a pluggable `RenderRow` so
+      the bespoke row did not require forking its cursor/scroll/hit-test
+      machinery.
+
+      Folder tabs finished their move: `topbar.TabAt` is the hit-test now
+      and `chatlist.SelectFolderIndex` is the other half. The old tab-bar
+      rendering, its chip and its hit-test are deleted rather than left
+      dead — along with the seven tests that were keeping them alive, each
+      guarantee re-homed to topbar or the app first.
+
+- [ ] **Thread grid** ← **next, and the last big one.** Replace bubbles with
+      the columnar time/sender/body grid: 24-cell gutter (20 when the body
+      would fall below 32), deterministic sender colours, day and unread
+      dividers, reply quotes, outgoing state glyphs. `chatview/model.go` is
+      ~2000 lines against ~2000 lines of tests and the line-index scroll
+      machinery must survive behaviourally intact. Land the cursor-identity
+      fix (`getTargetMessage` is a bottom-visible approximation) as its own
+      commit first.
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality

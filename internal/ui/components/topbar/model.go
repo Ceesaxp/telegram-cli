@@ -124,6 +124,58 @@ func (m Model) View() string {
 	return cell.Fit(out, m.width)
 }
 
+// TabAt returns the index of the folder tab drawn at column x, or -1.
+//
+// It recomputes the same spans View lays out rather than remembering them,
+// so the hit-test cannot drift from the drawing: any change to the tab
+// layout has to be made in tabSpans, which both callers go through.
+func (m Model) TabAt(x int) int {
+	for _, s := range m.tabSpans() {
+		if x >= s.start && x < s.end {
+			return s.index
+		}
+	}
+	return -1
+}
+
+type tabSpan struct {
+	index      int
+	start, end int // half-open column range
+}
+
+// tabSpans computes each visible tab's column range, applying the same
+// budget View does — including dropping tabs that do not fit, so a click
+// past the last visible tab is not attributed to one that was never drawn.
+func (m Model) tabSpans() []tabSpan {
+	if m.width <= 0 {
+		return nil
+	}
+
+	leftW := 1 + 2 + 1 + 1
+	_, rightW := m.rightGroup(m.width-leftW,
+		lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
+	budget := m.width - leftW - rightW
+
+	var spans []tabSpan
+	used := 0
+	for i, f := range m.folders {
+		label := itoa(i+1) + ":" + f.Name
+		w := 1 + cell.Width(label)
+		if used+w > budget {
+			break
+		}
+		// The leading space belongs to the gap, not the label, so clicking
+		// between two tabs hits neither.
+		spans = append(spans, tabSpan{
+			index: i,
+			start: leftW + used + 1,
+			end:   leftW + used + w,
+		})
+		used += w
+	}
+	return spans
+}
+
 // rightGroup renders the widest connection group that fits in budget, and
 // returns it with its display width.
 func (m Model) rightGroup(budget int, dot, faint, ghost lipgloss.Style) (string, int) {
