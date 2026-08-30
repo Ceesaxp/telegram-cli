@@ -159,7 +159,7 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
-## TUI 2.0 — design closed, everything but the rail shipped
+## TUI 2.0 — design closed, every panel shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
 thirteen decisions are resolved. Handoff archived in
@@ -171,9 +171,10 @@ borderless frame with its top and hint bars, the two-line chat rows, the
 command palette, and the thread grid have all landed; bubbles, avatars,
 Glamour and the status bar are gone with them.
 
-What is left is the context rail, the media overlay, and the four content
-blocks whose data the client does not yet map. Until those land, the goldens
-are asserted on width only — see "Byte equality against the goldens" below.
+What is left is the media overlay and the remaining chat-view actions
+(`y`, `space`, `M`), plus the four content blocks whose data the client does
+not yet map. Until those land, the goldens are asserted on width only — see
+"Byte equality against the goldens" below.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
 the redesign spans several phases that are not individually shippable, and
@@ -411,23 +412,43 @@ the primary checkout stays free for fixes against a working client.
       behavioural test and `keys_test` pass unmodified, which is what the
       exit criterion was protecting.
 
-- [ ] **Context rail** ← **next.** `internal/ui/components/rail`: pinned
-      message, members, shared files and links, 30 cells, shown at 118
-      columns and wider. Decision 6 is the policy — nothing is fetched on
-      chat open, only when the rail is opened, cached per chat and load
-      generation. Recovering the current pin is one field on the
-      `SupergroupFullInfo` mapping plus the `GetMessage` call that already
-      exists; shared files and links need a `messages.search` with a media
-      filter. Retires `internal/ui/components/groupinfo`, whose guarantees
-      have to be re-homed first.
+- [x] **Context rail** — pinned messages, members, shared files and links in
+      a 30-cell column, toggled with backtick, shown at 118 columns and
+      wider. `ui.rail` is the default and survives a terminal too narrow to
+      honour it.
 
-      `ui.rail` is already parsed, defaulted and read — this is the phase
-      that honours it.
+      Decision 6 holds: nothing is fetched on chat open, only when the rail
+      is opened, cached per chat and generation. A late result for a chat
+      that is no longer open is still cached — it is correct for the chat
+      that asked, and only the open chat's entry is ever read.
+
+      Every section says which of four states it is in, because "not asked",
+      "waiting", "refused" and "empty" would otherwise all be blank space.
+      The member remainder counts the chat's total, which costs a second
+      call: the participants API returns a page, not a count.
+
+      One adapter, three filters: `telegram.SearchChatMedia` is
+      `messages.search` with a server-side filter and no query. That got the
+      pinned section for less than the reconciliation costed it, and got all
+      the pins rather than just the current one — divergence 18.
+
+      `groupinfo` deleted: built, sized and fed on every message since the
+      frame landed, never drawn. `PanelGroupInfo` went with it, and
+      `senderColour` moved to `theme.SenderColour` so the rail and the
+      thread grid cannot disagree about a person's colour.
+
+- [ ] **Media overlay, yank, and final hardening** ← **next**, phase 8. The
+      dismissible full-pane image overlay (Kitty, Sixel, half-blocks, an
+      external viewer, then platform open — and never writing graphics into
+      scrollback), `y` to copy a message or a code block, `space` to play
+      the selected voice note, and `M` to mark read without moving. OSC 8
+      hyperlinks belong here too, with the grapheme-aware wrapper that would
+      make them safe (divergence 14).
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality
-      cannot pass until the rail and the blocks that are waiting on data
-      both land. That separation is deliberate and is why
+      cannot pass until the blocks that are waiting on data land, and the
+      media overlay with them. That separation is deliberate and is why
       `golden.Compare` reports width and content as different `DiffKind`s.
 
 ### Documentation debt that comes due when code ships
