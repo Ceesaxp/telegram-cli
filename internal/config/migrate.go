@@ -281,6 +281,15 @@ func Migrate(cfg *Config, raw *RawFile) []MigrationChange {
 			Field: "ui.inline_images", Absent: true, New: def.UI.InlineImages,
 		})
 	}
+	if !hasField(raw, "storage", "download_dir", cfg.Storage.DownloadDir != "") {
+		// The tilde LITERAL, not the expanded default: a generated config
+		// has to stay portable between machines, which is the same reason
+		// TestMigrateDoesNotAbsolutizePaths exists.
+		cfg.Storage.DownloadDir = DefaultDownloadDir
+		changes = append(changes, MigrationChange{
+			Field: "storage.download_dir", Absent: true, New: DefaultDownloadDir,
+		})
+	}
 	if !hasField(raw, "ui", "hyperlinks", cfg.UI.Hyperlinks != "") {
 		cfg.UI.Hyperlinks = def.UI.Hyperlinks
 		changes = append(changes, MigrationChange{

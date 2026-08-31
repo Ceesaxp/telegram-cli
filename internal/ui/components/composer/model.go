@@ -116,7 +116,29 @@ func (m *Model) SetSize(width, height int) {
 }
 
 // SetFocused sets focus state.
+// SetFocused moves the keyboard into or out of the composer.
+//
+// Arriving in the composer puts vi mode back into INSERT. The reason is the
+// one SetEditingMode already gives for starting there: typing a message is
+// the common case, and a normal-mode landing swallows the first word — but
+// the state was only initialised once, so the composer remembered whatever
+// mode it was left in.
+//
+// A vi user leaves the composer with two escapes: the first goes to normal
+// mode, the second gives the panel back. So the composer was ALWAYS in
+// normal mode by the time it was next entered, and r, e and i each landed
+// there. Pressing r and typing "abc" produced "bc" — the "a" was vi's
+// append. ctrl+j did not insert a newline for the same reason, deliberately
+// (see isNewlineChord); ctrl+o worked because it is handled before the modal
+// dispatch, which is why the external editor looked like the only way in.
+//
+// Only on the transition, so a setFocus while already focused cannot pull a
+// vi user out of normal mode mid-command.
 func (m *Model) SetFocused(focused bool) {
+	if focused && !m.focused {
+		m.vi = viInsert
+		m.viPending = 0
+	}
 	m.focused = focused
 	m.textarea.Focused = focused
 }

@@ -26,7 +26,17 @@ type TelegramConfig struct {
 
 type StorageConfig struct {
 	SessionFile string `toml:"session_file"`
-	FilesDir    string `toml:"files_dir"`
+
+	// FilesDir is the media CACHE: where downloads land so a photo drawn
+	// twice is fetched once. It is not where "save this" saves to — see
+	// DownloadDir — and a user who set files_dir expecting the latter got
+	// a cache directory full of files with server-side names.
+	FilesDir string `toml:"files_dir"`
+
+	// DownloadDir is where `s` puts a copy, under the sender's own
+	// filename. Defaults to the platform download folder, because that is
+	// where a person looks for a thing they just saved.
+	DownloadDir string `toml:"download_dir"`
 	// StateFile is the bbolt database holding the update-sequence state
 	// (pts/qts/seq/date) and the peer access-hash cache, so updates that
 	// arrived while the app was offline can be recovered on the next start.
@@ -83,6 +93,7 @@ type UIConfig struct {
 const (
 	DefaultSessionFile = "~/.local/share/tele-tui/session.json"
 	DefaultFilesDir    = "~/.local/share/tele-tui/files"
+	DefaultDownloadDir = "~/Downloads"
 )
 
 // Inline-image policies for [UIConfig.InlineImages].
@@ -431,6 +442,7 @@ func Load() (*Config, error) {
 
 	cfg.Storage.SessionFile = expandPath(cfg.Storage.SessionFile)
 	cfg.Storage.FilesDir = expandPath(cfg.Storage.FilesDir)
+	cfg.Storage.DownloadDir = expandPath(cfg.Storage.DownloadDir)
 	cfg.Storage.StateFile = expandPath(cfg.Storage.StateFile)
 
 	return cfg, nil
@@ -441,6 +453,7 @@ func defaultConfig() *Config {
 		Storage: StorageConfig{
 			SessionFile: expandPath(DefaultSessionFile),
 			FilesDir:    expandPath(DefaultFilesDir),
+			DownloadDir: expandPath(DefaultDownloadDir),
 		},
 		UI: UIConfig{
 			ComposeEditing:  ComposeEditingAuto,

@@ -1143,6 +1143,57 @@ value that was once shipped as a default was never chosen, so `-migrate-config`
 replaces it rather than preserving it. The mechanism was already there; it
 just had not been told about this field.
 
+### 36. The composer remembered a mode across the door
+
+`r`, `e` and `i` all appeared not to work: the composer took focus, and then
+the first letters typed into it went missing — pressing `r` and typing "abc"
+left a draft reading "bc". `ctrl+j` did not insert a newline. The external
+editor, `ctrl+o`, was the only way to write anything, which is what the field
+report said.
+
+One cause. The composer's vi state was initialised once and then remembered,
+and a vi user always *leaves* the composer through normal mode — one Escape
+to leave insert, a second to give the panel back (decision 3's Escape ladder).
+So the composer was always in normal mode by the time it was next entered.
+`r`, `e` and `i` each landed there, and the first keystrokes were read as
+commands: the `a` of "abc" was vi's append, which is why it vanished and the
+"bc" survived. `ctrl+j` was refused for the same reason and deliberately —
+`isNewlineChord` is insert-mode-only, so the hint line and the behaviour
+agree. `ctrl+o` worked because it is handled before the modal dispatch.
+
+`SetFocused` now resets to insert on the unfocused→focused transition, and
+only on that transition: focus is re-asserted on resizes and after overlays
+close, and a reset there would drop a user out of normal mode mid-command.
+Escape still reaches normal mode from inside — the fix is about the way in,
+not a removal of the mode.
+
+### 37. Saving is a copy out of the cache, not the download
+
+`s` reported `💾 Saved photo → ~/.local/share/tele-tui/files/1234567890` and
+stopped. That is the media *cache*: it exists so a photo drawn twice is
+fetched once, and it names files by their server-side id. Nothing had been
+saved in the sense the key implies — there was no directory a person would
+look in, and no filename they would recognise.
+
+`storage.download_dir` (default `~/Downloads`, filled in by
+`-migrate-config`) is now where `s` puts a copy, under the sender's own
+filename. Three rules, because a save is one of the few things this client
+does that touches a user's files:
+
+- **Never overwrite.** `photo.jpg` is what every phone camera calls its
+  output, so the collision is the common case; the copy becomes
+  `photo (2).jpg`, with the suffix before the extension where a file manager
+  puts it, and `O_EXCL` so the name cannot be taken between the check and the
+  create.
+- **Confine the name.** It comes off the wire. A document called
+  `../../.ssh/authorized_keys` is saved as `authorized_keys`; a name that
+  reduces to nothing, `.` or `..` becomes `telegram-file`.
+- **Leave nothing behind on failure.** A half-written file in Downloads is
+  worse than no file, because it looks like it worked.
+
+`files_dir` keeps its meaning and its default. The two were one setting, and
+a user who set `files_dir` expecting the second one got the first.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

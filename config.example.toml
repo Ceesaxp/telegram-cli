@@ -10,7 +10,12 @@ phone = ""
 # Session and file storage paths
 [storage]
 session_file = "~/.local/share/tele-tui/session.json"
+# The media CACHE: where downloads land so a photo drawn twice is fetched
+# once. This is not where "save this" saves to — that is download_dir.
 files_dir = "~/.local/share/tele-tui/files"
+
+# Where 's' puts a copy, under the sender's own filename.
+download_dir = "~/Downloads"
 # state_file = "~/.local/share/tele-tui/state.db"  # update/peer state DB (default: state.db next to session_file)
 
 # UI preferences

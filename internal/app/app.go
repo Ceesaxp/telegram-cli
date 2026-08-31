@@ -227,6 +227,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	}
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
+	m.chatView.ApplyStorage(cfg.Storage)
 	m.mediaView.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Order matters: the chat view has to know what app.go has already
