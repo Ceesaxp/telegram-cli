@@ -71,7 +71,7 @@ func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 		roles:        theme.DarkRoles(false),
 		inlineImages: config.InlineImagesOnOpen,
 		imgCache:     media.NewCache(50),
-		imgRend:      media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
+		imgRend:      inlineRenderer(protocol, defaultImageCols, defaultImageRows),
 	}
 }
 
@@ -84,6 +84,14 @@ func (r *MessageRenderer) SetHyperlinks(on bool) {
 	}
 	r.hyperlinks = on
 }
+
+// inlineArtRows is the height of the "always" preview, from the design
+// record: "Always may use an eight-row card preview."
+//
+// A cap rather than a suggestion. It is what keeps a photo's height a
+// property of the setting instead of a property of the image, which is what
+// the chat view's line index needs to stay usable.
+const inlineArtRows = 8
 
 // SetInlineImages sets the resolved ui.inline_images policy: whether a photo
 // is drawn as art or as a metadata card.
@@ -124,7 +132,27 @@ func (r *MessageRenderer) SetImageProtocol(protocol media.Protocol, maxCols, max
 	if maxRows <= 0 {
 		maxRows = defaultImageRows
 	}
-	r.imgRend = media.NewImageRenderer(protocol, maxCols, maxRows)
+	r.imgRend = inlineRenderer(protocol, maxCols, maxRows)
+}
+
+// inlineRenderer builds the image renderer for art drawn INSIDE the history,
+// with the row bound applied.
+//
+// One constructor for every path that makes one, so the bound cannot be
+// applied on the configured path and missed on the default. It is capped
+// rather than clamped afterwards because the renderer scales to its budget:
+// give it eight rows and it returns a whole picture eight rows tall, where
+// cutting twenty-five rows down to eight would return the top third of one.
+//
+// media.max_image_height is deliberately overridden rather than honoured.
+// That setting sizes the picture a user OPENS; it must not size one sitting
+// inside the history, because the height of a message in the history is what
+// the chat view's line index is made of.
+func inlineRenderer(protocol media.Protocol, maxCols, maxRows int) *media.ImageRenderer {
+	if maxRows > inlineArtRows {
+		maxRows = inlineArtRows
+	}
+	return media.NewImageRenderer(protocol, maxCols, maxRows)
 }
 
 // BodyOptions is how a message is to be laid out for the thread grid.
@@ -210,13 +238,27 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 		return renderedContent{note: "[unsupported]"}
 	}
 
-	// Anything with an attachment gets a card, except a photo whose art is
-	// already downloaded: the picture is strictly more informative than a
-	// description of it.
+	// Anything with an attachment gets a card. A photo gets art INSTEAD of
+	// the card only under ui.inline_images = "always", and even then only a
+	// bounded preview.
+	//
+	// This used to draw full-size art for any photo whose thumbnail had been
+	// downloaded, at both "on_open" and "always". Two things were wrong with
+	// that. The design record gives "on_open" a different meaning — the art
+	// appears when you OPEN the photo, in the full-pane overlay, which is
+	// what enter now does — and it gives "always" an eight-row card, not an
+	// arbitrarily tall one.
+	//
+	// The height is the part that matters. A message whose height changes
+	// when a thumbnail lands invalidates the chat view's line index under
+	// the reader: scroll arithmetic and the }/{ motions are computed from
+	// it, so a photo growing from one line to twenty makes the next motion
+	// land somewhere unrelated. A bounded preview cannot do that, and a
+	// card cannot either.
 	if card, ok := mediaCardFor(content); ok {
 		rc := renderedContent{text: captionOf(content)}
 		if photo, isPhoto := content.(*telegram.MessagePhoto); isPhoto &&
-			r.inlineImages != config.InlineImagesNever {
+			r.inlineImages == config.InlineImagesAlways {
 			if art, isArt := r.renderPhoto(photo.Photo, s); isArt {
 				rc.art = art
 				return rc

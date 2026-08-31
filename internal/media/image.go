@@ -143,6 +143,12 @@ func (r *ImageRenderer) PlaceImage(img image.Image) (Placement, error) {
 	}
 }
 
+// MaxRows is the tallest this renderer will draw, in terminal rows. It is
+// exported so a caller that bounds inline art can assert the bound rather
+// than assert on a rendered picture — which would need a decoder, and would
+// pass equally against a version that cropped instead of scaling.
+func (r *ImageRenderer) MaxRows() int { return r.maxHeight }
+
 // Protocol reports which protocol this renderer draws with.
 func (r *ImageRenderer) Protocol() Protocol { return r.protocol }
 

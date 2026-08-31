@@ -19,10 +19,15 @@ theme = "dark"               # "dark" or "light"
 timestamp_format = "15:04"   # Go time format
 date_format = "2006-01-02"
 
-# When a photo is drawn as art rather than as a metadata card:
-#   "never"    always the card — right over a slow link
-#   "on_open"  art for photos already downloaded, cards for the rest (default)
-#   "always"   fetch and draw every photo in view
+# Where a photo is drawn.
+#   "never"    the metadata card, and Enter opens the picture externally
+#   "on_open"  the card in the thread, the picture full-pane on Enter (default)
+#   "always"   as on_open, plus an eight-row preview inline
+#
+# The eight rows are a cap, not a suggestion, and media.max_image_height does
+# not raise it: a message whose height changes when its thumbnail lands moves
+# the history under you mid-scroll, because the scroll positions and the }/{
+# motions are computed from the height of every message above.
 inline_images = "on_open"
 
 # Show the right-hand context rail on a wide terminal. It costs 30 columns,

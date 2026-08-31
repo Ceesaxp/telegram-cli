@@ -920,6 +920,89 @@ from every panel. The arrows stay because [divergence 9](#9-the-palette-navigate
 already settled that the palette is a text surface. `i` stays because it is
 what the hint bar advertises and what the badge answers for.
 
+### 25. The active folder is marked by a background, not a brighter foreground
+
+The spec says "The active folder is bright; inactive folders are dim", and
+that is what shipped. It marked nothing.
+
+Telegram folder names are very often a single colour emoji, and **a colour
+emoji ignores the foreground it is given** — the glyph carries its own
+colours. On a folder row made of pictures, "bright versus dim" changed the
+digit and the colon and left the thing the user actually looks at identical.
+The active tab now also carries a `sel` background, which sits behind the
+glyph rather than inside it.
+
+The package had no `TestMain` pinning a colour profile, so every assertion it
+made about a colour passed against an Ascii profile that emitted none. That
+is the fourth package this has been true of.
+
+### 26. Folder tabs reserve more room than they measure
+
+The top bar drew `nnected` where it meant `● connected`: the folder tabs ran
+past their budget and overwrote the connection group beside them.
+
+**Emoji width is not a property of the string.** A terminal decides it, and
+terminals disagree — a regional-indicator pair is one flag in some and two
+letter-boxes in others; a base character followed by U+FE0F is narrow where
+the presentation selector is ignored and wide where it is not. `ansi` and
+`uniseg` agree with each other on all of these, which is what makes the
+disagreement invisible from inside the program: there is nothing to compare
+against and no environment variable that answers.
+
+So the tabs now reserve **pessimistically**, in one direction only: their
+measured width plus one cell for every grapheme carrying a composition rule
+(U+FE0F, ZWJ, regional indicator). Over-reserving costs a wider gap or one
+tab dropped early — visible, harmless, self-evident. Under-reserving corrupts
+the row. Given the choice, this takes the gap.
+
+Reservation and geometry are kept apart, which cost a bug on the way in: the
+reservation decides how many tabs FIT, and their measured width decides where
+they are DRAWN. Using the reservation for both put every click-target to the
+right of the tab it named.
+
+This does not make the row immune. A terminal that draws a glyph at a width
+no table predicts will still shear it, and the only real fix is a terminal
+that can be asked. What changed is that the failure is now bounded on the
+side that mattered.
+
+### 27. `on_open` means the overlay, not art in the history
+
+The spec: "Image rendering is governed by ui.inline_images: never, on_open
+(the default), or always. **On open**, choose Kitty graphics, Sixel,
+half-blocks, configured image viewer, then platform open. A usable inline
+backend opens **a dismissible full-pane overlay**... **Always may use an
+eight-row card preview.**"
+
+The implementation drew full-size art in the history for any photo whose
+thumbnail had been downloaded, at both `on_open` and `always` — a different
+feature wearing the same name, and unbounded where the spec bounds it.
+
+The height was the damage. A message that grows from one line to twenty when
+a thumbnail lands **invalidates the chat view's line index under the reader**,
+and the scroll arithmetic and the `}`/`{` motions are computed from it. A
+photo arriving mid-scroll made the next motion jump somewhere unrelated.
+
+Now: `never` and `on_open` draw the metadata card in the thread, and the
+picture appears in the full-pane overlay `enter` opens — which is what
+`on_open` says. `always` draws art bounded to eight rows. The bound is
+applied where the renderer is BUILT, not to its output, so the picture is
+scaled to fit rather than cropped to it, and `media.max_image_height` is
+deliberately overridden: that setting sizes the picture a user opens, not one
+sitting inside the history.
+
+### 28. vi's two cursors are drawn differently
+
+In INSERT the caret is a GAP between characters — that is where typing lands,
+so a block belongs before the character at the cursor. In NORMAL the cursor
+sits ON a character: it is why Escape appears to step back one, why `x`
+deletes "the character under the cursor", and why `i` inserts before it.
+
+Both were drawn as a gap. So typing `12345678` and pressing Escape looked as
+though the caret had jumped between the 7 and the 8; it was on the 8, drawn
+as though it were before it. Normal mode now draws the caret as reverse video
+on its character, and both modes fall back to the block at the end of a line,
+where there is no character to sit on.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

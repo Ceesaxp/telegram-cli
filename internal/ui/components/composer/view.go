@@ -235,6 +235,37 @@ func (m Model) promptContent(width int) (string, lipgloss.Style) {
 	}
 }
 
+// drawCursor puts the caret into a line, in whichever of the two
+// conventions the current mode uses.
+//
+// vi has two cursors, and drawing both the same way is what made normal mode
+// read as broken. In INSERT the caret is a GAP between characters, so a block
+// belongs before the character at the cursor: typing puts text there. In
+// NORMAL the cursor sits ON a character — that is why Escape appears to step
+// back one, why x deletes "the character under the cursor", and why i inserts
+// before it — so the caret has to be that character, drawn in reverse video,
+// not a block wedged in front of it.
+//
+// Drawing normal mode's cursor as a gap is why "type 12345678, press Escape"
+// looked like the caret had jumped between the 7 and the 8. It had not moved
+// anywhere it should not be; it was on the 8, drawn as though it were before
+// it.
+//
+// At the end of a line there is no character to sit on — an empty line, or a
+// line whose last character was just deleted — so both modes fall back to the
+// block.
+func (m Model) drawCursor(runes []rune, start, cursor, end int) string {
+	head, tail := string(runes[start:cursor]), string(runes[cursor:end])
+
+	if !m.IsViNormalMode() || cursor >= end {
+		return head + cursorBlock + tail
+	}
+
+	on := string(runes[cursor])
+	rest := string(runes[cursor+1 : end])
+	return head + lipgloss.NewStyle().Reverse(true).Render(on) + rest
+}
+
 // cursorBlock is what the composer draws where the caret is.
 //
 // A block the app draws itself rather than the terminal's own caret: Bubble
@@ -274,7 +305,7 @@ func (m Model) draftLine(width int) string {
 	}
 
 	col := cursor - start
-	withCursor := string(runes[start:cursor]) + cursorBlock + string(runes[cursor:end])
+	withCursor := m.drawCursor(runes, start, cursor, end)
 	if cell.Width(withCursor) <= width {
 		return withCursor
 	}

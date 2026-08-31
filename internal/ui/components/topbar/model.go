@@ -93,7 +93,14 @@ func (m Model) View() string {
 	// there is one that works.
 	markStyle := lipgloss.NewStyle().Foreground(m.roles.Cyan).Bold(true)
 	ghostStyle := lipgloss.NewStyle().Foreground(m.roles.Ghost)
-	activeStyle := lipgloss.NewStyle().Foreground(m.roles.Bright)
+	// The active tab is marked by a BACKGROUND, not only by a brighter
+	// foreground. Folder names come from Telegram and are very often a
+	// single colour emoji, and a colour emoji ignores the foreground it is
+	// given — so "the active folder is bright, the others are dim" marked
+	// nothing at all on a folder list made of pictures. A background is
+	// behind the glyph rather than in it, so it shows whatever the glyph
+	// decides to be.
+	activeStyle := lipgloss.NewStyle().Foreground(m.roles.Bright).Background(m.roles.Sel)
 	idleStyle := lipgloss.NewStyle().Foreground(m.roles.Dim)
 	dotStyle := lipgloss.NewStyle().Foreground(m.dotColour())
 	faintStyle := lipgloss.NewStyle().Foreground(m.roles.Faint)
@@ -112,10 +119,10 @@ func (m Model) View() string {
 	// select them are visible rather than remembered.
 	tabBudget := m.width - leftW - rightW
 	var tabs strings.Builder
-	tabsW := 0
+	reserved := 0
 	for i, f := range m.folders {
 		label := itoa(i+1) + ":" + f.Name
-		if tabsW+1+cell.Width(label) > tabBudget {
+		if reserved+1+reservedWidth(label) > tabBudget {
 			// Whole tabs drop, and the last one is clipped only if not even
 			// one fits — a half-written folder name is worse than a missing
 			// one, since it reads as a different folder.
@@ -127,16 +134,54 @@ func (m Model) View() string {
 		}
 		tabs.WriteString(" ")
 		tabs.WriteString(style.Render(label))
-		tabsW += 1 + cell.Width(label)
+		reserved += 1 + reservedWidth(label)
 	}
 
-	gap := m.width - leftW - tabsW - rightW
+	// The gap is measured from what the tabs ACTUALLY drew, not from what
+	// was reserved for them, so an over-reservation shows up as a slightly
+	// wider gap rather than as a row that does not add up.
+	gap := m.width - leftW - cell.Width(tabs.String()) - rightW
 	if gap < 0 {
 		gap = 0
 	}
 
 	out := left + tabs.String() + strings.Repeat(" ", gap) + right
 	return cell.Fit(out, m.width)
+}
+
+// reservedWidth is how much room to keep for a label: its measured width,
+// plus one cell for every grapheme whose rendered width the Unicode tables
+// cannot be trusted to predict.
+//
+// Emoji width is not a property of the string. A terminal decides it, and
+// terminals disagree — a regional-indicator pair is one flag in some and two
+// letter-boxes in others, and a base character followed by U+FE0F is narrow
+// where the presentation selector is ignored and wide where it is not. This
+// row cannot ask, and there is no environment variable that answers.
+//
+// So it reserves pessimistically, in one direction only. Over-reserving costs
+// a wider gap or one tab dropped early — visible, harmless, and self-evident.
+// Under-reserving lets the tabs run past their budget and overwrite the
+// connection status beside them, which is what put "nnected" on somebody's
+// top bar. Given the choice between a gap and a corrupted row, this takes the
+// gap.
+//
+// Only sequences with a *composition* rule are counted: those are where a
+// terminal that composes and a terminal that does not produce different
+// widths. A lone wide glyph is measured correctly by everyone.
+func reservedWidth(label string) int {
+	extra := 0
+	for _, r := range label {
+		switch {
+		case r == 0xFE0F: // VARIATION SELECTOR-16, emoji presentation
+			extra++
+		case r == 0x200D: // ZERO WIDTH JOINER
+			extra++
+		case r >= 0x1F1E6 && r <= 0x1F1FF: // REGIONAL INDICATOR
+			extra++
+		}
+	}
+	return cell.Width(label) + extra
 }
 
 // TabAt returns the index of the folder tab drawn at column x, or -1.
@@ -171,22 +216,28 @@ func (m Model) tabSpans() []tabSpan {
 		lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
 	budget := m.width - leftW - rightW
 
+	// Two accumulators, because they answer two questions. `reserved` is
+	// how much room the tabs were given, which decides how many of them
+	// fit; `drawn` is how wide they actually came out, which is where the
+	// columns are. Using the reservation for both put every span to the
+	// right of the tab it names as soon as one label was over-reserved.
 	var spans []tabSpan
-	used := 0
+	reserved, drawn := 0, 0
 	for i, f := range m.folders {
 		label := itoa(i+1) + ":" + f.Name
-		w := 1 + cell.Width(label)
-		if used+w > budget {
+		if reserved+1+reservedWidth(label) > budget {
 			break
 		}
+		w := cell.Width(label)
 		// The leading space belongs to the gap, not the label, so clicking
 		// between two tabs hits neither.
 		spans = append(spans, tabSpan{
 			index: i,
-			start: leftW + used + 1,
-			end:   leftW + used + w,
+			start: leftW + drawn + 1,
+			end:   leftW + drawn + 1 + w,
 		})
-		used += w
+		reserved += 1 + reservedWidth(label)
+		drawn += 1 + w
 	}
 	return spans
 }

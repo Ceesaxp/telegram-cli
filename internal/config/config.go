@@ -39,9 +39,11 @@ type UIConfig struct {
 	TimestampFormat string `toml:"timestamp_format"`
 	DateFormat      string `toml:"date_format"`
 
-	// InlineImages governs when a photo is drawn as art rather than as a
-	// metadata card: [InlineImagesNever], [InlineImagesOnOpen] (the
-	// default), or [InlineImagesAlways].
+	// InlineImages governs WHERE a photo is drawn:
+	// [InlineImagesNever], [InlineImagesOnOpen] (the default), or
+	// [InlineImagesAlways]. Only the last puts art in the thread, and only
+	// bounded — see render.inlineArtRows for why the bound is not
+	// negotiable.
 	InlineImages string `toml:"inline_images"`
 
 	// Hyperlinks governs OSC 8 terminal hyperlinks on links in a message:
@@ -85,13 +87,17 @@ const (
 
 // Inline-image policies for [UIConfig.InlineImages].
 const (
-	// InlineImagesNever always shows the metadata card. The right answer
-	// over a slow link, and on a terminal whose image support is a guess.
+	// InlineImagesNever shows the metadata card in the thread and hands
+	// the picture to the platform viewer on Enter. The right answer over a
+	// slow link, and on a terminal whose image support is a guess.
 	InlineImagesNever = "never"
-	// InlineImagesOnOpen draws art for photos whose thumbnail is already
-	// downloaded and a card for the rest. The default.
+	// InlineImagesOnOpen shows the card in the thread and draws the picture
+	// full-pane when the reader OPENS it. The default, and the name is
+	// literal: "on open" is when the art appears, not a condition under
+	// which it appears in the history.
 	InlineImagesOnOpen = "on_open"
-	// InlineImagesAlways fetches and draws every photo in view.
+	// InlineImagesAlways also draws an eight-row preview in the thread,
+	// which is the only setting that puts art in the history at all.
 	InlineImagesAlways = "always"
 )
 
