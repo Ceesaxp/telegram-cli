@@ -270,6 +270,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `/` or `Ctrl+F` | Find in this chat |
 | `n` / `N` | Next / previous match |
 | `}` / `{` | Move the cursor to the next / previous message. `j`/`k` scroll the buffer by lines, vi-style; these move between messages, and `G` hands the cursor back so it follows new arrivals again |
+| `1`–`9` | Count prefix for the motions, as in vi: `9{` moves nine messages back, `4k` scrolls four times. The pending count shows in the thread header, and any non-motion key discards it |
 | `Esc` | Close the find input while it's open; otherwise step back to the chat list (surviving find results are not cleared first) |
 | `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them) |
 | `Enter` | Open attachment — a photo opens full-pane in the terminal, everything else goes to the system viewer |
@@ -497,7 +498,7 @@ Only some fields are actually consulted:
 
 | Field | Default | Wired? |
 |-------|---------|--------|
-| `quit` | `ctrl+c` | yes |
+| `quit` | `ctrl+q` | yes |
 | `quit_browsing` | `q` | yes — chat list / chat view only; confirms first if the composer holds a draft or attachment |
 | `focus_chat_list` | `f1` | yes — *in addition to* the hardcoded `Alt+1` |
 | `focus_chat_view` | `f2` | yes — *in addition to* the hardcoded `Alt+2` |

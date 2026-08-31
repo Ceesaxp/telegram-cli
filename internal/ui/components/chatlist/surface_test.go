@@ -1,11 +1,13 @@
 package chatlist
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
@@ -127,5 +129,41 @@ func TestTheListDrawsTUI2Rows(t *testing.T) {
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "# infra-oncall") {
 		t.Errorf("the chat list is not drawing TUI 2.0 rows (no type sigil):\n%s", view)
+	}
+}
+
+// The chat list draws from the palette its constructor was given, and from
+// nothing else.
+//
+// It lives here rather than beside the other components' version of this
+// check because the loading view — the only one reachable from outside the
+// package — draws just the spinner, whose style is built from the
+// constructor's argument rather than from m.roles. So the app-level test
+// could not see the field go unset, and did not: the chat list shipped one
+// release rendering from a zero-valued palette.
+func TestTheChatListDrawsOnlyThePaletteItWasGiven(t *testing.T) {
+	marker, known := theme.MarkerRoles()
+
+	m := New(store.NewStore(), nil, marker)
+	m.SetSize(38, 12)
+	m.loading = false
+	*m.dirty = true
+	m.store.Chats.Set(&telegram.Chat{
+		ID: 1, Type: telegram.ChatTypeSupergroup, Title: "infra-oncall",
+		UnreadCount: 3,
+	})
+	m.refreshList()
+
+	seq := regexp.MustCompile(`[34]8;2;(\d+;\d+;\d+)`)
+	view := m.View()
+
+	found := seq.FindAllStringSubmatch(view, -1)
+	if len(found) == 0 {
+		t.Fatalf("the chat list drew no colour at all:\n%s", ansi.Strip(view))
+	}
+	for _, c := range found {
+		if _, ok := known[c[1]]; !ok {
+			t.Errorf("the chat list drew rgb(%s), which is not in its palette", c[1])
+		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
@@ -1646,6 +1647,16 @@ func (m Model) View() tea.View {
 			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.palette.View()))
 	}
 
+	// An overlay replaces the frame, and lipgloss.Place pads what is left
+	// with PLAIN space — so the screen around a centred card showed the
+	// terminal's own background, and the frame's surfaces went with it.
+	// Filling here rather than at each Place: bg is what the app sits on,
+	// and cell.Fill reopens it BEFORE each span's own sequences, so the
+	// card's panel still wins inside the card.
+	if m.overlayOpen() {
+		content = cell.FillRows(m.roles.Bg, strings.Split(content, "\n"), m.width)
+	}
+
 	// Whatever the terminal is still holding from a closed overlay goes out
 	// with this frame. It is a zero-width sequence, so prefixing it cannot
 	// disturb the layout — and it has to travel this way rather than being
@@ -1728,4 +1739,13 @@ func (m Model) deviceCountCmd() tea.Cmd {
 		n, _ := tg.DeviceCount()
 		return deviceCountMsg(n)
 	}
+}
+
+// overlayOpen reports whether something is drawn over the frame rather than
+// inside it. The four are the ones View places with lipgloss.Place.
+func (m Model) overlayOpen() bool {
+	return (m.dialog != nil && m.dialog.IsVisible()) ||
+		m.search.IsVisible() ||
+		(m.help.IsVisible() && m.screen == ScreenMain) ||
+		(m.palette.IsVisible() && m.screen == ScreenMain)
 }

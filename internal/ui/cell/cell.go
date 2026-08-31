@@ -371,6 +371,28 @@ func Fill(colour lipgloss.Color, s string, width int) string {
 	return b.String()
 }
 
+// FillRows fits each row to width, paints colour behind every cell of it,
+// and joins them.
+//
+// It exists because [Fill] kept being applied one row at a time and then
+// forgotten on the next surface. Every overlay assembles a row out of styled
+// spans and hands it to a background style, and every styled span closes
+// itself with ESC[0m — which clears the background along with the
+// foreground. So the surface survives as far as the first span and the rest
+// of the row shows the terminal through it. That is divergence 19, and it
+// arrived a second time in the overlays, which were migrated to the palette
+// after the panels were fixed and did not get the fix that went with it.
+//
+// One function rather than a call site per surface, so the next one written
+// gets it by using it.
+func FillRows(colour lipgloss.Color, rows []string, width int) string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = Fill(colour, row, width)
+	}
+	return strings.Join(out, "\n")
+}
+
 // PaintedWidth returns how many leading display cells of s are drawn with
 // some background colour in effect, stopping at the first cell that is not.
 //

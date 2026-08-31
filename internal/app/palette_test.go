@@ -1,6 +1,7 @@
 package app
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -9,26 +10,30 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/mediaview"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
-// A component is given the palette once, in its constructor, and has to use
-// the one it was given.
-//
-// All three of these ignored it. They took a theme.Roles argument, dropped it
-// on the floor, and installed theme.DarkRoles(false) — the 256-colour
-// fallback — so on a terminal reporting truecolour the thread, the chat list
-// and the composer would have rendered from a different palette than the
-// frame around them. It went unnoticed because the app also called SetRoles
-// at startup, which papered over it; removing that redundant call is what
-// exposed it.
-func TestEveryComponentUsesThePaletteItWasGiven(t *testing.T) {
-	// A palette nothing could arrive at by accident.
-	marker := theme.DarkRoles(true)
-	marker.Fg = lipgloss.Color("#010203")
-	marker.Dim = lipgloss.Color("#040506")
-	marker.Panel = lipgloss.Color("#070809")
+// truecolourSeq finds every 24-bit foreground or background in a rendered
+// string, capturing it as "r;g;b".
+var truecolourSeq = regexp.MustCompile(`[34]8;2;(\d+;\d+;\d+)`)
 
+// A component is given the palette once, in its constructor, and everything
+// it draws has to come from that palette.
+//
+// This has gone wrong twice, in opposite directions, which is why the table
+// covers EVERY component that takes one rather than the ones that looked
+// interesting at the time.
+//
+// First all three panels took a theme.Roles argument, dropped it on the
+// floor, and installed theme.DarkRoles(false) — masked by a redundant
+// SetRoles call at startup. Then, removing that setter, the chat list stopped
+// being given a palette at all: its constructor set no roles, every colour
+// was the zero value, and the list rendered unstyled.
+func TestEveryComponentUsesThePaletteItWasGiven(t *testing.T) {
+	marker, known := theme.MarkerRoles()
 	s := store.NewStore()
 	var tg *telegram.Client
 
@@ -40,6 +45,7 @@ func TestEveryComponentUsesThePaletteItWasGiven(t *testing.T) {
 			m := composer.New(marker)
 			m.SetSize(60, 1)
 			m.SetChatId(1)
+			m.SetFocused(true)
 			return m.View()
 		}},
 		{"the thread", func() string {
@@ -47,31 +53,54 @@ func TestEveryComponentUsesThePaletteItWasGiven(t *testing.T) {
 			m.SetSize(60, 10)
 			return m.View()
 		}},
+		{"the top bar", func() string {
+			m := topbar.New(marker)
+			m.SetWidth(80)
+			m.SetClock("12:40")
+			m.SetConnection(topbar.Connected, "connected")
+			m.SetDevices(2)
+			m.SetFolders([]topbar.Folder{{Name: "all", Active: true}, {Name: "work"}})
+			return m.View()
+		}},
+		{"the hint bar", func() string {
+			m := hintbar.New(marker)
+			m.SetWidth(80)
+			m.SetHints([]hintbar.Hint{{Key: "q", Label: "quit"}})
+			m.SetRight("2 buffers")
+			return m.View()
+		}},
+		{"the media overlay", func() string {
+			m := mediaview.New(marker)
+			m.SetSize(60, 10)
+			m.Open("photo · nadia", "downloading…")
+			return m.View()
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := tt.view()
-			if !strings.Contains(view, "1;2;3") && !strings.Contains(view, "4;5;6") &&
-				!strings.Contains(view, "7;8;9") {
-				t.Errorf("%s drew none of the palette it was given:\n%s",
-					tt.name, strings.ReplaceAll(view, "\x1b", "ESC"))
+
+			found := truecolourSeq.FindAllStringSubmatch(view, -1)
+			if len(found) == 0 {
+				t.Fatalf("%s drew no colour at all — it is not using the "+
+					"palette it was given:\n%s", tt.name,
+					strings.ReplaceAll(view, "\x1b", "ESC"))
+			}
+			for _, m := range found {
+				if _, ok := known[m[1]]; !ok {
+					t.Errorf("%s drew rgb(%s), which is not in the palette "+
+						"it was given", tt.name, m[1])
+				}
 			}
 		})
 	}
 }
 
-// And the palette the app resolves is the one every component gets, so a
-// truecolour terminal does not get a 256-colour thread inside a truecolour
-// frame.
+// And the palette the app resolves is the one the assembled screen uses.
 func TestTheAppHandsOutOnePalette(t *testing.T) {
 	m := framedModel(t, 120, 30)
 
-	// The frame's own surfaces come from m.roles; if a component had kept
-	// its own default, the row would carry two different greys for the same
-	// role. Asserting the whole screen is painted is not enough — that
-	// passed throughout — so this asks whether the thread's body uses the
-	// same bg the frame fills its column with.
 	view := m.View().Content
 	bg := backgroundSeq(m.roles.Bg)
 	if bg == "" {
@@ -82,12 +111,11 @@ func TestTheAppHandsOutOnePalette(t *testing.T) {
 	}
 }
 
-// The grid draws the gutter and the renderer draws the body, and they have
-// to agree about what amber is. The renderer holds its own copy of the
-// palette, so a constructor that set the grid's and forgot the renderer's
-// would produce a message whose timestamp and whose text came from two
-// different themes — visible only on a message with inline formatting, which
-// is why the whole-view assertion above does not catch it.
+// The grid draws the gutter and the renderer draws the body, and they have to
+// agree about what amber is. The renderer holds its own copy of the palette,
+// so a constructor that set the grid's and forgot the renderer's would give a
+// message whose timestamp and whose text came from two different themes —
+// visible only on a message with inline formatting.
 func TestTheMessageBodyUsesTheSamePaletteAsTheGrid(t *testing.T) {
 	marker := theme.DarkRoles(true)
 	marker.Amber = lipgloss.Color("#112233")

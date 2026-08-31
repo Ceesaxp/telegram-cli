@@ -66,6 +66,13 @@ var staleKeyDefaults = map[string][]string{
 	// page_up/page_down are deliberately absent: they are inert (chatview
 	// hardcodes pgup/pgdown), so rewriting them changes nothing a user can
 	// observe while adding noise to the summary. See migratableKeyFields.
+	// ctrl+c was the shipped default for quit until it was retired: it is
+	// the chord a terminal user presses to abandon a command rather than to
+	// close an application, and it was reachable by accident from every
+	// panel. A config still holding it makes the help card advertise
+	// "ctrl+q / ctrl+c", which is the duplicate the retirement removed.
+	"quit": {"ctrl+c"},
+
 	"focus_chat_list": {"ctrl+1"},
 	"focus_chat_view": {"ctrl+2"},
 	"focus_composer":  {"ctrl+3"},

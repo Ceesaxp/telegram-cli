@@ -172,10 +172,14 @@ command palette, the thread grid, the content blocks, the composer and the
 context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
-Every phase in the plan has now shipped. What is left before the design can
-be called complete is the four content blocks whose data the client does not
-map. Until the blocks land, the goldens
-are asserted on width only — see "Byte equality against the goldens" below.
+Every phase in the plan has now shipped, and both release blockers are
+discharged. What is left before the design can be called complete is the four
+content blocks whose data this client does not map; until they land, the
+goldens are asserted on width only — see "Byte equality against the goldens"
+below.
+
+Field feedback has its own item below: the compose line's editing keymaps are
+thinner than either convention implies.
 
 - [x] **Panel surfaces are painted** — every panel wrapped its assembled row
       in a background style, which a styled span's own `ESC[0m` cleared, so
@@ -188,6 +192,48 @@ are asserted on width only — see "Byte equality against the goldens" below.
       colour profile — four packages did not have one, which is why this ran
       four phases under a green suite. See
       [divergence 19](docs/tui-2.0.md#19-the-frame-owns-each-columns-surface-not-the-panels).
+- [ ] **Text cannot be selected with the mouse.** Raised in field use. The
+      cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
+      the terminal hands every drag to the application instead of running its
+      own selection. That mouse reporting is not decoration — it is what
+      makes clicking a chat row, a folder tab and the mouse wheel work.
+
+      Three ways out, and the choice is a decision rather than a fix:
+
+      - **Hold a modifier.** Most terminals (iTerm2, Ghostty, GNOME Terminal,
+        Windows Terminal) bypass mouse reporting while Option/Alt or Shift is
+        held, so selection already works today if you know the gesture. This
+        may be entirely a documentation item.
+      - **A toggle.** A binding that drops mouse reporting until pressed
+        again, so a drag selects. Cheap, but adds a mode with no visible
+        state unless the hint bar says so.
+      - **Yank instead of select.** `y` already copies the cursored message,
+        and the media overlay could copy a code block. Selection-by-mouse is
+        then a thing you do not need — which is the honest answer for a
+        terminal app, and the least likely to satisfy someone who wanted to
+        grab half a sentence.
+
+      Check the modifier gesture on the terminals in use before building
+      anything: if it works everywhere that matters, the whole item is a
+      README paragraph.
+
+- [ ] **Compose-line editing is thinner than the keymap it advertises** ←
+      **next**. Raised in field use, and largely a rendering problem that is
+      now fixed: the caret was drawn as a gap in vi's normal mode too, so
+      every motion read as off-by-one even though `ctrl+a`, `ctrl+e`, `0` and
+      `$` had always worked (divergence 28).
+
+      What is genuinely missing, now that the caret is legible:
+
+      - **vi normal:** `^` is unbound — only `0` and `home` reach the line
+        start. No `e`, no `W`/`B`, no `cw`/`ciw`, no `p`, no counts.
+      - **emacs:** no `alt+b`/`alt+f` (word motion), no `alt+d` (kill word
+        forward), no `ctrl+y` (yank back what `ctrl+k`/`ctrl+w` killed).
+
+      Worth a scoped pass rather than an accretion of keys: a kill ring is a
+      design decision, `cw` needs an operator-pending state the composer does
+      not have, and counts need a prefix register. Decide the shape first.
+
 - [x] **Six components rendered from the legacy `theme.Theme`** — migrated,
       and the legacy theme is deleted. `palette`, `help`, `search`, `dialog`,
       `auth` and `contacts` now draw from `theme.Roles` through a shared

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
@@ -95,9 +96,23 @@ func (m *Model) SetSize(w, h int) {
 // computeGeometry, which this mirrors): DialogBox contributes a 1-cell
 // border and (1,2) padding per side.
 const (
-	maxBoxWidth  = 76
-	maxBoxHeight = 28
-	minBoxWidth  = 40
+	// Width is capped because a keymap read across 200 columns is a keymap
+	// nobody reads. HEIGHT is not: there is no such thing as a card that is
+	// too tall to read, and a cap on it hides bindings behind a scroll
+	// while leaving the screen half empty. A 28-row cap on a 60-row
+	// terminal is how "} / {" came to be a binding this card knew about
+	// and never showed.
+	maxBoxWidth = 76
+	minBoxWidth = 40
+
+	// Two columns halve the scrolling on a terminal wide enough to hold
+	// them. The threshold is what a second column needs to stay readable,
+	// not a round number: two of minColumnWidth plus the gap between them,
+	// plus the frame's own chrome.
+	minColumnWidth = 46
+	columnGap      = 3
+	maxTwoColWidth = 2*maxBoxWidth + columnGap
+
 	minBoxHeight = 12
 
 	dialogChromeW = 6         // DialogBox: (border 1 + padding 2) * 2 sides
@@ -134,8 +149,15 @@ type geometry struct {
 // it stays usable on a tiny terminal.
 func computeGeometry(w, h int) geometry {
 	boxW := w - 8
-	if boxW > maxBoxWidth {
-		boxW = maxBoxWidth
+	// A wide window gets a wider box, but only because a SECOND COLUMN
+	// fits in it — never a single column stretched across 200 cells, which
+	// is a keymap nobody reads.
+	cap := maxBoxWidth
+	if boxW >= 2*minColumnWidth+columnGap+dialogChromeW {
+		cap = maxTwoColWidth
+	}
+	if boxW > cap {
+		boxW = cap
 	}
 	if boxW < minBoxWidth {
 		boxW = minBoxWidth
@@ -164,9 +186,6 @@ func computeGeometry(w, h int) geometry {
 	}
 
 	boxH := h - 6
-	if boxH > maxBoxHeight {
-		boxH = maxBoxHeight
-	}
 	if boxH < minBoxHeight {
 		boxH = minBoxHeight
 	}
@@ -250,6 +269,13 @@ func bindingLine(b Binding, keysW, innerWidth int, keysStyle, descStyle lipgloss
 
 // bodyLines renders the full (unscrolled) section content as individual
 // display lines, each already fit to innerWidth cells.
+// bodyLines is the whole keymap as rows, laid out in one column or two
+// depending on what the width affords.
+//
+// Two columns is not decoration: this keymap is 86 rows, so on any terminal
+// under about 90 rows tall a single column puts most of it below the fold.
+// A binding you have to scroll to find is one you look for in the source
+// instead — which is what happened to "} / {".
 func (m Model) bodyLines(innerWidth int) []string {
 	mutedStyle := theme.OverlayMuted(m.roles)
 
@@ -257,6 +283,73 @@ func (m Model) bodyLines(innerWidth int) []string {
 		return []string{cell.FitLine(mutedStyle, "No key bindings to show.", innerWidth)}
 	}
 
+	colW := innerWidth
+	twoCol := innerWidth >= 2*minColumnWidth+columnGap
+	if twoCol {
+		colW = (innerWidth - columnGap) / 2
+	}
+
+	single := m.sectionLines(colW, mutedStyle)
+	if !twoCol {
+		return single
+	}
+	return joinColumns(single, colW, innerWidth, mutedStyle)
+}
+
+// joinColumns lays a flat body out side by side, splitting at the section
+// boundary nearest the middle so a heading never ends up alone at the foot
+// of the left column with its bindings in the right one.
+func joinColumns(lines []string, colW, innerWidth int, blank lipgloss.Style) []string {
+	split := splitPoint(lines)
+	left, right := lines[:split], lines[split:]
+	// The blank separator that WAS the boundary belongs to neither column.
+	if len(right) > 0 && strings.TrimSpace(ansi.Strip(right[0])) == "" {
+		right = right[1:]
+	}
+
+	rows := max(len(left), len(right))
+	out := make([]string, rows)
+	pad := strings.Repeat(" ", columnGap)
+	empty := cell.Fit("", colW)
+
+	for i := range rows {
+		l, r := empty, ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		out[i] = cell.Fit(cell.Fit(l, colW)+pad+r, innerWidth)
+	}
+	return out
+}
+
+// splitPoint is the blank line closest to the middle of the body, or the
+// exact middle when there is none.
+func splitPoint(lines []string) int {
+	mid := (len(lines) + 1) / 2
+	best, bestDist := mid, len(lines)
+	for i, line := range lines {
+		if strings.TrimSpace(ansi.Strip(line)) != "" {
+			continue
+		}
+		if d := abs(i - mid); d < bestDist {
+			best, bestDist = i, d
+		}
+	}
+	return best
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// sectionLines is the keymap as a single column of rows.
+func (m Model) sectionLines(innerWidth int, mutedStyle lipgloss.Style) []string {
 	keysW := keysColumnWidth(m.sections, innerWidth)
 	sectionTitleStyle := theme.OverlayTitle(m.roles)
 	keysStyle := theme.OverlayKey(m.roles).Bold(true)
@@ -272,6 +365,38 @@ func (m Model) bodyLines(innerWidth int) []string {
 		}
 	}
 	return lines
+}
+
+// hiddenRows describes what is off the top and bottom of the card, or ""
+// when the whole keymap fits.
+func (m Model) hiddenRows(g geometry) string {
+	total := len(m.bodyLines(g.innerWidth))
+	if total <= g.contentH {
+		return ""
+	}
+	offset := clampOffset(m.offset, total, g.contentH)
+
+	above, below := offset, total-offset-g.contentH
+	switch {
+	case above > 0 && below > 0:
+		return "↑" + itoa(above) + " ↓" + itoa(below)
+	case below > 0:
+		return "↓" + itoa(below) + " more"
+	default:
+		return "↑" + itoa(above) + " above"
+	}
+}
+
+func itoa(n int) string {
+	if n <= 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
 }
 
 // clampOffset clamps a scroll offset into [0, max(0, total-visible)] —
@@ -374,6 +499,13 @@ func (m Model) View() string {
 	if footerText == "" {
 		footerText = defaultFooter
 	}
+	// A card that scrolls has to say it is scrolled. The footer already
+	// advertises the keys; what it did not say is that there was anything
+	// to use them on, so a binding below the fold was indistinguishable
+	// from a binding that does not exist.
+	if more := m.hiddenRows(g); more != "" {
+		footerText = more + " · " + footerText
+	}
 	footerStyle := theme.OverlayMuted(m.roles)
 	footer := cell.FitLine(footerStyle, footerText, g.innerWidth)
 
@@ -381,7 +513,7 @@ func (m Model) View() string {
 	rows = append(rows, title, "")
 	rows = append(rows, body...)
 	rows = append(rows, footer)
-	content := strings.Join(rows, "\n")
+	content := cell.FillRows(m.roles.Panel, rows, g.innerWidth)
 
 	// g.boxWidth/g.boxHeight are the box's OUTER dimensions. DialogBox
 	// adds its own 1-cell border on top of whatever is passed to
