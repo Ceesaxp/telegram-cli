@@ -14,7 +14,7 @@ import (
 // bar, chat list, and hint bar"). Offsets below are the ones measured out of
 // the golden fixtures at a 38-cell column:
 //
-//	col  0      selection bar          (indent, on the preview line)
+//	col  0      selection bar          selection bar
 //	col  1      type sigil             (indent)
 //	col  2      space                  (indent)
 //	cols 3..    title                  preview
@@ -102,7 +102,11 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	preview := lipgloss.NewStyle().Foreground(r.Faint).
 		Render(cell.Fit(cell.Truncate(item.Subtitle, previewW), previewW))
 
-	line2 := strings.Repeat(" ", rowTextCol) + preview
+	// The bar runs down BOTH rows of the chat. A mark on the title line
+	// only marks the title; the preview underneath it reads as belonging to
+	// no row in particular, which is exactly how a two-line row loses its
+	// selection.
+	line2 := barStyle.Render(bar) + strings.Repeat(" ", rowTextCol-1) + preview
 	if badgeW > 0 {
 		line2 += " " + badge
 	}

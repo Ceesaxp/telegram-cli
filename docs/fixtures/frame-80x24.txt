@@ -4,7 +4,7 @@
  tg │ 1:all 2:unread 3:work 4:channels 5:archive            ● connected │ 21:04 
  / filter chats…          9/9 │ # infra-oncall │ group… buf 2 │ ln 214/214  bot 
 ▌# infra-oncall         2m    │   20:47     nadia  That is the migration        
-   nadia: rebased, CI gr… [4] │                    backfill, not the rollout.   
+▌  nadia: rebased, CI gr… [4] │                    backfill, not the rollout.   
  @ Nadia Feld           6m    │                    It drains in ~20 min.        
    you: pushing the tag now   │   20:52       you  Confirmed from the queue     
  # relay-protocol       14m   │                    dashboard. Resuming.  ✓✓     
@@ -18,9 +18,9 @@
  # design-crit          yd    │                    flag.                        
    you: left comments on 3    │                    [🚀 4]                       
  ! tape/changelog muted yd    │ ▌ 21:03       ivo  Good. I will write the       
-   v0.4.1 — keymap overhaul   │                    incident note either way —   
- @ Jonas Vik            2d    │                    cheap to have, expensive to  
-   thanks, that unblocked me  │                    reconstruct.                 
+   v0.4.1 — keymap overhaul   │ ▌                  incident note either way —   
+ @ Jonas Vik            2d    │ ▌                  cheap to have, expensive to  
+   thanks, that unblocked me  │ ▌                  reconstruct.                 
                               │               ···  nadia is typing…             
                               │ reply ↳ nadia: Rebased o…           esc to drop 
  j/k move  g/G ends  u unread │ NORMAL › i to compose · : for commands       md 

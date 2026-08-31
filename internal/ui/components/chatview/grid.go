@@ -358,9 +358,20 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 		}
 	}
 
+	// The bar runs down every row of the message, and its colour is the
+	// only thing on screen that says which panel has the keyboard.
+	//
+	// Cyan when this panel is focused, ghost when it is not — the same rule
+	// the chat list has always followed, and which this one did not: two
+	// panels drawing an equally bright cursor is two panels claiming to be
+	// active, and the reader has to guess.
 	bar := " "
 	if selected {
-		bar = lipgloss.NewStyle().Foreground(r.Cyan).Render("▌")
+		colour := r.Ghost
+		if m.focused {
+			colour = r.Cyan
+		}
+		bar = lipgloss.NewStyle().Foreground(colour).Render("▌")
 	}
 
 	stamp := render.FormatClock(msg.Date)
@@ -377,7 +388,9 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 			out = append(out, g.row(bar, stamp, sender, row, r))
 			continue
 		}
-		out = append(out, g.row(" ", "", "", row, r))
+		// The time and sender fields belong to the message's first row
+		// only; the bar belongs to all of them.
+		out = append(out, g.row(bar, "", "", row, r))
 	}
 
 	// The selected message is a band of curline across the full pane, not

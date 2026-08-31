@@ -4,7 +4,7 @@
  tg │ 1:all 2:unread 3:work 4:channels 5:archive                                           ● connected · mtproto 2.0 · devices 1 │ 21:04 
  / filter chats…                  9/9 │ # infra-oncall │ group · 24 members · 6 … buf 2 │ ln 214/214  bot │ PINNED                       
 ▌# infra-oncall                 2m    │                        └──────┘  o open · s save                  │ ▪ Deploy window 14:00–1… ivo 
-   nadia: rebased, CI green       [4] │                        [👀 5] [🔥 2]                              │ ▪ Runbook: auth p95 s… nadia 
+▌  nadia: rebased, CI green       [4] │                        [👀 5] [🔥 2]                              │ ▪ Runbook: auth p95 s… nadia 
  @ Nadia Feld                   6m    │   20:44           sam  The offending query, for the record:       │                              
    you: pushing the tag now           │                        ┌ sql ────────────── 4 lines · y to yank ┐ │ MEMBERS · 24                 
  # relay-protocol               14m   │                        │ 1   SELECT s.* FROM sessions s         │ │ ● ivo                  admin 
@@ -24,8 +24,8 @@
                                       │   21:02           sam  Approved. Merging behind the flag.         │                              
                                       │                        [🚀 4]                                     │                              
                                       │ ▌ 21:03           ivo  Good. I will write the incident note       │                              
-                                      │                        either way — cheap to have, expensive to   │                              
-                                      │                        reconstruct.                               │                              
+                                      │ ▌                      either way — cheap to have, expensive to   │                              
+                                      │ ▌                      reconstruct.                               │                              
                                       │                   ···  nadia is typing…                           │                              
                                       │ reply ↳ nadia: Rebased onto main, CI is gr…           esc to drop │                              
  j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                         md │                              

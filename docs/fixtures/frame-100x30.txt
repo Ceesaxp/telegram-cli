@@ -4,7 +4,7 @@
  tg │ 1:all 2:unread 3:work 4:channels 5:archive      ● connected · mtproto 2.0 · devices 1 │ 21:04 
  / filter chats…                  9/9 │ # infra-oncall │ group · 24 member… buf 2 │ ln 214/214  bot 
 ▌# infra-oncall                 2m    │                        look?                                
-   nadia: rebased, CI green       [4] │                        ▣ auth-p95-2608.png  184 KB · png    
+▌  nadia: rebased, CI green       [4] │                        ▣ auth-p95-2608.png  184 KB · png    
  @ Nadia Feld                   6m    │                        [👀 5] [🔥 2]                        
    you: pushing the tag now           │   20:44           sam  The offending query, for the record: 
  # relay-protocol               14m   │                        ┌ sql ──────── 4 lines · y to yank ┐ 
@@ -25,8 +25,8 @@
                                       │   21:02           sam  Approved. Merging behind the flag.   
                                       │                        [🚀 4]                               
                                       │ ▌ 21:03           ivo  Good. I will write the incident note 
-                                      │                        either way — cheap to have,          
-                                      │                        expensive to reconstruct.            
+                                      │ ▌                      either way — cheap to have,          
+                                      │ ▌                      expensive to reconstruct.            
                                       │                   ···  nadia is typing…                     
                                       │ reply ↳ nadia: Rebased onto main, CI…           esc to drop 
  j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                   md 

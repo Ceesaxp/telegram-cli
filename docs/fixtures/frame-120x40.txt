@@ -4,7 +4,7 @@
  tg │ 1:all 2:unread 3:work 4:channels 5:archive                          ● connected · mtproto 2.0 · devices 1 │ 21:04 
  / filter chats…                  9/9 │ # infra-oncall │ group … buf 2 │ ln 214/214  bot │ PINNED                       
 ▌# infra-oncall                 2m    │   09:16     nadia  ↳ you Backoff caps at 30s?    │ ▪ Deploy window 14:00–1… ivo 
-   nadia: rebased, CI green       [4] │                    Yes, jittered. Full ±20%.     │ ▪ Runbook: auth p95 s… nadia 
+▌  nadia: rebased, CI green       [4] │                    Yes, jittered. Full ±20%.     │ ▪ Runbook: auth p95 s… nadia 
  @ Nadia Feld                   6m    │ TODAY ────────────────────────────────────────── │                              
    you: pushing the tag now           │   20:41       ivo  Rollout paused — session hits │ MEMBERS · 24                 
  # relay-protocol               14m   │                    spiked on the auth path.      │ ● ivo                  admin 
@@ -34,9 +34,9 @@
                                       │                    flag.                         │                              
                                       │                    [🚀 4]                        │                              
                                       │ ▌ 21:03       ivo  Good. I will write the        │                              
-                                      │                    incident note either way —    │                              
-                                      │                    cheap to have, expensive to   │                              
-                                      │                    reconstruct.                  │                              
+                                      │ ▌                  incident note either way —    │                              
+                                      │ ▌                  cheap to have, expensive to   │                              
+                                      │ ▌                  reconstruct.                  │                              
                                       │               ···  nadia is typing…              │                              
                                       │ reply ↳ nadia: Rebased on…           esc to drop │                              
  j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands        md │                              
