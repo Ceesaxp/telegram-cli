@@ -137,3 +137,31 @@ func lastLine(view string) string {
 	}
 	return strings.Join(lines[len(lines)-3:], "\n")
 }
+
+// Every row of the card is painted with the PANEL surface, edge to edge.
+//
+// Divergence 19 arriving a second time: the overlays were still drawing from
+// the pre-2.0 theme when the panels were fixed, and were migrated to the
+// palette afterwards without the fix that went with it. Each row was
+// assembled out of styled spans and handed to a background style, where the
+// first span's own ESC[0m takes the surface with it — this card was painting
+// 23 of 112 cells on a binding row.
+//
+// Asserted on the PANEL specifically rather than on "something": the app
+// fills the screen behind an overlay with bg, which satisfies a paint check
+// while leaving the card's interior the wrong colour.
+func TestEveryCardRowIsPaintedWithPanel(t *testing.T) {
+	r := theme.DarkRoles(false)
+	m := card(t, 120, 40, longSections(6))
+	panelBg := "48;5;" + string(r.Panel)
+
+	for i, line := range strings.Split(m.View(), "\n") {
+		if p := cell.PaintedWidth(line); p != cell.Width(line) {
+			t.Errorf("row %d: painted %d of %d cells", i, p, cell.Width(line))
+		}
+		if !strings.Contains(line, panelBg) {
+			t.Errorf("row %d is not on the panel surface: %s", i,
+				strings.ReplaceAll(line, "\x1b", "ESC"))
+		}
+	}
+}

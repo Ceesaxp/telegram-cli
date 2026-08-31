@@ -513,7 +513,7 @@ func (m Model) View() string {
 	rows = append(rows, title, "")
 	rows = append(rows, body...)
 	rows = append(rows, footer)
-	content := strings.Join(rows, "\n")
+	content := cell.FillRows(m.roles.Panel, rows, g.innerWidth)
 
 	// g.boxWidth/g.boxHeight are the box's OUTER dimensions. DialogBox
 	// adds its own 1-cell border on top of whatever is passed to

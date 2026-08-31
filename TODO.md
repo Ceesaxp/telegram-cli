@@ -192,6 +192,31 @@ thinner than either convention implies.
       colour profile — four packages did not have one, which is why this ran
       four phases under a green suite. See
       [divergence 19](docs/tui-2.0.md#19-the-frame-owns-each-columns-surface-not-the-panels).
+- [ ] **Text cannot be selected with the mouse.** Raised in field use. The
+      cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
+      the terminal hands every drag to the application instead of running its
+      own selection. That mouse reporting is not decoration — it is what
+      makes clicking a chat row, a folder tab and the mouse wheel work.
+
+      Three ways out, and the choice is a decision rather than a fix:
+
+      - **Hold a modifier.** Most terminals (iTerm2, Ghostty, GNOME Terminal,
+        Windows Terminal) bypass mouse reporting while Option/Alt or Shift is
+        held, so selection already works today if you know the gesture. This
+        may be entirely a documentation item.
+      - **A toggle.** A binding that drops mouse reporting until pressed
+        again, so a drag selects. Cheap, but adds a mode with no visible
+        state unless the hint bar says so.
+      - **Yank instead of select.** `y` already copies the cursored message,
+        and the media overlay could copy a code block. Selection-by-mouse is
+        then a thing you do not need — which is the honest answer for a
+        terminal app, and the least likely to satisfy someone who wanted to
+        grab half a sentence.
+
+      Check the modifier gesture on the terminals in use before building
+      anything: if it works everywhere that matters, the whole item is a
+      README paragraph.
+
 - [ ] **Compose-line editing is thinner than the keymap it advertises** ←
       **next**. Raised in field use, and largely a rendering problem that is
       now fixed: the caret was drawn as a gap in vi's normal mode too, so

@@ -123,7 +123,7 @@ func TestMigrateLeavesCustomizations(t *testing.T) {
 // TestMigrateFillsNewFields covers a config written before these fields
 // existed — the reason someone upgrading has no folder or help bindings.
 func TestMigrateFillsNewFields(t *testing.T) {
-	cfg := &Config{Keys: KeyConfig{Quit: "ctrl+c", Contacts: "alt+c"}}
+	cfg := &Config{Keys: KeyConfig{Quit: "ctrl+q", Contacts: "alt+c"}}
 	cfg.Storage.SessionFile = "/data/tele/session.json"
 	got := changeMap(t, Migrate(cfg, nil))
 
@@ -372,8 +372,12 @@ search = "?"
 		"contacts_alt":  "f4",
 		"global_search": "ctrl+g",
 		"help":          "?",
-		// Untouched: the user chose these.
-		"quit":   "ctrl+c",
+		// ctrl+c was the shipped default for quit until it was retired, so
+		// a config still holding it never chose it — it came from an
+		// example file. Left alone, the help card advertises
+		// "ctrl+q / ctrl+c", which is the duplicate the retirement removed.
+		"quit": "ctrl+q",
+		// Untouched: the user chose this one.
 		"search": "?",
 	} {
 		var got string

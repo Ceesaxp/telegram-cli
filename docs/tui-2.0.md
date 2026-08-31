@@ -1099,6 +1099,50 @@ a key the surface ignores, which is what a digit was here before.
 A bare `0` is deliberately not a count, as in vi. It has no binding here yet,
 so the guard changes nothing today; it exists so that `0` stays available.
 
+### 34. Divergence 19, a second time — in the overlays
+
+The panels' surfaces were fixed when the defect was found: a row assembled
+out of styled spans and handed to a background style loses that background at
+the first span's `ESC[0m`, because SGR is a mode and a reset is not a scope.
+
+The overlays were still drawing from the pre-2.0 theme at the time. They were
+migrated to the palette afterwards, and did not get the fix that went with
+it — so the help card was painting **23 of 112 cells** on a binding row, and
+every other overlay the same.
+
+Worse, the surround: an overlay replaces the frame, and `lipgloss.Place` pads
+what is left with **plain space**, so the screen around a centred card showed
+the terminal's own background and the frame's surfaces went with it.
+
+Both are fixed through `cell.FillRows`, which is `Fill` for a slice — one
+function rather than a call site per surface, so the next surface written
+gets it by using it. The card fills with panel; the app fills the placed
+result with bg, and the card still wins inside itself because `Fill` reopens
+a surface BEFORE each span's own sequences.
+
+`TestAnOpenOverlayIsPaintedEdgeToEdge` covers all four overlays at once. The
+help card additionally asserts **panel** rather than "some colour": the app's
+bg fill satisfies a paint check while leaving a card's interior the wrong
+colour, so the weaker assertion would have passed a half-fixed card.
+
+`help` had no `TestMain` pinning a colour profile — the sixth package. The
+rule is now worth stating plainly: **a component package that renders
+anything needs one on the day it is created**, or its colour assertions pass
+against an Ascii profile that emits nothing.
+
+### 35. `quit = "ctrl+c"` is a retired default, not a choice
+
+Removing `ctrl+c` as a quit chord (divergence 24) changed the default for
+`keys.quit` from `ctrl+c` to `ctrl+q`. A config file written before that
+still holds the old value, and since a configured key is shown alongside the
+hardcoded one, the help card read `ctrl+q / ctrl+c` — advertising exactly the
+duplicate the change removed.
+
+`ctrl+c` joins `staleKeyDefaults`, which exists for this: a field holding a
+value that was once shipped as a default was never chosen, so `-migrate-config`
+replaces it rather than preserving it. The mechanism was already there; it
+just had not been told about this field.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

@@ -498,7 +498,7 @@ Only some fields are actually consulted:
 
 | Field | Default | Wired? |
 |-------|---------|--------|
-| `quit` | `ctrl+c` | yes |
+| `quit` | `ctrl+q` | yes |
 | `quit_browsing` | `q` | yes — chat list / chat view only; confirms first if the composer holds a draft or attachment |
 | `focus_chat_list` | `f1` | yes — *in addition to* the hardcoded `Alt+1` |
 | `focus_chat_view` | `f2` | yes — *in addition to* the hardcoded `Alt+2` |
