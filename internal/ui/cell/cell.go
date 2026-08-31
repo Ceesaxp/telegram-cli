@@ -131,18 +131,107 @@ func WrapLines(s string, width int) []string {
 	}
 	lines := strings.Split(Wrap(s, width), "\n")
 
-	open := ""
+	open, link := "", ""
 	for i, line := range lines {
+		if link != "" {
+			line = link + line
+		}
 		if open != "" {
 			line = open + line
 		}
-		open = OpenStyle(line)
+		open, link = OpenStyle(line), OpenLink(line)
 		if open != "" {
 			line += "\x1b[0m"
+		}
+		if link != "" {
+			line += LinkClose
 		}
 		lines[i] = line
 	}
 	return lines
+}
+
+// LinkClose ends an OSC 8 hyperlink: the same sequence with an empty URI.
+const LinkClose = "\x1b]8;;\x1b\\"
+
+// OpenLink returns the OSC 8 opening sequence left active at the end of s,
+// verbatim so it can be re-emitted, or "" when s closes what it opened.
+//
+// It is [OpenStyle]'s counterpart for hyperlinks, and it exists for the same
+// reason. `ansi.Wrap` breaks a line between a link's opening and closing
+// sequences without repairing either, so the first line ends with the link
+// still open and the second carries a close that opens nothing. Every
+// terminal that understands OSC 8 then treats the rest of that first row —
+// its trailing padding, the panel rule, and the column beside it — as part
+// of the link.
+//
+// The design record concluded this could not be fixed the way the SGR leak
+// was, because reopening a hyperlink means knowing which runes belong to it
+// after wrapping. That is true of a wrapper that has to infer the URI, and
+// not true here: the URI is carried in the opening sequence, so the sequence
+// is its own answer. See docs/tui-2.0.md, divergence 14.
+//
+// Unlike OpenStyle this does not accumulate. A hyperlink is not a mode that
+// composes — a second OSC 8 replaces the first, and an empty URI ends it.
+func OpenLink(s string) string {
+	open := ""
+	for i := 0; i+1 < len(s); {
+		if s[i] != 0x1b || s[i+1] != ']' {
+			i++
+			continue
+		}
+		n, _ := escapeAt(s, i)
+		if n == 0 {
+			break // unterminated: nothing after it can close it either
+		}
+		seq := s[i : i+n]
+		if isLinkOpen(seq) {
+			open = seq
+		} else if isLinkClose(seq) {
+			open = ""
+		}
+		i += n
+	}
+	return open
+}
+
+// isLinkOpen reports whether seq is an OSC 8 with a non-empty URI. The
+// payload is "8;params;URI", so the URI is whatever follows the second
+// semicolon — params may itself be empty, which is the common spelling.
+func isLinkOpen(seq string) bool {
+	uri, ok := linkURI(seq)
+	return ok && uri != ""
+}
+
+func isLinkClose(seq string) bool {
+	uri, ok := linkURI(seq)
+	return ok && uri == ""
+}
+
+func linkURI(seq string) (string, bool) {
+	body := strings.TrimPrefix(seq, "\x1b]")
+	body = strings.TrimSuffix(strings.TrimSuffix(body, "\x1b\\"), "\a")
+	rest, ok := strings.CutPrefix(body, "8;")
+	if !ok {
+		return "", false
+	}
+	_, uri, ok := strings.Cut(rest, ";")
+	if !ok {
+		return "", false
+	}
+	return uri, true
+}
+
+// Link wraps text in an OSC 8 hyperlink. A caller that has no URI, or is
+// drawing into a terminal that was not asked for hyperlinks, should not call
+// it rather than passing "" — an empty URI is the CLOSING sequence, and
+// emitting one that closes nothing is how a link leaks in the other
+// direction.
+func Link(uri, text string) string {
+	if uri == "" {
+		return text
+	}
+	return "\x1b]8;;" + uri + "\x1b\\" + text + LinkClose
 }
 
 // OpenStyle returns the SGR state left active at the end of s: the
@@ -299,16 +388,21 @@ func Fill(colour lipgloss.Color, s string, width int) string {
 func PaintedWidth(s string) int {
 	painted, bg := 0, false
 	for i := 0; i < len(s); {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) && s[j] != 'm' && s[j] != 0x1b {
-				j++
-			}
-			if j < len(s) && s[j] == 'm' {
-				bg = applySGR(bg, s[i+2:j])
-				i = j + 1
+		if s[i] == 0x1b {
+			// An SGR sequence changes the background; anything else — an OSC
+			// 8 hyperlink, a cursor move — does not, and is stepped over.
+			// The step is why this branch handles every escape rather than
+			// only SGR: falling through to the text scan below with i still
+			// on the ESC would measure an empty run and never advance.
+			if n, sgr := escapeAt(s, i); n > 0 {
+				if sgr != "" || isReset(s, i) {
+					bg = applySGR(bg, sgr)
+				}
+				i += n
 				continue
 			}
+			// A lone trailing ESC: nothing follows it to draw.
+			return painted
 		}
 		j := i
 		for j < len(s) && s[j] != 0x1b {
@@ -321,6 +415,49 @@ func PaintedWidth(s string) int {
 		i = j
 	}
 	return painted
+}
+
+// escapeAt measures the escape sequence starting at s[i] and returns its
+// byte length, plus its parameter list when it is an SGR sequence.
+//
+// A zero length means s[i] does not begin a sequence this understands, which
+// callers must treat as "stop" rather than "skip one byte" — see the loop in
+// [PaintedWidth], where advancing by anything less than the whole sequence
+// would measure its bytes as drawable text.
+func escapeAt(s string, i int) (n int, sgrParams string) {
+	if i+1 >= len(s) {
+		return 0, ""
+	}
+	switch s[i+1] {
+	case '[': // CSI: ends at the first byte in @-~
+		for j := i + 2; j < len(s); j++ {
+			if c := s[j]; c >= '@' && c <= '~' {
+				if c == 'm' {
+					return j + 1 - i, s[i+2 : j]
+				}
+				return j + 1 - i, ""
+			}
+		}
+		return 0, ""
+	case ']', 'P', 'X', '^', '_': // OSC, DCS, SOS, PM, APC: end at ST or BEL
+		for j := i + 2; j < len(s); j++ {
+			if s[j] == 0x07 {
+				return j + 1 - i, ""
+			}
+			if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+				return j + 2 - i, ""
+			}
+		}
+		return 0, ""
+	default: // a two-byte escape
+		return 2, ""
+	}
+}
+
+// isReset reports whether s[i] begins ESC[0m or ESC[m, whose empty parameter
+// list [escapeAt] cannot tell apart from a non-SGR sequence.
+func isReset(s string, i int) bool {
+	return strings.HasPrefix(s[i:], "\x1b[0m") || strings.HasPrefix(s[i:], "\x1b[m")
 }
 
 // applySGR folds one SGR parameter list into "is a background set".

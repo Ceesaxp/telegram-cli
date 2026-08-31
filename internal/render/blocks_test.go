@@ -38,7 +38,7 @@ func TestNestedEntitiesAreNotDuplicated(t *testing.T) {
 		span(9, 4, &telegram.TextEntityTypeTextURL{URL: "https://example.com"}),
 	)
 
-	got := ansi.Strip(RenderInline(ft, testRoles(), false))
+	got := ansi.Strip(RenderInline(ft, testRoles(), textOpts{}))
 	if got != "read the docs now" {
 		t.Fatalf("nested entities changed the text: %q", got)
 	}
@@ -76,7 +76,7 @@ func TestEntityOffsetsOutOfRangeDoNotPanic(t *testing.T) {
 		span(2, 9999, &telegram.TextEntityTypeItalic{}),
 		span(4000, 10, &telegram.TextEntityTypeCode{}),
 	)
-	if got := ansi.Strip(RenderInline(ft, testRoles(), false)); got != "short" {
+	if got := ansi.Strip(RenderInline(ft, testRoles(), textOpts{})); got != "short" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -192,7 +192,7 @@ func TestBlockBoundariesDoNotLeaveBlankRows(t *testing.T) {
 	ft := formatted("intro:\nCODE\nafter",
 		span(7, 4, &telegram.TextEntityTypePreCode{Language: "go"}))
 
-	lines := renderBlocks(ft, testRoles(), 40, false)
+	lines := renderBlocks(ft, testRoles(), 40, textOpts{})
 	for i, line := range lines {
 		if strings.TrimSpace(ansi.Strip(line)) == "" {
 			t.Fatalf("blank row %d of %d at a block boundary:\n%s",
@@ -204,7 +204,7 @@ func TestBlockBoundariesDoNotLeaveBlankRows(t *testing.T) {
 // TestBlankLinesInsideProseSurvive: trimming the boundary must not eat the
 // paragraph breaks a sender wrote on purpose.
 func TestBlankLinesInsideProseSurvive(t *testing.T) {
-	lines := renderBlocks(formatted("first\n\nsecond"), testRoles(), 40, false)
+	lines := renderBlocks(formatted("first\n\nsecond"), testRoles(), 40, textOpts{})
 	if len(lines) != 3 {
 		t.Fatalf("expected the blank line kept, got %d lines: %q", len(lines), lines)
 	}
@@ -284,7 +284,7 @@ func TestQuoteBlockRulesEveryLine(t *testing.T) {
 // new item.
 func TestListItemsGetAHangingIndent(t *testing.T) {
 	ft := formatted("- " + strings.Repeat("word ", 12))
-	lines := renderBlocks(ft, testRoles(), 24, false)
+	lines := renderBlocks(ft, testRoles(), 24, textOpts{})
 
 	if len(lines) < 2 {
 		t.Fatalf("test needs a wrapped item, got %d lines", len(lines))
@@ -304,7 +304,7 @@ func TestListItemsGetAHangingIndent(t *testing.T) {
 func TestOrdinalListsIndentByTheirOwnWidth(t *testing.T) {
 	for _, tc := range []struct{ marker string }{{"1. "}, {"10. "}, {"3) "}} {
 		ft := formatted(tc.marker + strings.Repeat("word ", 12))
-		lines := renderBlocks(ft, testRoles(), 24, false)
+		lines := renderBlocks(ft, testRoles(), 24, textOpts{})
 		if len(lines) < 2 {
 			t.Fatalf("%q: test needs a wrapped item", tc.marker)
 		}
@@ -346,7 +346,7 @@ func TestSpoilerIsHiddenUntilRevealed(t *testing.T) {
 	r := testRoles()
 	ft := formatted("the answer is 42", span(14, 2, &telegram.TextEntityTypeSpoiler{}))
 
-	hidden := RenderInline(ft, r, false)
+	hidden := RenderInline(ft, r, textOpts{})
 	if ansi.Strip(hidden) != "the answer is 42" {
 		t.Fatalf("a spoiler must still occupy its cells: %q", ansi.Strip(hidden))
 	}
@@ -357,7 +357,7 @@ func TestSpoilerIsHiddenUntilRevealed(t *testing.T) {
 		t.Fatalf("a hidden spoiler's foreground is legible: %q", hidden)
 	}
 
-	revealed := RenderInline(ft, r, true)
+	revealed := RenderInline(ft, r, textOpts{reveal: true})
 	if strings.Contains(revealed, "38;5;"+string(r.Sel)) {
 		t.Fatalf("a revealed spoiler is still hidden: %q", revealed)
 	}

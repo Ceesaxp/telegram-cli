@@ -207,6 +207,7 @@ func (m Model) hintsForMode() []hintbar.Hint {
 			{Key: "i", Label: "compose"},
 			{Key: ":", Label: "command"},
 			{Key: m.keys.reply, Label: "reply"},
+			{Key: "y", Label: "yank"},
 			{Key: m.keys.editMessage, Label: "edit"},
 			{Key: m.keys.help, Label: "keymap"},
 		}

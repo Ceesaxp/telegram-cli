@@ -448,8 +448,12 @@ func (m Model) helpSections() []help.Section {
 			{Keys: strings.Join([]string{
 				bound(cv.Reply), bound(cv.Edit), bound(cv.Delete),
 			}, " / "), Desc: "Reply / edit / delete message"},
-			{Keys: "enter / o", Desc: "Open attachment"},
+			{Keys: "enter", Desc: "Open attachment — a photo opens in the pane"},
+			{Keys: "o", Desc: "Open attachment in the system viewer"},
 			{Keys: "s", Desc: "Save attachment"},
+			{Keys: "space", Desc: "Play the selected voice note"},
+			{Keys: "y", Desc: "Copy the selected message's text"},
+			{Keys: "M", Desc: "Mark this chat read without moving"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
 			{Keys: "i / c", Desc: "Compose a message"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},

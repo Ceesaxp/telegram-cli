@@ -49,9 +49,15 @@ func TestAppFixedMatchesDispatcher(t *testing.T) {
 	yieldedNotClaimed := map[string]string{
 		"n": "yielded to chatview's search-hit cycling",
 		"N": "yielded to chatview's search-hit cycling",
-		"q": "closes the help overlay, and only while that overlay is up — " +
-			"the browsing panels receive no keys then. From a browsing panel " +
-			"\"q\" is claimed through the configurable keys.quit_browsing",
+		"q": "closes the help overlay and the media overlay, and only while " +
+			"one of them is up — the browsing panels receive no keys then. " +
+			"From a browsing panel \"q\" is claimed through the configurable " +
+			"keys.quit_browsing",
+		"s": "saves from the media overlay, and only while it is up. The " +
+			"chat view binds \"s\" itself (chatViewFixedKeys) and receives " +
+			"it normally the rest of the time",
+		"o": "opens externally from the media overlay, on the same terms as " +
+			"\"s\"",
 	}
 
 	cfg := &config.Config{}

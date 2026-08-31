@@ -302,11 +302,30 @@ func (m *Model) SetRoles(r theme.Roles) {
 	m.cache.clear()
 }
 
-// ApplyUI applies the [ui] settings the renderer needs. Today that is the
-// inline-image policy; the rail preference is the host's own business.
+// ApplyUI applies the [ui] settings the renderer needs: the inline-image
+// policy and whether links carry OSC 8. The rail preference is the host's
+// own business.
 func (m *Model) ApplyUI(cfg config.UIConfig) {
 	m.renderer.SetInlineImages(cfg.InlineImages)
+	m.renderer.SetHyperlinks(hyperlinksEnabled(cfg.Hyperlinks))
 	m.cache.clear()
+}
+
+// hyperlinksEnabled folds the ui.hyperlinks policy and the terminal's
+// capability into the single boolean the renderer wants.
+//
+// Resolved here rather than in the renderer so the terminal is consulted
+// once, at config time, and never during a frame — and so "auto" has exactly
+// one meaning in the codebase.
+func hyperlinksEnabled(policy string) bool {
+	switch config.ResolveHyperlinks(policy) {
+	case config.HyperlinksAlways:
+		return true
+	case config.HyperlinksNever:
+		return false
+	default:
+		return theme.SupportsHyperlinks()
+	}
 }
 
 // ApplyMedia applies [media] config: image protocol and bubble size,
@@ -420,7 +439,8 @@ type resolvedKeys struct {
 // spellings (which stay active no matter what ScrollUp/ScrollDown/PageUp/
 // PageDown are configured to — see Keys's doc comment) plus the remaining
 // keys this wave does not make configurable (g/G/home/end/ctrl+u/ctrl+d/
-// esc/ctrl+f/n/N/enter/o/s). This is chatview's own reserved surface;
+// esc/ctrl+f/n/N/enter/o/s/x, and phase 8's y/M/space). This is chatview's
+// own reserved surface;
 // SetKeys additionally claims whatever SetReservedKeys was given for the
 // app-level surface. Together they seed the "claimed" set no configured
 // binding may shadow.
@@ -433,6 +453,11 @@ func chatViewFixedKeys() map[string]bool {
 		"esc": true, "ctrl+f": true,
 		"n": true, "N": true,
 		"enter": true, "o": true, "s": true, "x": true,
+		// Phase 8's message actions. space is spelled as the config
+		// vocabulary spells it (config.NormalizeKey maps "spacebar" and " "
+		// onto it), so a user reading this list and their config file see
+		// the same word.
+		"y": true, "M": true, "space": true,
 	}
 }
 
@@ -1663,17 +1688,44 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case kp.Matches(m.keys.delete):
 		return m, m.messageAction("delete")
 
-	// Enter: play/open media of the bottom-visible message
+	// Enter opens the cursored message's media. A photo raises the overlay;
+	// everything else keeps going to the platform, because a video or a
+	// document has no in-terminal form this client can draw.
 	case kp.Matches("enter"):
+		if cmd := m.OverlayPhotoCmd(); cmd != nil {
+			return m, cmd
+		}
 		return m, m.playMedia()
 
-	// 'o' also opens media
+	// 'o' opens externally, always — it is the way past the overlay for a
+	// photo the terminal draws badly, and the overlay's own hint row
+	// advertises it.
 	case kp.Matches("o"):
 		return m, m.playMedia()
 
 	// 's' saves/downloads file
 	case kp.Matches("s"):
 		return m, m.downloadFile()
+
+	// 'y' yanks the message's text to the system clipboard. A nil Cmd means
+	// there was nothing to copy, and the host says so rather than leaving
+	// the press to look like it worked.
+	case kp.Matches("y"):
+		if cmd := m.YankCmd(); cmd != nil {
+			return m, cmd
+		}
+		return m, func() tea.Msg { return YankMsg{} }
+
+	// space plays the cursored voice note.
+	case kp.Matches("space", " "):
+		return m, m.PlayVoiceCmd()
+
+	// 'M' marks the chat read without moving. The whole point is to clear
+	// the badge while staying where you are reading, so it deliberately
+	// does not scroll and does not touch the unread divider — that stays
+	// put until the buffer is left.
+	case kp.Matches("M"):
+		return m, m.MarkReadCmd()
 
 	// 'x' opens the spoilers in the message under the cursor, and closes
 	// them again. A toggle rather than a one-way reveal: having looked, the
@@ -1986,8 +2038,12 @@ func (m Model) downloadFile() tea.Cmd {
 		return nil
 	}
 
+	tg := m.tg
 	return func() tea.Msg {
-		file, err := m.tg.DownloadFileSync(key)
+		if tg == nil {
+			return MediaPlayMsg{Status: "error", Info: "not connected"}
+		}
+		file, err := tg.DownloadFileSync(key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download failed: %v", err)}
 		}
@@ -1999,9 +2055,12 @@ func (m Model) downloadAndPlay(key string, mediaType string, statusMsg string) t
 	if key == "" {
 		return nil
 	}
-	voice, video := m.voice, m.video
+	voice, video, tg := m.voice, m.video, m.tg
 	return func() tea.Msg {
-		file, err := m.tg.DownloadFileSync(key)
+		if tg == nil {
+			return MediaPlayMsg{Status: "error", Info: "not connected"}
+		}
+		file, err := tg.DownloadFileSync(key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
@@ -2068,8 +2127,12 @@ func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {
 	if key == "" {
 		return nil
 	}
+	tg := m.tg
 	return func() tea.Msg {
-		file, err := m.tg.DownloadFileSync(key)
+		if tg == nil {
+			return MediaPlayMsg{Status: "error", Info: "not connected"}
+		}
+		file, err := tg.DownloadFileSync(key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}

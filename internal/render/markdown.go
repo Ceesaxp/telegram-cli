@@ -49,6 +49,12 @@ type MessageRenderer struct {
 	imgCache *media.Cache
 	imgRend  *media.ImageRenderer
 
+	// hyperlinks is whether link runs are wrapped in OSC 8. Resolved once
+	// at startup from ui.hyperlinks and the environment (see
+	// theme.SupportsHyperlinks); never re-derived per render, and never
+	// asked of the terminal.
+	hyperlinks bool
+
 	// inlineImages is the resolved ui.inline_images policy. Defaults to the
 	// permissive one so a renderer built without config behaves as it did
 	// before the setting existed.
@@ -67,6 +73,16 @@ func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
 		imgCache:     media.NewCache(50),
 		imgRend:      media.NewImageRenderer(protocol, defaultImageCols, defaultImageRows),
 	}
+}
+
+// SetHyperlinks turns OSC 8 hyperlinks on the message body on or off. The
+// caller resolves the policy and the terminal's capability together, once,
+// so the renderer never has to.
+func (r *MessageRenderer) SetHyperlinks(on bool) {
+	if r == nil {
+		return
+	}
+	r.hyperlinks = on
 }
 
 // SetInlineImages sets the resolved ui.inline_images policy: whether a photo
@@ -148,10 +164,15 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 	}
 	out = append(out, rc.card...)
 	if rc.note != "" {
-		out = append(out, renderBlocks(plain(rc.note), r.roles, width, false)...)
+		// A note is this client's own words about the message — "poll ·",
+		// "[unsupported]" — so it carries no entities and nothing to link.
+		out = append(out, renderBlocks(plain(rc.note), r.roles, width, textOpts{})...)
 	}
 	if rc.text != nil && rc.text.Text != "" {
-		out = append(out, renderBlocks(rc.text, r.roles, width, opts.RevealSpoilers)...)
+		out = append(out, renderBlocks(rc.text, r.roles, width, textOpts{
+			reveal: opts.RevealSpoilers,
+			links:  r.hyperlinks,
+		})...)
 	}
 	if len(out) == 0 {
 		return []string{""}

@@ -32,37 +32,48 @@ func NewImageRenderer(protocol Protocol, maxWidth, maxHeight int) *ImageRenderer
 }
 
 func (r *ImageRenderer) RenderFile(path string) (string, error) {
+	img, err := r.decodeFile(path)
+	if err != nil {
+		return "", err
+	}
+	return r.RenderImage(img)
+}
+
+// decodeFile is RenderFile's front half: the size and bounds guards, then the
+// decode. Split out so PlaceFile cannot acquire a copy of the guards that
+// drifts from this one — the whole point of them is that no path into the
+// decoder skips them.
+func (r *ImageRenderer) decodeFile(path string) (image.Image, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("opening image: %w", err)
+		return nil, fmt.Errorf("opening image: %w", err)
 	}
 	if err := checkImageFileSize(info.Size()); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("opening image: %w", err)
+		return nil, fmt.Errorf("opening image: %w", err)
 	}
 	defer f.Close()
 
 	cfg, _, err := image.DecodeConfig(f)
 	if err != nil {
-		return "", fmt.Errorf("decoding image: %w", err)
+		return nil, fmt.Errorf("decoding image: %w", err)
 	}
 	if err := checkImageBounds(info.Size(), cfg.Width, cfg.Height); err != nil {
-		return "", err
+		return nil, err
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", fmt.Errorf("decoding image: %w", err)
+		return nil, fmt.Errorf("decoding image: %w", err)
 	}
 
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return "", fmt.Errorf("decoding image: %w", err)
+		return nil, fmt.Errorf("decoding image: %w", err)
 	}
-
-	return r.RenderImage(img)
+	return img, nil
 }
 
 func checkImageFileSize(fileSize int64) error {
@@ -86,17 +97,54 @@ func checkImageBounds(fileSize int64, width, height int) error {
 }
 
 func (r *ImageRenderer) RenderImage(img image.Image) (string, error) {
+	p, err := r.PlaceImage(img)
+	return p.Art, err
+}
+
+// Placement is a rendered image together with whatever it takes to remove it
+// again.
+//
+// The two protocols differ in who owns the pixels. Sixel and half-blocks are
+// written into the cell grid, so redrawing those cells erases them and
+// Teardown is empty. A kitty image belongs to the TERMINAL: it survives any
+// number of text redraws, and a caller that draws one over the UI and then
+// stops drawing it has left it on the screen. Teardown is that caller's way
+// to say it is finished with the image.
+type Placement struct {
+	Art      string
+	Teardown string
+}
+
+// PlaceFile renders a file and reports how to remove it.
+func (r *ImageRenderer) PlaceFile(path string) (Placement, error) {
+	img, err := r.decodeFile(path)
+	if err != nil {
+		return Placement{}, err
+	}
+	return r.PlaceImage(img)
+}
+
+// PlaceImage renders an already-decoded image and reports how to remove it.
+func (r *ImageRenderer) PlaceImage(img image.Image) (Placement, error) {
 	img = resizeToFit(img, r.maxWidth, r.maxHeight)
 
 	switch r.protocol {
 	case ProtocolKitty:
-		return renderKitty(img)
+		art, id, err := renderKittyWithID(img)
+		if err != nil {
+			return Placement{}, err
+		}
+		return Placement{Art: art, Teardown: KittyDelete(id)}, nil
 	case ProtocolSixel:
-		return renderSixel(img)
+		art, err := renderSixel(img)
+		return Placement{Art: art}, err
 	default:
-		return renderBlocks(img), nil
+		return Placement{Art: renderBlocks(img)}, nil
 	}
 }
+
+// Protocol reports which protocol this renderer draws with.
+func (r *ImageRenderer) Protocol() Protocol { return r.protocol }
 
 // resizeToFit scales image to fit terminal dimensions.
 // For blocks: each column = 1 pixel wide, each row = 2 pixels tall (half-blocks).
