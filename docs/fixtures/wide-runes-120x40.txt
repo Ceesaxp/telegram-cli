@@ -1,7 +1,7 @@
 # wide-runes-120x40.txt  (120×40)
 # every line below is exactly 120 display cells wide
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
- tg │ 1:all 2:unread 3:work 4:channels 5:archive                          ● connected · mtproto 2.0 · devices 1 │ 21:04 
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive                                         ● connected · 1 device │ 21:04 
  / filter chats…                  9/9 │ # デプロイ調整 │ group … buf 2 │ ln 214/214  bot │ PINNED                       
 ▌# デプロイ調整                 2m    │                                                  │ ▪ Deploy window 14:00–1… ivo 
 ▌  田中: リベース済み、CI緑       [4] │                                                  │ ▪ Runbook: auth p95 s… nadia 

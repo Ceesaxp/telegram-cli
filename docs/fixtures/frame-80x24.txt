@@ -1,7 +1,7 @@
 # frame-80x24.txt  (80×24)
 # every line below is exactly 80 display cells wide
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
- tg │ 1:all 2:unread 3:work 4:channels 5:archive            ● connected │ 21:04 
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive ● connected · 1 device │ 21:04 
  / filter chats…          9/9 │ # infra-oncall │ group… buf 2 │ ln 214/214  bot 
 ▌# infra-oncall         2m    │   20:47     nadia  That is the migration        
 ▌  nadia: rebased, CI gr… [4] │                    backfill, not the rollout.   

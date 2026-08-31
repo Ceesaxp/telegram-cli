@@ -173,9 +173,8 @@ context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
 Every phase in the plan has now shipped. What is left before the design can
-be called complete is the top bar's two literal placeholders (decision 7),
-the six components still drawing from the pre-2.0 theme, and the four content
-blocks whose data the client does not map. Until the blocks land, the goldens
+be called complete is the six components still drawing from the pre-2.0
+theme, and the four content blocks whose data the client does not map. Until the blocks land, the goldens
 are asserted on width only — see "Byte equality against the goldens" below.
 
 - [x] **Panel surfaces are painted** — every panel wrapped its assembled row
@@ -231,9 +230,10 @@ the primary checkout stays free for fixes against a working client.
       `keys_test` must pass unmodified.
 - [x] **D6 — rail data policy**: deferred until the rail is opened; no fetch
       on chat open.
-- [x] **D7 — top-bar facts**: functions deferred, cells kept with placeholder
-      text (`mtproto 2.0`, `devices 1`). Goldens regenerated. **See release
-      blocker below.**
+- [x] **D7 — top-bar facts**: deferral discharged. The device count is wired
+      to `account.getAuthorizations`; the transport cell is deleted, because
+      gotd speaks MTProto 2.0 and nothing else and the cell could only ever
+      have shown one string.
 - [x] **D8 — command authority**: pin/unpin, mute/unmute, reload-config
       authorised; secret chat and Markdown export deferred and not registered.
 - [x] **D9 — responsive precedence**: 12–19 rows keeps the width-based column
@@ -250,12 +250,20 @@ the primary checkout stays free for fixes against a working client.
 
 ### Release blockers created by a deferral
 
-- [ ] **Top-bar placeholders must not ship.** The goldens and the spec carry
-      `mtproto 2.0` and `devices 1` as literal placeholder text so the layout
-      and shrink order could be settled without the data. Before release,
-      either wire both to a real source or drop the two cells and regenerate
-      the affected top-bar rows. A hard-coded transport version presented as
-      live connection status is a lie in the UI.
+- [x] **Top-bar placeholders must not ship** — discharged. The device count
+      is real (`account.getAuthorizations`, asked once when the connection
+      becomes ready; zero drops the cell, because every account has at least
+      the session doing the asking). The transport cell is gone rather than
+      wired: there was nothing for it to vary with.
+
+      Two things fell out of doing it. `frame-80x24.txt` drew a top row the
+      renderer has never produced — the fixture gave the folder tabs priority
+      over the right group and the spec gives it the other way round, and
+      nothing compared them because the frame tests assert width, not
+      content. And the chrome rows had no periodic tick at all, so the clock
+      showed the time of the last window resize and `hintbar.ClearNotice` had
+      no caller, leaving a "transient" notice up until something replaced it.
+      Both fixed; see divergence 6 and 6a.
 
 ### First code, in this order
 

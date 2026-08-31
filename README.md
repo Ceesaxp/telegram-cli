@@ -54,10 +54,10 @@
 ## Screenshot
 
 ```
- tg │ 1:All 2:Work 3:Channels              ● connected · mtproto 2.0 │ 15:22
+ tg │ 1:All 2:Work 3:Channels                  ● connected · 2 devices │ 15:22
  / filter chats…                  4/4 │ # infra-oncall │ group        ln 22/22
 ▌# infra-oncall                 08:15 │ TODAY ──────────────────────────────
-     sam: the offending query   [2]   │   15:02           sam  the offending
+▌    sam: the offending query   [2]   │   15:02           sam  the offending
  @ Alice                        13:24 │                        query, for the
      see you tomorrow                 │                        record:
  ! Telegram muted               08:03 │                        ┌ sql ── 4 li…
@@ -869,11 +869,9 @@ Also landed, invisibly: `internal/ui/cell` (terminal geometry),
 `internal/ui/golden` (the fixture harness), the interaction-mode resolver, and
 the `:` command palette.
 
-**Still to come:** the chat list's two-line rows with type sigils, the
-columnar message grid that replaces bubbles, and the context rail. The
-`mtproto 2.0` and `devices 1` cells in the top bar are **placeholders** with no
-real data behind them yet — they pin the layout and must be wired or removed
-before release.
+**Still to come:** the overlays and dialogs still draw from the pre-2.0
+palette, and four content blocks are waiting on Telegram data this client
+does not map.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a

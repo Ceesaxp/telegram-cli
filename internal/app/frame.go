@@ -120,6 +120,7 @@ func (m *Model) notify(text string) {
 		kind = "error"
 	}
 	m.hintBar.SetNotice(text, kind)
+	m.noticeAt = time.Now()
 }
 
 // refreshChrome updates the two chrome rows from current state. Called
@@ -130,12 +131,11 @@ func (m *Model) refreshChrome() {
 	m.topBar.SetFolders(m.topBarFolders())
 	m.topBar.SetClock(time.Now().Format("15:04"))
 
-	// DEFERRED (decision 7): neither value has a source in the current
-	// connection state. These literals exist so the layout and shrink order
-	// are settled; they must be wired or removed before release, and TODO.md
-	// tracks that as a release blocker. Presenting a hard-coded transport
-	// version as live status would be a lie in the UI.
-	m.topBar.SetPlaceholders("mtproto 2.0", "devices 1")
+	// Zero until account.getAuthorizations answers, and zero drops the
+	// cell — the top bar says nothing about devices rather than guessing at
+	// a number. Decision 7's other placeholder, the transport version, is
+	// gone rather than wired: gotd speaks MTProto 2.0 and nothing else.
+	m.topBar.SetDevices(m.deviceCount)
 
 	m.hintBar.SetWidth(m.width)
 	m.hintBar.SetHints(m.hintsForMode())

@@ -20,7 +20,7 @@ func newBar(width int) Model {
 	})
 	m.SetConnection(Connected, "connected")
 	m.SetClock("21:04")
-	m.SetPlaceholders("mtproto 2.0", "devices 1")
+	m.SetDevices(3)
 	return m
 }
 
@@ -43,38 +43,68 @@ func TestFolderTabsAreNumbered(t *testing.T) {
 	}
 }
 
-// TestRightGroupDegradesInOrder is the specified shrink order: the status
-// description truncates, then the device count is dropped, then the
-// transport. The clock is never dropped.
+// TestRightGroupDegradesInOrder is the shrink order that is left now that
+// the transport cell is gone: the device count drops, then the status
+// description, and the clock never does.
 //
-// The widths here bracket each transition rather than being magic numbers —
-// what matters is the ORDER pieces disappear in, so each case asserts what
-// is still present as well as what has gone.
+// The widths bracket the transition rather than being magic numbers — what
+// matters is the ORDER, so the test asserts what survives each step as well
+// as what has gone.
 func TestRightGroupDegradesInOrder(t *testing.T) {
 	full := plain(newBar(140).View())
-	if !strings.Contains(full, "mtproto 2.0") || !strings.Contains(full, "devices 1") {
+	if !strings.Contains(full, "3 devices") || !strings.Contains(full, "connected") {
 		t.Fatalf("the widest form is missing a piece: %q", full)
 	}
 
-	// Narrow until each piece goes, and record the order.
-	var lostDevices, lostTransport int
-	for w := 140; w >= 20; w-- {
+	var lostDevices, lostStatus int
+	for w := 140; w >= 12; w-- {
 		v := plain(newBar(w).View())
-		if lostDevices == 0 && !strings.Contains(v, "devices 1") {
+		if lostDevices == 0 && !strings.Contains(v, "devices") {
 			lostDevices = w
 		}
-		if lostTransport == 0 && !strings.Contains(v, "mtproto") {
-			lostTransport = w
+		if lostStatus == 0 && !strings.Contains(v, "connected") {
+			lostStatus = w
 		}
 	}
 
-	if lostDevices == 0 || lostTransport == 0 {
-		t.Fatalf("pieces never dropped (devices at %d, transport at %d)",
-			lostDevices, lostTransport)
+	if lostDevices == 0 || lostStatus == 0 {
+		t.Fatalf("pieces never dropped (devices at %d, status at %d)",
+			lostDevices, lostStatus)
 	}
-	if lostDevices <= lostTransport {
-		t.Errorf("transport dropped at width %d but devices only at %d; "+
-			"devices must go first", lostTransport, lostDevices)
+	if lostDevices <= lostStatus {
+		t.Errorf("the status went at width %d but devices only at %d; "+
+			"devices must go first", lostStatus, lostDevices)
+	}
+}
+
+// An unanswered device count draws nothing. Every account has at least the
+// session doing the asking, so a zero is always "not asked yet" and never a
+// fact about the account — and "devices 0" would state it as one.
+func TestAnUnknownDeviceCountDrawsNothing(t *testing.T) {
+	m := newBar(140)
+	m.SetDevices(0)
+
+	v := plain(m.View())
+	if strings.Contains(v, "device") {
+		t.Errorf("an unknown device count was drawn: %q", v)
+	}
+	if !strings.Contains(v, "connected") {
+		t.Errorf("the status went with it: %q", v)
+	}
+}
+
+// One device is "1 device". "devices 1" reads as placeholder text even when
+// it is true, which is what it was for four phases.
+func TestOneDeviceIsSingular(t *testing.T) {
+	m := newBar(140)
+	m.SetDevices(1)
+	if v := plain(m.View()); !strings.Contains(v, "1 device ") {
+		t.Errorf("want the singular form: %q", v)
+	}
+
+	m.SetDevices(2)
+	if v := plain(m.View()); !strings.Contains(v, "2 devices") {
+		t.Errorf("want the plural form: %q", v)
 	}
 }
 
