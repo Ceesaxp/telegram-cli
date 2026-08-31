@@ -173,7 +173,7 @@ movement rather than a motion: `l` from the chat list focuses the chat
 view, `h` from the chat view focuses the chat list, and each is a no-op at
 its own edge rather than wrapping around.
 
-Typing is always entered on purpose — `i`, `c`, `Tab`, a focus key, or a
+Typing is always entered on purpose — `i`, `Tab`, a focus key, or a
 click on the composer — nothing is forwarded to the composer implicitly, so
 no binding below costs you the ability to type that character.
 
@@ -188,7 +188,7 @@ Option key" below if `Alt+…` bindings don't seem to work at all.
 
 `q` quits from the chat list and chat view — lazygit's "q is the way out"
 everywhere it can't be mistaken for typing. It asks first if the composer
-holds an unsent draft or a pending attachment; `Ctrl+C`/`Ctrl+Q` still quit
+holds an unsent draft or a pending attachment; `Ctrl+Q` still quits
 unconditionally from anywhere, including the composer, and `q` still closes
 the help overlay as before.
 
@@ -222,7 +222,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+C` / `Ctrl+Q` | Quit (plus `keys.quit` if set to something else) |
+| `Ctrl+Q` | Quit (`keys.quit`, and this is its default) |
 | `q` | Quit — chat list / chat view only (`keys.quit_browsing`); confirms first if the composer holds a draft or attachment |
 | `?` | Toggle the help overlay |
 | `Tab` / `Shift+Tab` | Cycle panel focus (works from the composer too) |
@@ -251,7 +251,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `g` / `Home` | First chat |
 | `G` / `End` | Last chat |
 | `Enter` | Open the selected chat |
-| `i` / `c` | Compose a message |
+| `i` | Compose a message |
 | `/` | Filter this list live (`Esc` clears, `Enter` keeps it applied) |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
 | click a chat | Select it |
@@ -269,6 +269,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `h` | Focus the chat list (`l` here is a no-op) |
 | `/` or `Ctrl+F` | Find in this chat |
 | `n` / `N` | Next / previous match |
+| `}` / `{` | Move the cursor to the next / previous message. `j`/`k` scroll the buffer by lines, vi-style; these move between messages, and `G` hands the cursor back so it follows new arrivals again |
 | `Esc` | Close the find input while it's open; otherwise step back to the chat list (surviving find results are not cleared first) |
 | `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them) |
 | `Enter` | Open attachment — a photo opens full-pane in the terminal, everything else goes to the system viewer |
@@ -278,7 +279,7 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `y` | Copy the selected message's text to the system clipboard |
 | `M` | Mark this chat read without moving the scroll or the unread divider |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
-| `i` / `c` | Compose a message |
+| `i` | Compose a message |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
 
 `/` is contextual in both browsing panels — vi convention, "search the
@@ -306,7 +307,7 @@ messages, not one — so `Esc` is how you leave it.
 
 Almost nothing else is claimed at app level while the composer has focus,
 so neither line-editing keymap below loses a chord. The complete exception
-list: `Ctrl+C`/`Ctrl+Q` (quit, plus `keys.quit` if set to something else),
+list: `Ctrl+Q` (quit, or whatever `keys.quit` is set to),
 `Ctrl+V`, `Esc` (only when there's nothing to cancel), `Tab`/`Shift+Tab`,
 the panel-focus keys (`Alt+1/2/3`, `F1`-`F3`), `Alt+J`/`K`/`H`/`L`
 (chat/folder navigation), and `Alt+C`/`F4` (contacts) — every one of the
@@ -526,7 +527,7 @@ letter keeps working and the configured value is simply never reached.
 "Already claimed" covers keys the chat view hardcodes for itself (`g`/`G`,
 `Ctrl+U`/`Ctrl+D`, `n`/`N`, `Ctrl+F`, `Enter`/`o`/`s`) as well as the whole
 app-level surface these seven fields cannot see on their own — `h`, `l`,
-`i`, `c`, `Tab`, `Ctrl+V`, `Ctrl+C`/`Ctrl+Q`, `Esc`, and whatever
+`i`, `Tab`, `Ctrl+V`, `Ctrl+Q`, `Esc`, and whatever
 `quit`/`quit_browsing`/`help`/`search`/`global_search`/`contacts`/
 `contacts_alt`/the focus and next/prev chat/folder fields resolve to. That
 is what stops e.g. `reply = "h"` from quietly stealing panel movement.
@@ -716,7 +717,7 @@ What one run does:
   (dropped by the rewrite, but preserved in the backup); and any `[keys]`
   bindings that now collide with each other — checked only among the
   fields `internal/app` actually dispatches on, so a value that happens to
-  match a hardcoded binding (`i`/`c`, the composer's readline chords, …)
+  match a hardcoded binding (`i`, the composer's readline chords, …)
   isn't flagged.
 - **Backs up first, unconditionally.** The original is copied to
   `config.toml.bak`, byte-for-byte, at `0600`, before anything is

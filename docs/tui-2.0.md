@@ -131,8 +131,10 @@ The chat list is 38 columns at normal width, panel background, and contains:
 - A one-row filter header: amber slash, filter query or dim placeholder, and
   ghost matching/total count.
 - Two rows per chat. Row one is selection bar, type sigil, title, and
-  right-aligned relative time. Row two is a three-cell-indented preview plus a
-  right-aligned unread badge.
+  right-aligned relative time. Row two is the selection bar again, a
+  two-cell indent, the preview, and a right-aligned unread badge — the bar
+  spans the whole chat, not its first line (see
+  [divergence 22](#22-a-selection-is-marked-down-its-whole-height)).
 - Sigils: @ DM (blue), # group or supergroup (mauve), ! channel (amber), and
   ~ saved messages (green).
 - Selected titles are bright; unread/unmuted titles are fg; other titles use
@@ -171,7 +173,7 @@ Messages use a fixed 24-column gutter:
 | Columns | Field |
 | --- | --- |
 | 1 | leading space |
-| 1 | cyan cursor bar on the selected message |
+| 1 | cursor bar on the selected message, on EVERY row of it — cyan while the thread has focus, ghost when it does not |
 | 1 | leading space |
 | 5 | faint HH:MM |
 | 2 | spacing |
@@ -811,6 +813,70 @@ one clipboard path a user cannot see, cannot bound, and cannot decline:
 terminals accept it silently and some multiplexers forward it onward. A
 feature that writes to the user's system clipboard from a remote host is a
 decision for them to make, not a fallback to reach for.
+
+### 22. A selection is marked down its whole height
+
+Two amendments to this document, made together because they are the same
+mistake seen twice.
+
+The chat list spec gave row one "selection bar, type sigil, title, time" and
+row two "a three-cell-indented preview". The grid table gave column 1 to "the
+cyan cursor bar on the selected message" and the renderer read that as its
+first row. Both were drawn that way and both were wrong in use: a mark on the
+first line of a two-line chat marks the title, not the chat, and a five-line
+message with one marked line does not read as five selected lines. The bar
+now runs the full height of whatever is selected, and the goldens are redrawn
+to match — the first deliberate geometry change to a fixture, which is
+otherwise forbidden ("a geometry diff is a bug in the layout, not a stale
+fixture"). It is recorded here so that rule keeps its force.
+
+Dividers are excluded, on the same reasoning as the curline band: the day
+divider above a message is the boundary, not the message, and a lit divider
+says the cursor is on a row it cannot be on.
+
+**The bar's colour is the focus cue, and the thread never implemented it.**
+The chat list has always dimmed its bar to ghost when the panel is unfocused
+— "focus is the cyan bar and nothing else", since TUI 2.0 has no
+focused-panel border to carry it. The thread drew its cursor cyan
+unconditionally, so both panels claimed the keyboard at once and neither one
+answered "where do my keystrokes go". The thread now follows the same rule.
+
+### 23. `}` and `{` move between messages
+
+The design record gives `j`/`k` to line scrolling and says nothing about
+moving the cursor, because it had none to move: the cursor was derived from
+the scroll position and anchored back into the visible window. In use that
+means "reply to the message above this one" is done by scrolling until the
+right message happens to sit at the edge of the window.
+
+`}` and `{` are vi's paragraph motions and a message is a paragraph. Both
+were free — `n`/`N` cycle search hits and `[`/`]` switch folders.
+
+The interesting part is the tail rule. At the bottom of the history the
+cursor IS the newest message and follows arrivals, which is what a live chat
+needs — `r` has to reply to what just came in, not to whatever the cursor was
+resting on. That rule would also swallow a deliberate motion, so an explicit
+one PINS the cursor and the tail rule stands down until the reader gives it
+back: `G`, opening another chat, or scrolling the pinned message off screen.
+
+A motion scrolls the minimum needed to keep its message whole on screen,
+where a jump centres its target. A jump is a teleport and centring orients
+the reader afterwards; stepping between adjacent messages is reading, and
+re-centring the history under every press would move the text they are
+looking at on every keystroke.
+
+### 24. One spelling per action
+
+Three actions had two or three bindings each: `ctrl+c`, `ctrl+q` and
+`keys.quit` (whose default was `ctrl+c`) all quit; the palette took `up` and
+`ctrl+p`, `down` and `ctrl+n`; `i` and `c` both opened the composer.
+
+Kept: `ctrl+q` (and `keys.quit`, now defaulting to it), the arrows, and `i`.
+`ctrl+c` goes because it is the chord a terminal user presses to abandon a
+command rather than to close an application, and it was reachable by accident
+from every panel. The arrows stay because [divergence 9](#9-the-palette-navigates-with-arrows-not-jk)
+already settled that the palette is a text surface. `i` stays because it is
+what the hint bar advertises and what the badge answers for.
 
 ## Decisions
 

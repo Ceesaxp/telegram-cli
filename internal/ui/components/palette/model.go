@@ -134,11 +134,15 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 	case "enter":
 		return m, ActionRun
 
-	case "up", "ctrl+p":
+	// Arrows only. Divergence 9 already settled that this is a text
+	// surface and so cannot take j/k; ctrl+p and ctrl+n were a second
+	// spelling of the arrows, on a list that is never more than a few
+	// entries tall.
+	case "up":
 		m.move(-1)
 		return m, ActionNone
 
-	case "down", "ctrl+n":
+	case "down":
 		m.move(1)
 		return m, ActionNone
 

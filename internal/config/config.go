@@ -282,7 +282,7 @@ type KeyConfig struct {
 	Quit string `toml:"quit"`
 	// QuitBrowsing quits from the chat list and the chat view only, where
 	// a bare letter cannot be mistaken for typing — the composer owns
-	// printables and never sees it. Quit (and the hardcoded ctrl+c /
+	// printables and never sees it. Quit (and the hardcoded
 	// ctrl+q) work from everywhere including the composer. Default "q".
 	//
 	// An unsent draft or a pending attachment turns it into a confirm
@@ -462,7 +462,7 @@ func defaultConfig() *Config {
 			ShowPreview: true,
 		},
 		Keys: KeyConfig{
-			Quit:          "ctrl+c",
+			Quit:          "ctrl+q",
 			QuitBrowsing:  "q",
 			FocusChatList: "f1",
 			FocusChatView: "f2",

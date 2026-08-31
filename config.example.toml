@@ -103,7 +103,7 @@ show_preview = true
 # help card shows the now-unreachable action as "(unbound)" instead of a
 # blank or the wrong key.
 [keys]
-quit = "ctrl+c"
+quit = "ctrl+q"
 quit_browsing = "q"          # quits from the chat list/chat view only; confirms first if the composer holds a draft or attachment
 focus_chat_list = "f1"
 focus_chat_view = "f2"
