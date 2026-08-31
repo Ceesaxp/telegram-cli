@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
@@ -56,7 +57,17 @@ type Model struct {
 	// it. Empty for every protocol but kitty, whose images the terminal
 	// owns and a text redraw does not erase.
 	mediaTeardown string
-	dialog        *dialog.Model
+
+	// noticeAt is when the hint bar's transient notice was raised, so the
+	// chrome tick can give the row back after four seconds. Zero means
+	// there is nothing to expire.
+	noticeAt time.Time
+
+	// deviceCount is how many sessions are authorised on this account.
+	// Zero means "not answered yet", which is always what zero means here:
+	// every account has at least the session doing the asking.
+	deviceCount int
+	dialog      *dialog.Model
 
 	screen     ScreenState
 	focus      FocusPanel
@@ -283,7 +294,10 @@ var (
 // noticeEditAttach is shown when an attach action is refused during an edit.
 const noticeEditAttach = "⚠ cannot attach while editing"
 
-func (m Model) Init() tea.Cmd { return nil }
+// Init starts the chrome tick. Without it the top bar's clock would show
+// the time of the last window resize for the rest of the session, and a
+// transient notice would own the hint bar until something replaced it.
+func (m Model) Init() tea.Cmd { return chromeTick() }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -786,7 +800,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.topBar.SetConnection(topBarConnState(telegram.ConnectionStateReady))
 		m.setFocus(PanelChatList)
 		m.updateLayout()
-		return m, m.chatList.Init()
+		// The device count is asked for once, here, and held. Sessions are
+		// created and revoked by hand on the scale of days, so polling for
+		// it would spend requests watching a number that does not move.
+		return m, tea.Batch(m.chatList.Init(), m.deviceCountCmd())
+
+	case chromeTickMsg:
+		m.expireNotice(time.Time(msg))
+		m.refreshChrome()
+		return m, chromeTick()
+
+	case deviceCountMsg:
+		// Zero is the answer when the lookup failed, and zero drops the
+		// cell — the same state as "not asked yet", which is what a
+		// failure leaves the user in. No notice either: nobody asked for
+		// this number, so failing to get it is not an event in their day.
+		m.deviceCount = int(msg)
+		// Refreshed here rather than left to the next tick: the answer is
+		// worth up to a second of nobody noticing it appear, but not worth
+		// the reader wondering whether it is coming.
+		m.refreshChrome()
+		return m, nil
 
 	case telegram.ConnectionStateMsg:
 		// The dot is the only standing statement about whether this client
@@ -1669,4 +1703,36 @@ func (m Model) renderFatalError() string {
 		Render(body)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// deviceCountMsg carries the answer to account.getAuthorizations, or zero
+// when there was none.
+//
+// One field, not a count and an error: the two failure modes this has —
+// "the RPC failed" and "we have not asked yet" — are the same fact as far
+// as the top bar is concerned, and both draw nothing. Carrying an error
+// beside the count would invite a branch that distinguishes them and then
+// does the same thing on both sides.
+type deviceCountMsg int
+
+// deviceCountCmd asks how many sessions are authorised on this account.
+//
+// The number is worth a cell in the top bar for the reason Telegram gives it
+// a whole screen: a count higher than the user expects is how an
+// unauthorised login gets noticed. It replaces half of decision 7's
+// placeholder pair; the other half, a transport version, is not here because
+// there is nothing for it to vary with.
+func (m Model) deviceCountCmd() tea.Cmd {
+	tg := m.tg
+	if tg == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		// The error is dropped rather than branched on: DeviceCount reports
+		// 0 when it cannot tell, and 0 is already the state that draws
+		// nothing. A branch mapping failure to zero would be a second way
+		// of saying what the zero return says.
+		n, _ := tg.DeviceCount()
+		return deviceCountMsg(n)
+	}
 }

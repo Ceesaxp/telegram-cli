@@ -39,12 +39,17 @@ type Model struct {
 	status  string // "connected", "connecting", ...
 	clock   string // "21:04"
 
-	// transport and devices are DEFERRED placeholders (decision 7). Neither
-	// has a source in the current connection state, so they are set from a
-	// literal and must be wired or removed before release — see TODO.md.
-	// They exist now only so the shrink order and the goldens are settled.
-	transport string
-	devices   string
+	// devices is how many sessions are authorised on the account, or 0
+	// while the answer has not arrived. Zero drops the cell rather than
+	// drawing "devices 0": every account has at least this session, so a
+	// zero is always "not asked yet" and never a fact.
+	//
+	// This was half of decision 7's placeholder pair. The other half — a
+	// transport version — is gone: gotd speaks MTProto 2.0 and nothing
+	// else, so the cell could only ever have shown one string, and a
+	// constant in a status area is decoration wearing the clothes of
+	// information.
+	devices int
 }
 
 func New(roles theme.Roles) Model {
@@ -54,8 +59,14 @@ func New(roles theme.Roles) Model {
 func (m *Model) SetWidth(w int)        { m.width = w }
 func (m *Model) SetFolders(f []Folder) { m.folders = f }
 func (m *Model) SetClock(s string)     { m.clock = s }
-func (m *Model) SetPlaceholders(transport, devices string) {
-	m.transport, m.devices = transport, devices
+
+// SetDevices sets the authorised-session count. Zero means "unknown" and
+// drops the cell.
+func (m *Model) SetDevices(n int) {
+	if n < 0 {
+		n = 0
+	}
+	m.devices = n
 }
 
 // SetConnection sets the dot and its description together, so the two can
@@ -187,11 +198,8 @@ func (m Model) rightGroup(budget int, dot, faint, ghost lipgloss.Style) (string,
 
 	// Widest to narrowest. Each candidate is the plain text after the dot.
 	candidates := []string{}
-	if m.transport != "" && m.devices != "" {
-		candidates = append(candidates, m.status+sep+m.transport+sep+m.devices)
-	}
-	if m.transport != "" {
-		candidates = append(candidates, m.status+sep+m.transport)
+	if m.devices > 0 {
+		candidates = append(candidates, m.status+sep+m.deviceLabel())
 	}
 	candidates = append(candidates, m.status, "")
 
@@ -208,6 +216,15 @@ func (m Model) rightGroup(budget int, dot, faint, ghost lipgloss.Style) (string,
 	// Nothing but the clock fits; it is never dropped.
 	out := faint.Render(m.clock) + faint.Render(" ")
 	return out, cell.Width(m.clock) + 1
+}
+
+// deviceLabel is the cell's text. Singular for one, because "devices 1" is
+// the kind of wording that reads as a placeholder even when it is true.
+func (m Model) deviceLabel() string {
+	if m.devices == 1 {
+		return "1 device"
+	}
+	return itoa(m.devices) + " devices"
 }
 
 func (m Model) dotColour() lipgloss.Color {

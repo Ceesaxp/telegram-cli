@@ -1,7 +1,7 @@
 # frame-100x30.txt  (100×30)
 # every line below is exactly 100 display cells wide
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
- tg │ 1:all 2:unread 3:work 4:channels 5:archive      ● connected · mtproto 2.0 · devices 1 │ 21:04 
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive                     ● connected · 1 device │ 21:04 
  / filter chats…                  9/9 │ # infra-oncall │ group · 24 member… buf 2 │ ln 214/214  bot 
 ▌# infra-oncall                 2m    │                        look?                                
 ▌  nadia: rebased, CI green       [4] │                        ▣ auth-p95-2608.png  184 KB · png    

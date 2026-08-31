@@ -2,8 +2,8 @@
 
 Status: **contracted.** All thirteen decisions are resolved (see
 [Decisions](#decisions)); implementation may begin. What remains before
-release is engineering and one deferral to retire — the top-bar placeholder
-described in decision 7.
+release is engineering. The top-bar placeholders decision 7 deferred are
+retired: the device count is wired and the transport cell is deleted.
 
 This document is the repository-native record of the supplied TUI 2.0
 handoff, reconciled against the code. **Where this document and the handoff
@@ -496,20 +496,62 @@ scope question in the other direction: narrowly scoped Telegram and store
 additions are permitted, each with a concrete UI consumer and tests.
 `internal/restapi` and `internal/mcpserver` are genuinely untouched.
 
-### 6. Resolved: the goldens carry deliberate top-bar placeholders
+### 6. Retired: the top-bar placeholders, one wired and one deleted
 
-Four frame fixtures render the top bar with a transport version and a device
-count, neither of which has a source in the current connection state.
-Decision 7 resolved this by **deferring the functions while keeping the
-cells**: the goldens read `connected · mtproto 2.0 · devices 1`, so the
-layout and the shrink order are pinned, and `frame-80x24.txt` shows the
-degraded `connected │ 21:04` form after both cells drop.
+Four frame fixtures rendered the top bar with a transport version and a
+device count, neither of which had a source. Decision 7 deferred the
+functions while keeping the cells, so the layout and the shrink order were
+pinned by the goldens, and made shipping them a **release blocker**.
 
-The strings are placeholders and are recorded as such. Shipping them as
-though they were live status would be a lie in the UI, so wiring them to a
-real source — or removing the two cells and regenerating those rows — is a
-**release blocker**, tracked in TODO.md rather than left as a design
-question.
+The blocker is discharged, and the two cells were not the same problem.
+
+**The device count is real.** `account.getAuthorizations` returns every
+session authorised on the account, and its length is the number Telegram's
+own clients show under "Devices". It is worth the cell for the reason
+Telegram gives it a screen: a count higher than the user expects is how an
+unauthorised login gets noticed. One RPC, asked once when the connection
+becomes ready and held — sessions are created and revoked by hand, on the
+scale of days, so polling would spend requests watching a number that does
+not move. Zero means "not answered" and drops the cell, because every
+account has at least the session doing the asking.
+
+**The transport cell is deleted.** There was nothing to wire it to: gotd
+speaks MTProto 2.0 and nothing else, so the cell could only ever have shown
+one string. A constant in a status area is decoration wearing the clothes of
+information, and the honest form of "always 2.0" is to say nothing.
+
+The right group's shrink order is therefore two steps rather than three:
+the device count goes, then the status description, and the clock never
+does.
+
+**A finding, made while regenerating the rows.** `frame-80x24.txt` drew all
+five folder tabs and the degraded `connected │ 21:04` form, and the renderer
+has never produced that: this document specifies that the right group claims
+its space BEFORE the tabs, so at 80 columns the implementation kept the full
+group and dropped two tabs instead. The fixture was drawn under the opposite
+rule and nothing compared them, because the frame tests assert width and not
+content. The row is regenerated from the renderer, which is the only source
+that can be checked. With the transport cell gone all five tabs fit at 80
+alongside `connected · 1 device`, so the fixture's intent survives the
+correction.
+
+### 6a. The chrome rows had nothing to make them tick
+
+Found while wiring the device count, and the same class of defect the
+placeholders were.
+
+`refreshChrome` sets the top bar's clock, and it ran on a window resize, on
+authentication, and on a folder-tab click. Nothing else. On a terminal
+nobody resized, **the clock showed the time the client started, for the
+whole session** — a cell that looks like live status and is not, which is
+exactly what decision 7 refused to ship.
+
+The same absence had a second victim. This document gives the hint bar's
+transient notice four seconds, and `hintbar.ClearNotice` existed with **no
+caller anywhere in the program**: a notice owned the row until something
+else replaced it. Both are one missing piece — the program had no periodic
+tick at all — and both are fixed by one: a one-second pulse that refreshes
+the chrome and expires a notice that has had its four seconds.
 
 ### 7. Width is measured with `x/ansi`, not `uniseg`
 
@@ -562,7 +604,7 @@ The goldens draw the header's right group as `buf 2 │ ln 214/214  bot`. Only
 `buf N` is a chat's index among the open buffers, which the thread panel does
 not know — the app does. `bot` needs a flag on the chat that the client does
 not map today. Both are omitted rather than filled with a plausible number,
-for the same reason the top bar's placeholders are a recorded release
+for the same reason the top bar's placeholders were a recorded release
 blocker: a false fact stated in fixed-width type is worse than a missing one.
 
 They come back when the data reaches the panel, and the right group is
@@ -885,10 +927,10 @@ record was written; 3 and 6 through 13 were settled on 2026-08-29. Each entry
 below states what was decided and, where the choice was contested, why the
 alternative was declined.
 
-Two resolutions defer work rather than removing it, and both are tracked in
-TODO.md so the deferral cannot quietly become permanent: decision 7 leaves
-placeholder text in the top bar that must not ship, and decision 5 defers
-multi-attachment albums, which blocks the multi-file paste item.
+One resolution still defers work rather than removing it, and it is tracked
+in TODO.md so the deferral cannot quietly become permanent: decision 5 defers
+multi-attachment albums, which blocks the multi-file paste item. Decision 7's
+deferral — the top-bar placeholders — has been discharged.
 
 1. **Resolved — scope versus data model:** TUI 2.0 may add narrowly scoped
    internal/telegram and internal/store types, mappings, and RPC calls for
@@ -946,18 +988,20 @@ multi-attachment albums, which blocks the multi-file paste item.
    and update opportunistically from incoming messages while the rail stays
    open. Sections render immediately with explicit loading rows; an honest
    unavailable/error row is shown where Telegram returns nothing.
-7. **Resolved for now — top-bar facts deferred:** The *functions* that would
-   source the transport version and device count are deferred; the **cells
-   stay in the design** with placeholder text, so the layout, the shrink
-   order, and the goldens are all settled. The goldens read
-   `connected · mtproto 2.0 · devices 1`, with `frame-80x24.txt` showing the
-   degraded `connected │ 21:04` form after both cells are dropped.
+7. **Discharged — one cell wired, one deleted:** this deferred the
+   *functions* behind the transport version and the device count while
+   keeping both cells with placeholder text, so the layout and the shrink
+   order stayed settled, and made shipping the placeholders a release
+   blocker.
 
-   **These are placeholders and must not ship as if they were real.** Before
-   release, either wire the values to a real source or drop the two cells and
-   regenerate the affected top-bar rows; a hard-coded `mtproto 2.0` presented
-   as live status would be a lie in the UI. Tracked as a release blocker in
-   TODO.md, not as a design question.
+   The blocker is gone. The device count is wired to
+   `account.getAuthorizations` and is the number Telegram's own clients show;
+   the transport cell is deleted, because gotd speaks MTProto 2.0 and nothing
+   else and the cell could only ever have shown one string. The shrink order
+   is two steps now. See
+   [divergence 6](#6-retired-the-top-bar-placeholders-one-wired-and-one-deleted),
+   which also records the `frame-80x24.txt` row that the renderer had never
+   produced.
 8. **Resolved — command authority:** Of the commands that are not pure
    presentation, the first release ships **pin/unpin, mute/unmute, and
    reload-config**, and these are authorised to make their corresponding
@@ -1157,7 +1201,10 @@ internal/app/app.go, and component tests.
 - Implement top-bar shrinking order and connection states from current events.
   Render the transport and device cells with the decision 7 placeholder text so
   the geometry matches the goldens, and record the placeholder as a release
-  blocker — it must be wired or removed before shipping.
+  blocker — it must be wired or removed before shipping. **Both are settled
+  now:** the device count is wired to `account.getAuthorizations` and the
+  transport cell is deleted
+  ([divergence 6](#6-retired-the-top-bar-placeholders-one-wired-and-one-deleted)).
 - Convert chat list data to two-line rows, sigils, selection bars, muted text,
   strict title/preview/time/badge budgets, and filter header/footer.
 - Render the per-chat draft state in the preview row (decision 13); the
