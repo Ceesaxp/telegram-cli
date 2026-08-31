@@ -6,7 +6,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // --- Measurement --------------------------------------------------------
@@ -221,19 +220,19 @@ func TestFitZeroWidth(t *testing.T) {
 // style.Width(totalWidth) call, silently word-wraps onto extra lines
 // instead of rendering as one line — because lipgloss.Style.Width treats
 // its argument as the TOTAL width including the style's own padding.
-// FitLine must never do this, for every padded style actually shipped in
-// theme.DarkTheme() that this bug class hit: the chat list row styles
-// (list.go), the folder tab styles (chatlist's tab bar), the status bar
-// style, and the unread badge style.
+// FitLine must never do this, for any padded style. The shapes below are
+// the ones the bug class actually hit — chat list rows, folder tabs, the
+// status bar, the unread badge — reduced to what made them dangerous, which
+// is the padding and nothing else. They were taken from a shipped theme
+// until that theme was deleted; naming the padding directly is a better
+// test anyway, since the property is "a style with a frame", not "these six
+// styles".
 func TestFitLineNeverWraps(t *testing.T) {
-	th := theme.DarkTheme()
 	styles := map[string]lipgloss.Style{
-		"ChatListItem":       th.ChatListItem,
-		"ChatListItemActive": th.ChatListItemActive,
-		"Tab":                th.Tab,
-		"TabActive":          th.TabActive,
-		"StatusBar":          th.StatusBar,
-		"ChatListUnread":     th.ChatListUnread,
+		"one cell either side":  paddedStyle(0, 1),
+		"two cells either side": paddedStyle(0, 2),
+		"asymmetric":            lipgloss.NewStyle().PaddingLeft(2).PaddingRight(1),
+		"no padding at all":     lipgloss.NewStyle(),
 	}
 
 	for name, style := range styles {
@@ -258,10 +257,9 @@ func TestFitLineNeverWraps(t *testing.T) {
 // rather than character count: content that is under budget in runes but
 // over it in cells.
 func TestFitLineNeverWrapsOnWideRunes(t *testing.T) {
-	th := theme.DarkTheme()
 	for _, width := range []int{6, 10, 20, 28} {
 		content := strings.Repeat("四", width) // width runes, 2*width cells
-		out := FitLine(th.ChatListItem, content, width)
+		out := FitLine(paddedStyle(0, 1), content, width)
 
 		if n := lipgloss.Height(out); n != 1 {
 			t.Errorf("width=%d: produced %d lines, want 1: %q", width, n, out)
@@ -276,8 +274,7 @@ func TestFitLineNeverWrapsOnWideRunes(t *testing.T) {
 // exactly totalWidth (through the style's own background/whitespace),
 // not left short.
 func TestFitLinePadsShortContent(t *testing.T) {
-	th := theme.DarkTheme()
-	out := FitLine(th.ChatListItem, "hi", 20)
+	out := FitLine(paddedStyle(0, 1), "hi", 20)
 	if w := ansi.StringWidth(out); w != 20 {
 		t.Fatalf("FitLine(ChatListItem, \"hi\", 20) has display width %d, want exactly 20: %q", w, out)
 	}
@@ -289,8 +286,7 @@ func TestFitLinePadsShortContent(t *testing.T) {
 // TestFitLineTruncatesOverBudgetContent checks wildly over-budget content
 // is truncated to fit, not wrapped or left overflowing.
 func TestFitLineTruncatesOverBudgetContent(t *testing.T) {
-	th := theme.DarkTheme()
-	out := FitLine(th.StatusBar, strings.Repeat("y", 200), 40)
+	out := FitLine(paddedStyle(0, 1), strings.Repeat("y", 200), 40)
 	if w := ansi.StringWidth(out); w > 40 {
 		t.Fatalf("FitLine over-budget content has display width %d, want <= 40: %q", w, out)
 	}
@@ -302,11 +298,16 @@ func TestFitLineTruncatesOverBudgetContent(t *testing.T) {
 // TestFitLineZeroWidth checks the degenerate zero/negative width case
 // doesn't panic and returns something empty rather than garbage.
 func TestFitLineZeroWidth(t *testing.T) {
-	th := theme.DarkTheme()
-	if got := FitLine(th.ChatListItem, "hi", 0); got != "" {
+	if got := FitLine(paddedStyle(0, 1), "hi", 0); got != "" {
 		t.Fatalf("FitLine(..., 0) = %q, want empty", got)
 	}
-	if got := FitLine(th.ChatListItem, "hi", -5); got != "" {
+	if got := FitLine(paddedStyle(0, 1), "hi", -5); got != "" {
 		t.Fatalf("FitLine(..., -5) = %q, want empty", got)
 	}
+}
+
+// paddedStyle is a style with a frame, which is the only property of a
+// style FitLine has to survive.
+func paddedStyle(vertical, horizontal int) lipgloss.Style {
+	return lipgloss.NewStyle().Padding(vertical, horizontal)
 }

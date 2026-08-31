@@ -24,7 +24,7 @@ const fixedDate = int32(1700000000)
 // theme) with a chat already open. tg is nil: no test runs a tea.Cmd, so
 // no network call is ever made.
 func newTestModel() Model {
-	m := New(store.NewStore(), nil, theme.DarkTheme())
+	m := New(store.NewStore(), nil, theme.DarkRoles(false))
 	m.SetSize(60, 20)
 	m.chatID = testChatID
 	m.chatTitle = "test"

@@ -44,7 +44,6 @@ func plain(text string) *telegram.FormattedText {
 // MessageRenderer turns message content into terminal lines. It holds the
 // image renderer and its cache; everything else it does is stateless.
 type MessageRenderer struct {
-	theme    *theme.Theme
 	roles    theme.Roles
 	imgCache *media.Cache
 	imgRend  *media.ImageRenderer
@@ -61,10 +60,9 @@ type MessageRenderer struct {
 	inlineImages string
 }
 
-func NewMessageRenderer(th *theme.Theme) *MessageRenderer {
+func NewMessageRenderer() *MessageRenderer {
 	protocol := media.DetectProtocol()
 	return &MessageRenderer{
-		theme: th,
 		// A default palette, not a zero one: a renderer whose output
 		// depends on the host remembering to call SetRoles is a renderer
 		// with two behaviours, and its own tests construct it directly.

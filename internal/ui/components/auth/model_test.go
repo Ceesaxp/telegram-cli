@@ -11,7 +11,7 @@ import (
 
 func TestSubmitPhoneWaitsForCodeRequestConfirmation(t *testing.T) {
 	authorizer := telegram.NewTUIAuthorizer(&config.Config{})
-	model := New(theme.DarkTheme(), authorizer)
+	model := New(theme.DarkRoles(false), authorizer)
 	model.input.Value = "+15551234567"
 
 	got, _ := model.submit()
@@ -29,7 +29,7 @@ func TestSubmitPhoneWaitsForCodeRequestConfirmation(t *testing.T) {
 
 func TestPasswordInputIsMasked(t *testing.T) {
 	authorizer := telegram.NewTUIAuthorizer(&config.Config{})
-	model := New(theme.DarkTheme(), authorizer)
+	model := New(theme.DarkRoles(false), authorizer)
 	model.SetSize(80, 24)
 
 	model.SetStep(StepPassword)

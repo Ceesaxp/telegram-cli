@@ -58,7 +58,7 @@ func TestTerminalClientErrorIsUnmissable(t *testing.T) {
 		"Disconnected from Telegram",
 		"session revoked from another device",
 		"Restart teletui",
-		"Ctrl+C",
+		"Ctrl+Q",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("error panel does not mention %q", want)

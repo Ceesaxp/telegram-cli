@@ -225,7 +225,7 @@ func TestModeAfterEmacsEscape(t *testing.T) {
 func TestModeForOverlays(t *testing.T) {
 	t.Run("prompt dialog collects text", func(t *testing.T) {
 		m := mainModel(t, PanelChatList)
-		d := dialog.NewPrompt(m.theme, "attach", "Attach file", "Path:")
+		d := dialog.NewPrompt(m.roles, "attach", "Attach file", "Path:")
 		m.dialog = &d
 		if got := m.Mode(); got != ModeInsert {
 			t.Errorf("prompt: Mode() = %v, want INSERT", got)
@@ -234,7 +234,7 @@ func TestModeForOverlays(t *testing.T) {
 
 	t.Run("confirm dialog navigates", func(t *testing.T) {
 		m := mainModel(t, PanelComposer) // INSERT behind the dialog
-		d := dialog.NewConfirm(m.theme, "quit", "Quit", "Sure?")
+		d := dialog.NewConfirm(m.roles, "quit", "Quit", "Sure?")
 		m.dialog = &d
 		if got := m.Mode(); got != ModeNormal {
 			t.Errorf("confirm over a focused composer: Mode() = %v, want NORMAL", got)

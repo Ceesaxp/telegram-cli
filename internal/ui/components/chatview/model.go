@@ -139,7 +139,6 @@ func (c *gridCache) len() int {
 type Model struct {
 	store    *store.Store
 	tg       *telegram.Client
-	theme    *theme.Theme
 	renderer *render.MessageRenderer
 	cache    *gridCache
 
@@ -284,32 +283,24 @@ type Model struct {
 	reservedKeys map[string]bool
 }
 
-func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
+func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	input := widgets.NewTextArea()
 	input.Focused = true
 	m := Model{
 		store:              s,
 		tg:                 tg,
-		theme:              th,
-		renderer:           render.NewMessageRenderer(th),
+		renderer:           render.NewMessageRenderer(),
 		cache:              newGridCache(),
 		searchInput:        input,
 		autoDownloadPhotos: true,
 	}
-	// A default palette, not a zero one: see the roles field. 256-colour
-	// is the safe assumption when nobody has told us otherwise.
-	m.roles = theme.DarkRoles(false)
-	m.SetKeys(Keys{})
-	return m
-}
-
-// SetRoles supplies the TUI 2.0 semantic palette used by the thread grid.
-func (m *Model) SetRoles(r theme.Roles) {
+	// The palette reaches the renderer too: the grid draws the gutter and
+	// the body draws the message, and they have to agree about what amber
+	// is.
 	m.roles = r
 	m.renderer.SetRoles(r)
-	// Every cached line carries its colours baked in, so a palette change
-	// invalidates all of them.
-	m.cache.clear()
+	m.SetKeys(Keys{})
+	return m
 }
 
 // ApplyUI applies the [ui] settings the renderer needs: the inline-image
@@ -2203,7 +2194,7 @@ func (m Model) View() string {
 	if m.chatID == 0 {
 		return lipgloss.NewStyle().
 			Width(m.width).Height(m.height).
-			Foreground(lipgloss.Color("244")).
+			Foreground(m.roles.Dim).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render("Select a chat\n\nTab to switch panels")
 	}
@@ -2233,7 +2224,7 @@ func (m Model) View() string {
 		}
 		body := lipgloss.NewStyle().
 			Width(m.width).Height(bodyH).
-			Foreground(lipgloss.Color("244")).
+			Foreground(m.roles.Dim).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(label)
 		if statusLine != "" {
@@ -2465,7 +2456,7 @@ func (m Model) renderStatusLine() string {
 	// one line tall — that is what bodyHeight subtracts for it. The label
 	// is ASCII today, but it is assembled from stage strings that may not
 	// stay that way.
-	style := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	style := lipgloss.NewStyle().Foreground(m.roles.Dim)
 	if inner := m.width - style.GetHorizontalFrameSize(); inner > 0 {
 		line = cell.Clamp(line, inner)
 	}

@@ -18,10 +18,6 @@ import (
 // out of this".
 const hintText = "Enter: search · Tab: switch tab · ↑↓: select · Esc: close"
 
-// mutedFg is used for the hint line and the empty-state message. It matches
-// the gray widgets.List already uses for its own "No items" placeholder.
-const mutedFg = lipgloss.Color("#565F89")
-
 // Overlay geometry. The box is a centered, capped-size dialog rather than a
 // box stretched to the full window: DialogBox contributes a 1-cell border
 // and (1,2) padding per side, SearchInput contributes its own 1-cell border,
@@ -183,7 +179,7 @@ type Model struct {
 	list        widgets.List
 	store       *store.Store
 	tg          *telegram.Client
-	theme       *theme.Theme
+	roles       theme.Roles
 	width       int
 	height      int
 	geo         geometry
@@ -193,21 +189,23 @@ type Model struct {
 }
 
 // New creates a new search model.
-func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
+func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	ta := widgets.NewTextArea()
 	ta.Placeholder = "Search..."
-	ta.Style = th.SearchInput
+	ta.Style = theme.OverlayInput(r)
+	ta.StylePlaceholder = theme.OverlayMuted(r)
 	ta.Focused = true
 
 	tabs := widgets.NewTabs([]string{"Chats", "Messages", "Global"})
-	tabs.StyleTab = th.Tab
-	tabs.StyleTabActive = th.TabActive
+	tabs.StyleTab = theme.OverlayMuted(r)
+	tabs.StyleTabActive = theme.OverlaySelected(r)
 
 	l := widgets.NewList()
-	l.StyleNormal = th.SearchResult
-	l.StyleActive = th.SearchResultActive
-	l.StyleTitle = th.ChatListTitle
-	l.StyleSub = th.ChatListPreview
+	l.StyleNormal = theme.OverlayBody(r)
+	l.StyleActive = theme.OverlaySelected(r)
+	l.StyleTitle = theme.OverlayBody(r)
+	l.StyleSub = lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
+	l.StyleEmpty = theme.OverlayMuted(r)
 
 	return Model{
 		input: ta,
@@ -215,7 +213,7 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		list:  l,
 		store: s,
 		tg:    tg,
-		theme: th,
+		roles: r,
 	}
 }
 
@@ -453,12 +451,12 @@ func (m Model) View() string {
 
 	g := m.geo
 
-	title := m.theme.AuthTitle.Render(fitLine(m.titleText(), g.innerWidth))
+	title := theme.OverlayTitle(m.roles).Render(fitLine(m.titleText(), g.innerWidth))
 	input := m.input.View()
 	tabs := m.tabs.View()
 	results := m.resultsView(g)
 	hint := lipgloss.NewStyle().
-		Foreground(mutedFg).
+		Foreground(m.roles.Dim).
 		Width(g.innerWidth).
 		Render(fitLine(hintText, g.innerWidth))
 
@@ -473,7 +471,7 @@ func (m Model) View() string {
 	// g.boxWidth/g.boxHeight directly, as the previous version effectively
 	// did with m.width/m.height, is what stretched the box and let its
 	// content overflow the actual wrap width.
-	return m.theme.DialogBox.
+	return theme.OverlayFrame(m.roles).Padding(1, 2).
 		Width(g.boxWidth - 2).
 		Height(g.boxHeight - 2).
 		Render(content)
@@ -502,7 +500,7 @@ func (m Model) resultsView(g geometry) string {
 			Width(g.innerWidth).
 			Height(g.listHeight).
 			Align(lipgloss.Center, lipgloss.Center).
-			Foreground(mutedFg).
+			Foreground(m.roles.Dim).
 			Render(fitLine(msg, g.innerWidth))
 	}
 	return m.list.View()

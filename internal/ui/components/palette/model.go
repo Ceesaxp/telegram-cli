@@ -56,7 +56,7 @@ const (
 
 // Model is the palette overlay.
 type Model struct {
-	theme   *theme.Theme
+	roles   theme.Roles
 	visible bool
 
 	// query is what the user has typed after the colon, command word and
@@ -68,8 +68,8 @@ type Model struct {
 	cursor   int   // index into filtered
 }
 
-func New(th *theme.Theme) Model {
-	return Model{theme: th}
+func New(r theme.Roles) Model {
+	return Model{roles: r}
 }
 
 // SetItems replaces the command list. The app calls this with its registry.
@@ -270,10 +270,12 @@ func (m Model) View() string {
 		return ""
 	}
 
-	promptStyle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true)
-	nameStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
-	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
-	keyStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	// Amber for the prompt and the command names: the palette is where
+	// commands are, and amber is the commands role.
+	promptStyle := lipgloss.NewStyle().Foreground(m.roles.Amber).Background(m.roles.Panel).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(m.roles.Amber).Background(m.roles.Panel)
+	descStyle := theme.OverlayMuted(m.roles)
+	keyStyle := theme.OverlayKey(m.roles)
 
 	var lines []string
 
@@ -298,7 +300,7 @@ func (m Model) View() string {
 
 	lines = append(lines, cell.Fit(descStyle.Render("  enter run · tab complete · esc cancel"), Width))
 
-	return m.theme.DialogBox.Render(strings.Join(lines, "\n"))
+	return theme.OverlayFrame(m.roles).Padding(0, 1).Render(strings.Join(lines, "\n"))
 }
 
 // itemLine renders one command row: marker, name, arguments, description,
@@ -343,10 +345,7 @@ func (m Model) itemLine(it Item, selected bool, nameStyle, descStyle, keyStyle l
 	// equivalent, the one thing on the row that must not be cut.
 	line = cell.Fit(line, Width)
 	if selected {
-		return lipgloss.NewStyle().
-			Background(m.theme.Surface).
-			Foreground(m.theme.Text).
-			Render(line)
+		return theme.OverlaySelected(m.roles).Render(line)
 	}
 	return line
 }

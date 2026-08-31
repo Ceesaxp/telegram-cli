@@ -173,8 +173,8 @@ context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
 Every phase in the plan has now shipped. What is left before the design can
-be called complete is the six components still drawing from the pre-2.0
-theme, and the four content blocks whose data the client does not map. Until the blocks land, the goldens
+be called complete is the four content blocks whose data the client does not
+map. Until the blocks land, the goldens
 are asserted on width only — see "Byte equality against the goldens" below.
 
 - [x] **Panel surfaces are painted** — every panel wrapped its assembled row
@@ -188,16 +188,31 @@ are asserted on width only — see "Byte equality against the goldens" below.
       colour profile — four packages did not have one, which is why this ran
       four phases under a green suite. See
       [divergence 19](docs/tui-2.0.md#19-the-frame-owns-each-columns-surface-not-the-panels).
-- [ ] **Six components still render from the legacy `theme.Theme`** —
-      `palette`, `help`, `search`, `dialog`, `auth` and `contacts`, plus the
-      `widgets` primitives (`List`, `Tabs`, `TextArea`, `Spinner`) that the
-      chat list and chat view borrow for scrolling and text entry. They draw
-      from the pre-2.0 hard-coded 256-colour set — bright blue `39`, green
-      `42` — rather than from `theme.Roles`, so every overlay is a different
-      palette from the frame under it. The semantic roles exist and are
-      complete; this is call-site conversion, not design work. Not a phase 8
-      blocker, but it is the last place TUI 2.0 and the legacy design are
-      both on screen at once.
+- [x] **Six components rendered from the legacy `theme.Theme`** — migrated,
+      and the legacy theme is deleted. `palette`, `help`, `search`, `dialog`,
+      `auth` and `contacts` now draw from `theme.Roles` through a shared
+      overlay vocabulary (`theme/overlay.go`), so a title is one colour in
+      the app rather than six.
+
+      `theme.Theme` was 268 lines of pre-built lipgloss styles carrying its
+      own bright blue `39` and green `42`. The vocabulary that replaces it is
+      functions of `Roles`, not a second struct: a table of styles has to be
+      constructed somewhere, so it acquires a lifecycle and a copy in every
+      component that holds one, which is how it drifted in the first place.
+
+      `TestNoColourLiteralsOutsideThePalette` scans `internal/ui` for
+      `lipgloss.Color("…")` and fails on any it does not have a documented
+      reason for. It found four more on its first run.
+
+      Three things fell out. The chat list ran a whole **avatar subsystem** —
+      cache, renderer, a per-chat photo download on every chat-list load —
+      feeding a `ListItem.Avatar` field its own row renderer never reads;
+      TUI 2.0 replaced avatars with the type sigil and nobody removed the
+      machinery. `widgets.List` still drew the initials block for the two
+      surfaces that had no custom row renderer. And `chatview`, `chatlist`
+      and `composer` **ignored the palette their constructors were handed**,
+      installing the 256-colour default instead — masked by a redundant
+      `SetRoles` call at startup, and exposed by removing it.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
 the redesign spans several phases that are not individually shippable, and

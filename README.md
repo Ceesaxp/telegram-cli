@@ -869,9 +869,9 @@ Also landed, invisibly: `internal/ui/cell` (terminal geometry),
 `internal/ui/golden` (the fixture harness), the interaction-mode resolver, and
 the `:` command palette.
 
-**Still to come:** the overlays and dialogs still draw from the pre-2.0
-palette, and four content blocks are waiting on Telegram data this client
-does not map.
+**Still to come:** four content blocks are waiting on Telegram data this
+client does not map — reactions, poll results, link previews, and a voice
+note's waveform.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a

@@ -42,6 +42,12 @@ type TextArea struct {
 	Focused     bool
 	Placeholder string
 	Style       lipgloss.Style
+
+	// StylePlaceholder draws the prompt shown while the field is empty and
+	// unfocused. Supplied by the caller like Style — this widget used to
+	// reach for a hard-coded #565F89, which is how a generic input ended up
+	// holding an opinion about the application's palette.
+	StylePlaceholder lipgloss.Style
 	// MultiLine makes Value a multi-line buffer: pastes keep their line
 	// breaks, InsertNewline is meaningful, and View renders one row per
 	// line inside a vertically scrolling window Height rows tall.
@@ -383,8 +389,7 @@ func isWordSep(r rune) bool {
 
 func (t *TextArea) View() string {
 	if t.Value == "" && t.Placeholder != "" && !t.Focused {
-		ph := lipgloss.NewStyle().Foreground(lipgloss.Color("#565F89")).Render(t.Placeholder)
-		return t.Style.Width(t.Width).Render(ph)
+		return t.Style.Width(t.Width).Render(t.StylePlaceholder.Render(t.Placeholder))
 	}
 
 	runes := []rune(t.Value)

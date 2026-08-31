@@ -9,7 +9,7 @@ import (
 )
 
 func newFocused() Model {
-	m := New(theme.ForName("dark"))
+	m := New(theme.DarkRoles(false))
 	m.SetSize(60, 3)
 	m.SetFocused(true)
 	m.SetChatId(42)
@@ -19,7 +19,7 @@ func newFocused() Model {
 // newFocusedNoChat is the state reachable with Tab before any chat has been
 // selected: the composer has focus but no chat to send to.
 func newFocusedNoChat() Model {
-	m := New(theme.ForName("dark"))
+	m := New(theme.DarkRoles(false))
 	m.SetSize(60, 3)
 	m.SetFocused(true)
 	return m

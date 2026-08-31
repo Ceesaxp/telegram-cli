@@ -27,7 +27,7 @@ const (
 
 // Model is a modal dialog component.
 type Model struct {
-	theme     *theme.Theme
+	roles     theme.Roles
 	visible   bool
 	kind      Kind
 	id        string
@@ -42,9 +42,9 @@ type Model struct {
 }
 
 // NewConfirm creates a confirmation dialog.
-func NewConfirm(th *theme.Theme, id, title, message string) Model {
+func NewConfirm(r theme.Roles, id, title, message string) Model {
 	return Model{
-		theme:   th,
+		roles:   r,
 		visible: true,
 		kind:    KindConfirm,
 		id:      id,
@@ -55,9 +55,9 @@ func NewConfirm(th *theme.Theme, id, title, message string) Model {
 }
 
 // NewAlert creates an alert dialog.
-func NewAlert(th *theme.Theme, id, title, message string) Model {
+func NewAlert(r theme.Roles, id, title, message string) Model {
 	return Model{
-		theme:   th,
+		roles:   r,
 		visible: true,
 		kind:    KindAlert,
 		id:      id,
@@ -81,9 +81,9 @@ func NewAlert(th *theme.Theme, id, title, message string) Model {
 // where the cost of a reflex Enter is asymmetric. That asymmetry does
 // not exist here: the worst case of a reflex Enter on a prompt is an
 // empty path, which the app already ignores.
-func NewPrompt(th *theme.Theme, id, title, message string) Model {
+func NewPrompt(r theme.Roles, id, title, message string) Model {
 	return Model{
-		theme:     th,
+		roles:     r,
 		visible:   true,
 		kind:      KindPrompt,
 		id:        id,
@@ -183,12 +183,12 @@ func (m Model) View() string {
 		return ""
 	}
 
-	title := m.theme.DialogTitle.Render(m.title)
-	message := lipgloss.NewStyle().Foreground(m.theme.Text).Render(m.message)
+	title := theme.OverlayTitle(m.roles).Render(m.title)
+	message := theme.OverlayBody(m.roles).Render(m.message)
 
 	rows := []string{title, "", message}
 	if m.kind == KindPrompt {
-		inputStyle := m.theme.AuthInput.Width(30)
+		inputStyle := theme.OverlayInput(m.roles).Width(30)
 		rows = append(rows, "", inputStyle.Render(m.input+"▏"))
 	}
 	buttons, hint := m.renderButtons(), m.renderHint()
@@ -209,7 +209,7 @@ func (m Model) View() string {
 	rows[len(rows)-3] = center.Render(buttons)
 	rows[len(rows)-1] = center.Render(hint)
 
-	return m.theme.DialogBox.Render(strings.Join(rows, "\n"))
+	return theme.OverlayFrame(m.roles).Padding(1, 2).Render(strings.Join(rows, "\n"))
 }
 
 // renderButtons paints the button row with the highlighted button marked
@@ -223,10 +223,10 @@ func (m Model) View() string {
 func (m Model) renderButtons() string {
 	var row string
 	for i, label := range m.buttons {
-		style := m.theme.DialogButton
+		style := theme.OverlayBody(m.roles)
 		text := "  " + label + "  "
 		if i == m.buttonIdx {
-			style = m.theme.DialogButtonActive
+			style = theme.OverlaySelected(m.roles)
 			text = "[ " + label + " ]"
 		}
 		if i > 0 {
@@ -257,7 +257,7 @@ func (m Model) renderHint() string {
 		// what was typed — lead with that rather than with movement.
 		hint = "enter: accept input · ←/→: choose · esc: cancel"
 	}
-	return lipgloss.NewStyle().Foreground(m.theme.TextMuted).Render(hint)
+	return theme.OverlayMuted(m.roles).Render(hint)
 }
 
 // moveButton moves the highlight by delta, wrapping.

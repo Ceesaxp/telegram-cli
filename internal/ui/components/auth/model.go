@@ -24,7 +24,7 @@ const (
 
 // Model is the authentication flow component.
 type Model struct {
-	theme      *theme.Theme
+	roles      theme.Roles
 	authorizer *telegram.TUIAuthorizer
 	step       Step
 	input      widgets.TextArea
@@ -36,14 +36,15 @@ type Model struct {
 }
 
 // New creates a new auth model.
-func New(th *theme.Theme, authorizer *telegram.TUIAuthorizer) Model {
+func New(r theme.Roles, authorizer *telegram.TUIAuthorizer) Model {
 	ta := widgets.NewTextArea()
 	ta.Focused = true
 	ta.Placeholder = "+1234567890"
-	ta.Style = th.AuthInput
+	ta.Style = theme.OverlayInput(r)
+	ta.StylePlaceholder = theme.OverlayMuted(r)
 
 	return Model{
-		theme:      th,
+		roles:      r,
 		authorizer: authorizer,
 		step:       StepPhone,
 		input:      ta,
@@ -157,9 +158,9 @@ func (m Model) View() string {
 	case StepQR:
 		qr := widgets.RenderQRCode(m.qrLink, 256)
 		content = fmt.Sprintf("%s\n\n%s\n\n%s",
-			m.theme.AuthTitle.Render("QR Code Login"),
+			theme.OverlayTitle(m.roles).Render("QR Code Login"),
 			qr,
-			m.theme.AuthLabel.Render(m.hint),
+			theme.OverlayMuted(m.roles).Render(m.hint),
 		)
 	case StepLoading:
 		label := m.hint
@@ -167,10 +168,10 @@ func (m Model) View() string {
 			label = "Authenticating..."
 		}
 		sp := widgets.NewSpinner(label)
-		sp.Style = m.theme.Spinner
+		sp.Style = lipgloss.NewStyle().Foreground(m.roles.Cyan)
 		content = sp.View()
 	case StepDone:
-		content = m.theme.AuthTitle.Render("Authenticated! Loading chats...")
+		content = theme.OverlayTitle(m.roles).Render("Authenticated! Loading chats...")
 	default:
 		stepLabels := []string{"Phone", "Code", "Password"}
 		stepIdx := int(m.step)
@@ -178,24 +179,27 @@ func (m Model) View() string {
 			stepIdx = 0
 		}
 
-		title := m.theme.AuthTitle.Render(fmt.Sprintf("Step %d: %s", stepIdx+1, stepLabels[stepIdx]))
-		label := m.theme.AuthLabel.Render(m.hint)
+		title := theme.OverlayTitle(m.roles).Render(fmt.Sprintf("Step %d: %s", stepIdx+1, stepLabels[stepIdx]))
+		label := theme.OverlayMuted(m.roles).Render(m.hint)
 		input := m.input.View()
 
 		errMsg := ""
 		if m.error != "" {
-			errMsg = "\n" + lipgloss.NewStyle().Foreground(m.theme.Error).Render(m.error)
+			errMsg = "\n" + theme.OverlayError(m.roles).Render(m.error)
 		}
 
 		content = fmt.Sprintf("%s\n\n%s\n%s%s", title, label, input, errMsg)
 	}
 
 	fullContent := fmt.Sprintf("%s\n\n%s",
-		m.theme.AuthTitle.Render(logo),
+		theme.OverlayTitle(m.roles).Render(logo),
 		content,
 	)
 
-	return m.theme.AuthPane.
+	return lipgloss.NewStyle().
+		Foreground(m.roles.Fg).
+		Background(m.roles.Bg).
+		Align(lipgloss.Center, lipgloss.Center).
 		Width(m.width).
 		Height(m.height).
 		Render(fullContent)

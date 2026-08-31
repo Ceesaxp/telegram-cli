@@ -75,7 +75,6 @@ type Model struct {
 	tg         *telegram.Client
 	store      *store.Store
 	config     *config.Config
-	theme      *theme.Theme
 	roles      theme.Roles
 	notifier   *notification.Notifier
 	sound      *notification.SoundPlayer
@@ -197,20 +196,19 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 }
 
 func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer) Model {
-	th := theme.ForName(cfg.UI.Theme)
 	// Colour depth is resolved once, here, from the environment only —
 	// never by querying the terminal, whose reply would arrive as
 	// keystrokes. See theme.SupportsTrueColor.
 	roles := theme.RolesFor(cfg.UI.Theme, theme.SupportsTrueColor())
 	m := Model{
-		auth:       auth.New(th, authorizer),
-		chatList:   chatlist.New(s, tg, th),
-		chatView:   chatview.New(s, tg, th),
-		composer:   composer.New(th),
-		contacts:   contacts.New(s, tg, th),
-		search:     search.New(s, tg, th),
-		help:       help.New(th),
-		palette:    palette.New(th),
+		auth:       auth.New(roles, authorizer),
+		chatList:   chatlist.New(s, tg, roles),
+		chatView:   chatview.New(s, tg, roles),
+		composer:   composer.New(roles),
+		contacts:   contacts.New(s, tg, roles),
+		search:     search.New(s, tg, roles),
+		help:       help.New(roles),
+		palette:    palette.New(roles),
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
 		rail:       rail.New(roles),
@@ -220,7 +218,6 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		tg:         tg,
 		store:      s,
 		config:     cfg,
-		theme:      th,
 		roles:      roles,
 		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
@@ -230,7 +227,6 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
 	m.mediaView.ApplyMedia(cfg.Media)
-	m.chatList.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Order matters: the chat view has to know what app.go has already
 	// claimed BEFORE it resolves what the user configured, or it will
@@ -259,9 +255,6 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// correctly in its right-hand column rather than advertising a default
 	// the user replaced.
 	m.palette.SetItems(m.paletteItems())
-	m.chatList.SetRoles(roles)
-	m.chatView.SetRoles(roles)
-	m.composer.SetRoles(roles)
 	m.rail.SetStore(s, tg)
 	// The rail's default visibility is the user's preference; the backtick
 	// toggles it from there. Decision 6: opening it is what starts the
@@ -631,7 +624,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// mattered gets dismissed too.
 			if key.Matches(m.keys.quitBrowsing) && browsing {
 				if m.composer.HasDraft() || m.composer.Attachment() != "" {
-					d := dialog.NewConfirm(m.theme, "quit", "Quit",
+					d := dialog.NewConfirm(m.roles, "quit", "Quit",
 						"Discard the message you are writing and quit?")
 					m.dialog = &d
 					return m, nil
@@ -965,7 +958,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notify(noticeEditAttach)
 			break
 		}
-		d := dialog.NewPrompt(m.theme, "attach-file", "Attach File", "Path to file:")
+		d := dialog.NewPrompt(m.roles, "attach-file", "Attach File", "Path to file:")
 		m.dialog = &d
 
 	case composer.ResizedMsg:
@@ -1478,7 +1471,7 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 		// its own — knows what to delete once the user confirms.
 		m.pendingDeleteChatId = msg.ChatId
 		m.pendingDeleteMessageId = msg.MessageId
-		d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+		d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 		m.dialog = &d
 	}
 	return m, nil
@@ -1678,13 +1671,13 @@ func (m Model) View() tea.View {
 // what to do about it — a bare error string would leave the user waiting
 // for a reconnect that is never coming.
 func (m Model) renderFatalError() string {
-	errStyle := lipgloss.NewStyle().Foreground(m.theme.Error).Bold(true)
-	textStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
-	dimStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	errStyle := lipgloss.NewStyle().Foreground(m.roles.Red).Bold(true)
+	textStyle := lipgloss.NewStyle().Foreground(m.roles.Fg)
+	dimStyle := lipgloss.NewStyle().Foreground(m.roles.Dim)
 
 	// The reason comes from the network layer and can be arbitrarily long;
 	// wrapping keeps it inside the box instead of blowing the layout out.
-	reason := lipgloss.NewStyle().Foreground(m.theme.Error).Width(56).Render(m.fatalError)
+	reason := lipgloss.NewStyle().Foreground(m.roles.Red).Width(56).Render(m.fatalError)
 
 	body := errStyle.Render("Disconnected from Telegram") + "\n\n" +
 		reason + "\n\n" +
@@ -1694,11 +1687,11 @@ func (m Model) renderFatalError() string {
 		dimStyle.Render("from another device — you will be asked to sign in") + "\n" +
 		dimStyle.Render("again on the next start.") + "\n\n" +
 		dimStyle.Render("Run with TELETUI_DEBUG=/tmp/teletui.log for details.") + "\n\n" +
-		textStyle.Render("Press Ctrl+C to quit.")
+		textStyle.Render("Press Ctrl+Q to quit.")
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Error).
+		BorderForeground(m.roles.Red).
 		Padding(1, 4).
 		Render(body)
 

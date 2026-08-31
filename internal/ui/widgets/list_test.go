@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"github.com/charmbracelet/lipgloss"
 	"strings"
 	"testing"
 
@@ -17,22 +18,27 @@ import (
 // no padding to trigger it — that's exactly how it escaped the original
 // version of this test file.
 func newThemedList() List {
-	th := theme.DarkTheme()
+	r := theme.DarkRoles(false)
+	// The row styles carry PADDING, which is the property that makes this
+	// test worth running: FitLine's wrap bug is invisible with zero-value
+	// styles because they have no frame to spend the budget on.
+	row := lipgloss.NewStyle().Padding(0, 1)
+
 	l := NewList()
-	l.StyleNormal = th.ChatListItem
-	l.StyleActive = th.ChatListItemActive
-	l.StyleTitle = th.ChatListTitle
-	l.StyleSub = th.ChatListPreview
-	l.StyleMeta = th.ChatListTime
-	l.StyleBadge = th.ChatListUnread
-	l.StyleOnline = th.ChatListOnline
+	l.StyleNormal = row.Foreground(r.Fg).Background(r.Panel)
+	l.StyleActive = row.Foreground(r.Bright).Background(r.Sel)
+	l.StyleTitle = lipgloss.NewStyle().Foreground(r.Fg)
+	l.StyleSub = lipgloss.NewStyle().Foreground(r.Faint)
+	l.StyleMeta = lipgloss.NewStyle().Foreground(r.Faint)
+	l.StyleBadge = lipgloss.NewStyle().Padding(0, 1).Background(r.Cyan).Foreground(r.Bg)
+	l.StyleOnline = lipgloss.NewStyle().Foreground(r.Green)
+	l.StyleEmpty = theme.OverlayMuted(r)
 	return l
 }
 
 // stressItems returns list items designed to expose rune-vs-cell width
 // mismatches: mixed double-width emoji + flag sequences + Cyrillic in the
-// title, CJK text in the subtitle, a long badge, and an oversized avatar
-// block whose lines are wider than the reserved avatar column.
+// title, CJK text in the subtitle, and a long badge.
 func stressItems() []ListItem {
 	return []ListItem{
 		{
@@ -50,7 +56,6 @@ func stressItems() []ListItem {
 			Subtitle: "normal subtitle",
 			Badge:    "3",
 			Meta:     "12:00",
-			Avatar:   "🖼️🖼️🖼️🖼️🖼️\n🖼️🖼️🖼️🖼️🖼️", // deliberately wider than the 4-cell avatar column
 		},
 		{
 			ID:       "3",

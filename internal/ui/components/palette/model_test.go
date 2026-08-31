@@ -21,7 +21,7 @@ func testItems() []Item {
 
 func openPalette(t *testing.T) Model {
 	t.Helper()
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetItems(testItems())
 	m.Open()
 	return m
@@ -91,7 +91,7 @@ func TestFuzzyMatchingFindsSubsequences(t *testing.T) {
 // highlighted: an exactly-typed command must be the one at the top, not
 // buried under a looser match that happens to sort earlier.
 func TestPrefixMatchesSortAboveFuzzyOnes(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetItems([]Item{
 		{Name: "some-quit-alias"}, // contains q,u,i,t as a subsequence
 		{Name: "quit"},            // real prefix match
@@ -241,7 +241,7 @@ func TestEnterRunsAndEscapeCancels(t *testing.T) {
 }
 
 func TestUpdateIsInertWhenClosed(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetItems(testItems())
 	m, action := m.Update(decodeKey(t, "x"))
 	if action != ActionNone || m.Query() != "" {
@@ -321,7 +321,7 @@ func TestViewLinesAreExactlyWide(t *testing.T) {
 // not push the row past its budget. Rune-counting would keep 60 CJK runes
 // for a 60-cell column and draw 120 cells, tearing the frame open.
 func TestViewHandlesWideRunes(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetItems([]Item{
 		{Name: "wide", Description: strings.Repeat("四", 60), Key: "w"},
 	})
@@ -352,7 +352,7 @@ func assertUniformWidth(t *testing.T, view string) {
 }
 
 func TestViewIsEmptyWhenClosed(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetItems(testItems())
 	if got := m.View(); got != "" {
 		t.Errorf("View() = %q while closed, want empty", got)

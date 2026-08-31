@@ -341,7 +341,7 @@ func TestExpandedFooterAdvertisesTheToggle(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEmacsIsTheDefault(t *testing.T) {
-	if got := New(newFocused().theme).EditingMode(); got != ModeEmacs {
+	if got := New(theme.DarkRoles(false)).EditingMode(); got != ModeEmacs {
 		t.Errorf("default EditingMode = %v, want ModeEmacs", got)
 	}
 }
@@ -1033,7 +1033,7 @@ func TestComposerStaysMultiLineAtEverySize(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := New(theme.ForName("dark"))
+			m := New(theme.DarkRoles(false))
 			tc.size(&m)
 			m.SetFocused(true)
 			m.SetChatId(42)

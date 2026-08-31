@@ -236,7 +236,7 @@ func (m Model) renderSearchLine() string {
 	const prefix = " search: "
 	const cursor = "\u2588"
 
-	style := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	style := lipgloss.NewStyle().Foreground(m.roles.Dim)
 	inner := m.width - style.GetHorizontalFrameSize()
 	budget := inner - cell.Width(prefix)
 	if budget < 1 {

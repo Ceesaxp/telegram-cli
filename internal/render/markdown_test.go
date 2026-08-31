@@ -10,11 +10,10 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 func newTestRenderer() *MessageRenderer {
-	return NewMessageRenderer(theme.DarkTheme())
+	return NewMessageRenderer()
 }
 
 func textMessage(text string, entities []*telegram.TextEntity) *telegram.Message {

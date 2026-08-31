@@ -108,7 +108,7 @@ func TestComputeGeometryMidSize(t *testing.T) {
 }
 
 func newTestModel(w, h int) Model {
-	m := New(store.NewStore(), nil, theme.ForName("dark"))
+	m := New(store.NewStore(), nil, theme.DarkRoles(false))
 	m.SetSize(w, h)
 	m.SetVisible(true)
 	return m
