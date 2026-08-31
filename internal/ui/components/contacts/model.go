@@ -22,7 +22,7 @@ type Model struct {
 	list    widgets.List
 	store   *store.Store
 	tg      *telegram.Client
-	theme   *theme.Theme
+	roles   theme.Roles
 	width   int
 	height  int
 	focused bool
@@ -31,19 +31,20 @@ type Model struct {
 }
 
 // New creates a new contacts model.
-func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
+func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	l := widgets.NewList()
-	l.StyleNormal = th.ChatListItem
-	l.StyleActive = th.ChatListItemActive
-	l.StyleTitle = th.ChatListTitle
-	l.StyleSub = th.ChatListPreview
-	l.StyleOnline = th.ChatListOnline
+	l.StyleNormal = lipgloss.NewStyle().Foreground(r.Fg).Background(r.Panel)
+	l.StyleActive = lipgloss.NewStyle().Foreground(r.Bright).Background(r.Sel)
+	l.StyleTitle = lipgloss.NewStyle().Foreground(r.Fg).Background(r.Panel)
+	l.StyleSub = lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
+	l.StyleOnline = lipgloss.NewStyle().Foreground(r.Green).Background(r.Panel)
+	l.StyleEmpty = theme.OverlayMuted(r)
 
 	return Model{
 		list:  l,
 		store: s,
 		tg:    tg,
-		theme: th,
+		roles: r,
 	}
 }
 
@@ -183,7 +184,7 @@ func (m Model) View() string {
 		return ""
 	}
 
-	title := m.theme.AuthTitle.Width(m.width).Render("Contacts")
+	title := theme.OverlayTitle(m.roles).Width(m.width).Render("Contacts")
 	content := m.list.View()
 
 	return lipgloss.NewStyle().

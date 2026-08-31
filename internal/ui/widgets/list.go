@@ -16,8 +16,7 @@ type ListItem struct {
 	Badge    string
 	Meta     string
 	Online   bool
-	Avatar   string // 2-line rendered avatar (half-block image or initials)
-	Muted    bool   // chat notifications are muted; render dimmed
+	Muted    bool // chat notifications are muted; render dimmed
 
 	// Kind and Saved describe what the item IS, for callers whose rows
 	// show a type mark. TUI 2.0's chat list uses them for its sigil, which
@@ -52,6 +51,12 @@ type List struct {
 	StyleMeta   lipgloss.Style
 	StyleBadge  lipgloss.Style
 	StyleOnline lipgloss.Style
+
+	// StyleEmpty draws the "No items" placeholder. Supplied by the caller
+	// like every other style here — this widget used to reach for a
+	// hard-coded #565F89, which is how a generic list ended up owning an
+	// opinion about the application's palette.
+	StyleEmpty lipgloss.Style
 
 	itemHeight int
 }
@@ -173,11 +178,10 @@ func (l *List) ensureVisible() {
 // View renders the list.
 func (l *List) View() string {
 	if len(l.Items) == 0 {
-		return lipgloss.NewStyle().
+		return l.StyleEmpty.
 			Width(l.Width).
 			Height(l.Height).
 			Align(lipgloss.Center, lipgloss.Center).
-			Foreground(lipgloss.Color("#565F89")).
 			Render("No items")
 	}
 
@@ -189,9 +193,12 @@ func (l *List) View() string {
 	var b strings.Builder
 
 	end := min(l.Offset+visibleItems, len(l.Items))
-	const avatarColW = 4 // avatar column content width, in display cells
-	const avatarSep = 1  // separator cell between the avatar and text columns
-	avatarW := avatarColW + avatarSep
+	// A one-cell indent where the avatar column used to be. TUI 2.0 has no
+	// avatars — the chat list replaced them with a type sigil, and this
+	// widget's own row drawing kept a four-cell block of coloured initials
+	// that only the two un-redesigned surfaces still reached. The indent
+	// stays because the rows were laid out around it.
+	const rowIndent = 1
 
 	// The row style (StyleNormal/StyleActive) carries its own padding —
 	// PaddingLeft(1)+PaddingRight(1) in the shipped theme — so the text
@@ -205,7 +212,7 @@ func (l *List) View() string {
 	// the two defensively so a future asymmetric theme can't reintroduce
 	// the overflow.
 	rowFrame := max(l.StyleNormal.GetHorizontalFrameSize(), l.StyleActive.GetHorizontalFrameSize())
-	textW := l.Width - avatarW - rowFrame
+	textW := l.Width - rowIndent - rowFrame
 	if textW < 0 {
 		textW = 0
 	}
@@ -230,12 +237,6 @@ func (l *List) View() string {
 		style := l.StyleNormal
 		if isActive {
 			style = l.StyleActive
-		}
-
-		// Avatar: use rendered image or colored initials
-		avatar := item.Avatar
-		if avatar == "" {
-			avatar = renderInitials(item.Title, isActive)
 		}
 
 		titleStyle := l.StyleTitle
@@ -307,25 +308,15 @@ func (l *List) View() string {
 			}
 		}
 
-		// Join avatar + text side by side, one output line at a time,
-		// each rendered through the row style via FitLine — never
-		// through a bare style.Width() call on already-full-width
-		// content (see FitLine's doc comment for why that wraps instead
-		// of clamping). The avatar column, which isn't governed by a
-		// lipgloss style at this join point, is still clamped manually:
-		// item.Avatar is an externally rendered image (or the initials
-		// block below) whose actual cell width isn't guaranteed to match
-		// the reserved column.
-		avatarLines := strings.Split(avatar, "\n")
-		for len(avatarLines) < 2 {
-			avatarLines = append(avatarLines, "")
-		}
+		// One output line at a time, each rendered through the row style
+		// via FitLine — never through a bare style.Width() call on
+		// already-full-width content (see FitLine's doc comment for why
+		// that wraps instead of clamping).
 		textLines := [2]string{titleLine, subLine}
 
 		var rowLines []string
-		for ri := 0; ri < 2; ri++ {
-			av := cell.Fit(avatarLines[ri], avatarColW)
-			content := av + " " + textLines[ri]
+		for ri := range 2 {
+			content := strings.Repeat(" ", rowIndent) + textLines[ri]
 			rowLines = append(rowLines, cell.FitLine(style, content, l.Width))
 		}
 
@@ -336,51 +327,6 @@ func (l *List) View() string {
 	}
 
 	return b.String()
-}
-
-// renderInitials creates a 2-line colored box with initials from the title.
-func renderInitials(title string, active bool) string {
-	// Extract up to 2 initials
-	initials := ""
-	words := strings.Fields(title)
-	for _, w := range words {
-		r := []rune(w)
-		if len(r) > 0 && r[0] > 32 {
-			// Skip emoji-like chars
-			if r[0] < 127 || r[0] > 0x2000 {
-				initials += string(r[0])
-			}
-			if len(initials) >= 2 {
-				break
-			}
-		}
-	}
-	if initials == "" {
-		initials = "?"
-	}
-
-	// Pick a color based on hash of title
-	colors := []string{"196", "208", "220", "34", "39", "129", "170", "214", "49", "201"}
-	hash := 0
-	for _, r := range title {
-		hash = hash*31 + int(r)
-	}
-	if hash < 0 {
-		hash = -hash
-	}
-	bg := colors[hash%len(colors)]
-
-	style := lipgloss.NewStyle().
-		Background(lipgloss.Color(bg)).
-		Foreground(lipgloss.Color("231")).
-		Bold(true).
-		Width(4).
-		Align(lipgloss.Center)
-
-	line1 := style.Render(initials)
-	line2 := style.Render("  ")
-
-	return line1 + "\n" + line2
 }
 
 func min(a, b int) int {

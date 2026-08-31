@@ -102,7 +102,7 @@ func TestGeometryNeverExceedsWindow(t *testing.T) {
 }
 
 func newVisibleModel(w, h int) Model {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetSections(sampleSections())
 	m.SetSize(w, h)
 	m.SetVisible(true)
@@ -154,7 +154,7 @@ func TestViewSectionsRenderedInOrder(t *testing.T) {
 // TestViewHiddenIsEmpty checks the overlay renders nothing when not
 // visible.
 func TestViewHiddenIsEmpty(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetSections(sampleSections())
 	m.SetSize(80, 24)
 	if got := m.View(); got != "" {
@@ -166,7 +166,7 @@ func TestViewHiddenIsEmpty(t *testing.T) {
 // to the top both when the overlay is (re-)shown and when its content
 // changes.
 func TestSetVisibleAndSetSectionsResetScroll(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetSections(sampleSections())
 	m.SetSize(30, 10) // narrow enough that content overflows and scrolls
 	m.SetVisible(true)
@@ -198,7 +198,7 @@ func TestSetVisibleAndSetSectionsResetScroll(t *testing.T) {
 // last content line would leave the visible window (which would leave
 // blank trailing rows while more content remains above).
 func TestScrollClamping(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetSections(sampleSections())
 	m.SetSize(30, 10) // narrow/short enough that content overflows
 	m.SetVisible(true)
@@ -241,7 +241,7 @@ func TestScrollClamping(t *testing.T) {
 // TestUpdateNoopWhenNotVisible checks Update never mutates scroll state
 // while the overlay is hidden.
 func TestUpdateNoopWhenNotVisible(t *testing.T) {
-	m := New(theme.DarkTheme())
+	m := New(theme.DarkRoles(false))
 	m.SetSections(sampleSections())
 	m.SetSize(30, 10)
 	// deliberately not visible

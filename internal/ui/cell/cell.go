@@ -529,6 +529,13 @@ func applySGR(bg bool, params string) bool {
 // line of a multi-line row through FitLine separately and join with "\n"
 // rather than passing multi-line input in.
 //
+// The style is expected to be a SINGLE-ROW one: padding, colours, bold. A
+// border or a vertical margin adds rows of its own, which no amount of
+// horizontal budgeting can collapse back to one, and a horizontal margin is
+// laid outside the width lipgloss is given rather than inside it. No row
+// style in this app has any of the three; a caller that wants a box wants
+// theme.OverlayFrame, which is not fitted to a line.
+//
 // Note: if totalWidth is smaller than style.GetHorizontalFrameSize(),
 // lipgloss cannot shrink the style's padding below its natural size, so the
 // result can exceed totalWidth in that degenerate case. No panel in this app

@@ -46,7 +46,7 @@ func result(t *testing.T, cmd tea.Cmd) DialogResultMsg {
 // Cancel, so a reflex Enter can never perform the destructive action the
 // dialog is guarding (deleting a message, quitting with a draft).
 func TestConfirmDefaultsToCancel(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 	m, cmd := press(m, specialKey(tea.KeyEnter))
 
 	got := result(t, cmd)
@@ -73,7 +73,7 @@ func TestMovementKeysMoveTheHighlight(t *testing.T) {
 
 	for name, k := range cases {
 		t.Run(name, func(t *testing.T) {
-			m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+			m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 			if m.buttonIdx != 0 {
 				t.Fatalf("setup: buttonIdx = %d, want 0 (Cancel)", m.buttonIdx)
 			}
@@ -95,7 +95,7 @@ func TestMovementKeysMoveTheHighlight(t *testing.T) {
 // TestMovementWrapsBothWays: with two buttons every movement key toggles,
 // and the direction keys are honest about their direction.
 func TestMovementWrapsBothWays(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "quit", "Quit", "Discard the draft?")
+	m := NewConfirm(theme.DarkRoles(false), "quit", "Quit", "Discard the draft?")
 
 	m, _ = press(m, specialKey(tea.KeyLeft))
 	if m.buttonIdx != 1 {
@@ -119,7 +119,7 @@ func TestMovementWrapsBothWays(t *testing.T) {
 // highlight for any key but the horizontal ones.
 func TestConfirmIgnoresJAndK(t *testing.T) {
 	for _, r := range []rune{'j', 'k'} {
-		m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+		m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 		m, _ = press(m, key(r))
 		if m.buttonIdx != 0 {
 			t.Fatalf("%q moved the confirm highlight to %d; it must stay on Cancel", string(r), m.buttonIdx)
@@ -138,7 +138,7 @@ func TestConfirmIgnoresJAndK(t *testing.T) {
 // dialog used to start on Cancel, which silently discarded the path the
 // user had just typed into the attach-file flow.
 func TestPromptDefaultsToOK(t *testing.T) {
-	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
 	if m.buttonIdx != len(m.buttons)-1 {
 		t.Fatalf("a fresh prompt highlights button %d (%q), want the last one (OK)",
 			m.buttonIdx, m.buttons[m.buttonIdx])
@@ -151,7 +151,7 @@ func TestPromptDefaultsToOK(t *testing.T) {
 // TestPromptTypeThenEnterCarriesTheInput is the attach-file flow
 // end-to-end: type a path, press Enter, get it back.
 func TestPromptTypeThenEnterCarriesTheInput(t *testing.T) {
-	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
 
 	for _, r := range "/tmp/a.png" {
 		m, _ = press(m, key(r))
@@ -174,7 +174,7 @@ func TestPromptTypeThenEnterCarriesTheInput(t *testing.T) {
 // every printable — the attach-file dialog takes a path, and paths
 // contain j's and k's.
 func TestPromptTreatsMovementLettersAsText(t *testing.T) {
-	m := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
 
 	start := m.buttonIdx
 	m, _ = press(m, key('j'), key('k'), key('.'), key('t'), key('x'), key('t'))
@@ -198,7 +198,7 @@ func TestPromptTreatsMovementLettersAsText(t *testing.T) {
 }
 
 func TestEscCancels(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 	m, _ = press(m, specialKey(tea.KeyRight)) // highlight Confirm
 	m, cmd := press(m, specialKey(tea.KeyEscape))
 
@@ -215,7 +215,7 @@ func TestEscCancels(t *testing.T) {
 // styling stripped — a reversed-color block alone is invisible on a
 // monochrome terminal.
 func TestViewMarksTheHighlightedButtonWithoutColor(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 
 	plain := ansi.Strip(m.View())
 	if !strings.Contains(plain, "[ Cancel ]") {
@@ -239,7 +239,7 @@ func TestViewMarksTheHighlightedButtonWithoutColor(t *testing.T) {
 // must be discoverable from the dialog itself, not by losing something
 // to it.
 func TestViewShowsTheMovementHint(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 	plain := ansi.Strip(m.View())
 	for _, want := range []string{"←/→: choose", "enter: accept", "esc: cancel"} {
 		if !strings.Contains(plain, want) {
@@ -249,14 +249,14 @@ func TestViewShowsTheMovementHint(t *testing.T) {
 
 	// A prompt leads with Enter, because that is the reflex at the end of
 	// typing and here it accepts what was typed.
-	p := NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:")
+	p := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
 	plain = ansi.Strip(p.View())
 	if !strings.Contains(plain, "enter: accept input") {
 		t.Fatalf("prompt View() does not say Enter accepts the input:\n%s", plain)
 	}
 
 	// A single-button alert has nothing to choose between, so it says so.
-	a := NewAlert(theme.DarkTheme(), "oops", "Error", "Something broke")
+	a := NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke")
 	plain = ansi.Strip(a.View())
 	if strings.Contains(plain, "choose") {
 		t.Fatalf("an alert with one button advertises a choice:\n%s", plain)
@@ -273,9 +273,9 @@ func TestViewShowsTheMovementHint(t *testing.T) {
 // removed from the status bar and the README.
 func TestHintNamesOnlyKeysTheDialogGets(t *testing.T) {
 	dialogs := map[string]Model{
-		"confirm": NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?"),
-		"alert":   NewAlert(theme.DarkTheme(), "oops", "Error", "Something broke"),
-		"prompt":  NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:"),
+		"confirm": NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?"),
+		"alert":   NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke"),
+		"prompt":  NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:"),
 	}
 	for name, m := range dialogs {
 		plain := ansi.Strip(m.renderHint())
@@ -292,9 +292,9 @@ func TestHintNamesOnlyKeysTheDialogGets(t *testing.T) {
 // ragged overlay.
 func TestViewIsARectangle(t *testing.T) {
 	dialogs := map[string]Model{
-		"confirm": NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?"),
-		"alert":   NewAlert(theme.DarkTheme(), "oops", "Error", "Something broke"),
-		"prompt":  NewPrompt(theme.DarkTheme(), "attach-file", "Attach File", "Path to file:"),
+		"confirm": NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?"),
+		"alert":   NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke"),
+		"prompt":  NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:"),
 	}
 	for name, m := range dialogs {
 		t.Run(name, func(t *testing.T) {
@@ -311,7 +311,7 @@ func TestViewIsARectangle(t *testing.T) {
 
 // TestHiddenDialogIgnoresKeys guards the early return in Update.
 func TestHiddenDialogIgnoresKeys(t *testing.T) {
-	m := NewConfirm(theme.DarkTheme(), "delete", "Delete Message", "Are you sure?")
+	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 	m, _ = press(m, specialKey(tea.KeyEscape))
 
 	m2, cmd := press(m, specialKey(tea.KeyEnter))

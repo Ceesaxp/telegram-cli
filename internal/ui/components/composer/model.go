@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
@@ -30,7 +31,6 @@ const (
 // Model is the message composer component.
 type Model struct {
 	textarea   widgets.TextArea
-	theme      *theme.Theme
 	width      int
 	height     int
 	focused    bool
@@ -74,10 +74,11 @@ type Model struct {
 }
 
 // New creates a new composer model.
-func New(th *theme.Theme) Model {
+func New(r theme.Roles) Model {
 	ta := widgets.NewTextArea()
 	ta.Placeholder = "Type a message..."
-	ta.Style = th.ComposerInput
+	ta.Style = lipgloss.NewStyle().Foreground(r.Fg).Background(r.Panel)
+	ta.StylePlaceholder = lipgloss.NewStyle().Foreground(r.Dim).Background(r.Panel)
 	// A message can hold line breaks (ctrl+j / shift+enter, vi o/O). This is
 	// declared here rather than inferred from Height so it holds before the
 	// first WindowSizeMsg and on a terminal too short to give the composer
@@ -87,14 +88,13 @@ func New(th *theme.Theme) Model {
 
 	return Model{
 		textarea: ta,
-		theme:    th,
 		height:   3,
 		// A placeholder width until the first WindowSizeMsg. Every row this
 		// component draws is cut to its width, and cutting to zero would
 		// make a composer that has not been laid out yet render nothing at
 		// all — including the draft somebody has already pasted into it.
 		width:  40,
-		roles:  theme.DarkRoles(false),
+		roles:  r,
 		drafts: make(map[int64]draft),
 	}
 }

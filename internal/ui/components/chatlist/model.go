@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/media"
 	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -25,7 +23,6 @@ type Model struct {
 	list  *widgets.List
 	store *store.Store
 	tg    *telegram.Client
-	theme *theme.Theme
 	roles theme.Roles
 
 	// draftChats is the set of chats with unsent work parked in the
@@ -60,8 +57,6 @@ type Model struct {
 	loading      bool
 	spinner      widgets.Spinner
 	activeChatId int64
-	avatarCache  *media.Cache
-	avatarRend   *media.ImageRenderer
 
 	// folders holds the user's chat folders, always with a synthesized or
 	// server-provided "All" folder at index 0. activeFolder indexes into
@@ -76,20 +71,19 @@ type Model struct {
 }
 
 // New creates a new chat list model.
-func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
+func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	l := widgets.NewList()
-	l.StyleNormal = th.ChatListItem
-	l.StyleActive = th.ChatListItemActive
-	l.StyleTitle = th.ChatListTitle
-	l.StyleSub = th.ChatListPreview
-	l.StyleMeta = th.ChatListTime
-	l.StyleBadge = th.ChatListUnread
-	l.StyleOnline = th.ChatListOnline
+	// Only StyleEmpty. Every other List style feeds the widget's own row
+	// drawing, and this component supplies RenderRow — so the seven that
+	// used to be set here were read by nothing at all. StyleEmpty is
+	// different: the "No items" placeholder is drawn before RenderRow gets
+	// a look in, so it is the one style a caller with a bespoke row still
+	// owns.
+	l.StyleEmpty = theme.OverlayMuted(r)
 
 	sp := widgets.NewSpinner("Loading chats...")
-	sp.Style = th.Spinner
+	sp.Style = lipgloss.NewStyle().Foreground(r.Cyan)
 
-	protocol := media.DetectProtocol()
 	dirty := false
 
 	// The filter input reuses the shared single-line TextArea so the
@@ -105,28 +99,17 @@ func New(s *store.Store, tg *telegram.Client, th *theme.Theme) Model {
 		filterInput: fi,
 		store:       s,
 		tg:          tg,
-		theme:       th,
 		loading:     true,
 		spinner:     sp,
-		avatarCache: media.NewCache(100),
-		avatarRend:  media.NewImageRenderer(protocol, 4, 2),
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
 		dirty:       &dirty,
 	}
-	// The TUI 2.0 row renderer is installed unconditionally, with a usable
-	// default palette. Installing it only in SetRoles would make the
-	// component render two different ways depending on whether the caller
-	// remembered to call it — and tests, which construct the model directly,
-	// would silently exercise the old rows.
-	m.roles = theme.DarkRoles(false)
-	l.RenderRow = m.renderRow
+	// The row renderer is installed here, not in SetRoles: a component
+	// that renders two different ways depending on whether the caller
+	// remembered a setter is a component with two behaviours, and the
+	// tests construct this model directly.
+	m.list.RenderRow = m.renderRow
 	return m
-}
-
-// ApplyMedia sets the avatar image protocol from [media] config.
-// Avatar cell size stays 4x2 regardless of MaxImageWidth/Height.
-func (m *Model) ApplyMedia(cfg config.MediaConfig) {
-	m.avatarRend = media.NewImageRenderer(media.ResolveProtocol(cfg.ImageProtocol), 4, 2)
 }
 
 // defaultAllFolder synthesizes the implicit "All chats" folder so the tab
@@ -182,16 +165,9 @@ func (m *Model) SetDraftChats(ids map[int64]bool) {
 	*m.dirty = true
 }
 
-// SetRoles supplies the TUI 2.0 semantic palette used by the row renderer.
-// The old *theme.Theme stays for the widgets this component still borrows.
 func (m *Model) SetMyUserID(id int64) {
 	m.myUserID = id
 	*m.dirty = true
-}
-
-func (m *Model) SetRoles(r theme.Roles) {
-	m.roles = r
-	m.list.RenderRow = m.renderRow
 }
 
 func (m *Model) SetSize(width, height int) {
@@ -600,10 +576,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.loading = false
 		m.spinner.Active = false
 		m.refreshList()
-		cmds = append(cmds, m.downloadAvatarsCmd())
-
-	case avatarsLoadedMsg:
-		m.refreshList()
 
 	case telegram.ChatFoldersMsg:
 		// Also arrives live from the update listener on folder edits.
@@ -867,13 +839,6 @@ func (m *Model) refreshList() {
 			online = m.store.Users.IsOnline(entry.Chat.ID)
 		}
 
-		// Check avatar cache
-		avatar := ""
-		cacheKey := fmt.Sprintf("av:%d", entry.Chat.ID)
-		if cached, ok := m.avatarCache.Get(cacheKey); ok {
-			avatar = cached
-		}
-
 		items = append(items, widgets.ListItem{
 			ID: fmt.Sprintf("%d", entry.Chat.ID),
 			// The title is bare now: the type mark is the sigil the row
@@ -886,7 +851,6 @@ func (m *Model) refreshList() {
 			Badge:    badge,
 			Meta:     meta,
 			Online:   online,
-			Avatar:   avatar,
 			Muted:    entry.Chat.Muted,
 		})
 	}
@@ -1051,40 +1015,6 @@ func chatIcon(chat *telegram.Chat) string {
 		return "📢"
 	default:
 		return "💬"
-	}
-}
-
-type avatarsLoadedMsg struct{}
-
-func (m Model) downloadAvatarsCmd() tea.Cmd {
-	return func() tea.Msg {
-		chats := m.store.Chats.OrderedChats()
-		for _, entry := range chats {
-			if entry.Chat == nil || entry.Chat.Photo == nil {
-				continue
-			}
-			cacheKey := fmt.Sprintf("av:%d", entry.Chat.ID)
-			if _, ok := m.avatarCache.Get(cacheKey); ok {
-				continue // already cached
-			}
-
-			photo := entry.Chat.Photo
-			if !photo.Downloaded || photo.Path == "" {
-				file, err := m.tg.DownloadFileSync(photo.ID)
-				if err != nil || file == nil {
-					continue
-				}
-				photo = file
-			}
-
-			if photo.Path != "" {
-				rendered, err := m.avatarRend.RenderFile(photo.Path)
-				if err == nil && rendered != "" {
-					m.avatarCache.Set(cacheKey, rendered)
-				}
-			}
-		}
-		return avatarsLoadedMsg{}
 	}
 }
 

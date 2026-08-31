@@ -37,7 +37,7 @@ const defaultFooter = "↑↓/jk: scroll · Esc/?: close"
 
 // Model is the help overlay component.
 type Model struct {
-	theme    *theme.Theme
+	roles    theme.Roles
 	width    int
 	height   int
 	visible  bool
@@ -46,9 +46,9 @@ type Model struct {
 	footer   string // "" means defaultFooter
 }
 
-// New creates a help overlay bound to th.
-func New(th *theme.Theme) Model {
-	return Model{theme: th}
+// New creates a help overlay drawn from the semantic palette.
+func New(r theme.Roles) Model {
+	return Model{roles: r}
 }
 
 // SetSections replaces the sections shown, in the order given. Resets
@@ -251,15 +251,15 @@ func bindingLine(b Binding, keysW, innerWidth int, keysStyle, descStyle lipgloss
 // bodyLines renders the full (unscrolled) section content as individual
 // display lines, each already fit to innerWidth cells.
 func (m Model) bodyLines(innerWidth int) []string {
-	mutedStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	mutedStyle := theme.OverlayMuted(m.roles)
 
 	if len(m.sections) == 0 {
 		return []string{cell.FitLine(mutedStyle, "No key bindings to show.", innerWidth)}
 	}
 
 	keysW := keysColumnWidth(m.sections, innerWidth)
-	sectionTitleStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-	keysStyle := lipgloss.NewStyle().Foreground(m.theme.Text).Bold(true)
+	sectionTitleStyle := theme.OverlayTitle(m.roles)
+	keysStyle := theme.OverlayKey(m.roles).Bold(true)
 
 	var lines []string
 	for i, sec := range m.sections {
@@ -360,7 +360,7 @@ func (m Model) View() string {
 
 	g := computeGeometry(m.width, m.height)
 
-	titleStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	titleStyle := theme.OverlayTitle(m.roles)
 	title := cell.FitLine(titleStyle, "Keyboard Shortcuts", g.innerWidth)
 
 	body := m.visibleBodyLines(g.innerWidth, g.contentH)
@@ -374,7 +374,7 @@ func (m Model) View() string {
 	if footerText == "" {
 		footerText = defaultFooter
 	}
-	footerStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	footerStyle := theme.OverlayMuted(m.roles)
 	footer := cell.FitLine(footerStyle, footerText, g.innerWidth)
 
 	rows := make([]string, 0, len(body)+3)
@@ -390,7 +390,7 @@ func (m Model) View() string {
 	// g.boxHeight directly would stretch the rendered box 2 cells past
 	// what the geometry above computed. Mirrors search/model.go's View()
 	// exactly (see its comment for the full accounting).
-	return m.theme.DialogBox.
+	return theme.OverlayFrame(m.roles).Padding(1, 2).
 		Width(g.boxWidth - 2).
 		Height(g.boxHeight - 2).
 		Render(content)

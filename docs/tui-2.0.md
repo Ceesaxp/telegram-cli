@@ -1003,6 +1003,63 @@ as though it were before it. Normal mode now draws the caret as reverse video
 on its character, and both modes fall back to the block at the end of a line,
 where there is no character to sit on.
 
+### 29. One palette, and a guard that keeps it one
+
+The palette section says to build the theme from the semantic roles and that
+"the existing DarkTheme signature remains; the hard-coded 256-colour body is
+replaced". Both halves happened, and the second one only for the surfaces
+that were redesigned. Six components — the palette, help, search, dialogs,
+auth and contacts — kept drawing from `theme.Theme`: 268 lines of pre-built
+lipgloss styles carrying their own bright blue `39` and green `42`. Every
+overlay was therefore a different palette from the frame beneath it.
+
+`theme.Theme` is deleted. What replaces it is `theme/overlay.go`: a title, a
+body, a muted line, a key, a selected row, an input, an error and a success,
+each a **function of `Roles`** rather than a field of a struct. The
+distinction is the whole point. A table of pre-built styles has to be
+constructed somewhere, so it acquires a lifecycle, a constructor, and a copy
+in every component that holds one — which is exactly how the second palette
+came to exist and then to drift.
+
+`TestNoColourLiteralsOutsideThePalette` scans `internal/ui` for
+`lipgloss.Color("…")` and fails on every one it has no documented reason for.
+It found four more the first time it ran. Its scanner is tested separately
+against a purpose-built tree, because a guard that quietly stops reporting
+looks exactly like a codebase that is clean.
+
+### 30. The avatars were still being downloaded
+
+TUI 2.0 replaced the chat list's avatar with a type sigil (decision 10 removed
+`ui.show_avatars` outright). The sigil shipped. The avatars did not leave.
+
+The chat list kept a `media.Cache`, an `ImageRenderer`, an `avatarsLoadedMsg`,
+and a command that ran on **every chat-list load** — walking the chat list and
+issuing a `DownloadFileSync` per chat that had a photo, then rendering each
+one to a 4×2 block — to populate a `ListItem.Avatar` field that its own
+`renderRow` has never read. `widgets.List` still drew a coloured initials
+block for the two surfaces with no custom row renderer.
+
+This is the sixth time functionality moved and the old implementation stayed
+alive. It is the first time the leftover was spending network requests.
+
+### 31. Three components ignored the palette they were handed
+
+`chatview`, `chatlist` and `composer` all took a `theme.Roles` argument in
+their constructors and then installed `theme.DarkRoles(false)` — the
+256-colour fallback — instead of using it. On a terminal reporting truecolour
+the thread, the list and the composer would have drawn from a different
+palette than the frame around them.
+
+It was invisible because the app also called `SetRoles` at startup, which
+overwrote the wrong value with the right one. Removing that redundant call —
+redundant because the constructors now take the palette — is what exposed it,
+and is why the three `SetRoles` methods are gone rather than kept: a setter
+whose only caller existed to undo a constructor's mistake is not an API.
+
+Runtime theme switching, which is what a `SetRoles` would be for, is still
+absent and still recorded as such under phase 7. When it is built, the cache
+invalidation it needs is part of building it.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

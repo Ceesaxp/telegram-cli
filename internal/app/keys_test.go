@@ -1258,7 +1258,7 @@ func TestViPanelMovement(t *testing.T) {
 			},
 			"dialog": func(t *testing.T) Model {
 				m := openChatModel(t, PanelChatList)
-				d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+				d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 				m.dialog = &d
 				return m
 			},
@@ -1337,7 +1337,7 @@ func TestQuitFromBrowsingPanels(t *testing.T) {
 			},
 			"dialog": func(t *testing.T) Model {
 				m := openChatModel(t, PanelChatList)
-				d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+				d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 				m.dialog = &d
 				return m
 			},
@@ -1846,7 +1846,7 @@ func TestUnreachableMnemonicIsShownAsUnbound(t *testing.T) {
 func TestContactsRespectsModals(t *testing.T) {
 	t.Run("a dialog cannot be bypassed", func(t *testing.T) {
 		m := openChatModel(t, PanelChatList)
-		d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+		d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 		m.dialog = &d
 		for _, seq := range []string{"\x1bc", "\x1bOS"} { // alt+c, f4
 			got := update(t, m, seq)
@@ -2109,7 +2109,7 @@ func TestLiveKeysAreAdvertisedWhereTheyWork(t *testing.T) {
 func withDialog(t *testing.T, focus FocusPanel) Model {
 	t.Helper()
 	m := openChatModel(t, focus)
-	d := dialog.NewConfirm(m.theme, "delete", "Delete Message", "Are you sure?")
+	d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 	m.dialog = &d
 	return m
 }

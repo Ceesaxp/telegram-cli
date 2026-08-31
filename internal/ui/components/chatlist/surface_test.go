@@ -63,7 +63,6 @@ func TestAnUnselectedRowLeavesTheSurfaceToTheFrame(t *testing.T) {
 		}
 	}
 	chrome := newTestModel()
-	chrome.SetRoles(theme.DarkRoles(false))
 	for name, line := range map[string]string{
 		"filter header": chrome.renderFilterHeader(38),
 		"list footer":   chrome.renderListFooter(38),
@@ -106,5 +105,27 @@ func TestTheSelectionBarDimsWhenTheListIsNotFocused(t *testing.T) {
 		if runes := []rune(ansi.Strip(line)); len(runes) == 0 || runes[0] != '▌' {
 			t.Errorf("row %d of an unfocused selection lost its bar", i)
 		}
+	}
+}
+
+// The row renderer is installed in New, not by a setter the caller has to
+// remember. A chat list that fell back to the widget's own row drawing would
+// show the pre-2.0 layout — a coloured initials block where the type sigil
+// goes — and every assertion in this file would still pass, because they all
+// call renderRow directly.
+func TestTheListDrawsTUI2Rows(t *testing.T) {
+	m := newTestModel()
+	m.SetSize(38, 10)
+	m.loading = false
+	*m.dirty = true
+
+	m.store.Chats.Set(&telegram.Chat{
+		ID: 1, Type: telegram.ChatTypeSupergroup, Title: "infra-oncall",
+	})
+	m.refreshList()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "# infra-oncall") {
+		t.Errorf("the chat list is not drawing TUI 2.0 rows (no type sigil):\n%s", view)
 	}
 }

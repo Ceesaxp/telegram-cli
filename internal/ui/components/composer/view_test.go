@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 
 func sized(t *testing.T, width int) Model {
 	t.Helper()
-	m := New(theme.ForName("dark"))
+	m := New(theme.DarkRoles(false))
 	m.SetSize(width, 1)
 	m.SetChatId(1)
 	return m
@@ -160,7 +160,7 @@ func TestBadgeReportsWhatTheNextKeyWillDo(t *testing.T) {
 // depends on the host remembering a setter is a component with two
 // behaviours; this one derives everything it can.
 func TestBadgeDoesNotDependOnTheHostForWhatItCanSee(t *testing.T) {
-	m := New(theme.ForName("dark"))
+	m := New(theme.DarkRoles(false))
 	m.SetFocused(true)
 	if !strings.Contains(m.View(), "INSERT") {
 		t.Errorf("a focused composer nobody told about reports:\n%s", ansi.Strip(m.View()))
