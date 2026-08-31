@@ -46,6 +46,8 @@
 - **Responsive Layout** — Borderless columns sized by terminal width: chat list 38 cells, thread flexing, dropping to a narrower list and then a single panel as space runs out. Every row is exactly the terminal width
 - **Theming** — Dark and light themes with 256-color support
 - **Inline Images** — `ui.inline_images` chooses when a photo is drawn as art rather than as a metadata card: `never`, `on_open` (the default), or `always`
+- **Media Overlay** — `Enter` on a photo draws it full-pane, with the protocol `media.image_protocol` resolves to (kitty, sixel, or Unicode half-blocks). Nothing is downloaded or drawn until you ask, `Esc` closes, and closing removes the image the terminal was holding rather than leaving it on screen
+- **Terminal Hyperlinks** — `ui.hyperlinks` puts OSC 8 links on the links in a message: `auto` (only on terminals known to support them), `never`, or `always`. Links are cyan and underlined either way; this adds the click
 - **Context Rail** — A thirty-cell column beside the thread with the chat's pinned messages, members, and shared files or links, chosen by chat type. Toggled with `` ` ``, defaulted by `ui.rail`, and shown only at 118 columns or wider. Nothing is fetched until you open it, and every section says whether it is loading, empty, or unavailable rather than leaving you to guess
 - **Persistence** — Update-sequence state and the peer access-hash cache persist to a local `state.db`, so updates missed while closed are gap-recovered on next start
 
@@ -101,10 +103,17 @@ wider. Backtick toggles it, `ui.rail` sets the default. Nothing about it is
 fetched until you open it, so a chat you open with the rail closed costs
 exactly what it did before the rail existed.
 
-What is **not** there yet: the full-pane image overlay, `y` to copy, and four
-blocks whose data this client does not map — reactions, poll results, link
-previews, and a voice note's waveform. Those are Telegram mapping work rather
-than rendering; see [TUI 2.0 design](#tui-20-design).
+`Enter` on a photo opens it **full-pane in the terminal**, drawn with
+whichever image protocol `media.image_protocol` resolves to. Nothing is
+fetched or drawn until you press it, `Esc` puts it away, and `o` hands the
+same file to your system viewer if the terminal draws it badly. `y` copies
+the selected message's text, `space` plays a voice note, and `M` clears the
+unread badge without moving your place in the history.
+
+What is **not** there yet: four blocks whose data this client does not map —
+reactions, poll results, link previews, and a voice note's waveform. Those are
+Telegram mapping work rather than rendering; see
+[TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
 
@@ -262,8 +271,12 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `n` / `N` | Next / previous match |
 | `Esc` | Close the find input while it's open; otherwise step back to the chat list (surviving find results are not cleared first) |
 | `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them) |
-| `Enter` / `o` | Open attachment |
+| `Enter` | Open attachment — a photo opens full-pane in the terminal, everything else goes to the system viewer |
+| `o` | Open attachment in the system viewer, always |
 | `s` | Save attachment |
+| `space` | Play the selected voice note or audio message |
+| `y` | Copy the selected message's text to the system clipboard |
+| `M` | Mark this chat read without moving the scroll or the unread divider |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` / `c` | Compose a message |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |

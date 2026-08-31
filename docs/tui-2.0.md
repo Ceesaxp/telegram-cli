@@ -607,25 +607,38 @@ every continuation and all content blocks.
 **Fixed in the fixture**, which now draws every continuation at 24. Eight
 rows moved; each stayed exactly 100 cells.
 
-### 14. No OSC 8 hyperlinks
+### 14. Resolved: OSC 8 hyperlinks, without the wrapper they were costed at
 
-The design record asks for terminal hyperlinks on links "where supported".
-They are not emitted, for a reason found by trying.
+**Superseded by phase 8.** This entry recorded why terminal hyperlinks were
+absent, and the reason held for four phases: `ansi.Wrap` breaks a line
+between a link's opening and closing sequences and repairs neither, so the
+rest of that row — its trailing padding and the panel rule beside it — became
+part of the link. The same class of fault as the SGR leak `cell.WrapLines`
+fixes.
 
-Width is not the obstacle — `ansi.StringWidth` measures an OSC 8 sequence as
-zero cells. `ansi.Wrap` is: it breaks a line in the middle of a hyperlink
-without closing and reopening it, so the opening sequence is left dangling on
-the first line and the closing one arrives on the second having opened
-nothing. Every terminal that supports OSC 8 then treats the rest of that
-first row — its trailing padding and the panel rule — as part of the link.
+It was costed here at a **grapheme-aware wrapper**, on the reasoning that
+reopening a hyperlink means knowing which runes belong to it after wrapping,
+which means wrapping before styling, which means replacing the tested wrapper
+with one of ours.
 
-This is the same class of fault as the SGR leak fixed in `cell.WrapLines`,
-but it cannot be fixed the same way: reopening a hyperlink means knowing
-which runes belong to it *after* wrapping, which means wrapping before
-styling, which means owning a grapheme-aware wrapper instead of using the
-tested one. Links are cyan and underlined meanwhile, which is the affordance;
-OSC 8 only adds click-to-open. It belongs with phase 8's hardening, together
-with the wrapper that would make it safe.
+That reasoning has a false premise. Reopening a link does not require
+knowing its runes: **the URI is carried in the opening sequence**, so the
+sequence is its own answer. `cell.OpenLink` recovers it from a wrapped line
+exactly as `OpenStyle` recovers an SGR run, and `WrapLines` closes and
+reopens both. Twenty lines beside the ones that already existed, rather than
+a wrapper.
+
+What shipped with it: link entities carry their destination (`inlineStyle.uri`),
+which is part of the style rather than a parallel table so that two adjacent
+links to different places are never merged into one run. The destination can
+only come from the entity's own field or the text it covers — a hyperlink
+whose target disagrees with its visible text is the shape of a phishing
+link. `ui.hyperlinks` gates it, `auto` is an allowlist, and tmux is excluded
+whatever runs under it: OSC 8 needs `allow-passthrough`, which is off by
+default and invisible to the environment.
+
+The composer's preview emits none. It draws what WILL be sent, and a
+clickable link in a draft invites a click on something that does not exist.
 
 ### 15. Inline code is coloured, not padded
 
@@ -745,6 +758,59 @@ emits nothing, which is deliberate: a package asserting on it has to pin a
 profile in `TestMain`, and four of them — `cell`, `chatlist`, `frame`,
 `internal/app` — did not, which is how this shipped through four phases under
 a green suite.
+
+### 20. The overlay is photos only, and the capability order is not a ladder
+
+The plan for phase 8 asks for "an explicit open flow with capability order
+Kitty, Sixel, blocks, configured viewer, platform open", and a dismissible
+overlay for the in-terminal modes. What shipped is narrower in one direction
+and simpler in another.
+
+**Photos only.** A video, a document or a voice note has no in-terminal
+representation this client can draw, so `enter` on one keeps the existing
+behaviour of handing the file to the platform. An overlay that opened and
+said "cannot draw this" would be worse than the thing that already works.
+
+**Not a ladder.** The three drawing protocols are not tried in turn until one
+succeeds: `media.image_protocol` resolves to exactly one, at startup, from
+the environment, and the overlay draws with it. A ladder implies a runtime
+failure to fall off, and there is none — a terminal either understood the
+protocol or silently did not, and this client has no way to find out which.
+The external viewer and the platform open are not lower rungs either; they
+are `o`, a separate key, available from inside the overlay and out of it.
+
+**Kitty images are deleted by id.** Sixel and half-blocks are cell contents
+and the next frame overwrites them. A kitty image belongs to the terminal and
+survives any number of text redraws, so closing the overlay emits an explicit
+delete — `a=d,d=I,i=<id>`, never the bare `a=d`, which kitty reads as "every
+placement on screen" and which would take the thread's inline art with it.
+`renderKitty` therefore places under an id of this client's choosing, which
+it previously did not.
+
+That transmission also gained `q=2`, which suppresses the terminal's `OK` and
+error replies. Those come back on **stdin**, and under Bubble Tea's raw-mode
+input loop anything on stdin is a keystroke: an unsuppressed transmission
+types `_Gi=31;OK\` into whatever has focus. It is the OSC 11 hazard
+(see `theme.SupportsTrueColor`) arriving by a different door, and it was
+live for every inline photo this client has ever drawn on kitty.
+
+The kitty and sixel paths are written from the protocol specifications and
+are **not verified against a real terminal** in this pass. The half-block
+path is the one the tests cover, and it is what `media.image_protocol =
+"blocks"` selects.
+
+### 21. No OSC 52 clipboard fallback
+
+The phase 8 plan allows one "only if approved". It has not been approved, and
+is not here.
+
+`y` drives the platform helpers — `pbcopy`, `wl-copy`, `xclip`, `xsel`,
+`clip.exe` — and reports "no clipboard tool found" when there is none, which
+over ssh is the honest answer. OSC 52 would work there, and it is also the
+one clipboard path a user cannot see, cannot bound, and cannot decline:
+terminals accept it silently and some multiplexers forward it onward. A
+feature that writes to the user's system clipboard from a remote host is a
+decision for them to make, not a fallback to reach for.
 
 ## Decisions
 
@@ -1370,6 +1436,29 @@ app, documentation, and end-to-end rendering tests.
 
 Exit criterion: media works without polluting scrollback; copy has clear
 failure feedback; no regression in non-graphics terminals.
+
+**Shipped.** `internal/ui/components/mediaview` (the full-pane overlay),
+`internal/clipboard`'s write side, `chatview`'s `y`/`space`/`M`, and OSC 8
+hyperlinks on message bodies.
+
+The scrollback guarantee holds by construction rather than by care: the
+overlay draws into the alternate screen the app already owns, and emits no
+graphics sequence of any kind until `Show` has been given a downloaded file —
+which only happens after the key that asked for it.
+`TestNoGraphicsBeforeAnOpen` asserts that for all three protocols, including
+the "still downloading" and "download failed" states that a reader reaches
+without ever seeing a picture.
+
+Three findings, recorded as [divergence 14](#14-resolved-osc-8-hyperlinks-without-the-wrapper-they-were-costed-at),
+[20](#20-the-overlay-is-photos-only-and-the-capability-order-is-not-a-ladder)
+and [21](#21-no-osc-52-clipboard-fallback): the hyperlinks cost twenty lines
+rather than a wrapper, the kitty transmission was replying onto stdin, and
+the OSC 52 fallback stays unbuilt because it was never approved.
+
+Not shipped, and named rather than quietly dropped: the waveform, progress
+and pause controls this section makes conditional on "a real media-player and
+amplitude design". There is neither. A voice note keeps the truthful play/stop
+card, and `space` plays it.
 
 ## Verification matrix
 
