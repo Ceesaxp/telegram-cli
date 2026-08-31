@@ -700,6 +700,52 @@ pin: `ChannelsGetParticipants` returns a page and not a count, and a
 remainder row computed from the page misstates the size of any group larger
 than one page.
 
+### 19. The frame owns each column's surface, not the panels
+
+The palette assigns a background to every region — panel for the chat list and
+the rail, bg for the thread, chrome for the two bars — and this document reads
+as though each panel paints its own. Every panel did, and every one of them
+was wrong.
+
+The spelling they all used was to assemble a row out of styled spans and then
+wrap the finished string in a background style:
+
+    lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, width))
+
+That emits the background once, at the front. Each span inside the line closes
+itself with `ESC[0m`, and a reset clears the background along with the
+foreground, so the surface survived only as far as the first span. A chat row
+showed no fill on its title line at all and a fill on its preview line that
+stopped where the text stopped. The thread's selected-message band — specified
+here as "a curline background across the full thread width" — was a single
+cyan cell in the gutter. The top bar was the only continuous surface in the
+app, and only because it repeated `.Background(chrome)` on all seven of its
+styles.
+
+It is the same family of defect as the one that produced `cell.WrapLines`: SGR
+is a mode, and a reset is not a scope. The fix is `cell.Fill`, which reopens
+the background after every reset in the line.
+
+Where it is applied is the divergence. Painting stays out of the panels and
+moves to `frame.Column.Surface`, because a panel can only paint the rows it
+drew and the frame owns the ones it did not — the blank padding under a short
+chat list, the centred empty states that go through Lipgloss's own `Height`,
+and the whole column in single-panel mode. Those were the widest unpainted
+bands on screen, and no amount of per-panel filling reaches them.
+
+Panels now paint only their exceptions: the selected chat row (sel), the
+selected message (curline), the unread badge (cyan), the thread header and the
+composer (panel, inside a column whose surface is bg). Those win, because
+`cell.Fill` reopens the surface **before** each span's own sequences rather
+than after, so a nested fill overrides an outer one.
+
+The assertion is `cell.PaintedWidth`, which counts the leading cells of a row
+drawn with any background in effect. It returns 0 under a colour profile that
+emits nothing, which is deliberate: a package asserting on it has to pin a
+profile in `TestMain`, and four of them — `cell`, `chatlist`, `frame`,
+`internal/app` — did not, which is how this shipped through four phases under
+a green suite.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
@@ -956,6 +1002,12 @@ rather than trust it**. `frame.Render` fits every line to its region, so a
 panel that is not yet exact-width is padded or clipped instead of shearing.
 That is what lets the chat list rows and the thread grid follow separately,
 and it is why phase 1 shipped alone.
+
+`frame.Render` later took a second responsibility for the same reason: each
+column's **surface**. Fitting a panel's lines and painting the region they sit
+in are the same job seen twice, and only the frame can do the second one for
+the rows a panel never drew. See
+[divergence 19](#19-the-frame-owns-each-columns-surface-not-the-panels).
 
 Width is asserted; byte equality is not yet. The fixtures are renders of a
 finished TUI 2.0, so string equality cannot pass until the chat list rows,

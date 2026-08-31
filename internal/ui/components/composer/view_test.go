@@ -30,8 +30,15 @@ func sized(t *testing.T, width int) Model {
 	return m
 }
 
-// rows splits a view and checks the two invariants every row of every panel
-// has to hold: exactly the width, and no style left open at the end.
+// rows splits a view and checks the three invariants every row of every
+// panel has to hold: exactly the width, no style left open at the end, and
+// panel painted the whole way across.
+//
+// The third is checked here rather than in a test of its own so that it
+// holds for every composer state some other test happens to build — the
+// prompt row, the reply bar, the attachment chip and both columns of the
+// expanded form. The composer is panel inside a thread column that is bg, so
+// unlike the chat list it cannot leave its surface to the frame.
 func rows(t *testing.T, m Model) []string {
 	t.Helper()
 	out := strings.Split(m.View(), "\n")
@@ -44,6 +51,10 @@ func rows(t *testing.T, m Model) []string {
 		}
 		if open := cell.OpenStyle(line); open != "" {
 			t.Errorf("row %d leaves %q open", i, open)
+		}
+		if p := cell.PaintedWidth(line); p != m.width {
+			t.Errorf("row %d: panel covers %d of %d cells, dying at column %d\n%s",
+				i, p, m.width, p, strings.ReplaceAll(line, "\x1b", "ESC"))
 		}
 	}
 	return out

@@ -75,13 +75,17 @@ func (m Model) View() string {
 		return ""
 	}
 
-	base := lipgloss.NewStyle().Background(m.roles.Chrome)
-	markStyle := lipgloss.NewStyle().Foreground(m.roles.Cyan).Bold(true).Background(m.roles.Chrome)
-	ghostStyle := lipgloss.NewStyle().Foreground(m.roles.Ghost).Background(m.roles.Chrome)
-	activeStyle := lipgloss.NewStyle().Foreground(m.roles.Bright).Background(m.roles.Chrome)
-	idleStyle := lipgloss.NewStyle().Foreground(m.roles.Dim).Background(m.roles.Chrome)
-	dotStyle := lipgloss.NewStyle().Foreground(m.dotColour()).Background(m.roles.Chrome)
-	faintStyle := lipgloss.NewStyle().Foreground(m.roles.Faint).Background(m.roles.Chrome)
+	// No style here carries a background. Chrome is this row's surface and
+	// the frame fills it — repeating it on every span was how this row
+	// stayed continuous while every other surface in the app was breaking
+	// at the first reset, and it is not a pattern worth keeping now that
+	// there is one that works.
+	markStyle := lipgloss.NewStyle().Foreground(m.roles.Cyan).Bold(true)
+	ghostStyle := lipgloss.NewStyle().Foreground(m.roles.Ghost)
+	activeStyle := lipgloss.NewStyle().Foreground(m.roles.Bright)
+	idleStyle := lipgloss.NewStyle().Foreground(m.roles.Dim)
+	dotStyle := lipgloss.NewStyle().Foreground(m.dotColour())
+	faintStyle := lipgloss.NewStyle().Foreground(m.roles.Faint)
 
 	left := " " + markStyle.Render("tg") + " " + ghostStyle.Render("│")
 	leftW := 1 + 2 + 1 + 1
@@ -110,7 +114,7 @@ func (m Model) View() string {
 		if f.Active {
 			style = activeStyle
 		}
-		tabs.WriteString(base.Render(" "))
+		tabs.WriteString(" ")
 		tabs.WriteString(style.Render(label))
 		tabsW += 1 + cell.Width(label)
 	}
@@ -120,7 +124,7 @@ func (m Model) View() string {
 		gap = 0
 	}
 
-	out := left + tabs.String() + base.Render(strings.Repeat(" ", gap)) + right
+	out := left + tabs.String() + strings.Repeat(" ", gap) + right
 	return cell.Fit(out, m.width)
 }
 

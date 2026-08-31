@@ -148,9 +148,11 @@ func (m Model) View() string {
 	return strings.Join(lines[:m.height], "\n")
 }
 
+// blank is a row the rail did not fill. It carries no colour of its own:
+// panel is this column's surface and the frame paints it, including the rows
+// below the last section.
 func (m Model) blank() string {
-	return lipgloss.NewStyle().Background(m.roles.Panel).
-		Render(strings.Repeat(" ", m.width))
+	return strings.Repeat(" ", m.width)
 }
 
 // heading draws a section title, with its total when there is one.
@@ -163,7 +165,7 @@ func (m Model) heading(s Section) string {
 	line := strings.Repeat(" ", railGlyphCol) +
 		lipgloss.NewStyle().Foreground(r.Faint).Render(
 			cell.Truncate(text, m.width-railGlyphCol-railTrailW))
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, m.width))
+	return cell.Fit(line, m.width)
 }
 
 // row draws one line: glyph, text, and a right-aligned trailing field.
@@ -194,7 +196,7 @@ func (m Model) row(row Row) string {
 		line += strings.Repeat(" ", railMinGap) +
 			lipgloss.NewStyle().Foreground(r.Faint).Render(row.Right)
 	}
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, m.width))
+	return cell.Fit(line, m.width)
 }
 
 func (m Model) glyphFor(row Row) (string, lipgloss.Color) {
