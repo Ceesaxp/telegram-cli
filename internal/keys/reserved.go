@@ -29,14 +29,18 @@ import "sort"
 //     through keys.quit_browsing, which is configurable.
 var AppFixed = []string{
 	// Quit, matched before every other binding and before the focus gates.
-	"ctrl+c", "ctrl+q",
+	// One chord: ctrl+c was a third spelling of an action that already had
+	// two, and is the chord a terminal user presses to abandon a command
+	// rather than to close an application.
+	"ctrl+q",
 	// The focus ladder and the panel cycle.
 	"esc", "tab", "shift+tab",
 	"alt+1", "alt+2", "alt+3",
 	// Lazygit-style movement between the two browsing panels.
 	"h", "l",
-	// The two ways into the composer.
-	"i", "c",
+	// The way into the composer. One letter — c was a second spelling of
+	// i, and the badge and the hint bar both answer for i.
+	"i",
 	// Clipboard paste, from whichever panel has focus.
 	"ctrl+v",
 	// The command palette. Claimed only from NORMAL — a focused emacs

@@ -222,11 +222,26 @@ func (m Model) promptContent(width int) (string, lipgloss.Style) {
 	case m.textarea.Value != "":
 		return m.draftLine(width), lipgloss.NewStyle().Foreground(r.Fg)
 	case m.focused:
-		return "type a message · enter sends", lipgloss.NewStyle().Foreground(r.Dim)
+		// The cursor comes first, before the placeholder, and it is the
+		// whole point of this branch. Without it, pressing i changed the
+		// badge's colour and nothing else — every motion key then moved an
+		// invisible cursor, which is indistinguishable from a motion key
+		// that does nothing. It is why the line editing was reported as
+		// missing when ctrl+a and $ had worked all along.
+		return cursorBlock + " type a message · enter sends",
+			lipgloss.NewStyle().Foreground(r.Dim)
 	default:
 		return "i to compose · : for commands", lipgloss.NewStyle().Foreground(r.Dim)
 	}
 }
+
+// cursorBlock is what the composer draws where the caret is.
+//
+// A block the app draws itself rather than the terminal's own caret: Bubble
+// Tea's alternate screen hides the hardware cursor, and a caret that is only
+// visible when the terminal feels like showing it is not a caret you can
+// build an editing model on.
+const cursorBlock = "█"
 
 // draftLine is the row of the draft the cursor is on, windowed so the cursor
 // stays visible.
@@ -259,7 +274,7 @@ func (m Model) draftLine(width int) string {
 	}
 
 	col := cursor - start
-	withCursor := string(runes[start:cursor]) + "█" + string(runes[cursor:end])
+	withCursor := string(runes[start:cursor]) + cursorBlock + string(runes[cursor:end])
 	if cell.Width(withCursor) <= width {
 		return withCursor
 	}

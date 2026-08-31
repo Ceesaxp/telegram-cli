@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
@@ -69,6 +71,40 @@ func TestAnUnselectedRowLeavesTheSurfaceToTheFrame(t *testing.T) {
 		if p := cell.PaintedWidth(line); p != 0 {
 			t.Errorf("the %s painted %d cells:\n%s",
 				name, p, strings.ReplaceAll(line, "\x1b", "ESC"))
+		}
+	}
+}
+
+// The bar runs down both rows of a selected chat. A mark on the title line
+// only marks the title, and the preview underneath reads as belonging to no
+// row in particular.
+func TestTheSelectionBarRunsDownBothRows(t *testing.T) {
+	for i, line := range rowModel().renderRow(selectableItem(), true, true, 38) {
+		if runes := []rune(ansi.Strip(line)); len(runes) == 0 || runes[0] != '▌' {
+			t.Errorf("row %d does not start with the selection bar: %q",
+				i, ansi.Strip(line))
+		}
+	}
+}
+
+// The bar's colour is the only thing on screen that says which panel has the
+// keyboard, so an unfocused list still shows WHERE the cursor is without
+// claiming to be where the keys go.
+func TestTheSelectionBarDimsWhenTheListIsNotFocused(t *testing.T) {
+	r := theme.DarkRoles(false)
+
+	focused := strings.Join(rowModel().renderRow(selectableItem(), true, true, 38), "\n")
+	blurred := strings.Join(rowModel().renderRow(selectableItem(), true, false, 38), "\n")
+
+	if !strings.Contains(focused, "38;5;"+string(r.Cyan)) {
+		t.Error("the focused list's selection bar is not cyan")
+	}
+	if strings.Contains(blurred, "38;5;"+string(r.Cyan)) {
+		t.Error("the unfocused list still draws a cyan selection bar")
+	}
+	for i, line := range rowModel().renderRow(selectableItem(), true, false, 38) {
+		if runes := []rune(ansi.Strip(line)); len(runes) == 0 || runes[0] != '▌' {
+			t.Errorf("row %d of an unfocused selection lost its bar", i)
 		}
 	}
 }

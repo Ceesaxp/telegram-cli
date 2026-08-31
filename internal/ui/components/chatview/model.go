@@ -170,16 +170,26 @@ type Model struct {
 	// between the user reading the screen and pressing r. An identity
 	// cannot drift that way.
 	//
-	// The cursor is not free-moving: there is no message-wise motion key
-	// in TUI 2.0 (j/k scroll lines, as they always have), so it is
-	// anchored back into the visible window by syncCursor whenever the
-	// viewport moves. What it buys is stickiness — while the message
-	// stays on screen, the target stays that message no matter what
-	// re-renders around it.
+	// The cursor moves two ways. } and { move it a message at a time and
+	// PIN it (see cursorPinned); otherwise it is anchored back into the
+	// visible window by syncCursor whenever the viewport moves. What the
+	// anchoring buys is stickiness — while the message stays on screen,
+	// the target stays that message no matter what re-renders around it.
 	//
 	// Zero means "not anchored yet"; the next read or sync adopts the
 	// newest visible message.
 	cursorID int64
+
+	// cursorPinned is whether the user placed the cursor themselves.
+	//
+	// It exists because of the tail rule below: at the bottom of the
+	// history the cursor IS the newest message and follows arrivals, which
+	// is what a live chat needs — r has to reply to the message that just
+	// came in, not to whichever one the cursor was resting on. That rule
+	// would also swallow a deliberate } or {, so an explicit motion sets
+	// this and the tail rule stands down until the reader says otherwise
+	// (G, or opening another chat).
+	cursorPinned bool
 
 	// roles is the TUI 2.0 semantic palette the grid draws with. New
 	// installs a default so a Model that never has SetRoles called still
@@ -458,6 +468,9 @@ func chatViewFixedKeys() map[string]bool {
 		// onto it), so a user reading this list and their config file see
 		// the same word.
 		"y": true, "M": true, "space": true,
+		// Message-wise cursor motion. See cursor.go for why } and { rather
+		// than something with a letter in it.
+		"}": true, "{": true,
 	}
 }
 
@@ -832,6 +845,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.chatTitle = title
 	m.scrollOffset = 0
 	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
+	m.cursorPinned = false
 	m.revealedID = 0
 	m.loading = true
 	m.loadStatus = "Loading messages..."
@@ -1636,8 +1650,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
+	case kp.Matches("}"):
+		m.moveCursor(1)
+		return m, m.lazyPhotoCmd()
+	case kp.Matches("{"):
+		m.moveCursor(-1)
+		return m, m.lazyPhotoCmd()
 	case kp.Matches("G", "end"):
 		m.scrollOffset = 0
+		// Back to the bottom is "stop holding my place": from here the
+		// cursor follows arrivals again.
+		m.unpinCursor()
 	case kp.Matches("g", "home"):
 		m.scrollOffset = m.maxScrollOffset()
 	case kp.Matches("ctrl+u"):
@@ -1845,7 +1868,12 @@ func (m Model) cursorMessage() *telegram.Message {
 	// arriving between two keypresses cannot leave a stale identity
 	// behind: at the bottom of the history the cursor IS the newest
 	// message, with nothing stored to go out of date.
-	if m.scrollOffset <= 0 {
+	//
+	// Unless the reader placed it. A cursor moved with } or { is theirs
+	// until they give it back, even at the bottom of the history — the
+	// whole point of moving it there is to act on something other than
+	// the newest message.
+	if m.scrollOffset <= 0 && !m.cursorPinned {
 		return msgs[len(msgs)-1]
 	}
 	if m.cursorID != 0 {
@@ -1884,7 +1912,7 @@ func (m *Model) syncCursor() {
 		m.cursorID = 0
 		return
 	}
-	if m.scrollOffset <= 0 {
+	if m.scrollOffset <= 0 && !m.cursorPinned {
 		m.setCursor(msgs[len(msgs)-1].ID)
 		return
 	}
@@ -1902,8 +1930,14 @@ func (m *Model) syncCursor() {
 			switch {
 			case i < first:
 				m.setCursor(msgs[first].ID)
+				// Scrolling the pinned message off the screen is the
+				// reader letting go of it: the cursor is a position again
+				// from here, and reaching the bottom resumes following
+				// arrivals.
+				m.cursorPinned = false
 			case i > last:
 				m.setCursor(msgs[last].ID)
+				m.cursorPinned = false
 			}
 			return
 		}

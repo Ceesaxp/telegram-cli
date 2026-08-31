@@ -52,8 +52,10 @@ func TestRowGeometryMatchesTheGolden(t *testing.T) {
 		t.Errorf("cols 32-33 = %q, want the relative time", got)
 	}
 
-	if got := string(preview[0:3]); got != "   " {
-		t.Errorf("preview row indent = %q, want three spaces", got)
+	// The bar runs down both rows of a selected chat, so the preview row's
+	// indent is the bar and two spaces rather than three spaces.
+	if got := string(preview[0:3]); got != "▌  " {
+		t.Errorf("preview row indent = %q, want the bar and two spaces", got)
 	}
 	if got := string(preview[3:9]); got != "nadia:" {
 		t.Errorf("preview starts %q at col 3", got)

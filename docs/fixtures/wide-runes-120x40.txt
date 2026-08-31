@@ -4,7 +4,7 @@
  tg │ 1:all 2:unread 3:work 4:channels 5:archive                          ● connected · mtproto 2.0 · devices 1 │ 21:04 
  / filter chats…                  9/9 │ # デプロイ調整 │ group … buf 2 │ ln 214/214  bot │ PINNED                       
 ▌# デプロイ調整                 2m    │                                                  │ ▪ Deploy window 14:00–1… ivo 
-   田中: リベース済み、CI緑       [4] │                                                  │ ▪ Runbook: auth p95 s… nadia 
+▌  田中: リベース済み、CI緑       [4] │                                                  │ ▪ Runbook: auth p95 s… nadia 
  @ Ægir Þórsdóttir              6m    │                                                  │                              
    you: pushing the tag now           │                                                  │ MEMBERS · 24                 
  # مجموعة-الترحيل               14m   │                                                  │ ● ivo                  admin 
@@ -36,7 +36,7 @@
                                       │                    👨‍👩‍👧‍👦 renders as one             │                              
                                       │                    cluster.                      │                              
                                       │ ▌ 08:19      مريم  اختبار أخير — last line,      │                              
-                                      │                    cursor sits here.             │                              
+                                      │ ▌                  cursor sits here.             │                              
                                       │               ···  田中さくら is typing…         │                              
                                       │ reply ↳ مريم: اختبار أخير…           esc to drop │                              
  j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands        md │                              

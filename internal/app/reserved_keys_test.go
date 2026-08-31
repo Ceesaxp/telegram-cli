@@ -190,7 +190,7 @@ func exprText(e ast.Expr) string {
 func TestReservedKeysFollowsConfig(t *testing.T) {
 	cfg := &config.Config{}
 	def := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg)).reservedKeys()
-	for _, want := range []string{"h", "l", "q", "i", "c", "/", "?", "tab", "esc", "ctrl+c"} {
+	for _, want := range []string{"h", "l", "q", "i", "/", "?", "tab", "esc", "ctrl+q"} {
 		if !slices.Contains(def, want) {
 			t.Errorf("default reserved set omits %q: %v", want, def)
 		}
@@ -212,7 +212,7 @@ func TestReservedKeysFollowsConfig(t *testing.T) {
 		}
 	}
 	// The hardcoded claims are not config's to move.
-	for _, fixed := range []string{"h", "l", "i", "c"} {
+	for _, fixed := range []string{"h", "l", "i"} {
 		if !slices.Contains(got, fixed) {
 			t.Errorf("hardcoded claim %q went missing under a rebind: %v", fixed, got)
 		}

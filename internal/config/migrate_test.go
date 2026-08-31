@@ -484,7 +484,7 @@ func TestDetectKeyCollisions(t *testing.T) {
 	// The other half, and the one nothing could see before: a key the app
 	// hardcodes, so there is no config field for it to clash with.
 	t.Run("component field colliding with a hardcoded app key", func(t *testing.T) {
-		for _, key := range []string{"h", "l", "i", "c", "tab", "esc", "ctrl+v", "alt+1"} {
+		for _, key := range []string{"h", "l", "i", "tab", "esc", "ctrl+v", "alt+1"} {
 			cfg := defaultConfig()
 			cfg.Keys.Reply = key
 			got := DetectKeyCollisions(cfg)

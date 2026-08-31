@@ -160,7 +160,7 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 		return config.NormalizeKey(configured)
 	}
 	return resolvedKeys{
-		quit:          resolve(kc.Quit, "ctrl+c"),
+		quit:          resolve(kc.Quit, "ctrl+q"),
 		quitBrowsing:  resolve(kc.QuitBrowsing, "q"),
 		focusChatList: resolve(kc.FocusChatList, "f1"),
 		focusChatView: resolve(kc.FocusChatView, "f2"),
@@ -302,7 +302,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := keys.NewPress(msg)
 
 		// Quit
-		if key.Matches("ctrl+c", "ctrl+q", m.keys.quit) {
+		// One chord, not three. ctrl+c was the third spelling of an action
+		// that already had two, and the one most likely to be pressed by
+		// accident — it is also the chord a terminal user reaches for to
+		// abandon a command rather than to close an application.
+		if key.Matches("ctrl+q", m.keys.quit) {
 			return m, tea.Quit
 		}
 
@@ -403,7 +407,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// sub-model dispatch at the bottom of Update, where
 			// blockedByDialog already routes input to the dialog alone —
 			// the same yield chatview's find and chatlist's filter use.
-			// ctrl+c / ctrl+q / keys.quit are unaffected: they are
+			// ctrl+q / keys.quit are unaffected: they are
 			// matched above this whole block, and a modal must never be
 			// able to trap someone in the program.
 			if m.dialog != nil {
@@ -601,7 +605,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// q quits from the browsing panels (config.KeyConfig.
 			// QuitBrowsing, default "q") — lazygit's "q is the way out"
 			// everywhere q cannot be text. The composer owns printables
-			// and is unaffected; ctrl+c / ctrl+q stay global; q still
+			// and is unaffected; ctrl+q stays global; q still
 			// closes the help overlay, which is handled above and returns
 			// before reaching here.
 			//
@@ -729,7 +733,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The composer's own chat id is the condition, not the chat
 			// list's: it is what submit actually sends to, and the two are
 			// set from the same ChatSelectedMsg.
-			if key.Matches("i", "c") && noOverlay &&
+			// i alone. c was a second spelling of the same action, and the
+			// letter is worth more free than spent twice: vi's i is what
+			// the hint bar advertises and what the badge answers.
+			if key.Matches("i") && noOverlay &&
 				m.composer.ChatId() != 0 &&
 				(m.focus == PanelChatView || m.focus == PanelChatList) {
 				m.setFocus(PanelComposer)
@@ -1167,7 +1174,7 @@ func (m Model) helpLine(focusName string) string {
 			k.help + ":help", "Tab:switch", "Esc:back",
 			"j/k:scroll", "h:chats",
 			k.search + ":find", "n/N:match",
-			"i or c:compose", k.quitBrowsing + ":quit",
+			"i:compose", k.quitBrowsing + ":quit",
 		}
 
 	case PanelSearch:
@@ -1188,7 +1195,7 @@ func (m Model) helpLine(focusName string) string {
 			k.help + ":help", "Tab:switch",
 			"j/k:move", "l:messages",
 			k.search + ":filter", "Enter:open",
-			"i or c:compose", k.quitBrowsing + ":quit",
+			"i:compose", k.quitBrowsing + ":quit",
 		}
 	}
 

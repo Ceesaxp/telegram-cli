@@ -606,8 +606,8 @@ func TestComposeRequiresAnExplicitMove(t *testing.T) {
 				t.Errorf("panel %v: %q jumped to the composer", panel, seq)
 			}
 		}
-		// i and c are the deliberate ways in, from both browsing panels.
-		for _, seq := range []string{"i", "c"} {
+		// i is the deliberate way in, from both browsing panels.
+		for _, seq := range []string{"i"} {
 			if got := update(t, m, seq); got.focus != PanelComposer {
 				t.Errorf("panel %v: %q did not focus the composer (got %v)", panel, seq, got.focus)
 			}
@@ -731,8 +731,8 @@ func TestHelpOverlay(t *testing.T) {
 	}
 
 	// Quit still outranks it — the overlay must not trap the user.
-	if _, cmd := m.Update(decodeKey(t, "\x03")); cmd == nil {
-		t.Error("ctrl+c produced no command while the help overlay was open")
+	if _, cmd := m.Update(decodeKey(t, "\x11")); cmd == nil {
+		t.Error("ctrl+q produced no command while the help overlay was open")
 	}
 }
 
@@ -780,7 +780,7 @@ func TestHelpSectionsComeFromResolvedKeys(t *testing.T) {
 	if row, ok := findBinding(m.helpSections(), "Quit"); !ok {
 		t.Error("no Quit row")
 	} else {
-		for _, want := range []string{"ctrl+c", "ctrl+q", "ctrl+x"} {
+		for _, want := range []string{"ctrl+q", "ctrl+x"} {
 			if !strings.Contains(row.Keys, want) {
 				t.Errorf("Quit row %q omits %q", row.Keys, want)
 			}
@@ -944,7 +944,7 @@ func TestComposerHelpFollowsEditingMode(t *testing.T) {
 // rather than raw control bytes, because the legacy bytes for ctrl+i, ctrl+m
 // and ctrl+[ are indistinguishable from tab, enter and esc.
 func TestComposerKeepsItsChords(t *testing.T) {
-	// ctrl+c and ctrl+q quit; ctrl+v pastes. Everything else falls through.
+	// ctrl+q quits; ctrl+v pastes. Everything else falls through.
 	exceptions := map[rune]bool{'c': true, 'q': true, 'v': true}
 
 	for r := 'a'; r <= 'z'; r++ {
@@ -1014,7 +1014,7 @@ func TestSearchKeysYieldToOpenOverlays(t *testing.T) {
 // config predates a field (or is the zero value used by these tests).
 func TestResolveKeysDefaults(t *testing.T) {
 	want := map[string]string{
-		"quit": "ctrl+c", "quitBrowsing": "q",
+		"quit": "ctrl+q", "quitBrowsing": "q",
 		"focusChatList": "f1", "focusChatView": "f2",
 		"focusComposer": "f3", "search": "/", "globalSearch": "ctrl+g",
 		"contacts": "alt+c", "contactsAlt": "f4", "help": "?",
@@ -2226,9 +2226,8 @@ func TestDialogIsModalForTheKeyboard(t *testing.T) {
 	})
 
 	// A modal must never be able to trap someone in the program.
-	t.Run("ctrl+c and ctrl+q still quit", func(t *testing.T) {
+	t.Run("ctrl+q still quits", func(t *testing.T) {
 		for _, tc := range []struct{ name, seq string }{
-			{"ctrl+c", "\x03"},
 			{"ctrl+q", "\x11"},
 		} {
 			for _, panel := range []FocusPanel{PanelChatList, PanelComposer} {

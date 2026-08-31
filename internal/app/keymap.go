@@ -32,7 +32,7 @@ import (
 //
 // ## Global — any panel
 //
-//	ctrl+c, ctrl+q     quit                          (plus [keys.quit])
+//	ctrl+q             quit                          ([keys.quit])
 //	q                  quit, from the browsing panels only [keys.quit_browsing]
 //	tab, shift+tab     cycle panel focus            (including from the composer)
 //	alt+1, f1          focus chat list               [keys.focus_chat_list]
@@ -109,7 +109,7 @@ import (
 // focused, so neither keymap's chords are shadowed. The complete list of keys
 // that still fire from a focused composer:
 //
-//	ctrl+c, ctrl+q     quit                          (plus [keys.quit])
+//	ctrl+q             quit                          ([keys.quit])
 //	ctrl+v             paste a clipboard image
 //	esc                only when the composer has nothing to cancel
 //	tab, shift+tab     cycle panel focus            (including from the composer)
@@ -205,12 +205,12 @@ const (
 // for why Keystroke() is authoritative and String() is consulted only for
 // unmodified keys.
 
-// quitKeys renders the quit row. ctrl+c and ctrl+q are both hardcoded in
-// Update and always work, so both are shown; a configured third key joins
-// them unless it duplicates one.
+// quitKeys renders the quit row. ctrl+q is hardcoded in Update and always
+// works; a configured key joins it unless it is the same one, which it is by
+// default.
 func quitKeys(configured string) string {
-	shown := []string{"ctrl+c", "ctrl+q"}
-	if configured != "" && configured != "ctrl+c" && configured != "ctrl+q" {
+	shown := []string{"ctrl+q"}
+	if configured != "" && configured != "ctrl+q" {
 		shown = append(shown, configured)
 	}
 	return strings.Join(shown, " / ")
@@ -430,7 +430,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "g / home", Desc: "First chat"},
 			{Keys: "G / end", Desc: "Last chat"},
 			{Keys: "enter", Desc: "Open the selected chat"},
-			{Keys: "i / c", Desc: "Compose a message"},
+			{Keys: "i", Desc: "Compose a message"},
 			{Keys: k.search, Desc: "Filter this chat list"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 			{Keys: "click", Desc: "Select a chat, or switch folder tab"},
@@ -445,6 +445,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "h", Desc: "Focus the chat list"},
 			{Keys: or(k.search, "ctrl+f"), Desc: "Find in this chat"},
 			{Keys: "n / N", Desc: "Next / previous match"},
+			{Keys: "} / {", Desc: "Next / previous message (j/k scroll lines)"},
 			{Keys: strings.Join([]string{
 				bound(cv.Reply), bound(cv.Edit), bound(cv.Delete),
 			}, " / "), Desc: "Reply / edit / delete message"},
@@ -455,7 +456,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "y", Desc: "Copy the selected message's text"},
 			{Keys: "M", Desc: "Mark this chat read without moving"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
-			{Keys: "i / c", Desc: "Compose a message"},
+			{Keys: "i", Desc: "Compose a message"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 		}},
 		m.composerHelpSection(),
