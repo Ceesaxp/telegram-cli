@@ -107,15 +107,16 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 		line2 += " " + badge
 	}
 
-	rowStyle := lipgloss.NewStyle().Background(r.Panel)
+	// Only the selected row paints. Panel is the column's surface and the
+	// frame fills it, including the rows below the last chat — filling it
+	// again here would be a second mechanism for one rule.
 	if selected {
-		rowStyle = lipgloss.NewStyle().Background(r.Sel)
+		return []string{
+			cell.Fill(r.Sel, line1, width),
+			cell.Fill(r.Sel, line2, width),
+		}
 	}
-
-	return []string{
-		rowStyle.Render(cell.Fit(line1, width)),
-		rowStyle.Render(cell.Fit(line2, width)),
-	}
+	return []string{cell.Fit(line1, width), cell.Fit(line2, width)}
 }
 
 // renderBadge draws the unread chip: the count with one cell of padding
@@ -162,7 +163,7 @@ func (m Model) renderFilterHeader(width int) string {
 		queryStyle.Render(cell.Fit(cell.Truncate(query, queryW), queryW)) +
 		lipgloss.NewStyle().Foreground(r.Ghost).Render(count)
 
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, width))
+	return cell.Fit(line, width)
 }
 
 // renderListFooter is the chat list's last row: the motions that work here.
@@ -193,7 +194,7 @@ func (m Model) renderListFooter(width int) string {
 			hint("u", "unread")
 	}
 
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, width))
+	return cell.Fit(line, width)
 }
 
 func itoa(n int) string {

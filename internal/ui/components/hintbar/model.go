@@ -81,15 +81,15 @@ func (m Model) View() string {
 		return ""
 	}
 
-	base := lipgloss.NewStyle().Background(m.roles.Chrome)
-
 	if m.notice != "" {
 		return cell.FitLine(m.noticeStyle, " "+m.notice, m.width)
 	}
 
-	keyStyle := lipgloss.NewStyle().Foreground(m.roles.Cyan).Background(m.roles.Chrome)
-	labelStyle := lipgloss.NewStyle().Foreground(m.roles.Faint).Background(m.roles.Chrome)
-	rightStyle := lipgloss.NewStyle().Foreground(m.roles.Ghost).Background(m.roles.Chrome)
+	// No background on any of these: chrome is this row's surface and the
+	// frame fills it.
+	keyStyle := lipgloss.NewStyle().Foreground(m.roles.Cyan)
+	labelStyle := lipgloss.NewStyle().Foreground(m.roles.Faint)
+	rightStyle := lipgloss.NewStyle().Foreground(m.roles.Ghost)
 
 	rightW := cell.Width(m.right)
 	if m.right != "" {
@@ -107,13 +107,13 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(base.Render(" "))
+	b.WriteString(" ")
 	for i, h := range m.hints[:kept] {
 		if i > 0 {
-			b.WriteString(base.Render("  "))
+			b.WriteString("  ")
 		}
 		b.WriteString(keyStyle.Render(h.Key))
-		b.WriteString(base.Render(" "))
+		b.WriteString(" ")
 		b.WriteString(labelStyle.Render(h.Label))
 	}
 
@@ -123,9 +123,9 @@ func (m Model) View() string {
 		gap = 0
 	}
 
-	out := left + base.Render(strings.Repeat(" ", gap))
+	out := left + strings.Repeat(" ", gap)
 	if m.right != "" {
-		out += rightStyle.Render(m.right) + base.Render(" ")
+		out += rightStyle.Render(m.right) + " "
 	}
 	return cell.Fit(out, m.width)
 }

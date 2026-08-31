@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/golden"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
@@ -39,6 +40,60 @@ func TestFrameRowsAreExactlyWide(t *testing.T) {
 			m := framedModel(t, size.w, size.h)
 			assertFrameExact(t, m.View().Content, size.w, size.h)
 		})
+	}
+}
+
+// The columns keep the surfaces the palette assigns them: panel for the
+// chat list and the rail, bg for the thread between them. The borderless
+// design has this instead of borders, so a body row that is all one colour
+// has lost the column structure even though it is still the right width.
+func TestTheColumnsGetTheirOwnSurfaces(t *testing.T) {
+	m := framedModel(t, 137, 40)
+	m.railOpen = true
+	row := strings.Split(m.View().Content, "\n")[2]
+
+	for name, colour := range map[string]lipgloss.Color{
+		"panel, for the chat list and the rail": m.roles.Panel,
+		"bg, for the thread":                    m.roles.Bg,
+	} {
+		if !strings.Contains(row, backgroundSeq(colour)) {
+			t.Errorf("no %s in the body row:\n%s", name,
+				strings.ReplaceAll(row, "\x1b", "ESC"))
+		}
+	}
+}
+
+// backgroundSeq is the escape a role's background actually renders to under
+// whatever profile and role depth this run resolved. Building it here rather
+// than writing "48;5;233" into the test keeps the assertion true on a
+// machine that reports truecolour and one that does not.
+func backgroundSeq(c lipgloss.Color) string {
+	out := lipgloss.NewStyle().Background(c).Render("x")
+	i := strings.Index(out, "x")
+	if i <= 0 {
+		return ""
+	}
+	return out[:i]
+}
+
+// The thread is bg wherever it is drawn. In single-panel mode it arrives in
+// the frame's ChatList column, and taking that column's usual surface would
+// make the app change colour purely because the terminal got narrow.
+func TestTheThreadStaysOnBgInSinglePanelMode(t *testing.T) {
+	m := framedModel(t, 60, 24)
+	if !m.layout.SinglePanel {
+		t.Fatal("precondition: 60 columns should be single-panel")
+	}
+	m.setFocus(PanelChatView)
+	row := strings.Split(m.View().Content, "\n")[2]
+
+	if strings.Contains(row, backgroundSeq(m.roles.Panel)) {
+		t.Errorf("the thread is drawn on panel at 60 columns:\n%s",
+			strings.ReplaceAll(row, "\x1b", "ESC"))
+	}
+	if !strings.Contains(row, backgroundSeq(m.roles.Bg)) {
+		t.Errorf("the thread is not on bg:\n%s",
+			strings.ReplaceAll(row, "\x1b", "ESC"))
 	}
 }
 
@@ -290,6 +345,29 @@ func assertFrameExact(t *testing.T, view string, w, h int) {
 		if got := cell.Width(line); got != w {
 			t.Errorf("row %d: display width %d, want %d: %q", i+1, got, w, line)
 		}
+	}
+}
+
+// TestFrameRowsArePaintedEdgeToEdge is the colour half of "exact": a row can
+// be the right width and still show the terminal's own background through
+// it, which is what every panel did before the frame took over its column's
+// surface.
+//
+// It splits the raw view rather than going through golden.SplitLines, which
+// strips ANSI on the way to comparing against plain-text fixtures — and so
+// cannot see the property being asserted here.
+func TestFrameRowsArePaintedEdgeToEdge(t *testing.T) {
+	for _, size := range goldenSizes {
+		t.Run(sizeName(size.w, size.h), func(t *testing.T) {
+			m := framedModel(t, size.w, size.h)
+			view := strings.TrimSuffix(m.View().Content, "\n")
+			for i, line := range strings.Split(view, "\n") {
+				if p := cell.PaintedWidth(line); p != size.w {
+					t.Errorf("row %d: painted %d of %d cells, dying at column %d\n%s",
+						i+1, p, size.w, p, strings.ReplaceAll(line, "\x1b", "ESC"))
+				}
+			}
+		})
 	}
 }
 

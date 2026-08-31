@@ -366,6 +366,12 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 	stamp := render.FormatClock(msg.Date)
 	sender := m.gridSender(msg, g)
 
+	// Where the message itself starts. Any dividers already in out belong
+	// to the boundary above this message, not to the message, and the band
+	// must not claim them: a day divider lit up as part of the selection
+	// says the cursor is on the divider, which is not a place it can be.
+	msgTop := len(out)
+
 	for i, row := range rows {
 		if i == 0 {
 			out = append(out, g.row(bar, stamp, sender, row, r))
@@ -377,10 +383,15 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 	// The selected message is a band of curline across the full pane, not
 	// just a mark in the gutter: the cursor has to be findable at a glance
 	// on a screen with no other highlight on it.
+	//
+	// cell.Fill rather than a wrapping Background: every one of these rows
+	// opens a styled span for the time, the sender and the body, and each
+	// one closes with a reset that would take the band with it — leaving a
+	// single cyan cell in the gutter, which is precisely the "just a mark"
+	// this band exists not to be.
 	if selected {
-		band := lipgloss.NewStyle().Background(r.CurLine)
-		for i, line := range out {
-			out[i] = band.Render(line)
+		for i := msgTop; i < len(out); i++ {
+			out[i] = cell.Fill(r.CurLine, out[i], g.Width)
 		}
 	}
 

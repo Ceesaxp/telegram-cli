@@ -2328,7 +2328,9 @@ func (m Model) renderHeader() string {
 	line += strings.Repeat(" ", pad) +
 		lipgloss.NewStyle().Foreground(r.Faint).Render(right)
 
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, m.width))
+	// The header is panel, and the thread column's surface is bg, so this
+	// one does paint: it is a real exception rather than a repeat.
+	return cell.Fill(r.Panel, line, m.width)
 }
 
 // headerPosition is the "ln 214/214" cell: the last visible rendered line

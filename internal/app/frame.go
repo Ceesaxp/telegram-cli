@@ -50,16 +50,19 @@ func (m Model) renderMainScreen() string {
 		TopBar:  m.topBar.View(),
 		HintBar: m.hintBar.View(),
 		ChatList: frame.Column{
-			Width: l.ChatListWidth,
-			Lines: frame.Lines(leftView),
+			Width:   l.ChatListWidth,
+			Surface: m.roles.Panel,
+			Lines:   frame.Lines(leftView),
 		},
 		Thread: frame.Column{
-			Width: l.ThreadWidth,
-			Lines: threadLines,
+			Width:   l.ThreadWidth,
+			Surface: m.roles.Bg,
+			Lines:   threadLines,
 		},
 		Rail: frame.Column{
-			Width: l.RailWidth,
-			Lines: frame.Lines(m.rail.View()),
+			Width:   l.RailWidth,
+			Surface: m.roles.Panel,
+			Lines:   frame.Lines(m.rail.View()),
 		},
 	}
 
@@ -70,8 +73,13 @@ func (m Model) renderMainScreen() string {
 		switch m.focus {
 		case PanelChatList, PanelContacts:
 			body.ChatList.Lines = frame.Lines(leftView)
+			body.ChatList.Surface = m.roles.Panel
 		default:
 			body.ChatList.Lines = threadLines
+			// The thread is drawn on bg wherever it is drawn. Leaving the
+			// surface as panel here would make one column of the app change
+			// colour purely because the terminal got narrow.
+			body.ChatList.Surface = m.roles.Bg
 		}
 		body.ChatList.Width = l.Width
 	}

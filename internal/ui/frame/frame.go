@@ -23,12 +23,25 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
-// Column is one region's content: the lines it drew, and the width it was
-// budgeted. Lines shorter than Height are padded with blanks; longer ones
-// are clipped.
+// Column is one region's content: the lines it drew, the width it was
+// budgeted, and the surface it is drawn on. Lines shorter than Height are
+// padded with blanks; longer ones are clipped.
+//
+// Surface is the frame's second job, and the reason panels do not paint
+// their own base colour. A panel can only fill the rows it drew; the frame
+// also owns the rows it did NOT draw — the blank padding under a short chat
+// list, the empty-state views that go through lipgloss's own Height, and the
+// whole column in single-panel mode. Painting in one place is what makes
+// "no cell falls through to the terminal's default" true of the screen
+// rather than of most of it.
+//
+// Panels still paint their exceptions, and those win: [cell.Fill] reopens
+// the surface before each span's own sequences, so a selected chat row that
+// filled itself sel stays sel underneath a column filled with panel.
 type Column struct {
-	Width int
-	Lines []string
+	Width   int
+	Surface lipgloss.Color
+	Lines   []string
 }
 
 // Screen is everything the frame needs to draw.
@@ -55,7 +68,7 @@ func Render(s Screen) string {
 	rows := make([]string, 0, l.Height)
 
 	if l.TopBar {
-		rows = append(rows, cell.Fit(s.TopBar, l.Width))
+		rows = append(rows, cell.Fill(s.Roles.Chrome, s.TopBar, l.Width))
 	}
 
 	rule := lipgloss.NewStyle().
@@ -68,7 +81,8 @@ func Render(s Screen) string {
 
 		if l.SinglePanel {
 			// One column owns the width. The caller decides which panel is
-			// showing; it arrives as ChatList.
+			// showing — including its surface, since the thread arrives as
+			// ChatList in this mode and is not drawn on panel.
 			b.WriteString(fitRow(s.ChatList, y, l.Width))
 		} else {
 			b.WriteString(fitRow(s.ChatList, y, l.ChatListWidth))
@@ -84,20 +98,27 @@ func Render(s Screen) string {
 	}
 
 	if l.HintBar {
-		rows = append(rows, cell.Fit(s.HintBar, l.Width))
+		rows = append(rows, cell.Fill(s.Roles.Chrome, s.HintBar, l.Width))
 	}
 
 	return strings.Join(rows, "\n")
 }
 
-// fitRow returns row y of a column, fitted to width. A column that drew
-// fewer lines than the body is padded with blanks rather than short-changing
-// the frame — a missing row is a torn frame, and a blank one is merely empty.
+// fitRow returns row y of a column, fitted to width and painted on the
+// column's surface. A column that drew fewer lines than the body is padded
+// with blanks rather than short-changing the frame — a missing row is a torn
+// frame, and a blank one is merely empty.
+//
+// The padding goes through the same fill as the content, which is the point:
+// a chat list that drew twelve rows into a forty-row body used to leave
+// twenty-eight rows of terminal default below it, and that band is exactly
+// what makes a panel look like it stops early.
 func fitRow(c Column, y, width int) string {
+	line := ""
 	if y < len(c.Lines) {
-		return cell.Fit(c.Lines[y], width)
+		line = c.Lines[y]
 	}
-	return strings.Repeat(" ", max(width, 0))
+	return cell.Fill(c.Surface, line, width)
 }
 
 // Lines splits a panel's rendered output into rows for a [Column]. It exists
@@ -110,11 +131,4 @@ func Lines(view string) []string {
 		return nil
 	}
 	return strings.Split(view, "\n")
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

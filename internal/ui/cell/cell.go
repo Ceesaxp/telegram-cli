@@ -225,6 +225,144 @@ func Fit(s string, width int) string {
 	return Pad(Clamp(s, width), width)
 }
 
+// Fill fits s to exactly width cells and paints colour behind every one of
+// them — including the cells covered by s's own styled spans.
+//
+// This exists because the obvious spelling silently does not work:
+//
+//	lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, width))
+//
+// emits the background once, at the front. Every styled span inside the line
+// closes itself with ESC[0m, and a reset clears the background along with
+// the foreground, so the panel colour survives only as far as the first span
+// and the rest of the row is drawn on whatever the terminal's default
+// happens to be. In a two-line chat row that shows up as a title line with
+// no fill at all and a preview line whose fill stops where the text does.
+//
+// It is the same family of defect as [WrapLines]: SGR is a mode, and a reset
+// is not a scope. Fill therefore re-opens the background after every reset in
+// s, which also means a span may set its own colours — a selection bar, an
+// unread badge on cyan — and the line still returns to the surface rather
+// than to nothing. Because the surface is re-opened BEFORE each span's own
+// sequences, a nested Fill wins over an outer one: a row that painted itself
+// sel keeps sel when the frame fills its column with panel.
+func Fill(colour lipgloss.Color, s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line := Fit(s, width)
+	style := lipgloss.NewStyle().Background(colour)
+
+	var b strings.Builder
+	start := 0
+	for i := 0; i+1 < len(line); i++ {
+		if line[i] != 0x1b || line[i+1] != '[' {
+			continue
+		}
+		n := 0
+		switch {
+		case strings.HasPrefix(line[i:], "\x1b[0m"):
+			n = 4
+		case strings.HasPrefix(line[i:], "\x1b[m"):
+			n = 3
+		default:
+			continue
+		}
+		// The reset itself is dropped: the style's own trailing reset
+		// closes the segment, so keeping both would emit it twice.
+		if seg := line[start:i]; seg != "" {
+			b.WriteString(style.Render(seg))
+		}
+		start = i + n
+		i += n - 1
+	}
+	if seg := line[start:]; seg != "" {
+		b.WriteString(style.Render(seg))
+	}
+	return b.String()
+}
+
+// PaintedWidth returns how many leading display cells of s are drawn with
+// some background colour in effect, stopping at the first cell that is not.
+//
+// It is the assertion that makes [Fill] testable, and it is a count rather
+// than a boolean because the interesting failure is a row whose fill dies two
+// thirds of the way along — the column it died at is the thing worth putting
+// in the message. It deliberately does not care WHICH background: a row is
+// correct when no cell falls through to the terminal's default, and the
+// badge, the selection bar and the surface are all legitimate answers.
+//
+// A colour profile with no colour renders no sequences at all, so this
+// returns 0 for every string under the default `go test` profile. That is
+// the point: a package asserting on it must pin a profile in TestMain, which
+// turns a vacuous styling test into a failing one.
+func PaintedWidth(s string) int {
+	painted, bg := 0, false
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' && s[j] != 0x1b {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				bg = applySGR(bg, s[i+2:j])
+				i = j + 1
+				continue
+			}
+		}
+		j := i
+		for j < len(s) && s[j] != 0x1b {
+			j++
+		}
+		if !bg {
+			return painted
+		}
+		painted += Width(s[i:j])
+		i = j
+	}
+	return painted
+}
+
+// applySGR folds one SGR parameter list into "is a background set".
+//
+// The extended-colour forms have to be parsed rather than scanned for,
+// because their arguments look like other codes: a true-colour foreground of
+// ESC[38;2;16;100;7m contains the token "100", which read on its own is the
+// bright-black background. Skipping each 38/48/58 introducer's own arguments
+// is what keeps that from reading as a painted cell.
+func applySGR(bg bool, params string) bool {
+	if params == "" {
+		return false // ESC[m is ESC[0m
+	}
+	fields := strings.Split(params, ";")
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		switch {
+		case f == "0" || f == "":
+			bg = false
+		case f == "49":
+			bg = false
+		case f == "38" || f == "48" || f == "58":
+			if f == "48" {
+				bg = true
+			}
+			if i+1 < len(fields) {
+				switch fields[i+1] {
+				case "5":
+					i += 2
+				case "2":
+					i += 4
+				}
+			}
+		case len(f) == 2 && f[0] == '4' && f[1] >= '0' && f[1] <= '7':
+			bg = true
+		case len(f) == 3 && f[0] == '1' && f[1] == '0' && f[2] >= '0' && f[2] <= '7':
+			bg = true
+		}
+	}
+	return bg
+}
+
 // FitLine renders s through style, clamped to exactly one line and at most
 // totalWidth display cells — padded with the style's own
 // background/whitespace if s is shorter.

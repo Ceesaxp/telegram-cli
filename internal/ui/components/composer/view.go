@@ -189,7 +189,7 @@ func (m Model) promptRow(width int) string {
 	if right != "" {
 		line += " " + lipgloss.NewStyle().Foreground(r.Faint).Render(right)
 	}
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, width))
+	return cell.Fill(r.Panel, line, width)
 }
 
 // promptGlyph is the prompt mark. It becomes a downward chevron when the
@@ -339,7 +339,7 @@ func (m Model) barRow(label, glyph, text string, colour lipgloss.Color) string {
 		Render(cell.Fit(cell.Truncate(flat, textW), textW)) +
 		" " + lipgloss.NewStyle().Foreground(r.Faint).Render(escape)
 
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(line, m.width))
+	return cell.Fill(r.Panel, line, m.width)
 }
 
 // expandedView is the eight-row form: the draft as source on the left with
@@ -374,8 +374,8 @@ func (m Model) expandedView() []string {
 	preview := m.previewLines(previewW, bodyRows)
 	rule := lipgloss.NewStyle().Foreground(r.Rule).Render("│")
 	for i := range bodyRows {
-		rows = append(rows, lipgloss.NewStyle().Background(r.Panel).
-			Render(cell.Fit(" "+source[i]+" "+rule+" "+preview[i], m.width)))
+		rows = append(rows, cell.Fill(r.Panel,
+			" "+source[i]+" "+rule+" "+preview[i], m.width))
 	}
 
 	if chip != "" {
@@ -408,7 +408,7 @@ func (m Model) expandedHeader(sourceW, previewW int) string {
 		label.Render(right) +
 		rule.Render(strings.Repeat("─", max(previewW-cell.Width(right)+1, 0)))
 
-	return lipgloss.NewStyle().Background(r.Panel).Render(cell.Fit(head, m.width))
+	return cell.Fill(r.Panel, head, m.width)
 }
 
 // sourceLines is the draft with line numbers, windowed on the cursor.
