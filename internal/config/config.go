@@ -44,6 +44,11 @@ type UIConfig struct {
 	// default), or [InlineImagesAlways].
 	InlineImages string `toml:"inline_images"`
 
+	// Hyperlinks governs OSC 8 terminal hyperlinks on links in a message:
+	// [HyperlinksAuto] (the default), [HyperlinksNever], or
+	// [HyperlinksAlways].
+	Hyperlinks string `toml:"hyperlinks"`
+
 	// Rail shows the right-hand context rail — pinned message, members,
 	// shared files — on a terminal wide enough for it. Off by default: it
 	// costs 30 columns, and they come out of the thread.
@@ -89,6 +94,36 @@ const (
 	// InlineImagesAlways fetches and draws every photo in view.
 	InlineImagesAlways = "always"
 )
+
+// Hyperlink policies for [UIConfig.Hyperlinks].
+const (
+	// HyperlinksAuto emits OSC 8 only on terminals known to understand it
+	// (theme.SupportsHyperlinks). The default, and an allowlist: a
+	// terminal that prints the sequence instead of acting on it puts a URL
+	// in the middle of somebody's message.
+	HyperlinksAuto = "auto"
+	// HyperlinksNever never emits them. Links stay cyan and underlined,
+	// which is the affordance; OSC 8 only adds the click.
+	HyperlinksNever = "never"
+	// HyperlinksAlways emits them regardless — for a terminal the
+	// allowlist does not know, or for tmux with allow-passthrough on,
+	// which cannot be detected from the environment.
+	HyperlinksAlways = "always"
+)
+
+// ResolveHyperlinks normalises [UIConfig.Hyperlinks] to one of the three
+// policies, treating anything unrecognised as the default rather than
+// failing: a typo in a cosmetic setting should not stop the client starting.
+func ResolveHyperlinks(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case HyperlinksNever:
+		return HyperlinksNever
+	case HyperlinksAlways:
+		return HyperlinksAlways
+	default:
+		return HyperlinksAuto
+	}
+}
 
 // ResolveInlineImages normalises [UIConfig.InlineImages], falling back to
 // the default for an empty or unrecognised value.
@@ -407,6 +442,7 @@ func defaultConfig() *Config {
 			TimestampFormat: "15:04",
 			DateFormat:      "2006-01-02",
 			InlineImages:    InlineImagesOnOpen,
+			Hyperlinks:      HyperlinksAuto,
 			Rail:            false,
 			ParseMarkdown:   false,
 		},

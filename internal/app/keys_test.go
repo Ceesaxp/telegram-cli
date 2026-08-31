@@ -1482,7 +1482,7 @@ func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
 // exact drift this wave exists to remove.
 func TestChatViewKeysComeFromConfig(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Keys.Reply = "y"
+	cfg.Keys.Reply = "p"
 	cfg.Keys.EditMessage = "Option+E"
 	cfg.Keys.DeleteMessage = "v"
 	cfg.Keys.ScrollUp = "u"
@@ -1501,8 +1501,8 @@ func TestChatViewKeysComeFromConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("no reply/edit/delete row")
 	}
-	if row.Keys != "y / alt+e / v" {
-		t.Errorf("reply row = %q, want the configured \"y / alt+e / x\"", row.Keys)
+	if row.Keys != "p / alt+e / v" {
+		t.Errorf("reply row = %q, want the configured \"p / alt+e / v\"", row.Keys)
 	}
 
 	// Motions are additive in chatview: a configured scroll key is an extra

@@ -1750,7 +1750,7 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	m.SetKeys(Keys{
 		Reply:      "ctrl+r",
 		Edit:       "v",
-		Delete:     "y",
+		Delete:     "p",
 		ScrollUp:   "w",
 		ScrollDown: "z",
 		PageUp:     "u",
@@ -1763,8 +1763,8 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	if _, cmd := m.handleKey(key('v')); dispatchedAction(t, cmd).Action != "edit" {
 		t.Fatalf("expected configured 'v' to edit")
 	}
-	if _, cmd := m.handleKey(key('y')); dispatchedAction(t, cmd).Action != "delete" {
-		t.Fatalf("expected configured 'y' to delete")
+	if _, cmd := m.handleKey(key('p')); dispatchedAction(t, cmd).Action != "delete" {
+		t.Fatalf("expected configured 'p' to delete")
 	}
 
 	// Replace semantics: the old mnemonic letters no longer do anything.
@@ -1892,7 +1892,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	accepted.SetKeys(Keys{
 		Reply:      "ctrl+r",
 		Edit:       "v",
-		Delete:     "y",
+		Delete:     "p",
 		ScrollUp:   "w",
 		ScrollDown: "z",
 		PageUp:     "u",
@@ -1900,7 +1900,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	})
 	got = accepted.ActiveKeys()
 	want = Keys{
-		Reply: "ctrl+r", Edit: "v", Delete: "y",
+		Reply: "ctrl+r", Edit: "v", Delete: "p",
 		ScrollUp: "w", ScrollDown: "z", PageUp: "u", PageDown: "i",
 	}
 	if got != want {

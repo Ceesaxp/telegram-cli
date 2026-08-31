@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
@@ -23,6 +24,30 @@ type inlineStyle struct {
 	spoiler   bool
 	link      bool
 	mention   bool
+
+	// uri is where a link goes, for the OSC 8 sequence. It is part of the
+	// style rather than a parallel table because renderRunes cuts runs
+	// wherever the style changes, and two adjacent links to different
+	// places must not be merged into one — which is exactly what a bool
+	// would have let happen.
+	uri string
+}
+
+// textOpts are the per-render choices that reach the inline styler.
+//
+// A struct rather than a growing tail of bools: reveal and links are both
+// "how, not what", they both have to travel from RenderBody down to
+// renderRunes through three intermediaries, and a call ending in
+// `roles, 40, false, true` says nothing about which is which.
+type textOpts struct {
+	// reveal turns spoilers back into readable text. True only for the
+	// message under the cursor, and only after x.
+	reveal bool
+
+	// links emits OSC 8 hyperlinks on link runs. Off unless the terminal
+	// was found to support them (theme.SupportsHyperlinks) or the user
+	// asked for them outright.
+	links bool
 }
 
 // inlineStyles builds a per-rune style table by layering every entity over
@@ -70,7 +95,8 @@ func inlineStyles(ft *telegram.FormattedText, n int) []inlineStyle {
 			set = func(s *inlineStyle) { s.spoiler = true }
 		case *telegram.TextEntityTypeTextURL, *telegram.TextEntityTypeURL,
 			*telegram.TextEntityTypeEmailAddress:
-			set = func(s *inlineStyle) { s.link = true }
+			uri := entityURI(e, ft.Text, lo, hi)
+			set = func(s *inlineStyle) { s.link, s.uri = true, uri }
 		case *telegram.TextEntityTypeMention, *telegram.TextEntityTypeMentionName,
 			*telegram.TextEntityTypeHashtag, *telegram.TextEntityTypeBotCommand:
 			set = func(s *inlineStyle) { s.mention = true }
@@ -86,6 +112,38 @@ func inlineStyles(ft *telegram.FormattedText, n int) []inlineStyle {
 		}
 	}
 	return styles
+}
+
+// entityURI is where a link entity points.
+//
+// Three spellings, because Telegram carries the destination in three
+// different places: a text_url has it as a field, a bare url IS its own text,
+// and an email address is a mailto: that the client has to build. Getting
+// this wrong is worse than not linking at all — a hyperlink whose target
+// disagrees with its visible text is the shape of a phishing link, so the
+// only sources allowed here are the entity's own field and the covered text.
+func entityURI(e *telegram.TextEntity, text string, lo, hi int) string {
+	if t, ok := e.Type.(*telegram.TextEntityTypeTextURL); ok {
+		return t.URL
+	}
+	runes := []rune(text)
+	if lo < 0 || hi > len(runes) || lo >= hi {
+		return ""
+	}
+	covered := strings.TrimSpace(string(runes[lo:hi]))
+	if covered == "" {
+		return ""
+	}
+	if _, isEmail := e.Type.(*telegram.TextEntityTypeEmailAddress); isEmail {
+		return "mailto:" + covered
+	}
+	// A bare URL entity may cover text with no scheme ("example.com").
+	// Terminals need an absolute URI, and guessing anything but http is
+	// guessing about someone else's link.
+	if !strings.Contains(covered, "://") {
+		return "https://" + covered
+	}
+	return covered
 }
 
 // style resolves one inline style to a lipgloss style.
@@ -138,7 +196,7 @@ func (s inlineStyle) style(roles theme.Roles, reveal bool) lipgloss.Style {
 
 // renderRunes styles a rune slice as a sequence of maximal constant-style
 // runs. styles must be the table for exactly those runes.
-func renderRunes(runes []rune, styles []inlineStyle, roles theme.Roles, reveal bool) string {
+func renderRunes(runes []rune, styles []inlineStyle, roles theme.Roles, o textOpts) string {
 	if len(runes) == 0 {
 		return ""
 	}
@@ -152,37 +210,38 @@ func renderRunes(runes []rune, styles []inlineStyle, roles theme.Roles, reveal b
 		run := string(runes[start:i])
 		if styles[start] == (inlineStyle{}) {
 			b.WriteString(run)
-		} else {
-			b.WriteString(styles[start].style(roles, reveal).Render(run))
+			start = i
+			continue
 		}
+		styled := styles[start].style(roles, o.reveal).Render(run)
+		if o.links {
+			// Inside the styling, not around it: the SGR reset that closes
+			// the run would otherwise land between the link's open and its
+			// close, and cell.WrapLines repairs the two modes separately.
+			styled = cell.Link(styles[start].uri, styled)
+		}
+		b.WriteString(styled)
 		start = i
 	}
 	return b.String()
 }
 
-// RenderInline styles a whole formatted text with the semantic palette.
+// RenderInline styles a whole formatted text with the semantic palette, and
+// with OSC 8 hyperlinks when o.links says the terminal has them.
 //
-// reveal turns spoilers back into readable text; it is true only for the
-// message under the cursor, and only after x.
-//
-// # No OSC 8 hyperlinks
-//
-// The design record asks for terminal hyperlinks on links "where supported",
-// and this is where they would be emitted. They are deliberately absent.
-//
-// Width is not the obstacle: ansi.StringWidth measures an OSC 8 sequence as
-// zero cells. ansi.Wrap is. It breaks a line in the middle of a hyperlink
-// without closing and reopening it, so the opening sequence is left dangling
-// on the first line and the closing one arrives on the second having opened
-// nothing — and every terminal that supports OSC 8 then treats the rest of
-// that first row, panel rule included, as part of the link. Emitting them
-// correctly means wrapping before styling, which means owning a
-// grapheme-aware wrapper instead of using the tested one. Recorded as a
-// divergence; the cyan underline is the affordance in the meantime.
-func RenderInline(ft *telegram.FormattedText, roles theme.Roles, reveal bool) string {
+// The hyperlinks were absent through phases 4 to 8 for a reason that turned
+// out to be smaller than it looked: ansi.Wrap breaks a line between a link's
+// opening and closing sequences and repairs neither, so the rest of that row
+// — its padding and the panel rule beside it — becomes part of the link. The
+// design record concluded that fixing it meant owning a grapheme-aware
+// wrapper, because reopening a link means knowing which runes belong to it
+// after wrapping. It does not: the URI is carried in the opening sequence, so
+// cell.OpenLink can recover it from the wrapped line the same way OpenStyle
+// recovers an SGR run. See docs/tui-2.0.md, divergence 14.
+func RenderInline(ft *telegram.FormattedText, roles theme.Roles, o textOpts) string {
 	if ft == nil || ft.Text == "" {
 		return ""
 	}
 	runes := []rune(ft.Text)
-	return renderRunes(runes, inlineStyles(ft, len(runes)), roles, reveal)
+	return renderRunes(runes, inlineStyles(ft, len(runes)), roles, o)
 }

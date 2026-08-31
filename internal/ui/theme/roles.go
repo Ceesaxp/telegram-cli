@@ -130,6 +130,48 @@ func SupportsTrueColor() bool {
 	return strings.Contains(strings.ToLower(os.Getenv("TERM")), "truecolor")
 }
 
+// SupportsHyperlinks reports whether the terminal understands OSC 8.
+//
+// An allowlist, not a denylist, and environment only — the same rule as
+// [SupportsTrueColor], for the same reason: the only way to ASK a terminal
+// what it supports is to write a query and read the reply off stdin, and
+// under Bubble Tea's raw-mode input loop that reply arrives as keystrokes
+// and gets typed into the composer.
+//
+// An allowlist because the failure is asymmetric. A terminal that ignores an
+// unknown OSC loses nothing but the click; one that prints its bytes puts
+// a URL in the middle of a message. Being wrong about a terminal that does
+// support them costs a feature nobody had; being wrong the other way
+// corrupts the thread.
+//
+// tmux is excluded deliberately even though several terminals under it
+// would qualify. It only forwards OSC 8 with allow-passthrough on, which is
+// off by default, and this cannot be detected from the environment either.
+// A user who has turned it on can say so with ui.hyperlinks = "always".
+func SupportsHyperlinks() bool {
+	if os.Getenv("TMUX") != "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(os.Getenv("TERM")), "screen") {
+		return false
+	}
+	if os.Getenv("WT_SESSION") != "" { // Windows Terminal
+		return true
+	}
+	if os.Getenv("VTE_VERSION") != "" { // GNOME Terminal, Tilix, and kin
+		return true
+	}
+	switch strings.ToLower(os.Getenv("TERM_PROGRAM")) {
+	case "ghostty", "iterm.app", "wezterm", "kitty", "rio", "vscode", "hyper":
+		return true
+	}
+	switch strings.ToLower(os.Getenv("TERM")) {
+	case "xterm-kitty", "foot", "foot-extra", "alacritty", "contour":
+		return true
+	}
+	return false
+}
+
 // RolesFor picks the palette for a theme name and colour depth. It is the
 // single entry point the app uses, so the two decisions are made together
 // and once.

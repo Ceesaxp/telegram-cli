@@ -29,6 +29,20 @@ inline_images = "on_open"
 # and they come out of the thread.
 rail = false
 
+# OSC 8 terminal hyperlinks on links in a message: "auto" (only on terminals
+# known to support them), "never", or "always".
+#
+# "auto" is an allowlist rather than a denylist, because the failure is
+# asymmetric: a terminal that ignores the sequence loses nothing but the
+# click, and one that prints it puts a URL in the middle of somebody's
+# message. Links are cyan and underlined either way — this only adds the
+# click.
+#
+# tmux is excluded from "auto" whatever the terminal under it is: OSC 8 only
+# gets through with allow-passthrough on, which is off by default and cannot
+# be detected from the environment. Set "always" if you have turned it on.
+hyperlinks = "auto"
+
 # Line editing in the composer: "emacs" (readline chords), "vi" (modal),
 # or "auto" to follow $VISUAL/$EDITOR.
 compose_editing = "auto"

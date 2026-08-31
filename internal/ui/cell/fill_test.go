@@ -152,6 +152,16 @@ func TestPaintedWidthCountsToTheFirstUnpaintedCell(t *testing.T) {
 		{"a truecolour foreground is not a background", "\x1b[38;2;16;100;7mab", 0},
 		{"a 256 foreground is not a background", "\x1b[38;5;46mab", 0},
 		{"combined foreground and background", "\x1b[38;5;232;48;5;73mab", 2},
+		// Not every escape is SGR. Each of these must be stepped over
+		// whole: measuring one as text would count its bytes as cells, and
+		// advancing by less than its length hangs the scan.
+		{"an OSC 8 hyperlink is not a background",
+			"\x1b[48;5;233m\x1b]8;;https://example.com\x1b\\ab\x1b]8;;\x1b\\cd", 4},
+		{"a BEL-terminated OSC", "\x1b[48;5;233m\x1b]8;;https://e.com\aab", 2},
+		{"a non-SGR CSI leaves the background alone", "\x1b[48;5;233m\x1b[2Kab", 2},
+		{"a two-byte escape", "\x1b[48;5;233m\x1bMab", 2},
+		{"a lone trailing escape", "\x1b[48;5;233mab\x1b", 2},
+		{"an unterminated OSC", "\x1b[48;5;233mab\x1b]8;;https://", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/mediaview"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/rail"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
@@ -36,18 +37,26 @@ import (
 const paletteTopMargin = 8
 
 type Model struct {
-	auth     auth.Model
-	chatList chatlist.Model
-	chatView chatview.Model
-	composer composer.Model
-	contacts contacts.Model
-	search   search.Model
-	help     help.Model
-	palette  palette.Model
-	topBar   topbar.Model
-	hintBar  hintbar.Model
-	rail     rail.Model
-	dialog   *dialog.Model
+	auth      auth.Model
+	chatList  chatlist.Model
+	chatView  chatview.Model
+	composer  composer.Model
+	contacts  contacts.Model
+	search    search.Model
+	help      help.Model
+	palette   palette.Model
+	topBar    topbar.Model
+	hintBar   hintbar.Model
+	rail      rail.Model
+	mediaView mediaview.Model
+
+	// mediaTeardown is what the terminal must be told to forget once the
+	// media overlay closes. Held rather than written: this Model has no
+	// output of its own, so it rides out on the next frame and View drains
+	// it. Empty for every protocol but kitty, whose images the terminal
+	// owns and a text redraw does not erase.
+	mediaTeardown string
+	dialog        *dialog.Model
 
 	screen     ScreenState
 	focus      FocusPanel
@@ -194,6 +203,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
 		rail:       rail.New(roles),
+		mediaView:  mediaview.New(roles),
 		screen:     ScreenLoading,
 		focus:      PanelChatList,
 		tg:         tg,
@@ -208,6 +218,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	}
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
+	m.mediaView.ApplyMedia(cfg.Media)
 	m.chatList.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Order matters: the chat view has to know what app.go has already
@@ -302,6 +313,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Any keypress means at least one frame has been rendered since
+		// the overlay closed, so the teardown has been emitted. Kitty
+		// reads a second delete of the same id as a no-op, but carrying it
+		// forever would prepend a sequence to every frame for the rest of
+		// the session.
+		m.mediaTeardown = ""
+
 		if m.screen == ScreenMain {
 			// The palette owns the keyboard outright while it is open,
 			// ahead of every other overlay. It is a text surface: every
@@ -323,6 +341,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.notify(notice)
 					}
 					return m, cmd
+				}
+				return m, nil
+			}
+
+			// The media overlay covers the frame, so it owns the
+			// keyboard for the same reason the help card does: a key
+			// that reached a panel behind it would take effect
+			// invisibly. Three keys work — the way out, and the two
+			// the overlay's own hint row advertises.
+			if m.mediaView.IsVisible() {
+				switch {
+				case key.Matches("esc", "q"):
+					m.mediaTeardown += m.mediaView.Close()
+					return m, nil
+				case key.Matches("s"):
+					return m, m.chatView.DownloadCmd()
+				case key.Matches("o"):
+					return m, m.chatView.OpenExternallyCmd()
 				}
 				return m, nil
 			}
@@ -898,6 +934,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateLayout()
 		return m, nil
 
+	case chatview.OpenPhotoMsg:
+		m.mediaView.SetSize(m.width, m.height)
+		m.mediaView.Open(msg.Caption, "downloading…")
+		return m, nil
+
+	case chatview.OpenedPhotoMsg:
+		// A download that lands after the overlay was dismissed is dropped
+		// by the overlay itself — see mediaview.Model.Show. Checking it
+		// again here would be a second mechanism for one rule.
+		if msg.Err != nil {
+			m.mediaView.Fail("could not download this photo: " + msg.Err.Error())
+			return m, nil
+		}
+		m.mediaView.Show(msg.Path)
+		return m, nil
+
+	case chatview.YankMsg:
+		switch {
+		case msg.Err != nil:
+			m.notify(fmt.Sprintf("⚠ copy failed: %v", msg.Err))
+		case msg.Runes == 0:
+			// A zero-rune yank is the nil Cmd case: the cursor was on a
+			// message with no words in it. Saying nothing would leave the
+			// press looking like it worked.
+			m.notify("nothing to copy — this message has no text")
+		default:
+			m.notify(fmt.Sprintf("copied %d characters", msg.Runes))
+		}
+		return m, nil
+
 	case chatview.MessageActionMsg:
 		return m.handleMessageAction(msg)
 
@@ -1445,6 +1511,9 @@ func (m *Model) updateLayout() {
 	m.search.SetSize(m.width, m.height)
 	m.help.SetSize(m.width, m.height)
 	m.rail.SetSize(l.RailWidth, l.BodyHeight)
+	// The media overlay is the whole terminal, not a region: it replaces
+	// the frame rather than sitting inside it.
+	m.mediaView.SetSize(m.width, m.height)
 	m.refreshChrome()
 }
 
@@ -1509,6 +1578,14 @@ func (m Model) View() tea.View {
 			m.search.View())
 	}
 
+	// The media overlay is the whole screen: a photo shown inside the thread
+	// column is acknowledged rather than shown, which is the point of having
+	// an overlay at all. It draws its own full-size view instead of being
+	// placed, so it can paint its surface edge to edge.
+	if m.mediaView.IsVisible() && m.screen == ScreenMain {
+		content = m.mediaView.View()
+	}
+
 	// Help is drawn last so it covers whatever else is open — it is only
 	// ever opened when nothing else is, but a race would otherwise leave it
 	// half-hidden behind a panel it is explaining.
@@ -1533,6 +1610,15 @@ func (m Model) View() tea.View {
 		content = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Top,
 			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.palette.View()))
+	}
+
+	// Whatever the terminal is still holding from a closed overlay goes out
+	// with this frame. It is a zero-width sequence, so prefixing it cannot
+	// disturb the layout — and it has to travel this way rather than being
+	// written directly, because a component writing to stdout beside the
+	// renderer is how a frame gets torn in half.
+	if m.mediaTeardown != "" {
+		content = m.mediaTeardown + content
 	}
 
 	v := tea.NewView(content)

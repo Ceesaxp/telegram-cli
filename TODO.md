@@ -172,10 +172,11 @@ command palette, the thread grid, the content blocks, the composer and the
 context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
-What is left is the media overlay and the remaining chat-view actions
-(`y`, `space`, `M`), plus the four content blocks whose data the client does
-not yet map. Until those land, the goldens are asserted on width only — see
-"Byte equality against the goldens" below.
+Every phase in the plan has now shipped. What is left before the design can
+be called complete is the top bar's two literal placeholders (decision 7),
+the six components still drawing from the pre-2.0 theme, and the four content
+blocks whose data the client does not map. Until the blocks land, the goldens
+are asserted on width only — see "Byte equality against the goldens" below.
 
 - [x] **Panel surfaces are painted** — every panel wrapped its assembled row
       in a background style, which a styled span's own `ESC[0m` cleared, so
@@ -460,13 +461,43 @@ the primary checkout stays free for fixes against a working client.
       `senderColour` moved to `theme.SenderColour` so the rail and the
       thread grid cannot disagree about a person's colour.
 
-- [ ] **Media overlay, yank, and final hardening** ← **next**, phase 8. The
-      dismissible full-pane image overlay (Kitty, Sixel, half-blocks, an
-      external viewer, then platform open — and never writing graphics into
-      scrollback), `y` to copy a message or a code block, `space` to play
-      the selected voice note, and `M` to mark read without moving. OSC 8
-      hyperlinks belong here too, with the grapheme-aware wrapper that would
-      make them safe (divergence 14).
+- [x] **Media overlay, yank, and final hardening** — phase 8, the last one.
+      `internal/ui/components/mediaview` draws a photo full-pane and `esc`
+      puts it away; `y` copies the selected message's text through the
+      platform clipboard helpers; `space` plays a voice note; `M` clears the
+      unread badge without moving the scroll or the divider. `y yank` rejoins
+      the hint set it was cut from while it did nothing.
+
+      The scrollback guarantee is structural: the overlay emits no graphics
+      sequence until it has a downloaded file, which only happens after the
+      key that asked for it. Asserted for all three protocols, including the
+      loading and failed states.
+
+      **OSC 8 hyperlinks shipped without the wrapper they were costed at**
+      (divergence 14). Reopening a link across a wrap does not need to know
+      which runes belong to it — the URI is in the opening sequence, so
+      `cell.OpenLink` recovers it the way `OpenStyle` recovers an SGR run.
+      Twenty lines beside the ones that existed, not a grapheme-aware
+      wrapper. Gated by `ui.hyperlinks`, whose `auto` is an allowlist and
+      excludes tmux.
+
+      Two live defects found on the way. `renderKitty` had no `q=2`, so every
+      inline photo on a kitty terminal made it reply `_Gi=..;OK\` **onto
+      stdin** — keystrokes, under Bubble Tea's raw-mode loop, typed into
+      whatever had focus. And it placed images with no id, so nothing could
+      delete one without deleting every placement on the screen. Both fixed;
+      divergence 20.
+
+      No OSC 52 clipboard fallback: the plan gates it on approval it has not
+      been given, so ssh gets an honest "no clipboard tool found" rather than
+      a silent write to the user's local clipboard. Divergence 21.
+
+- [ ] **Top bar placeholders** ← **next**. `mtproto 2.0` and `devices 1` are
+      literal strings with no data behind them (decision 7). They are the
+      last thing on screen that states something the client does not know,
+      and the design is not finishable while they are there: wire them to the
+      connection state, or drop the two cells and re-measure the shrink
+      order against the goldens.
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality

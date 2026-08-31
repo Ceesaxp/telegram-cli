@@ -116,12 +116,16 @@ func splitBlocks(ft *telegram.FormattedText) []block {
 // same code that draws received messages. A preview rendered by a second
 // implementation is a preview that can disagree with what arrives, and being
 // trusted is the entire purpose of it.
+//
+// No hyperlinks and no revealed spoilers: this is what the text WILL be, and
+// a clickable link in a draft is an invitation to click a thing that has not
+// been sent yet.
 func RenderText(ft *telegram.FormattedText, roles theme.Roles, width int) []string {
-	return renderBlocks(ft, roles, width, false)
+	return renderBlocks(ft, roles, width, textOpts{})
 }
 
 // renderBlocks lays a message's text out as body lines.
-func renderBlocks(ft *telegram.FormattedText, roles theme.Roles, width int, reveal bool) []string {
+func renderBlocks(ft *telegram.FormattedText, roles theme.Roles, width int, o textOpts) []string {
 	if ft == nil || ft.Text == "" || width < 1 {
 		return nil
 	}
@@ -153,7 +157,7 @@ func renderBlocks(ft *telegram.FormattedText, roles theme.Roles, width int, reve
 			if lo == hi {
 				continue
 			}
-			styled := renderRunes(runes[lo:hi], styles[lo:hi], roles, reveal)
+			styled := renderRunes(runes[lo:hi], styles[lo:hi], roles, o)
 			out = append(out, wrapProse(styled, roles, width)...)
 		}
 	}
