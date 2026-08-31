@@ -212,6 +212,20 @@ thinner than either convention implies.
       name confined to that directory. `files_dir` stays the media cache
       it always was; the two were one setting (divergence 37).
 
+- [x] **The three-cell gap after the clock** — `ui.emoji_width`, the
+      declaration divergence 26 said would be needed. `auto` (default) keeps
+      today's pessimism, `composed` and `separate` state what the terminal
+      does with U+FE0F, ZWJ sequences and flags. It is in `cell` rather than
+      `topbar` because every panel measures the same emoji.
+
+      Two bugs found writing it. "Narrow" and "wide" cannot name the modes:
+      a selector sequence is drawn *narrower* than the tables say and a
+      joined or paired one *wider*, by the same terminal. And the pessimism
+      was under-reserving — one cell per composition rune is 4 for a
+      three-person family that a non-composing terminal draws in 6, which is
+      exactly the corruption the reservation exists to prevent. The bound is
+      now the wider of the two renderings (divergence 38).
+
 - [ ] **Text cannot be selected with the mouse.** Raised in field use. The
       cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
       the terminal hands every drag to the application instead of running its

@@ -797,6 +797,40 @@ meant as one:
   allowlist rather than a blocklist: new dangerous schemes get invented
   faster than a blocklist can track them.
 
+## Emoji width (`ui.emoji_width`)
+
+If there's a gap of a few cells between the folder tabs and the clock, this
+is the setting. Set `ui.emoji_width = "separate"` and it closes.
+
+Emoji width is not a property of the string — the terminal decides it, and
+terminals disagree. Three kinds of sequence carry a *composition rule*, and a
+terminal that applies it and one that doesn't draw different widths:
+
+| Sequence | Tables say | Composed | Not composed |
+|---|---|---|---|
+| `❤️` — a narrow base plus U+FE0F | 2 | 2 | **1** (the selector is ignored, the text heart is drawn) |
+| `👨‍👩‍👧` — three emoji joined by U+200D | 2 | 2 | **6** (all three are drawn) |
+| `🇷🇸` — a regional-indicator pair | 2 | 2 | **4** (two letter-boxes) |
+| `👍🏻` — an emoji plus a skin tone | 2 | 2 | **4** (the swatch is drawn beside it) |
+
+So "narrow or wide" is the wrong question: the same terminal is narrower than
+the tables on the first row and wider on the other two. The question is
+whether it **composes**, which is what the values name:
+
+| `emoji_width` | Meaning |
+|---|---|
+| `"auto"` (default) | Don't assume. Measure with the tables, and where a row is being laid out against a budget, keep room for whichever rendering is wider. Never overflows; may leave a gap. |
+| `"composed"` | This terminal applies every rule. |
+| `"separate"` | This terminal applies none of them. |
+
+It is a declaration because it cannot be detected: no environment variable
+reports it, and the runtime query that would ask was removed for leaking its
+response bytes into the composer. There's no harm in trying the other value —
+set it, look at the top bar, keep whichever ends flush against the clock.
+
+The setting is process-wide and read once at startup, like the colour
+profile, so every panel that measures a string agrees about it.
+
 ## Where files go
 
 Two directories under `[storage]`, and they are not the same thing:

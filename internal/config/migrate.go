@@ -296,6 +296,12 @@ func Migrate(cfg *Config, raw *RawFile) []MigrationChange {
 			Field: "ui.hyperlinks", Absent: true, New: def.UI.Hyperlinks,
 		})
 	}
+	if !hasField(raw, "ui", "emoji_width", cfg.UI.EmojiWidth != "") {
+		cfg.UI.EmojiWidth = def.UI.EmojiWidth
+		changes = append(changes, MigrationChange{
+			Field: "ui.emoji_width", Absent: true, New: def.UI.EmojiWidth,
+		})
+	}
 	// ui.rail is NOT reported. Its default is the zero value, so there is
 	// nothing to tell anyone: the rewrite writes the whole struct, the key
 	// appears in the new file, and nothing about the client's behaviour

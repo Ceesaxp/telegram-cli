@@ -36,9 +36,19 @@ const Ellipsis = "…"
 // ANSI escape sequences are ignored and grapheme clusters are measured as
 // the terminal draws them.
 //
+// "As the terminal draws them" is a claim the Unicode tables cannot make on
+// their own for composed emoji, which is what [EmojiMode] is about; in
+// [EmojiSeparate] this measures the pieces instead. For a row being laid out
+// against a budget rather than measured after the fact, use [Reserve].
+//
 // For multi-line text use [MaxWidth]; this counts a newline as nothing and
 // so would under-report a block.
-func Width(s string) int { return ansi.StringWidth(s) }
+func Width(s string) int {
+	if CurrentEmojiMode() == EmojiSeparate {
+		return separateWidth(s)
+	}
+	return ansi.StringWidth(s)
+}
 
 // MaxWidth returns the width of the widest line in possibly-multi-line
 // text — the width of the box that would contain it.

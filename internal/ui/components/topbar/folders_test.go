@@ -50,33 +50,66 @@ func TestTheActiveFolderIsMarkedByABackground(t *testing.T) {
 	}
 }
 
-// The reservation is pessimistic in one direction only: never smaller than
-// what the label measures, and larger wherever a terminal might compose the
-// sequence differently than the width tables predict.
-func TestARiskyLabelReservesAtLeastItsWidth(t *testing.T) {
-	tests := []struct {
-		name  string
-		label string
-		risky bool
-	}{
-		{"plain ascii", "1:work", false},
-		{"a lone wide glyph", "3:🔤", false},
-		{"a presentation selector", "2:❤️", true},
-		{"a regional indicator pair", "5:🇷🇸", true},
-		{"a zero-width joiner", "6:👨‍👩‍👧", true},
+// The reservation covers BOTH ways the label might be drawn.
+//
+// A label whose only risky sequence is a presentation selector can only come
+// out narrower than the tables say, and narrower costs a gap — so it needs
+// no extra room. A joined or paired sequence can come out wider, and wider
+// overwrites the connection group beside it, so the reservation has to be
+// the decomposed width rather than the tables'.
+//
+// Stated as "reserved > measured wherever the sequence is risky", this test
+// passed while the reservation was a cell per composition rune — which is
+// four for a three-person family that a terminal drawing the parts puts in
+// six.
+func TestTheReservationCoversBothRenderings(t *testing.T) {
+	labels := []string{
+		"1:work",
+		"3:🔤",
+		"2:❤️",
+		"5:🇷🇸",
+		"6:👨‍👩‍👧",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			measured, reserved := cell.Width(tt.label), reservedWidth(tt.label)
-			if reserved < measured {
-				t.Fatalf("reserved %d is less than the measured %d", reserved, measured)
+	for _, label := range labels {
+		t.Run(label, func(t *testing.T) {
+			reserved := reservedWidth(label)
+
+			tables := cell.Width(label)
+			cell.SetEmojiMode(cell.EmojiSeparate)
+			separate := cell.Width(label)
+			cell.SetEmojiMode(cell.EmojiAuto)
+
+			if reserved < tables {
+				t.Errorf("reserved %d, but the tables measure %d", reserved, tables)
 			}
-			if got := reserved > measured; got != tt.risky {
-				t.Errorf("reserved %d vs measured %d; risky = %v, want %v",
-					reserved, measured, got, tt.risky)
+			if reserved < separate {
+				t.Errorf("reserved %d, but a terminal that composes nothing "+
+					"draws %d", reserved, separate)
+			}
+			// And no more than it has to be: an over-reservation is a tab
+			// dropped early, which is a cost even when it is the safe one.
+			if want := max(tables, separate); reserved != want {
+				t.Errorf("reserved %d, want %d", reserved, want)
 			}
 		})
+	}
+}
+
+// A declared mode replaces the hedge outright: the user has said which way
+// their terminal draws, so the tabs are laid out at exactly that width and
+// the row ends flush against the clock.
+func TestADeclaredModeDropsTheHedge(t *testing.T) {
+	t.Cleanup(func() { cell.SetEmojiMode(cell.EmojiAuto) })
+
+	for _, mode := range []cell.EmojiMode{cell.EmojiComposed, cell.EmojiSeparate} {
+		cell.SetEmojiMode(mode)
+		for _, label := range []string{"2:❤️", "5:🇷🇸", "6:👨‍👩‍👧"} {
+			if got, want := reservedWidth(label), cell.Width(label); got != want {
+				t.Errorf("mode %v: reserved %d for %q, want its measured %d",
+					mode, got, label, want)
+			}
+		}
 	}
 }
 

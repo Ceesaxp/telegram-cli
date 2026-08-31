@@ -61,6 +61,12 @@ type UIConfig struct {
 	// [HyperlinksAlways].
 	Hyperlinks string `toml:"hyperlinks"`
 
+	// EmojiWidth declares how this terminal draws emoji sequences that
+	// have a composition rule: [EmojiWidthAuto] (the default),
+	// [EmojiWidthComposed], or [EmojiWidthSeparate]. It is a declaration
+	// because it cannot be detected — see internal/ui/cell for why.
+	EmojiWidth string `toml:"emoji_width"`
+
 	// Rail shows the right-hand context rail — pinned message, members,
 	// shared files — on a terminal wide enough for it. Off by default: it
 	// costs 30 columns, and they come out of the thread.
@@ -127,6 +133,41 @@ const (
 	// which cannot be detected from the environment.
 	HyperlinksAlways = "always"
 )
+
+// Emoji-width declarations for [UIConfig.EmojiWidth].
+//
+// This is one setting rather than two because the terminals that get it
+// wrong get it wrong consistently: one that honours U+FE0F also composes
+// ZWJ sequences and flags. What it cannot be is inferred — the widths differ
+// in opposite directions, so no single "narrow" or "wide" describes them.
+const (
+	// EmojiWidthAuto measures with the Unicode tables and reserves a cell
+	// on top for every composition rule, so an over-reservation shows as a
+	// gap rather than as a row overwriting its neighbour. The default, and
+	// the only value that is a guess.
+	EmojiWidthAuto = "auto"
+	// EmojiWidthComposed says this terminal applies every composition
+	// rule. The tables are then right and nothing is reserved on top —
+	// which is what closes the gap between the folder tabs and the clock.
+	EmojiWidthComposed = "composed"
+	// EmojiWidthSeparate says it applies none of them: U+FE0F is ignored
+	// and joined or paired sequences are drawn as their parts.
+	EmojiWidthSeparate = "separate"
+)
+
+// ResolveEmojiWidth normalises [UIConfig.EmojiWidth], falling back to the
+// default for an empty or unrecognised value — a typo here should cost the
+// user the setting, not the client.
+func ResolveEmojiWidth(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case EmojiWidthComposed:
+		return EmojiWidthComposed
+	case EmojiWidthSeparate:
+		return EmojiWidthSeparate
+	default:
+		return EmojiWidthAuto
+	}
+}
 
 // ResolveHyperlinks normalises [UIConfig.Hyperlinks] to one of the three
 // policies, treating anything unrecognised as the default rather than
@@ -462,6 +503,7 @@ func defaultConfig() *Config {
 			DateFormat:      "2006-01-02",
 			InlineImages:    InlineImagesOnOpen,
 			Hyperlinks:      HyperlinksAuto,
+			EmojiWidth:      EmojiWidthAuto,
 			Rail:            false,
 			ParseMarkdown:   false,
 		},
