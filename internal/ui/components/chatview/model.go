@@ -179,6 +179,10 @@ type Model struct {
 	// newest visible message.
 	cursorID int64
 
+	// pendingCount is the vi count prefix typed but not yet spent: the 9
+	// in "9{". Zero means none. See count.go.
+	pendingCount int
+
 	// cursorPinned is whether the user placed the cursor themselves.
 	//
 	// It exists because of the tail rule below: at the bottom of the
@@ -837,6 +841,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.scrollOffset = 0
 	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
 	m.cursorPinned = false
+	m.pendingCount = 0
 	m.revealedID = 0
 	m.loading = true
 	m.loadStatus = "Loading messages..."
@@ -1607,6 +1612,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// String() exactly when nothing is modified.
 	kp := keys.NewPress(msg)
 
+	// A digit is a count prefix, not a command. Taken before the motion
+	// switch so no binding has to know about it, and before the isScroll
+	// test so a digit does not cancel a pending jump.
+	if m.countDigit(msg.String()) {
+		return m, nil
+	}
+
 	isScroll := kp.Matches(
 		"up", "k", m.keys.scrollUpExtra,
 		"down", "j", m.keys.scrollDownExtra,
@@ -1620,32 +1632,37 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.pendingJumpID = 0
 	}
 
+	// Spent here, once, whatever the key turns out to be: a count is
+	// attached to the motion that follows it and does not survive into the
+	// next one. count is 1 when none was typed.
+	count := m.takeCount()
+
 	switch {
 	case kp.Matches("up", "k", m.keys.scrollUpExtra):
-		m.scrollOffset += 3
+		m.scrollOffset += 3 * count
 		if cmd := m.clampScrollUp(); cmd != nil {
 			return m, cmd
 		}
 	case kp.Matches("pgup", m.keys.pageUpExtra):
-		m.scrollOffset += m.pageStep()
+		m.scrollOffset += m.pageStep() * count
 		if cmd := m.clampScrollUp(); cmd != nil {
 			return m, cmd
 		}
 	case kp.Matches("down", "j", m.keys.scrollDownExtra):
-		m.scrollOffset -= 3
+		m.scrollOffset -= 3 * count
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
 	case kp.Matches("pgdown", m.keys.pageDownExtra):
-		m.scrollOffset -= m.pageStep()
+		m.scrollOffset -= m.pageStep() * count
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
 	case kp.Matches("}"):
-		m.moveCursor(1)
+		m.moveCursor(count)
 		return m, m.lazyPhotoCmd()
 	case kp.Matches("{"):
-		m.moveCursor(-1)
+		m.moveCursor(-count)
 		return m, m.lazyPhotoCmd()
 	case kp.Matches("G", "end"):
 		m.scrollOffset = 0
@@ -1655,12 +1672,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case kp.Matches("g", "home"):
 		m.scrollOffset = m.maxScrollOffset()
 	case kp.Matches("ctrl+u"):
-		m.scrollOffset += m.height
+		m.scrollOffset += m.height * count
 		if maxOffset := m.maxScrollOffset(); m.scrollOffset > maxOffset {
 			m.scrollOffset = maxOffset
 		}
 	case kp.Matches("ctrl+d"):
-		m.scrollOffset -= m.height
+		m.scrollOffset -= m.height * count
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
@@ -2362,7 +2379,14 @@ func (m Model) renderHeader() string {
 	// The right group: line position, and the meta glyph when names and
 	// thumbnails are still filling in. The glyph is deliberately tiny —
 	// the messages are already readable, it only says more is coming.
+	// A pending count goes ahead of the position, in the one place on this
+	// row that already reports state. Without it a typed digit is
+	// indistinguishable from a key the thread ignores — which is what a
+	// digit WAS here until the count prefix existed.
 	right := m.headerPosition()
+	if n := m.countLabel(); n != "" {
+		right = n + "  " + right
+	}
 	if m.metaBusy {
 		right += " ⟳"
 	}

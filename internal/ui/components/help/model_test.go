@@ -37,13 +37,27 @@ func sampleSections() []Section {
 }
 
 func TestGeometryCapsAndFloors(t *testing.T) {
-	// Very large window: box caps rather than filling the screen.
+	// Very large window: the WIDTH caps, because a keymap read across 200
+	// columns is a keymap nobody reads. The height does not — a cap there
+	// hides bindings behind a scroll while leaving the screen half empty,
+	// which is how "} / {" became a binding this card knew about and never
+	// showed.
 	g := computeGeometry(400, 200)
-	if g.boxWidth != maxBoxWidth {
-		t.Errorf("boxWidth = %d, want cap %d at a huge window", g.boxWidth, maxBoxWidth)
+	if g.boxWidth != maxTwoColWidth {
+		t.Errorf("boxWidth = %d, want the two-column cap %d at a huge window",
+			g.boxWidth, maxTwoColWidth)
 	}
-	if g.boxHeight != maxBoxHeight {
-		t.Errorf("boxHeight = %d, want cap %d at a huge window", g.boxHeight, maxBoxHeight)
+
+	// A window too narrow for a second column caps at the single-column
+	// width instead — the wider cap exists to hold two columns, not to let
+	// one stretch.
+	if g := computeGeometry(100, 40); g.boxWidth > maxBoxWidth {
+		t.Errorf("boxWidth = %d at 100 columns, want at most %d",
+			g.boxWidth, maxBoxWidth)
+	}
+	if g.boxHeight != 200-6 {
+		t.Errorf("boxHeight = %d, want the window height less its margin (%d)",
+			g.boxHeight, 200-6)
 	}
 
 	// A window that CAN afford the structural floor (exactly it, in this

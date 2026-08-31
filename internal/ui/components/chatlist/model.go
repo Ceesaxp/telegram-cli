@@ -97,6 +97,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	m := Model{
 		list:        &l,
 		filterInput: fi,
+		roles:       r,
 		store:       s,
 		tg:          tg,
 		loading:     true,

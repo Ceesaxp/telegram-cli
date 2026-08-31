@@ -446,6 +446,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: or(k.search, "ctrl+f"), Desc: "Find in this chat"},
 			{Keys: "n / N", Desc: "Next / previous match"},
 			{Keys: "} / {", Desc: "Next / previous message (j/k scroll lines)"},
+			{Keys: "1-9", Desc: "Count prefix — 9{ moves nine messages back"},
 			{Keys: strings.Join([]string{
 				bound(cv.Reply), bound(cv.Edit), bound(cv.Delete),
 			}, " / "), Desc: "Reply / edit / delete message"},

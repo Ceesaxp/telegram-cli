@@ -1060,6 +1060,45 @@ Runtime theme switching, which is what a `SetRoles` would be for, is still
 absent and still recorded as such under phase 7. When it is built, the cache
 invalidation it needs is part of building it.
 
+### 32. The help card capped its own height and hid what it knew
+
+`} / {` was reported as missing from the keymap. It was in the keymap. The
+card had a hard 28-row height cap, so on a 60-row terminal it drew 28 rows,
+left 26 empty, and put the other 58 rows of keybindings behind a scroll — and
+its footer, which advertised the scroll keys, never said there was anything
+to use them on. A binding below the fold is indistinguishable from a binding
+that does not exist.
+
+Three changes, all of them about the same thing:
+
+- **The height cap is gone.** Width is still capped, because a keymap read
+  across 200 columns is a keymap nobody reads; there is no such thing as a
+  card too tall to read.
+- **The footer says what is hidden** — `↓14 more`, or `↑6 ↓8` in the middle.
+- **Two columns** when the width affords two readable ones, which halves the
+  scrolling on a terminal 110 columns or wider. The split falls on a section
+  boundary, so a heading is never orphaned at the foot of the left column
+  with its bindings in the right.
+
+### 33. `9{` — the vi count prefix
+
+Message-wise motion (divergence 23) shipped without one, and a reader who
+wants to go back nine messages should not press `{` nine times.
+
+Digits are free in the thread: the chat list binds 1–9 to its folder tabs,
+but that is the chat list. The prefix therefore costs no binding.
+
+It applies to the MOTIONS and nothing else — `}`/`{`, `j`/`k`, `ctrl+d`/`u`,
+the page keys. A count on a motion means "again, this many times", which is
+what someone typing it expects; a count on `r` or `y` or `enter` would have
+to mean something invented. Any other key clears the pending count rather
+than carrying it forward, and the count is **shown in the thread header while
+it is pending** — a digit that changes nothing on screen cannot be told from
+a key the surface ignores, which is what a digit was here before.
+
+A bare `0` is deliberately not a count, as in vi. It has no binding here yet,
+so the guard changes nothing today; it exists so that `0` stays available.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
