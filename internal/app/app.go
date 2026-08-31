@@ -225,8 +225,16 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		authorizer: authorizer,
 		keys:       resolveKeys(cfg.Keys),
 	}
+	// Process-wide and set before the first render, like lipgloss's colour
+	// profile: it describes the terminal this process is attached to, and
+	// every panel that measures a string has to agree about it. A
+	// declaration that only the top bar honoured would close the gap there
+	// and leave the chat titles sheared.
+	cell.SetEmojiMode(cell.ParseEmojiMode(config.ResolveEmojiWidth(cfg.UI.EmojiWidth)))
+
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
+	m.chatView.ApplyStorage(cfg.Storage)
 	m.mediaView.ApplyMedia(cfg.Media)
 	m.composer.SetEditingMode(composerEditingMode(cfg.UI.ComposeEditing))
 	// Order matters: the chat view has to know what app.go has already

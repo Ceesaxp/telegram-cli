@@ -29,7 +29,7 @@
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
 - **Voice/Audio Playback** — Play voice messages and audio inline via `mpv` / `ffplay`
 - **Video** — Open videos in external player (`mpv` / `vlc` / `xdg-open`)
-- **File Transfer** — Download with `s`, open with `Enter`, progress bar during sync
+- **File Transfer** — Save with `s` into `storage.download_dir` (`~/Downloads` by default) under the sender's own filename, never overwriting; open with `Enter`, progress bar during sync
 - **Clipboard Paste** — `Ctrl+V` attaches a clipboard image or file reference and sends it as an inline photo (or document, when the format can't be a photo)
 - **Search** — Search chats, messages, and the global Telegram directory; selecting a result jumps straight to that message, scrolled and centred, paging back through history if needed
 - **Contacts** — Contact list with online status indicators
@@ -272,10 +272,10 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `}` / `{` | Move the cursor to the next / previous message. `j`/`k` scroll the buffer by lines, vi-style; these move between messages, and `G` hands the cursor back so it follows new arrivals again |
 | `1`–`9` | Count prefix for the motions, as in vi: `9{` moves nine messages back, `4k` scrolls four times. The pending count shows in the thread header, and any non-motion key discards it |
 | `Esc` | Close the find input while it's open; otherwise step back to the chat list (surviving find results are not cleared first) |
-| `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them) |
+| `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them). Telegram only lets you edit your own messages; `e` on somebody else's says so rather than doing nothing |
 | `Enter` | Open attachment — a photo opens full-pane in the terminal, everything else goes to the system viewer |
 | `o` | Open attachment in the system viewer, always |
-| `s` | Save attachment |
+| `s` | Save attachment into `storage.download_dir` under the sender's filename (see [Where files go](#where-files-go)) |
 | `space` | Play the selected voice note or audio message |
 | `y` | Copy the selected message's text to the system clipboard |
 | `M` | Mark this chat read without moving the scroll or the unread divider |
@@ -343,7 +343,12 @@ keymap, chosen by `ui.compose_editing` in `config.toml`:
 | `Ctrl+D` / `Delete` | Delete the character under the cursor (also live in vi mode's insert state, but not in its normal mode) |
 
 **Vi mode** starts in insert mode — typing a message is the common case,
-and landing in normal mode would swallow the first word. Normal mode uses
+and landing in normal mode would swallow the first word. That applies
+*every* time the composer takes focus, not just the first: `i`, `r` and `e`
+all leave you able to type, even though a vi user leaves the composer
+through normal mode. Re-entering is the only thing that resets it — focus
+being re-asserted on a resize, or after an overlay closes, keeps whatever
+mode you were in. Normal mode uses
 real vi cursor semantics: the cursor sits *on* a character, never in the
 gap after it, so `$x` deletes the line's last character rather than the
 line break, and `$i` inserts before it rather than after:
@@ -696,9 +701,11 @@ What one run does:
   collision report below.
 - **Fills in fields your file never had**, at their current default: any
   newer `[keys]` field (`help`, `global_search`, `contacts_alt`, …),
-  `ui.compose_editing` (`"auto"`), and `storage.state_file` — written out
-  explicitly as the path the client would otherwise derive implicitly
-  (next to `session_file`), so the location stops being implied. Also
+  `ui.compose_editing` (`"auto"`), `storage.download_dir` (`~/Downloads`,
+  where `s` saves — see [Where files go](#where-files-go)), and
+  `storage.state_file` — written out explicitly as the path the client
+  would otherwise derive implicitly (next to `session_file`), so the
+  location stops being implied. Also
   `ui.parse_markdown`, but as a special case: it's set to `true` on
   migration and the change is reported, on the reasoning that an existing
   user already has a working setup and the feature is worth having —
@@ -733,7 +740,7 @@ What one run does:
   a plain file that breaks the link. The write itself goes to a temp file
   in the same directory, `fsync`'d, then renamed over the target, so a
   crash mid-write can't leave a truncated config.
-- **Keeps paths portable.** `session_file`/`files_dir`/`state_file` are
+- **Keeps paths portable.** `session_file`/`files_dir`/`download_dir`/`state_file` are
   written back exactly as your file had them — a `~/...` form stays
   `~/...` — and a path your file lacked is filled with the same portable
   `~/...` literal the built-in default uses, never an absolute path baked
@@ -789,6 +796,64 @@ meant as one:
   silently dropped or half-converted. The check is deliberately an
   allowlist rather than a blocklist: new dangerous schemes get invented
   faster than a blocklist can track them.
+
+## Emoji width (`ui.emoji_width`)
+
+If there's a gap of a few cells between the folder tabs and the clock, this
+is the setting. Set `ui.emoji_width = "separate"` and it closes.
+
+Emoji width is not a property of the string — the terminal decides it, and
+terminals disagree. Three kinds of sequence carry a *composition rule*, and a
+terminal that applies it and one that doesn't draw different widths:
+
+| Sequence | Tables say | Composed | Not composed |
+|---|---|---|---|
+| `❤️` — a narrow base plus U+FE0F | 2 | 2 | **1** (the selector is ignored, the text heart is drawn) |
+| `👨‍👩‍👧` — three emoji joined by U+200D | 2 | 2 | **6** (all three are drawn) |
+| `🇷🇸` — a regional-indicator pair | 2 | 2 | **4** (two letter-boxes) |
+| `👍🏻` — an emoji plus a skin tone | 2 | 2 | **4** (the swatch is drawn beside it) |
+
+So "narrow or wide" is the wrong question: the same terminal is narrower than
+the tables on the first row and wider on the other two. The question is
+whether it **composes**, which is what the values name:
+
+| `emoji_width` | Meaning |
+|---|---|
+| `"auto"` (default) | Don't assume. Measure with the tables, and where a row is being laid out against a budget, keep room for whichever rendering is wider. Never overflows; may leave a gap. |
+| `"composed"` | This terminal applies every rule. |
+| `"separate"` | This terminal applies none of them. |
+
+It is a declaration because it cannot be detected: no environment variable
+reports it, and the runtime query that would ask was removed for leaking its
+response bytes into the composer. There's no harm in trying the other value —
+set it, look at the top bar, keep whichever ends flush against the clock.
+
+The setting is process-wide and read once at startup, like the colour
+profile, so every panel that measures a string agrees about it.
+
+## Where files go
+
+Two directories under `[storage]`, and they are not the same thing:
+
+| Setting | Default | What it holds |
+|---|---|---|
+| `files_dir` | `~/.local/share/tele-tui/files` | The media **cache**. Downloads land here named by their Telegram file id, so a photo drawn twice is fetched once. Nothing here is meant to be found by hand. |
+| `download_dir` | `~/Downloads` | Where `s` **saves**: a copy under the sender's own filename, in the folder you'd look in. |
+
+`s` downloads into the cache (if it isn't there already) and then copies out
+of it. The copy:
+
+- **never overwrites** — a second `photo.jpg` is saved as `photo (2).jpg`,
+  with the suffix before the extension, so it's still a `.jpg`;
+- **stays in the directory** — the filename comes off the wire, so it's
+  reduced to its last path element before use: a document called
+  `../../.ssh/authorized_keys` is saved as `authorized_keys`, and a name that
+  reduces to nothing becomes `telegram-file`;
+- **leaves nothing behind if it fails** — no half-written file in Downloads
+  that looks like it worked.
+
+If `download_dir` is unset, `s` says so rather than guessing. Running
+`-migrate-config` fills it in with the `~/Downloads` literal.
 
 ## Persistence
 

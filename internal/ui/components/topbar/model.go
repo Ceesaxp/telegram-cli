@@ -149,40 +149,21 @@ func (m Model) View() string {
 	return cell.Fit(out, m.width)
 }
 
-// reservedWidth is how much room to keep for a label: its measured width,
-// plus one cell for every grapheme whose rendered width the Unicode tables
-// cannot be trusted to predict.
+// reservedWidth is how much room to keep for a folder label.
 //
-// Emoji width is not a property of the string. A terminal decides it, and
-// terminals disagree — a regional-indicator pair is one flag in some and two
-// letter-boxes in others, and a base character followed by U+FE0F is narrow
-// where the presentation selector is ignored and wide where it is not. This
-// row cannot ask, and there is no environment variable that answers.
+// It is [cell.Reserve] and nothing else. Emoji width is not a property of
+// the string — a terminal decides it, and terminals disagree — so unless the
+// user has declared how theirs draws composed sequences (ui.emoji_width),
+// this row reserves pessimistically rather than guessing: over-reserving
+// costs a wider gap or a tab dropped early, while under-reserving lets the
+// tabs run past their budget and overwrite the connection status beside
+// them, which is what put "nnected" on somebody's top bar.
 //
-// So it reserves pessimistically, in one direction only. Over-reserving costs
-// a wider gap or one tab dropped early — visible, harmless, and self-evident.
-// Under-reserving lets the tabs run past their budget and overwrite the
-// connection status beside them, which is what put "nnected" on somebody's
-// top bar. Given the choice between a gap and a corrupted row, this takes the
-// gap.
-//
-// Only sequences with a *composition* rule are counted: those are where a
-// terminal that composes and a terminal that does not produce different
-// widths. A lone wide glyph is measured correctly by everyone.
-func reservedWidth(label string) int {
-	extra := 0
-	for _, r := range label {
-		switch {
-		case r == 0xFE0F: // VARIATION SELECTOR-16, emoji presentation
-			extra++
-		case r == 0x200D: // ZERO WIDTH JOINER
-			extra++
-		case r >= 0x1F1E6 && r <= 0x1F1FF: // REGIONAL INDICATOR
-			extra++
-		}
-	}
-	return cell.Width(label) + extra
-}
+// The rule lives in cell because the top bar is not the only row that has to
+// know: a chat title, a rail entry and a message body all measure the same
+// emoji, and a declaration that only the top bar honoured would fix one row
+// and leave the rest sheared.
+func reservedWidth(label string) int { return cell.Reserve(label) }
 
 // TabAt returns the index of the folder tab drawn at column x, or -1.
 //

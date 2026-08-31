@@ -192,6 +192,40 @@ thinner than either convention implies.
       colour profile — four packages did not have one, which is why this ran
       four phases under a green suite. See
       [divergence 19](docs/tui-2.0.md#19-the-frame-owns-each-columns-surface-not-the-panels).
+- [x] **`r` and `e` typed into nothing, and `s` saved into the cache** —
+      two field reports, one of them four symptoms of a single cause.
+
+      Reply, edit, `i` and `ctrl+j` all appeared broken, and `ctrl+o` was
+      the only way to write anything: the composer's vi state was
+      initialised once and remembered, and a vi user always leaves through
+      normal mode, so it was always in normal mode by the time it was next
+      entered. Typing "abc" after `r` gave "bc" — the `a` was vi's append.
+      `SetFocused` now resets to insert on the unfocused→focused
+      transition, and only on that transition (divergence 36). Editing
+      somebody else's message is still refused, but says so now: a silent
+      refusal is indistinguishable from a key that does not work, which is
+      how `e` came to be reported as broken for a rule the client is right
+      to enforce.
+
+      `storage.download_dir` (default `~/Downloads`) is where `s` now puts
+      a copy, under the sender's filename, never overwriting and with the
+      name confined to that directory. `files_dir` stays the media cache
+      it always was; the two were one setting (divergence 37).
+
+- [x] **The three-cell gap after the clock** — `ui.emoji_width`, the
+      declaration divergence 26 said would be needed. `auto` (default) keeps
+      today's pessimism, `composed` and `separate` state what the terminal
+      does with U+FE0F, ZWJ sequences and flags. It is in `cell` rather than
+      `topbar` because every panel measures the same emoji.
+
+      Two bugs found writing it. "Narrow" and "wide" cannot name the modes:
+      a selector sequence is drawn *narrower* than the tables say and a
+      joined or paired one *wider*, by the same terminal. And the pessimism
+      was under-reserving — one cell per composition rune is 4 for a
+      three-person family that a non-composing terminal draws in 6, which is
+      exactly the corruption the reservation exists to prevent. The bound is
+      now the wider of the two renderings (divergence 38).
+
 - [ ] **Text cannot be selected with the mouse.** Raised in field use. The
       cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
       the terminal hands every drag to the application instead of running its
@@ -561,12 +595,12 @@ the primary checkout stays free for fixes against a working client.
       been given, so ssh gets an honest "no clipboard tool found" rather than
       a silent write to the user's local clipboard. Divergence 21.
 
-- [ ] **Top bar placeholders** ← **next**. `mtproto 2.0` and `devices 1` are
-      literal strings with no data behind them (decision 7). They are the
-      last thing on screen that states something the client does not know,
-      and the design is not finishable while they are there: wire them to the
-      connection state, or drop the two cells and re-measure the shrink
-      order against the goldens.
+- [x] **Top bar placeholders** — discharged. `mtproto 2.0` and `devices 1`
+      were literal strings with no data behind them (decision 7): the last
+      thing on screen that stated something the client did not know. The
+      device count is wired to `account.getAuthorizations`, and the transport
+      cell is deleted: gotd speaks MTProto 2.0 and nothing else, so the cell
+      could only ever have shown one string. See D7 above.
 
 - [ ] **Byte equality against the goldens.** Only width is asserted today.
       The fixtures are renders of a *finished* TUI 2.0, so string equality

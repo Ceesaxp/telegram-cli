@@ -1143,6 +1143,112 @@ value that was once shipped as a default was never chosen, so `-migrate-config`
 replaces it rather than preserving it. The mechanism was already there; it
 just had not been told about this field.
 
+### 36. The composer remembered a mode across the door
+
+`r`, `e` and `i` all appeared not to work: the composer took focus, and then
+the first letters typed into it went missing — pressing `r` and typing "abc"
+left a draft reading "bc". `ctrl+j` did not insert a newline. The external
+editor, `ctrl+o`, was the only way to write anything, which is what the field
+report said.
+
+One cause. The composer's vi state was initialised once and then remembered,
+and a vi user always *leaves* the composer through normal mode — one Escape
+to leave insert, a second to give the panel back (decision 3's Escape ladder).
+So the composer was always in normal mode by the time it was next entered.
+`r`, `e` and `i` each landed there, and the first keystrokes were read as
+commands: the `a` of "abc" was vi's append, which is why it vanished and the
+"bc" survived. `ctrl+j` was refused for the same reason and deliberately —
+`isNewlineChord` is insert-mode-only, so the hint line and the behaviour
+agree. `ctrl+o` worked because it is handled before the modal dispatch.
+
+`SetFocused` now resets to insert on the unfocused→focused transition, and
+only on that transition: focus is re-asserted on resizes and after overlays
+close, and a reset there would drop a user out of normal mode mid-command.
+Escape still reaches normal mode from inside — the fix is about the way in,
+not a removal of the mode.
+
+### 37. Saving is a copy out of the cache, not the download
+
+`s` reported `💾 Saved photo → ~/.local/share/tele-tui/files/1234567890` and
+stopped. That is the media *cache*: it exists so a photo drawn twice is
+fetched once, and it names files by their server-side id. Nothing had been
+saved in the sense the key implies — there was no directory a person would
+look in, and no filename they would recognise.
+
+`storage.download_dir` (default `~/Downloads`, filled in by
+`-migrate-config`) is now where `s` puts a copy, under the sender's own
+filename. Three rules, because a save is one of the few things this client
+does that touches a user's files:
+
+- **Never overwrite.** `photo.jpg` is what every phone camera calls its
+  output, so the collision is the common case; the copy becomes
+  `photo (2).jpg`, with the suffix before the extension where a file manager
+  puts it, and `O_EXCL` so the name cannot be taken between the check and the
+  create.
+- **Confine the name.** It comes off the wire. A document called
+  `../../.ssh/authorized_keys` is saved as `authorized_keys`; a name that
+  reduces to nothing, `.` or `..` becomes `telegram-file`.
+- **Leave nothing behind on failure.** A half-written file in Downloads is
+  worse than no file, because it looks like it worked.
+
+`files_dir` keeps its meaning and its default. The two were one setting, and
+a user who set `files_dir` expecting the second one got the first.
+
+### 38. Divergence 26 is a declaration, not a measurement
+
+The residual divergence 26 recorded — "a terminal that draws a glyph at a
+width no table predicts will still shear it, and the only real fix is a
+terminal that can be asked" — arrived as a three-cell gap between the folder
+tabs and the clock. The clock is right-aligned by arithmetic, so a row laid
+out wider than it is drawn ends short of the edge.
+
+`ui.emoji_width` is that fix, in the only form available: the user declares
+what the client cannot detect. `auto` (the default) keeps the pessimism;
+`composed` says every composition rule is applied; `separate` says none is.
+
+Two things were got wrong on the way in, both by the same mistake — treating
+this as one axis when it is not.
+
+**"Narrow" and "wide" do not describe it.** The three risky classes fail in
+opposite directions. A narrow base plus U+FE0F measures 2 and is drawn 1 by a
+terminal that ignores the selector — the tables *over*-measure, and the row
+ends short. A ZWJ sequence measures 2 and is drawn 6 by a terminal that
+composes nothing; a regional-indicator pair measures 2 and is drawn 4. Those
+*under*-measure, and the row runs over what is beside it. The same terminal
+is narrower than the tables on the first and wider on the other two, so the
+axis is composition, not width, and the values are named for it.
+
+**The pessimism was itself under-reserving.** The rule was "a cell for every
+rune carrying a composition rule", which is one cell per ZWJ — so a
+three-person family reserved 4 and a terminal drawing the parts puts it in 6.
+That is the failure the reservation exists to prevent, in the code meant to
+prevent it, and it survived because the test asked "is a risky label reserved
+wider than it measures?" rather than "is it reserved wide enough?". The bound
+is now the wider of the two renderings, which is tight and has no heuristic
+in it — and it *narrows* the reservation for a selector sequence, which can
+only ever be drawn narrower than the tables say.
+
+The rule lives in `cell.Reserve` rather than in the top bar, and the mode in
+`cell` rather than in `topbar`, because a chat title, a rail entry and a
+message body all measure the same emoji. A declaration only the top bar
+honoured would close the gap on one row and leave the rest sheared.
+
+Three more things the mutation pass found, all of them the same shape — a
+measurement that was right about emoji and wrong about everything else:
+
+- **A skin tone is a composition rule too.** `👍🏻` is a hand plus U+1F3FB, and
+  a terminal that does not tint the hand draws the swatch beside it in two
+  more cells. It was not in the set, so `separate` under-measured it.
+- **A grapheme cluster is not a composition.** Building the width up cluster
+  by cluster made `नमस्ते` four cells where the tables say three: Devanagari
+  and Tamil join a base to a spacing mark, and no terminal draws those apart.
+  The width is now the tables' answer plus a correction for each composed
+  cluster, so text with no composition rule is measured by exactly the same
+  code as before — structurally, not by having remembered to.
+- **A URI is not text.** Escapes are stripped before the walk, because an
+  OSC 8 opener holding a link to a path with a flag in it would otherwise
+  have two cells added for a sequence the terminal never draws.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

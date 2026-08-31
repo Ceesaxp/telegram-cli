@@ -179,6 +179,10 @@ type Model struct {
 	// newest visible message.
 	cursorID int64
 
+	// downloadDir is where s copies a file to. Empty means saving is
+	// refused rather than guessed at — see saveInto.
+	downloadDir string
+
 	// pendingCount is the vi count prefix typed but not yet spent: the 9
 	// in "9{". Zero means none. See count.go.
 	pendingCount int
@@ -331,6 +335,12 @@ func hyperlinksEnabled(policy string) bool {
 	default:
 		return theme.SupportsHyperlinks()
 	}
+}
+
+// ApplyStorage takes the [storage] settings this panel needs: where `s`
+// saves to. The media cache is the client's business, not this panel's.
+func (m *Model) ApplyStorage(cfg config.StorageConfig) {
+	m.downloadDir = cfg.DownloadDir
 }
 
 // ApplyMedia applies [media] config: image protocol and bubble size,
@@ -1967,7 +1977,13 @@ func (m Model) messageAction(action string) tea.Cmd {
 		return nil
 	}
 	if action == "edit" && !isOwnMessage(msg, m.myUserId) {
-		return nil
+		// Telegram allows editing only your own messages, and a refusal
+		// that says nothing is indistinguishable from a key that does not
+		// work — which is how "e is not working either" gets reported for
+		// a rule the client is right to enforce.
+		return func() tea.Msg {
+			return MediaPlayMsg{Status: "error", Info: "⚠ you can only edit your own messages"}
+		}
 	}
 	return func() tea.Msg {
 		return MessageActionMsg{Action: action, ChatId: m.chatID, MessageId: msg.ID}
@@ -2060,7 +2076,11 @@ func (m Model) downloadFile() tea.Cmd {
 			key, name = fileKey(c.Document.File), c.Document.FileName
 		}
 	case *telegram.MessagePhoto:
-		key, name = fileKey(bestPhotoSizeFile(c.Photo)), "photo"
+		// Photos carry no filename over the wire, so one is made from the
+		// message id — unique, sortable, and recognisable as coming from
+		// here, which "photo" was not.
+		key, name = fileKey(bestPhotoSizeFile(c.Photo)),
+			fmt.Sprintf("telegram-photo-%d.jpg", msg.ID)
 	case *telegram.MessageVideo:
 		if c.Video != nil {
 			key, name = fileKey(c.Video.File), c.Video.FileName
@@ -2071,7 +2091,8 @@ func (m Model) downloadFile() tea.Cmd {
 		}
 	case *telegram.MessageVoiceNote:
 		if c.VoiceNote != nil {
-			key, name = fileKey(c.VoiceNote.File), "voice"
+			key, name = fileKey(c.VoiceNote.File),
+				fmt.Sprintf("telegram-voice-%d.ogg", msg.ID)
 		}
 	default:
 		return nil
@@ -2080,16 +2101,23 @@ func (m Model) downloadFile() tea.Cmd {
 		return nil
 	}
 
-	tg := m.tg
+	tg, dir := m.tg, m.downloadDir
 	return func() tea.Msg {
 		if tg == nil {
 			return MediaPlayMsg{Status: "error", Info: "not connected"}
 		}
 		file, err := tg.DownloadFileSync(key)
 		if err != nil {
-			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download failed: %v", err)}
+			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("⚠ download failed: %v", err)}
 		}
-		return MediaPlayMsg{Status: "downloaded", Info: fmt.Sprintf("💾 Saved %s → %s", name, file.Path)}
+		// The download landed in the CACHE, under a server-side id. Saving
+		// is the copy out of it, under a name the sender chose and into a
+		// directory the reader will look in.
+		saved, err := saveInto(dir, name, file.Path)
+		if err != nil {
+			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("⚠ save failed: %v", err)}
+		}
+		return MediaPlayMsg{Status: "saved", Info: "💾 saved to " + saved}
 	}
 }
 

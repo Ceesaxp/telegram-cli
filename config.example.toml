@@ -10,7 +10,12 @@ phone = ""
 # Session and file storage paths
 [storage]
 session_file = "~/.local/share/tele-tui/session.json"
+# The media CACHE: where downloads land so a photo drawn twice is fetched
+# once. This is not where "save this" saves to — that is download_dir.
 files_dir = "~/.local/share/tele-tui/files"
+
+# Where 's' puts a copy, under the sender's own filename.
+download_dir = "~/Downloads"
 # state_file = "~/.local/share/tele-tui/state.db"  # update/peer state DB (default: state.db next to session_file)
 
 # UI preferences
@@ -47,6 +52,24 @@ rail = false
 # gets through with allow-passthrough on, which is off by default and cannot
 # be detected from the environment. Set "always" if you have turned it on.
 hyperlinks = "auto"
+
+# How this terminal draws emoji sequences that have a composition rule —
+# a base plus U+FE0F ("❤️"), a ZWJ sequence ("👨‍👩‍👧"), a flag ("🇷🇸"):
+#
+#   "auto"     — don't assume; keep room for whichever rendering is wider
+#   "composed" — it applies every rule: one glyph, two cells
+#   "separate" — it applies none: the selector is ignored and the base drawn
+#                as text, and joined or paired sequences are drawn as parts
+#
+# It is a declaration because it cannot be detected. The width is the
+# terminal's decision, no environment variable reports it, and the runtime
+# query that would ask was removed for leaking its answer into the composer.
+#
+# Symptom of "composed" on a terminal that is actually "separate": a gap of
+# a few cells between the folder tabs and the clock, because the row was
+# laid out wider than it drew. There is no harm in trying the other value —
+# set it, look at the top bar, keep whichever ends flush.
+emoji_width = "auto"
 
 # Line editing in the composer: "emacs" (readline chords), "vi" (modal),
 # or "auto" to follow $VISUAL/$EDITOR.

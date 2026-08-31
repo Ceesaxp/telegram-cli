@@ -26,7 +26,17 @@ type TelegramConfig struct {
 
 type StorageConfig struct {
 	SessionFile string `toml:"session_file"`
-	FilesDir    string `toml:"files_dir"`
+
+	// FilesDir is the media CACHE: where downloads land so a photo drawn
+	// twice is fetched once. It is not where "save this" saves to — see
+	// DownloadDir — and a user who set files_dir expecting the latter got
+	// a cache directory full of files with server-side names.
+	FilesDir string `toml:"files_dir"`
+
+	// DownloadDir is where `s` puts a copy, under the sender's own
+	// filename. Defaults to the platform download folder, because that is
+	// where a person looks for a thing they just saved.
+	DownloadDir string `toml:"download_dir"`
 	// StateFile is the bbolt database holding the update-sequence state
 	// (pts/qts/seq/date) and the peer access-hash cache, so updates that
 	// arrived while the app was offline can be recovered on the next start.
@@ -50,6 +60,12 @@ type UIConfig struct {
 	// [HyperlinksAuto] (the default), [HyperlinksNever], or
 	// [HyperlinksAlways].
 	Hyperlinks string `toml:"hyperlinks"`
+
+	// EmojiWidth declares how this terminal draws emoji sequences that
+	// have a composition rule: [EmojiWidthAuto] (the default),
+	// [EmojiWidthComposed], or [EmojiWidthSeparate]. It is a declaration
+	// because it cannot be detected — see internal/ui/cell for why.
+	EmojiWidth string `toml:"emoji_width"`
 
 	// Rail shows the right-hand context rail — pinned message, members,
 	// shared files — on a terminal wide enough for it. Off by default: it
@@ -83,6 +99,7 @@ type UIConfig struct {
 const (
 	DefaultSessionFile = "~/.local/share/tele-tui/session.json"
 	DefaultFilesDir    = "~/.local/share/tele-tui/files"
+	DefaultDownloadDir = "~/Downloads"
 )
 
 // Inline-image policies for [UIConfig.InlineImages].
@@ -116,6 +133,41 @@ const (
 	// which cannot be detected from the environment.
 	HyperlinksAlways = "always"
 )
+
+// Emoji-width declarations for [UIConfig.EmojiWidth].
+//
+// This is one setting rather than two because the terminals that get it
+// wrong get it wrong consistently: one that honours U+FE0F also composes
+// ZWJ sequences and flags. What it cannot be is inferred — the widths differ
+// in opposite directions, so no single "narrow" or "wide" describes them.
+const (
+	// EmojiWidthAuto measures with the Unicode tables and reserves a cell
+	// on top for every composition rule, so an over-reservation shows as a
+	// gap rather than as a row overwriting its neighbour. The default, and
+	// the only value that is a guess.
+	EmojiWidthAuto = "auto"
+	// EmojiWidthComposed says this terminal applies every composition
+	// rule. The tables are then right and nothing is reserved on top —
+	// which is what closes the gap between the folder tabs and the clock.
+	EmojiWidthComposed = "composed"
+	// EmojiWidthSeparate says it applies none of them: U+FE0F is ignored
+	// and joined or paired sequences are drawn as their parts.
+	EmojiWidthSeparate = "separate"
+)
+
+// ResolveEmojiWidth normalises [UIConfig.EmojiWidth], falling back to the
+// default for an empty or unrecognised value — a typo here should cost the
+// user the setting, not the client.
+func ResolveEmojiWidth(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case EmojiWidthComposed:
+		return EmojiWidthComposed
+	case EmojiWidthSeparate:
+		return EmojiWidthSeparate
+	default:
+		return EmojiWidthAuto
+	}
+}
 
 // ResolveHyperlinks normalises [UIConfig.Hyperlinks] to one of the three
 // policies, treating anything unrecognised as the default rather than
@@ -431,6 +483,7 @@ func Load() (*Config, error) {
 
 	cfg.Storage.SessionFile = expandPath(cfg.Storage.SessionFile)
 	cfg.Storage.FilesDir = expandPath(cfg.Storage.FilesDir)
+	cfg.Storage.DownloadDir = expandPath(cfg.Storage.DownloadDir)
 	cfg.Storage.StateFile = expandPath(cfg.Storage.StateFile)
 
 	return cfg, nil
@@ -441,6 +494,7 @@ func defaultConfig() *Config {
 		Storage: StorageConfig{
 			SessionFile: expandPath(DefaultSessionFile),
 			FilesDir:    expandPath(DefaultFilesDir),
+			DownloadDir: expandPath(DefaultDownloadDir),
 		},
 		UI: UIConfig{
 			ComposeEditing:  ComposeEditingAuto,
@@ -449,6 +503,7 @@ func defaultConfig() *Config {
 			DateFormat:      "2006-01-02",
 			InlineImages:    InlineImagesOnOpen,
 			Hyperlinks:      HyperlinksAuto,
+			EmojiWidth:      EmojiWidthAuto,
 			Rail:            false,
 			ParseMarkdown:   false,
 		},
