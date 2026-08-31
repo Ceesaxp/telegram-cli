@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
@@ -98,6 +99,11 @@ func TestRenderBodyDoesNotReflowArt(t *testing.T) {
 		"ROW2:" + strings.Repeat("#", rowWidth-5),
 		"ROW3:" + strings.Repeat("#", rowWidth-5),
 	}
+
+	// Art is drawn inline only under "always" now: "on_open" means the
+	// picture appears in the overlay that enter opens, and never in the
+	// history. See renderContent.
+	r.SetInlineImages(config.InlineImagesAlways)
 
 	const fileID = "fake-photo-file"
 	// Prime the image cache directly so renderPhoto takes the cache-hit
