@@ -168,13 +168,36 @@ thirteen decisions are resolved. Handoff archived in
 
 **State of play.** The shape of TUI 2.0 is on screen. Foundations, the
 borderless frame with its top and hint bars, the two-line chat rows, the
-command palette, and the thread grid have all landed; bubbles, avatars,
-Glamour and the status bar are gone with them.
+command palette, the thread grid, the content blocks, the composer and the
+context rail have all landed; bubbles, avatars, Glamour, the status bar and
+the group-info overlay are gone with them.
 
 What is left is the media overlay and the remaining chat-view actions
 (`y`, `space`, `M`), plus the four content blocks whose data the client does
 not yet map. Until those land, the goldens are asserted on width only — see
 "Byte equality against the goldens" below.
+
+- [x] **Panel surfaces are painted** — every panel wrapped its assembled row
+      in a background style, which a styled span's own `ESC[0m` cleared, so
+      the surface died at the first span: chat rows with an unpainted title
+      line, a selected-message band one cell wide, and the terminal's own
+      background showing through every row a panel did not draw. `cell.Fill`
+      reopens the background after each reset and `frame.Column.Surface`
+      moves the painting to the one place that can cover the padding rows.
+      Asserted with `cell.PaintedWidth`, which is worthless without a pinned
+      colour profile — four packages did not have one, which is why this ran
+      four phases under a green suite. See
+      [divergence 19](docs/tui-2.0.md#19-the-frame-owns-each-columns-surface-not-the-panels).
+- [ ] **Six components still render from the legacy `theme.Theme`** —
+      `palette`, `help`, `search`, `dialog`, `auth` and `contacts`, plus the
+      `widgets` primitives (`List`, `Tabs`, `TextArea`, `Spinner`) that the
+      chat list and chat view borrow for scrolling and text entry. They draw
+      from the pre-2.0 hard-coded 256-colour set — bright blue `39`, green
+      `42` — rather than from `theme.Roles`, so every overlay is a different
+      palette from the frame under it. The semantic roles exist and are
+      complete; this is call-site conversion, not design work. Not a phase 8
+      blocker, but it is the last place TUI 2.0 and the legacy design are
+      both on screen at once.
 
 Implementation happens in a **separate worktree**, not the primary checkout —
 the redesign spans several phases that are not individually shippable, and
