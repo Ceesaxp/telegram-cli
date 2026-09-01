@@ -172,11 +172,12 @@ command palette, the thread grid, the content blocks, the composer and the
 context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
-Every phase in the plan has now shipped, and both release blockers are
-discharged. What is left before the design can be called complete is the four
-content blocks whose data this client does not map; until they land, the
-goldens are asserted on width only — see "Byte equality against the goldens"
-below.
+Every phase in the plan has now shipped, both release blockers are
+discharged, and the four content blocks that were waiting on Telegram data
+are mapped and drawn. What is left is byte equality against the goldens: the
+blocks render, but reconciling them with the fixture cell for cell is a pass
+of its own — see "Byte equality against the goldens" below. The goldens stay
+asserted on width until it lands.
 
 Field feedback has its own item below: the compose line's editing keymaps are
 thinner than either convention implies.
@@ -544,13 +545,47 @@ the primary checkout stays free for fixes against a working client.
       body column, while drawing the code block and media card in the same
       fixture at 24. Recorded as divergence 13.
 
-- [ ] **Content that still has no data source.** Each is a mapping change in
-      `internal/telegram`, not a renderer (divergence 16):
-      - reactions — `Message.Reactions` is not mapped
-      - poll options, counts and closing time — `Poll` carries the question
-      - link previews — no web-page type at all
-      - voice waveform — `DocumentAttributeAudio.Waveform` is not mapped
-      - voice transcript — a premium RPC this client does not make
+- [x] **The four content blocks** — reactions, poll results, link previews
+      and a voice note's waveform, mapped in `internal/telegram/blocks.go`
+      and drawn by `internal/render/{poll,preview,reactions}.go` plus the
+      waveform on the media card. See divergences 16, 16a and 16b.
+
+      Two things the mapping had to get right. **Tallies are keyed, not
+      zipped**: `PollResults.Results` arrives in its own order, addressed by
+      each answer's opaque option bytes, and is empty entirely for a poll
+      that hides its results — pairing it with the answers by position would
+      attach the right numbers to the wrong answers in exactly the case
+      nobody checks. **Percentages are shares of different things in the
+      two kinds of poll**: a single-choice poll's answers partition its
+      voters, so its shares are of the votes cast and apportioned by
+      largest remainder to sum to exactly 100 — three equal thirds round to
+      33 each and a reader adds them up. A multiple-choice poll's do not
+      partition anything, so its shares are of the VOTERS and are not meant
+      to sum to anything; three people who each pick both answers have
+      chosen each unanimously, and 50% there is the opposite of what
+      happened. `TotalVoterCount` counts people for the same reason.
+
+      Reactions and poll votes arrive as their own updates rather than as
+      edits, and both are routed through the refetch an edit already takes —
+      the tallies come back attached to the message they belong to, so
+      nothing has to merge a partial update into a message it cannot see.
+      `updateMessagePoll`'s peer is optional; without one there is no chat to
+      refetch from and the update is dropped rather than aimed at chat zero.
+
+      Reaction chips are budgeted with `cell.Reserve`, not `cell.Width` — an
+      emoji is the one string the tables and the terminal disagree about, and
+      a row budgeted on the smaller of the two runs off the pane on the
+      terminal that draws the larger.
+
+      A voice note's **transcript** is still absent: a Telegram premium RPC
+      this client does not make.
+
+      Review found two things. The multiple-choice denominator above, and
+      three blocks drawing past a one-cell body column — the preview's rule,
+      the code frame's four-cell guard, and prose reaching `cell.WrapLines`,
+      which emits a rune wider than the column whole. Each has a fallback
+      form now and the whole-body invariant test sweeps from one cell rather
+      than fourteen, which is the gap that let them through. Divergence 16c.
 
 - [x] **Composer and app modes** — the mode badge, the inline row, the
       expanded Ctrl+P form, per-chat drafts, and the decision 10 config
@@ -642,10 +677,14 @@ the primary checkout stays free for fixes against a working client.
       cell is deleted: gotd speaks MTProto 2.0 and nothing else, so the cell
       could only ever have shown one string. See D7 above.
 
-- [ ] **Byte equality against the goldens.** Only width is asserted today.
-      The fixtures are renders of a *finished* TUI 2.0, so string equality
-      cannot pass until the blocks that are waiting on data land, and the
-      media overlay with them. That separation is deliberate and is why
+- [ ] **Byte equality against the goldens.** Only width is asserted
+      today. The four content blocks now render, so the last structural
+      blocker is the media overlay; what remains beyond it is reconciliation
+      rather than absence. Known differences, each deliberate and recorded in
+      divergences 16a and 16b: the poll's percentage field is four cells
+      wide rather than three (the gallery never draws a 100% option), a voice
+      note's row carries its file size, and neither a transcript affordance
+      nor `transcript: t` exists to draw. That separation is why
       `golden.Compare` reports width and content as different `DiffKind`s.
 
 ### Documentation debt that comes due when code ships

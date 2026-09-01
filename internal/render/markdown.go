@@ -18,21 +18,26 @@ import (
 //   - art is pre-rendered raster or block art. It is a grid of cells at
 //     fixed column positions and is only ever CROPPED, never wrapped: a
 //     word wrapper run over it reflows the rows into noise.
-//   - card is a metadata card, already exact-width.
+//   - blocks are already-laid-out lines drawn ABOVE the text: a metadata
+//     card, or a poll's question, options and footer.
 //   - text is the message body or an attachment's caption, with its
 //     entities intact, so blocks and inline spans can be rendered from it.
 //   - note is plain text with no entities: service events, and the honest
 //     placeholders for content this client cannot render.
+//   - trailer is already-laid-out lines drawn BELOW the text: a link
+//     preview, which is a second reading of something the text already
+//     says and so cannot precede it.
 type renderedContent struct {
-	art  string
-	card []string
-	text *telegram.FormattedText
-	note string
+	art     string
+	blocks  []string
+	text    *telegram.FormattedText
+	note    string
+	trailer []string
 }
 
 func (rc renderedContent) empty() bool {
-	return rc.art == "" && len(rc.card) == 0 && rc.note == "" &&
-		(rc.text == nil || rc.text.Text == "")
+	return rc.art == "" && len(rc.blocks) == 0 && rc.note == "" &&
+		len(rc.trailer) == 0 && (rc.text == nil || rc.text.Text == "")
 }
 
 // plain wraps a note in a FormattedText so it can go through the same
@@ -188,7 +193,7 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 			out = append(out, cell.Clamp(line, width))
 		}
 	}
-	out = append(out, rc.card...)
+	out = append(out, rc.blocks...)
 	if rc.note != "" {
 		// A note is this client's own words about the message — "poll ·",
 		// "[unsupported]" — so it carries no entities and nothing to link.
@@ -200,6 +205,13 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 			links:  r.hyperlinks,
 		})...)
 	}
+	out = append(out, rc.trailer...)
+
+	// Reactions belong to the MESSAGE, not to its content: a photo and a
+	// poll are reacted to the same way, so they are appended once here
+	// rather than by every branch of renderContent.
+	out = append(out, renderReactions(msg.Reactions, r.roles, width)...)
+
 	if len(out) == 0 {
 		return []string{""}
 	}
@@ -262,16 +274,20 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 				return rc
 			}
 		}
-		rc.card = card.render(r.roles, width)
+		rc.blocks = card.render(r.roles, width)
 		return rc
 	}
 
 	switch c := content.(type) {
 	case *telegram.MessageText:
+		preview := renderWebPage(c.WebPage, r.roles, width)
 		if c.Text == nil || c.Text.Text == "" {
-			return renderedContent{note: "[empty]"}
+			if len(preview) == 0 {
+				return renderedContent{note: "[empty]"}
+			}
+			return renderedContent{trailer: preview}
 		}
-		return renderedContent{text: c.Text}
+		return renderedContent{text: c.Text, trailer: preview}
 
 	case *telegram.MessageSticker:
 		return renderedContent{note: c.Sticker.Emoji + " sticker"}
@@ -285,11 +301,10 @@ func (r *MessageRenderer) renderContent(content telegram.MessageContent, s *stor
 			"contact " + c.Contact.FirstName + " " + c.Contact.LastName)}
 
 	case *telegram.MessagePoll:
-		// The question and nothing else. Telegram sends options, vote
-		// counts and the closing time; the domain type carries none of
-		// them, and a poll drawn with empty bars would state a result.
-		// Recorded as a divergence — the goldens draw the full poll.
-		return renderedContent{note: "poll · " + c.Poll.Question}
+		if c.Poll == nil {
+			return renderedContent{note: "[empty poll]"}
+		}
+		return renderedContent{blocks: renderPoll(c.Poll, r.roles, width)}
 
 	case *telegram.MessagePinMessage:
 		return renderedContent{note: "pinned a message"}

@@ -24,7 +24,24 @@ type mediaCard struct {
 	name    string   // filename, title, or a description of the kind
 	facts   []string // dimensions, duration, size, extension
 	actions string   // the keys that do something to this attachment
+
+	// wave is a voice note's amplitudes, 0–31 each, at whatever sample
+	// count the sender's client computed. A card that has them is drawn on
+	// ONE line at any width: the bar is the card's subject, and a frame
+	// around it would say less than the bar already does.
+	wave []byte
 }
+
+// waveformCells is the width of a voice note's amplitude bar, from the
+// design record: "Voice notes show a 24-cell waveform".
+const waveformCells = 24
+
+// waveformBlocks are the eight heights an amplitude can be drawn at, from
+// quietest to loudest.
+const waveformBlocks = "▁▂▃▄▅▆▇█"
+
+// waveformScale is the range Telegram's five-bit samples arrive in.
+const waveformScale = 31
 
 // cardBoxWidth is the badge box, "┌──────┐". Fixed, so the filenames of
 // consecutive attachments line up down the thread.
@@ -113,12 +130,12 @@ func mediaCardFor(content telegram.MessageContent) (mediaCard, bool) {
 		return card, true
 
 	case *telegram.MessageVoiceNote:
-		// No waveform. The design record draws a 24-cell amplitude bar, and
-		// there is no amplitude data on the domain type — a bar drawn from
-		// nothing would be the one part of this card that looks like
-		// measurement and is not. Duration is the fact that exists.
-		card := mediaCard{badge: "AUD", glyph: "♪", name: "voice note", actions: "enter play · s save"}
+		// The name is a fallback, not a label: a voice note WITH amplitudes
+		// is drawn as its waveform, and "voice note" is what is left to say
+		// about one whose sender's client computed none.
+		card := mediaCard{badge: "AUD", glyph: "▶", name: "voice note", actions: "enter play · s save"}
 		if c.VoiceNote != nil {
+			card.wave = c.VoiceNote.Waveform
 			card.facts = append(card.facts, fmtDur(c.VoiceNote.Duration))
 			if c.VoiceNote.File != nil && c.VoiceNote.File.Size > 0 {
 				card.facts = append(card.facts, fmtSize(c.VoiceNote.File.Size))
@@ -144,7 +161,7 @@ func badgeColour(roles theme.Roles) lipgloss.Color { return roles.Amber }
 // render draws the card at a body width, framed when there is room for it
 // and on one line when there is not.
 func (c mediaCard) render(roles theme.Roles, width int) []string {
-	if width < minCardWidth {
+	if len(c.wave) > 0 || width < minCardWidth {
 		return []string{c.collapsed(roles, width)}
 	}
 	return c.framed(roles, width)
@@ -204,7 +221,12 @@ func (c mediaCard) collapsed(roles theme.Roles, width int) string {
 		nameW = 1
 	}
 
-	out := badge.Render(c.glyph) + " " + name.Render(cell.Truncate(c.name, nameW))
+	subject := cell.Truncate(c.name, nameW)
+	if len(c.wave) > 0 {
+		subject = waveformBar(c.wave, min(waveformCells, nameW))
+	}
+
+	out := badge.Render(c.glyph) + " " + name.Render(subject)
 	if tail != "" {
 		out += "  " + facts.Render(tail)
 	}
@@ -224,4 +246,48 @@ func extensionOf(filename string) string {
 		return ""
 	}
 	return ext
+}
+
+// waveformBar draws amplitudes as a bar of block characters, resampled to
+// exactly width cells.
+//
+// Each cell takes the LOUDEST sample it covers, not their mean. A voice
+// note is a few hundred samples squeezed into two dozen cells, and
+// averaging flattens speech into an even grey band — the peaks are the part
+// that makes the bar recognisable as somebody talking.
+func waveformBar(samples []byte, width int) string {
+	if len(samples) == 0 || width < 1 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i := range width {
+		lo := i * len(samples) / width
+		hi := (i + 1) * len(samples) / width
+		if hi <= lo {
+			// More cells than samples: this one stretches its neighbour
+			// rather than dropping to silence.
+			hi = lo + 1
+		}
+
+		loudest := byte(0)
+		for _, s := range samples[lo:min(hi, len(samples))] {
+			loudest = max(loudest, s)
+		}
+		b.WriteString(waveformBlock(loudest))
+	}
+	return b.String()
+}
+
+// waveformBlock is the block character for one amplitude.
+//
+// A zero sample still draws the shortest block rather than a space. The bar
+// is a shape with a baseline, and a gap in the middle of it reads as the
+// end of the bar instead of as a quiet moment.
+func waveformBlock(sample byte) string {
+	if sample > waveformScale {
+		sample = waveformScale
+	}
+	blocks := []rune(waveformBlocks)
+	return string(blocks[int(sample)*(len(blocks)-1)/waveformScale])
 }

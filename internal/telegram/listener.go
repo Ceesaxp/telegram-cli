@@ -52,6 +52,27 @@ func (l *Listener) registerHandlers() {
 		l.onEdit(u.Message)
 		return nil
 	})
+	// A reaction or a poll vote changes a message that is already on
+	// screen, and both arrive as their own update rather than as an edit.
+	// Route them through the same refetch an edit takes: the tallies come
+	// back attached to the message they belong to, so nothing here has to
+	// merge a partial update into a message it cannot see.
+	d.OnMessageReactions(func(ctx context.Context, e tg.Entities, u *tg.UpdateMessageReactions) error {
+		if edited, ok := messageEdited(u.Peer, u.MsgID); ok {
+			c.send(edited)
+		}
+		return nil
+	})
+	d.OnMessagePoll(func(ctx context.Context, e tg.Entities, u *tg.UpdateMessagePoll) error {
+		// The peer is OPTIONAL on this update: Telegram sends the poll's
+		// new tally to everyone who has it open, without saying which chat
+		// each of them is looking at.
+		peer, _ := u.GetPeer()
+		if edited, ok := messageEdited(peer, u.MsgID); ok {
+			c.send(edited)
+		}
+		return nil
+	})
 	d.OnDeleteMessages(func(ctx context.Context, e tg.Entities, u *tg.UpdateDeleteMessages) error {
 		c.send(MessageDeletedMsg{
 			ChatId:     0, // the update carries no peer
@@ -172,6 +193,23 @@ func (l *Listener) onEdit(mc tg.MessageClass) {
 		return
 	}
 	l.client.send(MessageEditedMsg{ChatId: m.ChatID, MessageId: m.ID})
+}
+
+// messageEdited is the refetch request for a message an update touched,
+// and whether the update named a chat to fetch it from.
+//
+// An update with no usable peer is DROPPED rather than sent with a chat ID
+// of zero. Zero is not a chat, and the one message type in this package
+// that uses it means something specific by it — MessageDeletedMsg reads a
+// zero chat as "every chat" — so a refetch request that carries one is a
+// request aimed at nothing and one rename away from being aimed at
+// everything. The tally arrives with the next edit or the next open.
+func messageEdited(peer tg.PeerClass, msgID int) (MessageEditedMsg, bool) {
+	chatID := chatIDFromPeer(peer)
+	if chatID == 0 || msgID == 0 {
+		return MessageEditedMsg{}, false
+	}
+	return MessageEditedMsg{ChatId: chatID, MessageId: int64(msgID)}, true
 }
 
 func intsToInt64s(ids []int) []int64 {
