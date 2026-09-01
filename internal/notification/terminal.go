@@ -97,26 +97,50 @@ func detectTerminal() TerminalSupport {
 	return TerminalNone
 }
 
-// sanitize strips what would break the sequence or the screen.
+// sanitizeText strips what has no business in any notification.
 //
-// A message body is attacker-controlled text: it arrives from whoever sent
-// it. It is about to be placed inside an escape sequence whose fields are
-// separated by semicolons and terminated by ST, so a body containing either
-// would end the sequence early and leave the remainder to be drawn as text —
-// or, worse, to be read as a sequence of its own. Control characters go for
-// the same reason.
-func sanitize(s string) string {
+// A message body is attacker-controlled text — it arrives from whoever sent
+// it — so the escapes come out whichever way it is going to be delivered.
+// Newlines and tabs stay: a desktop notifier renders a multi-line body, and
+// flattening one costs the reader a line break they were sent.
+func sanitizeText(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
 		switch {
-		case r == ';':
-			b.WriteRune(',')
 		case r == '\n', r == '\t':
-			b.WriteRune(' ')
+			b.WriteRune(r)
 		case r < 0x20, r == 0x7f:
 			// Dropped, not replaced: ESC, BEL and the rest have no
 			// business in a notification and no useful stand-in.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// sanitizeSequence is sanitizeText plus what an OSC field cannot hold.
+//
+// The text is about to be placed inside an escape sequence whose fields are
+// separated by semicolons and terminated by ST, so a body containing either
+// would end the sequence early and leave the remainder to be drawn — or,
+// worse, read as a sequence of its own.
+//
+// This is deliberately NOT applied on the way to notify-send or osascript,
+// which take their arguments as arguments and have no OSC fields to break
+// out of. Running it there turned "Meet at 6; bring food" into "Meet at 6,
+// bring food" and flattened every multi-line preview, to protect against a
+// syntax that path does not use.
+func sanitizeSequence(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range sanitizeText(s) {
+		switch r {
+		case ';':
+			b.WriteRune(',')
+		case '\n', '\t':
+			b.WriteRune(' ')
 		default:
 			b.WriteRune(r)
 		}

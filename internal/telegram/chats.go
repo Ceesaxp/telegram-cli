@@ -266,7 +266,21 @@ func (c *Client) GetChat(chatID int64) (*Chat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get chat %d: %w", chatID, err)
 	}
+	return c.resolvedChat(ctx, peer)
+}
 
+// resolvedChat builds the domain chat for an already-resolved peer, mute
+// flag included.
+//
+// EVERY peer-derived path goes through here, so "a chat from a peer carries
+// the mute answer" is true by construction rather than by each caller
+// remembering to ask. It is one function because it was two, and the second
+// one forgot: CreatePrivateChat built its chat straight from the user
+// entity, which has no notify settings on it, so the chat went to the store
+// claiming Muted=false — and ChatStore.Merge, which copies the mute flag
+// precisely so a fetch can update it, dutifully unmuted a muted contact the
+// moment it was opened from the contact list.
+func (c *Client) resolvedChat(ctx context.Context, peer peers.Peer) (*Chat, error) {
 	var chat *Chat
 	switch p := peer.(type) {
 	case peers.User:
@@ -276,7 +290,7 @@ func (c *Client) GetChat(chatID int64) (*Chat, error) {
 	case peers.Channel:
 		chat = c.chatFromChannel(p.Raw())
 	default:
-		return nil, fmt.Errorf("get chat %d: unexpected peer type %T", chatID, peer)
+		return nil, fmt.Errorf("unexpected peer type %T", peer)
 	}
 
 	chat.Muted = peerMuted(ctx, c.api, peer.InputPeer())

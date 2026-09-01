@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/imtaqin/telegram-cli/internal/config"
@@ -19,6 +20,15 @@ import (
 // internal/notification's to test.
 func notifyModel(t *testing.T) Model {
 	t.Helper()
+
+	// The held-notification backstop, shortened. rawSequences runs the
+	// commands it is given, and a tea.Tick command blocks for its whole
+	// duration — so the real four seconds would be paid by every test that
+	// holds anything.
+	prev := noticeGrace
+	noticeGrace = time.Millisecond
+	t.Cleanup(func() { noticeGrace = prev })
+
 	cfg := &config.Config{}
 	cfg.Notifications.Enabled = true
 	cfg.Notifications.ShowPreview = true

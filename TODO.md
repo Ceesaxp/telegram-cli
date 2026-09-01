@@ -254,6 +254,18 @@ thinner than either convention implies.
       names are sanitised, since both go inside the sequence and both come
       off the wire (divergence 40).
 
+- [x] **Three review findings on the two above** — all the same shape as the
+      bug they were fixing (divergence 41). The notification was decided
+      before the mute answer arrived, so the first message from a muted chat
+      below the dialog page still rang; it now waits for the fetch, with a
+      four-second backstop and a bounded queue. The OSC escaping was applied
+      to the system path too, mangling `Meet at 6; bring food` for a syntax
+      `notify-send` does not use; split into `sanitizeText` and
+      `sanitizeSequence`. And `CreatePrivateChat` built its chat without
+      asking about mute, so opening a muted contact unmuted it — divergence
+      39's own bug, one layer down. `resolvedChat` is now the only place a
+      peer becomes a `Chat`, held by an AST test.
+
 - [ ] **Text cannot be selected with the mouse.** Raised in field use. The
       cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
       the terminal hands every drag to the application instead of running its

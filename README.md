@@ -826,9 +826,12 @@ system notification fires on the wrong machine.
 | Terminal.app | None; falls back to the system |
 | Under tmux or screen | Nothing is sent — whether the sequence gets through depends on configuration that can't be read from inside |
 
-Muted chats never notify, and the mute flag is read from your account's
-notify settings — including for chats below the first page of the dialog
-list, which are fetched on first contact.
+Muted chats never notify. The mute flag is read from your account's notify
+settings, including for chats below the first page of the dialog list — a
+message from one of those holds its notification until the client has been
+told who the chat is, rather than ringing first and asking afterwards. If
+that answer doesn't arrive within a few seconds the notification goes out
+anyway, unnamed: a late alert beats a lost one.
 
 ## Emoji width (`ui.emoji_width`)
 

@@ -40,16 +40,26 @@ type Notifier struct {
 	showPreview bool
 	method      string
 	terminal    TerminalSupport
+
+	// system delivers through the platform notifier, and is a field so a
+	// test can see what reaches it. That matters more than it looks:
+	// whether this path gets the text or an OSC-escaped version of it is
+	// the whole point of the split in terminal.go, and the real
+	// implementation is a process that has already exited by the time
+	// anything could ask.
+	system func(title, body string)
 }
 
 // NewNotifier creates a new notification dispatcher.
 func NewNotifier(enabled, showPreview bool, method string) *Notifier {
-	return &Notifier{
+	n := &Notifier{
 		enabled:     enabled,
 		showPreview: showPreview,
 		method:      ResolveMethod(method),
 		terminal:    detectTerminal(),
 	}
+	n.system = n.sendSystem
+	return n
 }
 
 // Notify posts a desktop notification and returns the escape sequence the
@@ -72,7 +82,7 @@ func (n *Notifier) Notify(title, body string) string {
 		body = "New message"
 	}
 
-	title, body = sanitize(title), sanitize(body)
+	title, body = sanitizeText(title), sanitizeText(body)
 	if title == "" && body == "" {
 		return ""
 	}
@@ -81,7 +91,10 @@ func (n *Notifier) Notify(title, body string) string {
 		return seq
 	}
 
-	go n.sendSystem(title, body)
+	// In the background: notify-send and osascript are processes, and
+	// waiting on one would stall the event loop for as long as the desktop
+	// takes to answer.
+	go n.system(title, body)
 	return ""
 }
 
@@ -98,6 +111,10 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 		// carries both fields.
 		support = TerminalTitleAndBody
 	}
+
+	// Escaped here rather than by the caller: this is the only path where
+	// the text ends up inside a sequence.
+	title, body = sanitizeSequence(title), sanitizeSequence(body)
 
 	switch support {
 	case TerminalTitleAndBody:

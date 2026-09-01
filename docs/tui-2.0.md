@@ -1322,6 +1322,51 @@ to be drawn — or read as a sequence of its own. Semicolons become commas and
 control characters are dropped, in the body and in the chat name both, since
 a chat name comes off the wire too.
 
+### 41. Three review findings, and what they had in common
+
+Divergences 39 and 40 shipped for review and came back with three defects.
+All three are the same shape as the bug they were fixing: a rule applied
+where it did not belong, or not applied where it did.
+
+**The notification was decided before the answer arrived.** `NewMessageMsg`
+and `ChatLastMessageMsg` are emitted for the same message in that order, and
+the decision to notify was made on the first — while the chat was still
+absent from the store, with no mute flag to read. It failed open. So the fix
+for "muted chats notify" left the first message from every muted chat below
+the first dialog page still ringing, and the README claimed a rule the code
+did not keep.
+
+The notification now waits for the fetch instead of guessing ahead of it, and
+still fails open — on a resolution that did not arrive, rather than on one
+that had not arrived yet. Waiting needs a bound, so a held notification is
+released after four seconds regardless, and the queue is capped, releasing
+the oldest rather than dropping it: the reader is owed the message, and being
+unable to name the chat is not a reason to withhold it.
+
+**The OSC escaping was applied to the system path too.** `sanitize` ran
+before the delivery path was chosen, so `notify-send` and `osascript` — which
+take arguments as arguments and have no semicolon-delimited fields — received
+"Meet at 6, bring food" and a flattened multi-line preview. The text was
+being mangled to protect against a syntax that path does not use. Split into
+`sanitizeText` (escapes out, both paths) and `sanitizeSequence` (semicolons
+and line breaks too, terminal only).
+
+**A peer chat that never asked about mute unmuted the chat.**
+`CreatePrivateChat` built its chat straight from the user entity, which
+carries no notify settings, so it went to the store claiming `Muted=false` —
+and `Merge` copies the mute flag, precisely so a fetch can update it. Opening
+a muted contact from the contact list unmuted it. That is divergence 39's own
+bug, one layer down, introduced by the change that fixed it.
+
+The lesson is the one already written above and evidently not learned hard
+enough: a flag that call sites have to remember is a flag one of them
+forgets. So the call sites no longer have anything to remember —
+`resolvedChat` is the single place a peer becomes a `Chat`, and it asks. The
+invariant is held by an AST test that walks `internal/telegram` and fails if
+`chatFromUser`, `chatFromBasicGroup` or `chatFromChannel` is called from
+anywhere but `resolvedChat` and the dialog path. Reverting the fix makes it
+name the function and the line.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
