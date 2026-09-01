@@ -1249,6 +1249,79 @@ measurement that was right about emoji and wrong about everything else:
   OSC 8 opener holding a link to a path with a flag in it would otherwise
   have two cells added for a sequence the terminal never draws.
 
+### 39. A partial update is not a small complete one
+
+Two field reports, one cause. Chat titles were missing from the list until
+the chat was opened, and desktop notifications ignored the mute flag.
+
+`ChatUpdateMsg` carried two kinds of chat. A **dialog** knows everything: who
+the chat is, and also whether it is muted, pinned, how many messages are
+unread, where the read marker sits and what the last message was. A **peer**
+knows only who it is — notify settings and dialog state are not part of
+resolving a peer. Both went into `ChatStore.Set`, which replaces the entry.
+
+So opening a chat cleared its mute flag. `OpenChat` calls `GetChat`, which
+resolves a peer, and the result overwrote the dialog's answer with a zero
+value. The chat stayed unmuted for the rest of the session, and every message
+after that rang — which is why the symptom looked unrelated to opening
+anything, and why it only ever appeared for chats the reader had read.
+
+The same replace also cleared `LastReadInboxMessageID`, which is where the
+chat view puts the unread divider. That never got reported, because the
+divider is drawn on open and the flag was cleared by the open.
+
+The store now has two methods. `Set` is for a dialog and replaces; `Merge` is
+for a peer and copies an explicit list of fields. The list is explicit rather
+than "copy anything that looks set" because a bool cannot tell `false` from
+`not known` — guessing from zero values is the same bug in a different hat.
+`Muted` is on the list, because the fetch now goes and asks: `GetChat` reads
+`account.getNotifySettings`, which is the only way a chat outside the loaded
+dialog page can learn it.
+
+The missing titles were the other half. The dialog list is loaded one recency
+page deep, so a message from further down arrives for a chat nobody has
+described. `UpdateLastMessage` invented an entry to hold it — an id and
+nothing else — and the row sat in the list with no name until the reader
+opened it, because opening was the only thing that fetched the chat. The
+invented entry is now marked `Unresolved`, which is what lets the list ask
+(once, not per frame) and draw `loading…` meanwhile. The mark exists rather
+than testing for an empty title because a real chat can have an empty title:
+a deleted account has no name, and telling the reader that is loading forever
+would be a lie.
+
+### 40. The notification came from Script Editor
+
+`osascript -e 'display notification ...'` posts as Script Editor, because the
+process is Script Editor. A message from a person arrived under Script
+Editor's name and icon, with Script Editor's notification permission deciding
+whether it appeared. There is no flag that fixes this, and a command-line
+binary cannot post under its own name on macOS at all: `UserNotifications`
+needs a bundle identifier, which needs an app bundle.
+
+The terminal already is an application with a name, an icon and a permission
+the user granted on purpose, and it can be asked to post the alert itself —
+over the same channel everything else on screen travels. `ui`-adjacent, but
+the reasoning is the hyperlink allowlist's: a terminal that does not
+understand the sequence **prints** it, so the failure is asymmetric and
+`auto` is an allowlist rather than a denylist. `notifications.method` is the
+override in both directions.
+
+Two things this had to get right that the osascript path never faced.
+
+**The bytes cannot be written directly.** Bubble Tea owns the terminal, and a
+goroutine writing to the same descriptor lands in the middle of a frame.
+`Notify` therefore returns a sequence instead of sending one, and the app
+hands it to `tea.Raw` — which puts it in the renderer's own output buffer,
+under the renderer's own lock. This is also why the sequence is built in
+`internal/notification` but emitted in `internal/app`.
+
+**A message body is attacker-controlled text about to be put inside an escape
+sequence.** OSC 777's fields are semicolon-separated and ST-terminated, so a
+message containing either would close the sequence early and leave the rest
+to be drawn — or read as a sequence of its own. Semicolons become commas and
+control characters are dropped, in the body and in the chat name both, since
+a chat name comes off the wire too.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

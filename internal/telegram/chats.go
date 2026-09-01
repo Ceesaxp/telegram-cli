@@ -1,7 +1,9 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/gotd/td/constant"
@@ -251,6 +253,12 @@ func inputPeerFromEntities(p tg.PeerClass, e tg.Entities) (tg.InputPeerClass, bo
 }
 
 // GetChat returns a single chat by canonical chat ID.
+//
+// The mute flag comes from a second call, because resolving a peer does not
+// report it: notify settings belong to the account's view of the peer, not
+// to the peer. Without it a chat outside the loaded dialog page would look
+// unmuted to everything downstream, and the first message from it would ring
+// — which is the whole reason anybody looks at this function.
 func (c *Client) GetChat(chatID int64) (*Chat, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -259,16 +267,53 @@ func (c *Client) GetChat(chatID int64) (*Chat, error) {
 		return nil, fmt.Errorf("get chat %d: %w", chatID, err)
 	}
 
+	var chat *Chat
 	switch p := peer.(type) {
 	case peers.User:
-		return c.chatFromUser(p.Raw()), nil
+		chat = c.chatFromUser(p.Raw())
 	case peers.Chat:
-		return c.chatFromBasicGroup(p.Raw()), nil
+		chat = c.chatFromBasicGroup(p.Raw())
 	case peers.Channel:
-		return c.chatFromChannel(p.Raw()), nil
+		chat = c.chatFromChannel(p.Raw())
 	default:
 		return nil, fmt.Errorf("get chat %d: unexpected peer type %T", chatID, peer)
 	}
+
+	chat.Muted = peerMuted(ctx, c.api, peer.InputPeer())
+	return chat, nil
+}
+
+// notifySettingsGetter is the one call [peerMuted] makes, so it can be
+// tested without a connection.
+type notifySettingsGetter interface {
+	AccountGetNotifySettings(context.Context, tg.InputNotifyPeerClass) (*tg.PeerNotifySettings, error)
+}
+
+// peerMuted reads the account's notify settings for one peer.
+//
+// A failure means "not muted". The settings are an extra round trip on top
+// of an answer the caller already has, so failing the whole chat because the
+// mute flag could not be read would be the worse trade — and of the two ways
+// to be wrong, ringing for a chat that turns out to be silenced is the one a
+// messaging client is allowed to pick. Assuming muted would hide messages.
+func peerMuted(ctx context.Context, api notifySettingsGetter, peer tg.InputPeerClass) bool {
+	settings, err := api.AccountGetNotifySettings(ctx, &tg.InputNotifyPeer{Peer: peer})
+	if err != nil {
+		log.Printf("notify settings: %s", err)
+		return false
+	}
+	return mutedFromNotifySettings(*settings, time.Now().Unix())
+}
+
+// peerChatUpdate is the message for a chat built by resolving a PEER.
+//
+// Both peer-derived senders go through this rather than writing the literal
+// out, so "a peer view is partial" is one fact in one place. It was two call
+// sites before, and a flag that two call sites have to remember is a flag
+// one of them eventually forgets — which is the shape of the bug this whole
+// change exists to fix.
+func peerChatUpdate(chat *Chat) ChatUpdateMsg {
+	return ChatUpdateMsg{Chat: chat, FromPeer: true}
 }
 
 // GetChatHistory returns messages of a chat, newest first.
@@ -470,7 +515,7 @@ func (c *Client) OpenChat(chatID int64) error {
 	if err != nil {
 		return err
 	}
-	c.send(ChatUpdateMsg{Chat: chat})
+	c.send(peerChatUpdate(chat))
 	return nil
 }
 

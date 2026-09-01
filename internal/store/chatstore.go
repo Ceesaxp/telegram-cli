@@ -14,6 +14,16 @@ type ChatEntry struct {
 	UnreadCount int32
 	Pinned      bool
 	Order       int64
+
+	// Unresolved marks an entry this store INVENTED to hold a message for
+	// a chat nobody had described yet — see [ChatStore.UpdateLastMessage].
+	// It has an id and nothing else: no name, no type, no mute flag.
+	//
+	// The flag exists because "the title is empty" is not the same
+	// question. A real chat can have an empty title (a deleted account
+	// has no name at all), and a row for one of those must not spend the
+	// rest of the session claiming to be loading.
+	Unresolved bool
 }
 
 // ChatStore is a thread-safe in-memory cache of chats.
@@ -28,7 +38,12 @@ func NewChatStore() *ChatStore {
 	}
 }
 
-// Set adds or updates a chat entry.
+// Set adds or updates a chat entry from a DIALOG — a complete view.
+//
+// A dialog knows everything about a chat: who it is, and also whether it is
+// muted, pinned, how many messages are unread and where it sits in the list.
+// So this replaces. [Merge] is for the other kind of update, and mixing the
+// two up is what silently unmuted every chat the reader opened.
 func (s *ChatStore) Set(chat *telegram.Chat) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -39,6 +54,7 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 		s.chats[chat.ID] = entry
 	}
 	entry.Chat = chat
+	entry.Unresolved = false
 	entry.UnreadCount = chat.UnreadCount
 	entry.Pinned = chat.Pinned
 
@@ -47,6 +63,49 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 	}
 	if chat.Order != 0 {
 		entry.Order = chat.Order
+	}
+}
+
+// Merge updates a chat entry from a PEER — a partial view.
+//
+// Resolving a peer answers "who is this": the id, the type, the name, the
+// username, the photo. It says nothing about the reader's relationship with
+// the chat, because that lives in the dialog and in the account's notify
+// settings, neither of which a peer lookup returns.
+//
+// Handing such a chat to [Set] replaced the entry wholesale, so every field
+// the peer lookup had no opinion about was overwritten with a zero value.
+// Opening a chat calls GetChat, so opening a chat cleared its mute flag, its
+// unread count, its pin and its last message — and the first symptom anybody
+// noticed was desktop notifications from a chat they had muted, which had
+// been muted right up until they read it.
+//
+// The field list below is therefore explicit rather than "copy anything that
+// looks set": a bool cannot tell "false" from "not known", and guessing from
+// zero values is the same bug wearing a different hat. Muted IS in the list,
+// because the fetch goes and asks for it — see Client.GetChat.
+func (s *ChatStore) Merge(chat *telegram.Chat) {
+	if chat == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, exists := s.chats[chat.ID]
+	if !exists || entry.Chat == nil {
+		// Nothing to preserve: a peer view is better than no view.
+		s.chats[chat.ID] = &ChatEntry{Chat: chat}
+		return
+	}
+
+	entry.Unresolved = false
+	entry.Chat.Type = chat.Type
+	entry.Chat.Title = chat.Title
+	entry.Chat.Username = chat.Username
+	entry.Chat.Muted = chat.Muted
+	if chat.Photo != nil {
+		entry.Chat.Photo = chat.Photo
 	}
 }
 
@@ -65,7 +124,13 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 
 	entry, ok := s.chats[chatID]
 	if !ok {
-		entry = &ChatEntry{Chat: &telegram.Chat{ID: chatID}}
+		// A message has arrived from a chat that is not in the dialog page
+		// this client loaded. The row has to exist — something was said —
+		// but everything except the id is unknown, so it is marked as such
+		// and somebody has to go and ask. Before the flag, this produced a
+		// nameless row that stayed nameless until the reader opened it,
+		// which is the only thing that fetched the chat.
+		entry = &ChatEntry{Chat: &telegram.Chat{ID: chatID}, Unresolved: true}
 		s.chats[chatID] = entry
 	}
 

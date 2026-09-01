@@ -296,6 +296,12 @@ func Migrate(cfg *Config, raw *RawFile) []MigrationChange {
 			Field: "ui.hyperlinks", Absent: true, New: def.UI.Hyperlinks,
 		})
 	}
+	if !hasField(raw, "notifications", "method", cfg.Notifications.Method != "") {
+		cfg.Notifications.Method = def.Notifications.Method
+		changes = append(changes, MigrationChange{
+			Field: "notifications.method", Absent: true, New: def.Notifications.Method,
+		})
+	}
 	if !hasField(raw, "ui", "emoji_width", cfg.UI.EmojiWidth != "") {
 		cfg.UI.EmojiWidth = def.UI.EmojiWidth
 		changes = append(changes, MigrationChange{

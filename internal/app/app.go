@@ -220,7 +220,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		store:      s,
 		config:     cfg,
 		roles:      roles,
-		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview),
+		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview, cfg.Notifications.Method),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
 		keys:       resolveKeys(cfg.Keys),
@@ -867,7 +867,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
 					body = text.Text.Text
 				}
-				m.notifier.Notify(title, body)
+				// A terminal-posted notification comes back as a sequence
+				// to write rather than something already sent: this
+				// process does not own the terminal, and tea.Raw is what
+				// puts bytes in the renderer's buffer instead of racing
+				// it mid-frame.
+				if seq := m.notifier.Notify(title, body); seq != "" {
+					cmds = append(cmds, tea.Raw(seq))
+				}
 				m.sound.Play()
 			}
 		}

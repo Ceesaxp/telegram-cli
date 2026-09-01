@@ -30,6 +30,17 @@ type MessageDeletedMsg struct {
 // or when a chat is loaded from the dialog list.
 type ChatUpdateMsg struct {
 	Chat *Chat
+
+	// FromPeer says this chat was built by resolving a PEER rather than by
+	// reading a dialog, and so is a partial view: it knows who the chat is
+	// and whether it is muted, and nothing about unread counts, pinning or
+	// the last message.
+	//
+	// The store has to be told, because it cannot tell from the value: a
+	// chat that is not pinned and a chat whose pin nobody asked about are
+	// the same struct. Storing one of these as though it were complete is
+	// what unmuted every chat the reader opened.
+	FromPeer bool
 }
 
 // ChatLastMessageMsg is sent when a chat's last message changes.
