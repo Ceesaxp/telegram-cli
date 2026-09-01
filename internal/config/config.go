@@ -134,6 +134,24 @@ const (
 	HyperlinksAlways = "always"
 )
 
+// Delivery methods for [NotificationConfig.Method].
+//
+// The strings are defined here, beside the other policy fields, so this
+// package stays free of the one that implements them — internal/notification
+// parses the same three values.
+const (
+	// NotifyMethodAuto asks the terminal where it is known to understand
+	// the sequence and the system otherwise. The default.
+	NotifyMethodAuto = "auto"
+	// NotifyMethodTerminal always asks the terminal, for one the allowlist
+	// does not know. A terminal that does not understand it prints it.
+	NotifyMethodTerminal = "terminal"
+	// NotifyMethodSystem always uses the platform notifier: notify-send on
+	// Linux, osascript on macOS — which posts as Script Editor, because a
+	// command-line binary has no bundle of its own to post from.
+	NotifyMethodSystem = "system"
+)
+
 // Emoji-width declarations for [UIConfig.EmojiWidth].
 //
 // This is one setting rather than two because the terminals that get it
@@ -260,6 +278,13 @@ type NotificationConfig struct {
 	Enabled     bool `toml:"enabled"`
 	Sound       bool `toml:"sound"`
 	ShowPreview bool `toml:"show_preview"`
+
+	// Method is who posts the notification: "auto" (the default — the
+	// terminal where it is known to understand the sequence, the system
+	// otherwise), "terminal", or "system". See internal/notification for
+	// why the terminal is usually the right answer, and why macOS labels
+	// the system path "Script Editor".
+	Method string `toml:"method"`
 }
 
 // KeyConfig lists user-configurable key bindings. Not every field is
@@ -521,6 +546,7 @@ func defaultConfig() *Config {
 			Enabled:     true,
 			Sound:       false,
 			ShowPreview: true,
+			Method:      NotifyMethodAuto,
 		},
 		Keys: KeyConfig{
 			Quit:          "ctrl+q",

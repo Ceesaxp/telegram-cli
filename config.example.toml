@@ -102,6 +102,33 @@ enabled = true
 sound = false
 show_preview = true
 
+# Who posts the notification:
+#
+#   "auto"     — the terminal, where it is known to understand the escape
+#                sequence; the system otherwise. The default.
+#   "terminal" — always the terminal, for one the allowlist does not know.
+#                A terminal that does not understand it PRINTS it, into
+#                whatever is on screen.
+#   "system"   — always the platform notifier: notify-send on Linux,
+#                osascript on macOS.
+#
+# The terminal is preferred because it is an application with a name, an
+# icon and a notification permission the user granted on purpose — and
+# because it is on the machine the user is looking at, which over ssh the
+# system notifier is not.
+#
+# On macOS "system" posts as **Script Editor**: osascript really is Script
+# Editor, so the alert carries its name, its icon and its notification
+# settings. A command-line binary cannot post under its own name there at
+# all — that needs an app bundle — which is why the terminal does it.
+#
+# Known to understand it: kitty, Ghostty, WezTerm, foot, urxvt (title and
+# body); iTerm2, Windows Terminal (body only, so the sender is folded into
+# the message). Terminal.app implements none, and falls back to the system.
+# Under tmux or screen nothing is sent: whether the sequence gets through
+# depends on configuration that cannot be read from here.
+method = "auto"
+
 # Keybindings — values below are the built-in defaults (see defaultConfig()
 # in internal/config/config.go); only listed fields are actually consulted,
 # see the KeyConfig doc comment there for which.

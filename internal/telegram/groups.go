@@ -152,8 +152,11 @@ func (c *Client) CreatePrivateChat(userID int64) (*Chat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create private chat: %w", err)
 	}
-	chat := c.chatFromUser(peer.Raw())
-	c.send(ChatUpdateMsg{Chat: chat})
+	chat, err := c.resolvedChat(ctx, peer)
+	if err != nil {
+		return nil, fmt.Errorf("create private chat: %w", err)
+	}
+	c.send(peerChatUpdate(chat))
 	return chat, nil
 }
 

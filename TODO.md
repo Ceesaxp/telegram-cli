@@ -226,6 +226,46 @@ thinner than either convention implies.
       exactly the corruption the reservation exists to prevent. The bound is
       now the wider of the two renderings (divergence 38).
 
+- [x] **Missing chat titles, and notifications that ignored mute** — two
+      field reports, one cause. `ChatUpdateMsg` carried both a dialog (which
+      knows mute, pin, unread and the read marker) and a peer (which knows
+      none of them), and both went through `ChatStore.Set`, which replaces.
+      So opening a chat cleared its mute flag — and cleared
+      `LastReadInboxMessageID`, which is where the unread divider goes.
+      `Set` is now for dialogs, `Merge` for peers, with an explicit field
+      list rather than zero-value guessing. `GetChat` reads
+      `account.getNotifySettings`, which is the only way a chat outside the
+      loaded dialog page learns it is muted.
+
+      The titles were the other half: a message from beyond the first dialog
+      page made the store invent an entry with an id and nothing else, and
+      opening it was the only thing that ever fetched the chat. Invented
+      entries are marked, fetched once, and read `loading…` meanwhile
+      (divergence 39).
+
+- [x] **Notifications no longer come from "Script Editor"** —
+      `notifications.method`. osascript posts as Script Editor because the
+      process is Script Editor, and a CLI binary cannot post under its own
+      name on macOS without an app bundle. The terminal can, and does:
+      OSC 777 where it carries a title, OSC 9 where it does not, allowlisted
+      the way hyperlinks are because a terminal that does not understand the
+      sequence prints it. Emitted through `tea.Raw` rather than written
+      directly — Bubble Tea owns the descriptor. Message bodies and chat
+      names are sanitised, since both go inside the sequence and both come
+      off the wire (divergence 40).
+
+- [x] **Three review findings on the two above** — all the same shape as the
+      bug they were fixing (divergence 41). The notification was decided
+      before the mute answer arrived, so the first message from a muted chat
+      below the dialog page still rang; it now waits for the fetch, with a
+      four-second backstop and a bounded queue. The OSC escaping was applied
+      to the system path too, mangling `Meet at 6; bring food` for a syntax
+      `notify-send` does not use; split into `sanitizeText` and
+      `sanitizeSequence`. And `CreatePrivateChat` built its chat without
+      asking about mute, so opening a muted contact unmuted it — divergence
+      39's own bug, one layer down. `resolvedChat` is now the only place a
+      peer becomes a `Chat`, held by an AST test.
+
 - [ ] **Text cannot be selected with the mouse.** Raised in field use. The
       cause is known: `View` sets `MouseMode = tea.MouseModeCellMotion`, so
       the terminal hands every drag to the application instead of running its

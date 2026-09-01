@@ -68,6 +68,13 @@ type Model struct {
 	// observable and clearable from View (which only ever sees a
 	// throwaway local copy of Model) as well as from Update.
 	dirty *bool
+
+	// resolving is the set of chats a fetch has already been issued for,
+	// so a nameless row asks once rather than on every refresh. Shared by
+	// pointer for the same reason as list and dirty: refreshList runs on a
+	// copy of Model, and a map recorded into a copy is a fetch issued
+	// again next frame, and the frame after that.
+	resolving map[int64]bool
 }
 
 // New creates a new chat list model.
@@ -104,6 +111,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		spinner:     sp,
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
 		dirty:       &dirty,
+		resolving:   make(map[int64]bool),
 	}
 	// The row renderer is installed here, not in SetRoles: a component
 	// that renders two different ways depending on whether the caller
@@ -591,12 +599,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.refreshList()
 
+	case chatResolveFailedMsg:
+		delete(m.resolving, msg.chatID)
+
 	case telegram.ChatMuteChangedMsg:
 		m.store.Chats.SetMuted(msg.ChatId, msg.Muted)
 		m.markDirty()
 
 	case telegram.ChatLastMessageMsg:
 		m.store.Chats.UpdateLastMessage(msg.ChatId, msg.LastMessage)
+		cmds = append(cmds, m.resolveChatCmd(msg.ChatId))
 		m.markDirty()
 
 	case telegram.ChatReadInboxMsg:
@@ -605,7 +617,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case telegram.ChatUpdateMsg:
 		if msg.Chat != nil {
-			m.store.Chats.Set(msg.Chat)
+			// A peer view is partial: merging keeps the unread count, the
+			// pin and the last message that only the dialog knew. Setting
+			// it as though it were complete is what cleared the mute flag
+			// of every chat the reader opened.
+			if msg.FromPeer {
+				m.store.Chats.Merge(msg.Chat)
+			} else {
+				m.store.Chats.Set(msg.Chat)
+			}
+			delete(m.resolving, msg.Chat.ID)
 			m.markDirty()
 		}
 
@@ -718,6 +739,49 @@ func (m *Model) setFolders(folders []*telegram.ChatFolder) {
 // are not already in the store. The folder's own peer list is the
 // membership source — not a recency slice of getDialogs. Nil client
 // (tests) is a no-op.
+// resolveChatCmd asks the client who a chat is, when a message has arrived
+// from one this client has never been told about.
+//
+// The dialog list is loaded one recency page deep, so a message from further
+// down produces an entry the store had to invent: an id, and nothing else.
+// That row used to sit in the list with no name until the reader opened it —
+// opening was the only thing that fetched the chat — which is what "titles
+// are missing until visited" was.
+//
+// The fetch also settles the mute flag, which a peer lookup does not carry
+// and which GetChat therefore goes and asks for: a row this client invented
+// looked unmuted, so the first message from a silenced chat rang.
+func (m Model) resolveChatCmd(chatID int64) tea.Cmd {
+	if m.tg == nil || chatID == 0 || m.resolving[chatID] {
+		return nil
+	}
+	entry, ok := m.store.Chats.Get(chatID)
+	if !ok || !entry.Unresolved {
+		return nil
+	}
+
+	// Recorded before the fetch, not after: two messages from the same
+	// unknown chat arrive back to back, and the second must not send a
+	// second request. The entry stops being Unresolved when the answer
+	// lands, and the id is dropped from here at the same time.
+	m.resolving[chatID] = true
+
+	tg := m.tg
+	return func() tea.Msg {
+		chat, err := tg.GetChat(chatID)
+		if err != nil || chat == nil {
+			return chatResolveFailedMsg{chatID: chatID}
+		}
+		return telegram.ChatUpdateMsg{Chat: chat, FromPeer: true}
+	}
+}
+
+// chatResolveFailedMsg releases the in-flight marker so a later message from
+// the same chat tries again. The row keeps its placeholder in the meantime,
+// which is the honest state: the client knows something was said and does
+// not yet know by whom.
+type chatResolveFailedMsg struct{ chatID int64 }
+
 func (m Model) FolderLoadCmd() tea.Cmd {
 	if m.tg == nil {
 		return nil
@@ -845,7 +909,7 @@ func (m *Model) refreshList() {
 			// The title is bare now: the type mark is the sigil the row
 			// renderer draws in its own column, not a prefix glued to the
 			// text, so it cannot be truncated away with a long name.
-			Title:    entry.Chat.Title,
+			Title:    chatTitle(entry),
 			Kind:     int(entry.Chat.Type),
 			Saved:    entry.Chat.ID == m.myUserID,
 			Subtitle: preview,
@@ -866,6 +930,24 @@ func (m *Model) refreshList() {
 			}
 		}
 	}
+}
+
+// unresolvedTitle stands in for a chat this client has heard from but has
+// not yet been told the name of. See [Model.resolveChatCmd].
+const unresolvedTitle = "loading…"
+
+// chatTitle is the name to draw for a chat.
+//
+// A row with no text at all is worse than a row that says what it is
+// waiting for: an empty title reads as a rendering fault, and gives the
+// reader nothing to aim at. Only an entry the store INVENTED gets the
+// placeholder — a real chat with an empty name is a deleted account, and
+// telling somebody that is loading forever would be a lie.
+func chatTitle(entry *store.ChatEntry) string {
+	if entry.Unresolved && entry.Chat.Title == "" {
+		return unresolvedTitle
+	}
+	return entry.Chat.Title
 }
 
 // chatInFolder reports whether entry belongs in folder, applying

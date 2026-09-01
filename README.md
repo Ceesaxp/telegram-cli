@@ -42,7 +42,7 @@
 - **Config Migration** — `-migrate-config` upgrades an existing `config.toml` to current defaults, with a timestamped backup and a change report
 - **Authentication** — Phone/SMS code and 2FA password, plus QR login for `telegram-mcp`
 - **First-Run Wizard** — Prompts for API credentials and saves config automatically
-- **Notifications** — Desktop notifications via `notify-send` / `osascript`, gated on terminal focus for read receipts and skipped for muted chats
+- **Notifications** — Posted by your terminal itself where it supports it (so they carry the terminal's name and icon, not "Script Editor", and work over ssh), falling back to `notify-send` / `osascript`; skipped for muted chats. See [Notifications](#notifications)
 - **Responsive Layout** — Borderless columns sized by terminal width: chat list 38 cells, thread flexing, dropping to a narrower list and then a single panel as space runs out. Every row is exactly the terminal width
 - **Theming** — Dark and light themes with 256-color support
 - **Inline Images** — `ui.inline_images` chooses where a photo is drawn: `never` and `on_open` (the default) show a metadata card in the thread and the picture full-pane when you press `Enter`; `always` also draws an eight-row preview inline. The bound is deliberate — a message whose height changes when a thumbnail lands moves the history under you mid-scroll
@@ -703,7 +703,8 @@ What one run does:
   newer `[keys]` field (`help`, `global_search`, `contacts_alt`, …),
   `ui.compose_editing` (`"auto"`), `storage.download_dir` (`~/Downloads`,
   where `s` saves — see [Where files go](#where-files-go)), and
-  `storage.state_file` — written out explicitly as the path the client
+  `notifications.method` (`"auto"`, see [Notifications](#notifications)),
+  and `storage.state_file` — written out explicitly as the path the client
   would otherwise derive implicitly (next to `session_file`), so the
   location stops being implied. Also
   `ui.parse_markdown`, but as a special case: it's set to `true` on
@@ -796,6 +797,41 @@ meant as one:
   silently dropped or half-converted. The check is deliberately an
   allowlist rather than a blocklist: new dangerous schemes get invented
   faster than a blocklist can track them.
+
+## Notifications
+
+Set with `notifications.method` in `config.toml`:
+
+| Value | Who posts it |
+|---|---|
+| `"auto"` (default) | The terminal, where it is known to understand the sequence; the system otherwise. |
+| `"terminal"` | Always the terminal — for one the allowlist doesn't know. A terminal that doesn't understand the sequence **prints** it, into whatever is on screen. |
+| `"system"` | Always the platform notifier: `notify-send` on Linux, `osascript` on macOS. |
+
+**Why the terminal, and why macOS says "Script Editor".** `osascript` posts
+notifications as Script Editor, because the process *is* Script Editor — so
+the alert carries its name, its icon, and its notification settings. No flag
+changes that, and a command-line binary can't post under its own name on
+macOS at all: `UserNotifications` requires a bundle identifier, which
+requires shipping an `.app`.
+
+Your terminal already has all three, granted deliberately. Asking it to post
+the alert gives you the right name and icon, and works over ssh — where a
+system notification fires on the wrong machine.
+
+| Terminal | Support |
+|---|---|
+| kitty, Ghostty, WezTerm, foot, urxvt | Title and body (OSC 777) |
+| iTerm2, Windows Terminal | Body only (OSC 9) — the sender is folded into the message |
+| Terminal.app | None; falls back to the system |
+| Under tmux or screen | Nothing is sent — whether the sequence gets through depends on configuration that can't be read from inside |
+
+Muted chats never notify. The mute flag is read from your account's notify
+settings, including for chats below the first page of the dialog list — a
+message from one of those holds its notification until the client has been
+told who the chat is, rather than ringing first and asking afterwards. If
+that answer doesn't arrive within a few seconds the notification goes out
+anyway, unnamed: a late alert beats a lost one.
 
 ## Emoji width (`ui.emoji_width`)
 

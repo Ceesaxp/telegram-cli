@@ -64,6 +64,10 @@ type Model struct {
 	// there is nothing to expire.
 	noticeAt time.Time
 
+	// pendingNotices are notifications waiting on the client to learn who
+	// the chat is, and therefore whether it is muted. See notice.go.
+	pendingNotices []pendingNotice
+
 	// deviceCount is how many sessions are authorised on this account.
 	// Zero means "not answered yet", which is always what zero means here:
 	// every account has at least the session doing the asking.
@@ -220,7 +224,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		store:      s,
 		config:     cfg,
 		roles:      roles,
-		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview),
+		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview, cfg.Notifications.Method),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
 		keys:       resolveKeys(cfg.Keys),
@@ -854,23 +858,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Never notify for our own messages — they arrive as updates too
 		// when sent from another device.
 		if !msg.Message.IsOutgoing && msg.Message.ChatID != m.chatList.ActiveChatId() {
-			entry, ok := m.store.Chats.Get(msg.Message.ChatID)
-			title := "New Message"
-			if ok && entry.Chat != nil {
-				title = entry.Chat.Title
+			body := "New message received"
+			if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
+				body = text.Text.Text
 			}
-			// Muted chats stay silent. A chat not yet in the store is an
-			// unknown quantity, so this fails open and still notifies.
-			muted := ok && entry.Chat != nil && entry.Chat.Muted
-			if !muted {
-				body := "New message received"
-				if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
-					body = text.Text.Text
-				}
-				m.notifier.Notify(title, body)
-				m.sound.Play()
+
+			entry, ok := m.store.Chats.Get(msg.Message.ChatID)
+			switch {
+			case !ok || entry.Chat == nil || entry.Unresolved:
+				// Nothing is known about this chat yet, including whether
+				// it is muted. Deciding now means guessing, and the guess
+				// that rings is wrong for exactly the chats a reader
+				// silenced on purpose — so the notification waits for the
+				// fetch the chat list is about to issue. See notice.go.
+				cmds = append(cmds, m.holdNotice(msg.Message.ChatID, body))
+			case entry.Chat.Muted:
+				// The answer is known, and it is no.
+			default:
+				cmds = append(cmds, m.postNotice(entry.Chat.Title, body))
 			}
 		}
+
+	case noticeGraceMsg:
+		cmds = append(cmds, m.releaseAllNotices())
+
+	case telegram.ChatUpdateMsg:
+		// The answer to "is this chat muted" arrives here, for a chat a
+		// notification may be waiting on. Read off the message rather than
+		// the store: this switch runs ahead of the chat list that does the
+		// storing, so the store still holds the unresolved stub.
+		cmds = append(cmds, m.releaseNotices(msg.Chat))
 
 	case chatlist.ChatSelectedMsg:
 		entry, ok := m.store.Chats.Get(msg.ChatId)
