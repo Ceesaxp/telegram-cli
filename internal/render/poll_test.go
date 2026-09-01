@@ -167,8 +167,18 @@ func TestPollFooterStatesOnlyKnownFacts(t *testing.T) {
 				TotalVoterCount: 4, ResultsKnown: true,
 				IsQuiz: true, MultipleChoice: true, IsClosed: true,
 			},
-			want: []string{"4 votes", "quiz", "multiple answers", "public", "closed"},
-			not:  []string{"anonymous", "closes"},
+			// "voters", not "votes": four people cast as many votes as
+			// they liked, and the total counts the people.
+			want: []string{"4 voters", "quiz", "multiple answers", "public", "closed"},
+			not:  []string{"4 votes", "anonymous", "closes"},
+		},
+		"one voter of a multiple-choice poll": {
+			poll: &telegram.Poll{
+				TotalVoterCount: 1, ResultsKnown: true,
+				MultipleChoice: true, IsAnonymous: true,
+			},
+			want: []string{"1 voter"},
+			not:  []string{"1 vote ", "votes"},
 		},
 		"closes at a time": {
 			poll: &telegram.Poll{IsAnonymous: true, CloseDate: 1_700_000_000},
@@ -215,12 +225,8 @@ func TestANarrowPollKeepsItsPercentages(t *testing.T) {
 	}
 }
 
-// TestAPollFitsAndClosesItsStyles at every width a pane can be.
-//
-// From four cells up. Below that a single wide rune cannot fit in the
-// column at all, and cell.WrapLines emits it rather than dropping the
-// sender's character — a choice this poll renderer does not get to make and
-// a width no real body column has.
+// TestAPollFitsAndClosesItsStyles at every width a pane can be, down to the
+// single cell the thread grid clamps its body column to.
 func TestAPollFitsAndClosesItsStyles(t *testing.T) {
 	polls := map[string]*telegram.Poll{
 		"design record": designRecordPoll(),
@@ -241,7 +247,7 @@ func TestAPollFitsAndClosesItsStyles(t *testing.T) {
 		},
 	}
 
-	for width := 4; width <= 140; width++ {
+	for width := 1; width <= 140; width++ {
 		for name, poll := range polls {
 			for i, line := range renderPoll(poll, testRoles(), width) {
 				if got := cell.Width(line); got > width {

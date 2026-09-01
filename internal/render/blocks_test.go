@@ -462,6 +462,12 @@ func TestVoiceNoteWithoutAmplitudesDrawsNoWaveform(t *testing.T) {
 // TestEveryBodyLineFitsAndClosesItsStyles is the whole-body version of the
 // two invariants each block is tested for on its own, across the content
 // kinds a thread actually holds.
+//
+// From ONE cell, which is what the thread grid clamps its body column to
+// rather than refusing to draw. Every block has a form it falls back to
+// there — the code frame goes away, a ruled block loses its rule, a chip is
+// cut — because a line wider than the column paints over whatever the grid
+// put to the right of it.
 func TestEveryBodyLineFitsAndClosesItsStyles(t *testing.T) {
 	r := newTestRenderer()
 	st := store.NewStore()
@@ -483,7 +489,7 @@ func TestEveryBodyLineFitsAndClosesItsStyles(t *testing.T) {
 		"preview": &telegram.MessageText{Text: formatted("Read later: " + long), WebPage: galleryPreview()},
 	}
 
-	for width := 14; width <= 120; width += 6 {
+	for width := 1; width <= 120; width++ {
 		for name, content := range messages {
 			msg := &telegram.Message{ID: 1, Content: content, Reactions: galleryReactions()}
 			for i, line := range r.RenderBody(msg, st, BodyOptions{Width: width}) {

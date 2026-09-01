@@ -489,10 +489,11 @@ func TestAPollMessageCarriesItsResults(t *testing.T) {
 	}
 }
 
-// TestAMultipleChoiceTotalIsNotTheSumOfItsAnswers. Three people picking two
-// options each cast six votes, and a footer reading "6 votes" over a poll
-// three people answered is a number this client made up.
-func TestAMultipleChoiceTotalIsNotTheSumOfItsAnswers(t *testing.T) {
+// TestAMultipleChoicePollDividesByItsVoters. Three people who each pick
+// both answers have chosen each of them unanimously. Dividing by the six
+// votes cast reports 50% and 50%, which is the opposite of what happened —
+// and the total is still three, not six.
+func TestAMultipleChoicePollDividesByItsVoters(t *testing.T) {
 	results := tg.PollResults{Results: []tg.PollAnswerVoters{
 		{Option: []byte("a"), Voters: 3},
 		{Option: []byte("b"), Voters: 3},
@@ -509,10 +510,107 @@ func TestAMultipleChoiceTotalIsNotTheSumOfItsAnswers(t *testing.T) {
 		t.Fatalf("total = %d, want 3 — six votes were cast by three people",
 			poll.TotalVoterCount)
 	}
-	// The shares are still of the votes cast, which is what the bars compare.
 	for i, option := range poll.Options {
-		if option.Percent != 50 {
-			t.Errorf("option %d = %d%%, want 50", i, option.Percent)
+		if option.Percent != 100 {
+			t.Errorf("option %d = %d%%, want 100 — every voter picked it",
+				i, option.Percent)
 		}
+	}
+}
+
+// TestAMultipleChoicePollsSharesDoNotSumToAnything, which is the whole
+// point: they are independent proportions of the same voters.
+func TestAMultipleChoicePollsSharesDoNotSumToAnything(t *testing.T) {
+	results := tg.PollResults{Results: []tg.PollAnswerVoters{
+		{Option: []byte("a"), Voters: 3},
+		{Option: []byte("b"), Voters: 2},
+		{Option: []byte("c"), Voters: 0},
+	}}
+	results.SetTotalVoters(4)
+
+	poll := pollFromTG(tg.Poll{
+		Question:       tg.TextWithEntities{Text: "Pick any"},
+		MultipleChoice: true,
+		Answers: []tg.PollAnswerClass{
+			answer("A", "a"), answer("B", "b"), answer("C", "c"),
+		},
+	}, results)
+
+	want := []int32{75, 50, 0}
+	for i, w := range want {
+		if got := poll.Options[i].Percent; got != w {
+			t.Errorf("option %d = %d%%, want %d", i, got, w)
+		}
+	}
+}
+
+// TestASingleChoicePollStillApportions. The two kinds of poll take
+// different denominators, and the flag is the only thing separating them.
+func TestASingleChoicePollStillApportions(t *testing.T) {
+	results := tg.PollResults{Results: []tg.PollAnswerVoters{
+		{Option: []byte("a"), Voters: 1},
+		{Option: []byte("b"), Voters: 1},
+		{Option: []byte("c"), Voters: 1},
+	}}
+	results.SetTotalVoters(3)
+
+	poll := pollFromTG(tg.Poll{
+		Question: tg.TextWithEntities{Text: "Pick one"},
+		Answers: []tg.PollAnswerClass{
+			answer("A", "a"), answer("B", "b"), answer("C", "c"),
+		},
+	}, results)
+
+	var sum int32
+	for _, option := range poll.Options {
+		sum += option.Percent
+	}
+	if sum != 100 {
+		t.Fatalf("shares sum to %d: %d/%d/%d", sum,
+			poll.Options[0].Percent, poll.Options[1].Percent, poll.Options[2].Percent)
+	}
+}
+
+func TestPercentOfVoters(t *testing.T) {
+	cases := []struct {
+		count, voters, want int32
+	}{
+		{3, 3, 100},
+		{3, 4, 75},
+		{1, 3, 33},
+		{2, 3, 67}, // rounded, not truncated
+		{0, 4, 0},
+		{4, 0, 0},   // no voter count to divide by
+		{9, 4, 100}, // clamped: a tally larger than the total is not 225%
+	}
+	for _, tc := range cases {
+		if got := percentOfVoters(tc.count, tc.voters); got != tc.want {
+			t.Errorf("percentOfVoters(%d, %d) = %d, want %d",
+				tc.count, tc.voters, got, tc.want)
+		}
+	}
+}
+
+// TestAMultipleChoicePollWithNoTotalStillComparesItsOptions. Telegram sends
+// a poll's total alongside its tallies, so this is theory — but with no
+// voter count to divide by, shares of the votes cast at least keep the
+// options in the right order against each other, which is what the bars
+// are for. All zeroes would say nobody picked anything.
+func TestAMultipleChoicePollWithNoTotalStillComparesItsOptions(t *testing.T) {
+	poll := pollFromTG(tg.Poll{
+		Question:       tg.TextWithEntities{Text: "Pick any"},
+		MultipleChoice: true,
+		Answers:        []tg.PollAnswerClass{answer("A", "a"), answer("B", "b")},
+	}, tg.PollResults{Results: []tg.PollAnswerVoters{
+		{Option: []byte("a"), Voters: 3},
+		{Option: []byte("b"), Voters: 1},
+	}})
+
+	if poll.TotalVoterCount != 0 {
+		t.Fatalf("total = %d, want 0 — the server sent none", poll.TotalVoterCount)
+	}
+	if poll.Options[0].Percent <= poll.Options[1].Percent {
+		t.Fatalf("the options do not compare: %d%% and %d%%",
+			poll.Options[0].Percent, poll.Options[1].Percent)
 	}
 }

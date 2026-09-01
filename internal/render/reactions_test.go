@@ -125,11 +125,7 @@ func TestReactionChipsWrapRatherThanOverflow(t *testing.T) {
 
 	for width := 1; width <= 80; width++ {
 		for i, line := range renderReactions(reactions, testRoles(), width) {
-			// A single chip wider than the pane still gets a line of its
-			// own; what must never happen is two chips sharing one that
-			// cannot hold them.
-			if reserved := cell.Reserve(ansi.Strip(line)); reserved > width &&
-				strings.Count(ansi.Strip(line), "[") > 1 {
+			if reserved := cell.Reserve(ansi.Strip(line)); reserved > width {
 				t.Fatalf("at width %d, line %d reserves %d cells: %q",
 					width, i, reserved, ansi.Strip(line))
 			}
@@ -140,15 +136,39 @@ func TestReactionChipsWrapRatherThanOverflow(t *testing.T) {
 	}
 }
 
-// TestEveryChipReachesTheScreen, however narrow the pane. A chip dropped
-// for want of room is a reaction the reader never learns about.
+// TestEveryChipReachesTheScreen wherever one fits. A chip dropped for want
+// of room is a reaction the reader never learns about, so each takes a line
+// of its own rather than being skipped.
 func TestEveryChipReachesTheScreen(t *testing.T) {
 	reactions := galleryReactions()
-	for width := 1; width <= 80; width++ {
+	for width := 6; width <= 80; width++ {
 		joined := ansi.Strip(strings.Join(renderReactions(reactions, testRoles(), width), "\n"))
 		for _, reaction := range reactions {
 			if !strings.Contains(joined, reaction.Emoji) {
 				t.Fatalf("at width %d, %q was dropped:\n%s", width, reaction.Emoji, joined)
+			}
+		}
+	}
+}
+
+// TestAChipTooWideForThePaneIsCutRatherThanSkipped. Below a chip's own
+// width there is nothing useful to show, but the reader must still see that
+// the message was reacted to at all.
+func TestAChipTooWideForThePaneIsCutRatherThanSkipped(t *testing.T) {
+	reactions := galleryReactions()
+	for width := 1; width <= 5; width++ {
+		lines := renderReactions(reactions, testRoles(), width)
+		if len(lines) != len(reactions) {
+			t.Fatalf("at width %d, %d chips became %d lines",
+				width, len(reactions), len(lines))
+		}
+		for i, line := range lines {
+			if reserved := cell.Reserve(ansi.Strip(line)); reserved > width {
+				t.Fatalf("at width %d, line %d reserves %d cells: %q",
+					width, i, reserved, ansi.Strip(line))
+			}
+			if open := cell.OpenStyle(line); open != "" {
+				t.Fatalf("at width %d, line %d leaves %q open", width, i, open)
 			}
 		}
 	}

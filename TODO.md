@@ -555,12 +555,15 @@ the primary checkout stays free for fixes against a working client.
       each answer's opaque option bytes, and is empty entirely for a poll
       that hides its results — pairing it with the answers by position would
       attach the right numbers to the wrong answers in exactly the case
-      nobody checks. **Percentages are apportioned, not rounded**: three
-      equal thirds round to 33 each and a reader adds them up, so the shares
-      are handed out by largest remainder and sum to exactly 100.
-      `TotalVoterCount` stays the server's own number, because a
-      multiple-choice poll counts one voter once and their answers several
-      times.
+      nobody checks. **Percentages are shares of different things in the
+      two kinds of poll**: a single-choice poll's answers partition its
+      voters, so its shares are of the votes cast and apportioned by
+      largest remainder to sum to exactly 100 — three equal thirds round to
+      33 each and a reader adds them up. A multiple-choice poll's do not
+      partition anything, so its shares are of the VOTERS and are not meant
+      to sum to anything; three people who each pick both answers have
+      chosen each unanimously, and 50% there is the opposite of what
+      happened. `TotalVoterCount` counts people for the same reason.
 
       Reactions and poll votes arrive as their own updates rather than as
       edits, and both are routed through the refetch an edit already takes —
@@ -576,6 +579,13 @@ the primary checkout stays free for fixes against a working client.
 
       A voice note's **transcript** is still absent: a Telegram premium RPC
       this client does not make.
+
+      Review found two things. The multiple-choice denominator above, and
+      three blocks drawing past a one-cell body column — the preview's rule,
+      the code frame's four-cell guard, and prose reaching `cell.WrapLines`,
+      which emits a rune wider than the column whole. Each has a fallback
+      form now and the whole-body invariant test sweeps from one cell rather
+      than fourteen, which is the gap that let them through. Divergence 16c.
 
 - [x] **Composer and app modes** — the mode badge, the inline row, the
       expanded Ctrl+P form, per-chat drafts, and the decision 10 config

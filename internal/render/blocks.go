@@ -177,7 +177,9 @@ func wrapProse(styled string, roles theme.Roles, width int) []string {
 	for _, line := range strings.Split(styled, "\n") {
 		marker := listMarker(line)
 		if marker == 0 || width <= marker+2 {
-			out = append(out, cell.WrapLines(line, width)...)
+			for _, w := range cell.WrapLines(line, width) {
+				out = append(out, cell.Clamp(w, width))
+			}
 			continue
 		}
 
@@ -250,10 +252,26 @@ func renderQuoteBlock(text string, roles theme.Roles, width int) []string {
 	var out []string
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		for _, w := range cell.WrapLines(line, inner) {
-			out = append(out, prefix+body.Render(w))
+			out = append(out, ruledLine(prefix, w, body, width))
 		}
 	}
 	return out
+}
+
+// ruledLine draws one line of a ruled block — a quote, a link preview — and
+// drops the rule when the pane cannot hold it and the line both.
+//
+// The rule is this renderer's own mark and the line is somebody's words, so
+// when only one of them fits it is the mark that goes. Two things reach
+// here: a body column narrower than the two-cell rule plus one cell of
+// content, and a wide rune that cell.WrapLines emitted whole rather than
+// dropping the sender's character. Both would otherwise paint over whatever
+// the grid put to the right of the body.
+func ruledLine(prefix, text string, style lipgloss.Style, width int) string {
+	if row := prefix + style.Render(text); cell.Width(row) <= width {
+		return row
+	}
+	return style.Render(cell.Truncate(text, width))
 }
 
 // renderCodeBlock draws a framed code block: a language tag in the top rule,
@@ -267,17 +285,20 @@ func renderCodeBlock(text, language string, roles theme.Roles, width int) []stri
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 
 	frameW := min(width, maxBlockWidth)
-	if frameW < 4 {
-		// No room for a frame; the code is still the message, so show it
-		// rather than a box that would not fit around it.
+	numW := len(strconv.Itoa(len(lines)))
+
+	// The cheapest frame there is: two borders, the line number, the two
+	// spaces of the narrow gutter, and one cell of code. Below it the box
+	// would not fit around the thing it is a box for — and drawn anyway it
+	// would run past the body column and over whatever the grid put to the
+	// right of it. The code is still the message, so show it bare.
+	if frameW < numW+5 {
 		out := make([]string, 0, len(lines))
 		for _, line := range lines {
 			out = append(out, lipgloss.NewStyle().Foreground(roles.Fg).Render(cell.Truncate(line, width)))
 		}
 		return out
 	}
-
-	numW := len(strconv.Itoa(len(lines)))
 
 	// A comfortable gutter is " N   "; a cramped one is "N  ". The wide
 	// form is what the goldens draw at 137 columns and the narrow one what

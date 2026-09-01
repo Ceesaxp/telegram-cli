@@ -57,6 +57,18 @@ func renderReactions(reactions []*telegram.Reaction, roles theme.Roles, width in
 			style.Render("]")
 
 		switch {
+		case chipW > width:
+			// A chip wider than the whole body column. It cannot be drawn
+			// whole and it must not be dropped — a reaction the reader
+			// never learns about is worse than an elided one — so it is
+			// cut to the column and takes a line of its own. Restyled from
+			// its plain text rather than cut through the styled string, so
+			// the line still closes what it opens.
+			if line != "" {
+				out = append(out, line)
+			}
+			out = append(out, style.Render(clampChip(text, width)))
+			line, used = "", 0
 		case line == "":
 			line, used = styled, chipW
 		case used+1+chipW <= width:
@@ -77,6 +89,22 @@ func renderReactions(reactions []*telegram.Reaction, roles theme.Roles, width in
 // the drawing the first time either changes.
 func reactionChip(reaction *telegram.Reaction) string {
 	return "[" + reactionMark(reaction) + " " + strconv.Itoa(int(reaction.Count)) + "]"
+}
+
+// clampChip cuts a chip down to a body column narrower than it is.
+//
+// It cuts by RESERVED width, which cell.Truncate cannot do on its own: the
+// tables and the terminal disagree about how wide an emoji is drawn, and
+// that disagreement is the whole reason a chip is budgeted with
+// cell.Reserve in the first place.
+func clampChip(text string, width int) string {
+	for w := width; w > 0; w-- {
+		cut := cell.Truncate(text, w)
+		if cell.Reserve(cut) <= width {
+			return cut
+		}
+	}
+	return ""
 }
 
 // reactionMark is the emoji a chip shows, or the stand-in for a custom one.

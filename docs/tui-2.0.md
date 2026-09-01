@@ -728,12 +728,50 @@ entirely for a poll whose results are hidden. Pairing it with `Poll.Answers`
 by position would attach the right numbers to the wrong answers in exactly
 the case nobody would check.
 
-**Percentages are apportioned, not rounded.** Three equal thirds round to 33
-each, and a reader adds them up. Largest-remainder apportionment makes the
-options of a poll sum to exactly 100, which is why the design record's poll
-reads 64/27/9 rather than 63/27/9. `TotalVoterCount` stays the server's own
-number rather than the sum of the tallies, because a multiple-choice poll
-counts one voter once and their answers several times.
+**Percentages are shares of different things in the two kinds of poll.** A
+single-choice poll's answers partition its voters, so its shares are of the
+votes cast and are apportioned by largest remainder to sum to exactly 100 —
+three equal thirds round to 33 each and a reader adds them up, which is why
+the design record's poll reads 64/27/9 rather than 63/27/9.
+
+A multiple-choice poll's answers do not partition anything. Three people who
+each pick both answers have chosen each of them unanimously; dividing by the
+six votes cast reports 50% and 50%, which is the opposite of what happened.
+Those shares are of the VOTERS, rounded independently, and are not meant to
+sum to anything. `TotalVoterCount` is the server's own number for the same
+reason — it counts people, and the footer says "4 voters" rather than
+"4 votes" where the two differ.
+
+### 16c. Every block has a form it falls back to at one cell
+
+`gridGeometryFor` clamps the body column to a minimum of one cell rather
+than refusing to draw, so one cell is a width every block has to survive. A
+line wider than the column is not merely ugly: it paints over the trailing
+column the grid drew to the right of it.
+
+Three blocks were drawing past it, and only the third was new:
+
+- **A link preview** reserved a two-cell rule plus a one-cell minimum body,
+  so it drew three cells into a column that might be one. `ruledLine` now
+  drops the rule when the pane cannot hold it and the line both — the rule
+  is this renderer's own mark and the line is somebody's words, so when only
+  one fits it is the mark that goes. The blockquote had the same shape and
+  now shares the helper.
+- **A code frame** guarded on `frameW < 4`, but four cells is not enough for
+  two borders, a line number, a gutter and a cell of code. The guard is now
+  the arithmetic it was standing in for.
+- **Prose** reached `cell.WrapLines`, which emits a rune wider than the
+  column whole rather than dropping the sender's character. Wrapped lines
+  are clamped as well, as are a poll's question and a reaction chip.
+
+A reaction chip is the one case where something has to be cut rather than
+moved: `[👍 3]` is six cells and cannot be made to fit a pane of four. It is
+cut and keeps a line of its own, because a reaction the reader never learns
+about is worse than an elided one — and it is cut by RESERVED width, which
+`cell.Truncate` cannot do on its own.
+
+The whole-body invariant test now sweeps from one cell rather than from
+fourteen. That gap is what let all three through.
 
 ### 16a. The gallery's poll is not framed, and neither is this one
 

@@ -96,7 +96,12 @@ func TestAPreviewWithNothingInItDrawsNothing(t *testing.T) {
 	}
 }
 
-// TestAPreviewFitsAndClosesItsStyles at every width a pane can be.
+// TestAPreviewFitsAndClosesItsStyles at every width a pane can be,
+// including the ones narrower than the rule. The thread grid clamps its
+// body column to one cell rather than refusing to draw, so one cell is a
+// width this block has to survive — a two-cell rule plus a one-cell
+// minimum body would paint three cells into it and over whatever the grid
+// put to the right.
 func TestAPreviewFitsAndClosesItsStyles(t *testing.T) {
 	pages := map[string]*telegram.WebPage{
 		"gallery":  galleryPreview(),
@@ -109,7 +114,7 @@ func TestAPreviewFitsAndClosesItsStyles(t *testing.T) {
 		"one long word": {SiteName: "x", Title: strings.Repeat("y", 200)},
 	}
 
-	for width := 4; width <= 140; width++ {
+	for width := 1; width <= 140; width++ {
 		for name, page := range pages {
 			for i, line := range renderWebPage(page, testRoles(), width) {
 				if got := cell.Width(line); got > width {
@@ -210,5 +215,26 @@ func TestAPreviewsRuleIsTheAccentColour(t *testing.T) {
 	}
 	if strings.HasPrefix(lines[0], ghost) {
 		t.Fatalf("the rule is a blockquote's: %q", lines[0])
+	}
+}
+
+// TestANarrowPreviewDropsItsRuleRatherThanThePane. The rule is this
+// renderer's own mark and the line is the page's words.
+func TestANarrowPreviewDropsItsRuleRatherThanThePane(t *testing.T) {
+	for width := 1; width <= 2; width++ {
+		lines := renderWebPage(galleryPreview(), testRoles(), width)
+		if len(lines) == 0 {
+			t.Fatalf("at width %d the preview vanished", width)
+		}
+		for i, line := range lines {
+			plain := ansi.Strip(line)
+			if cell.Width(line) > width {
+				t.Fatalf("at width %d, line %d is %d cells: %q",
+					width, i, cell.Width(line), plain)
+			}
+			if strings.Contains(plain, "│") {
+				t.Fatalf("at width %d the rule survived: %q", width, plain)
+			}
+		}
 	}
 }

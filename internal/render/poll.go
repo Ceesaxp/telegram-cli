@@ -43,7 +43,10 @@ func renderPoll(poll *telegram.Poll, roles theme.Roles, width int) []string {
 
 	var out []string
 	for _, line := range cell.WrapLines(poll.Question, blockW) {
-		out = append(out, question.Render(line))
+		// Truncate as well as wrap: a rune wider than the whole column is
+		// emitted whole rather than dropped, and one cell of body is a
+		// width the grid will clamp to but not one it will forgive.
+		out = append(out, question.Render(cell.Truncate(line, blockW)))
 	}
 	out = append(out, pollOptionRows(poll, roles, blockW)...)
 
@@ -170,13 +173,22 @@ func longestOption(options []*telegram.PollOption) int {
 func pollFooter(poll *telegram.Poll) string {
 	var facts []string
 
+	// "votes" only where a vote and a voter are the same thing. A
+	// multiple-choice poll's total counts PEOPLE, and six votes cast by
+	// three of them reported as "3 votes" is a number that matches
+	// nothing on the rows above it.
+	unit, plural := "vote", "votes"
+	if poll.MultipleChoice {
+		unit, plural = "voter", "voters"
+	}
+
 	switch {
 	case poll.TotalVoterCount == 1:
-		facts = append(facts, "1 vote")
+		facts = append(facts, "1 "+unit)
 	case poll.TotalVoterCount > 1:
-		facts = append(facts, strconv.Itoa(int(poll.TotalVoterCount))+" votes")
+		facts = append(facts, strconv.Itoa(int(poll.TotalVoterCount))+" "+plural)
 	case poll.ResultsKnown:
-		facts = append(facts, "no votes yet")
+		facts = append(facts, "no "+plural+" yet")
 	}
 
 	if poll.IsQuiz {

@@ -48,7 +48,7 @@ func renderWebPage(page *telegram.WebPage, roles theme.Roles, width int) []strin
 			lines = lines[:maxLines]
 		}
 		for _, line := range lines {
-			out = append(out, prefix+style.Render(line))
+			out = append(out, ruledLine(prefix, line, style, blockW))
 		}
 	}
 

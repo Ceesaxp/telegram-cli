@@ -84,15 +84,53 @@ func pollFromTG(p tg.Poll, r tg.PollResults) *Poll {
 	}
 
 	if poll.ResultsKnown {
-		for i, percent := range apportion(counts) {
-			poll.Options[i].Percent = percent
-		}
+		assignPercentages(poll, counts)
 	}
 	return poll
 }
 
+// assignPercentages works out what each option's bar is a share OF, which
+// is not the same question for the two kinds of poll.
+//
+// A single-choice poll's answers partition its voters, so the shares are of
+// the votes cast and are apportioned to sum to exactly 100.
+//
+// A multiple-choice poll's do not. Three people who each pick both answers
+// have chosen each of them unanimously; dividing by the six votes cast
+// would report 50% and 50%, which is the opposite of what happened. Those
+// shares are of the VOTERS, they are rounded independently, and they are
+// not meant to sum to anything.
+//
+// The fallback matters only in theory: Telegram sends a poll's total
+// alongside its tallies, and a multiple-choice poll that arrived without
+// one would have no voter count to divide by. Shares of the votes cast at
+// least compare the options correctly against each other, which is what the
+// bars are for.
+func assignPercentages(poll *Poll, counts []int32) {
+	if poll.MultipleChoice && poll.TotalVoterCount > 0 {
+		for i, count := range counts {
+			poll.Options[i].Percent = percentOfVoters(count, poll.TotalVoterCount)
+		}
+		return
+	}
+	for i, percent := range apportion(counts) {
+		poll.Options[i].Percent = percent
+	}
+}
+
+// percentOfVoters is one option's share of a poll's voters, to the nearest
+// whole percent and never over 100.
+func percentOfVoters(count, voters int32) int32 {
+	if count <= 0 || voters <= 0 {
+		return 0
+	}
+	percent := (int64(count)*100 + int64(voters)/2) / int64(voters)
+	return int32(min(percent, 100))
+}
+
 // apportion turns vote counts into whole percentages summing to exactly
-// 100, by largest remainder.
+// 100, by largest remainder. It is for the polls whose answers partition
+// the voters — see assignPercentages for the ones that do not.
 //
 // Rounding each share on its own is what produces three options reading
 // 64%, 27% and 9% above a footer that says 11 votes — or 33/33/33, where a
