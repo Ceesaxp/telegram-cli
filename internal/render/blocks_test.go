@@ -435,18 +435,17 @@ func TestMediaCardStatesOnlyKnownFacts(t *testing.T) {
 	}
 }
 
-// TestVoiceNoteHasNoWaveform. The design record draws a 24-cell amplitude
-// bar and there is no amplitude data on the domain type — a bar drawn from
-// nothing would be the one part of the card that looks like measurement and
-// is not.
-func TestVoiceNoteHasNoWaveform(t *testing.T) {
+// TestVoiceNoteWithoutAmplitudesDrawsNoWaveform. A bar drawn from nothing
+// would be the one part of the card that looks like measurement and is not.
+// The sender's client may never have computed one.
+func TestVoiceNoteWithoutAmplitudesDrawsNoWaveform(t *testing.T) {
 	card, ok := mediaCardFor(&telegram.MessageVoiceNote{
 		VoiceNote: &telegram.VoiceNote{Duration: 47, File: &telegram.File{ID: "v"}},
 	})
 	if !ok {
 		t.Fatal("a voice note must produce a card")
 	}
-	joined := card.name + strings.Join(card.facts, " ")
+	joined := ansi.Strip(strings.Join(card.render(testRoles(), 60), "\n"))
 	for _, bar := range []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"} {
 		if strings.Contains(joined, bar) {
 			t.Fatalf("a waveform was drawn from no amplitude data: %q", joined)
@@ -455,25 +454,8 @@ func TestVoiceNoteHasNoWaveform(t *testing.T) {
 	if !strings.Contains(joined, "0:47") {
 		t.Fatalf("the duration, which is real, is missing: %q", joined)
 	}
-}
-
-// TestPollShowsTheQuestionOnly. Telegram sends options, vote counts and a
-// closing time; the domain type carries none of them, and a poll drawn with
-// empty bars would state a result.
-func TestPollShowsTheQuestionOnly(t *testing.T) {
-	r := newTestRenderer()
-	lines := r.RenderBody(&telegram.Message{
-		ID: 1, Content: &telegram.MessagePoll{Poll: &telegram.Poll{Question: "Ship tonight?"}},
-	}, store.NewStore(), BodyOptions{Width: 40})
-
-	joined := ansi.Strip(strings.Join(lines, "\n"))
-	if !strings.Contains(joined, "Ship tonight?") {
-		t.Fatalf("the question is missing: %q", joined)
-	}
-	for _, invented := range []string{"%", "█", "░", "votes"} {
-		if strings.Contains(joined, invented) {
-			t.Fatalf("a poll result was invented: %q", joined)
-		}
+	if !strings.Contains(joined, "voice note") {
+		t.Fatalf("a card with no waveform still needs a name: %q", joined)
 	}
 }
 
@@ -495,11 +477,15 @@ func TestEveryBodyLineFitsAndClosesItsStyles(t *testing.T) {
 		"voice":  &telegram.MessageVoiceNote{VoiceNote: &telegram.VoiceNote{Duration: 12, File: &telegram.File{ID: "v"}}},
 		"poll":   &telegram.MessagePoll{Poll: &telegram.Poll{Question: long}},
 		"joined": &telegram.MessageChatJoinByLink{},
+
+		"voiced":  &telegram.MessageVoiceNote{VoiceNote: &telegram.VoiceNote{Duration: 47, File: &telegram.File{ID: "v"}, Waveform: speech(300)}},
+		"tallied": &telegram.MessagePoll{Poll: designRecordPoll()},
+		"preview": &telegram.MessageText{Text: formatted("Read later: " + long), WebPage: galleryPreview()},
 	}
 
 	for width := 14; width <= 120; width += 6 {
 		for name, content := range messages {
-			msg := &telegram.Message{ID: 1, Content: content}
+			msg := &telegram.Message{ID: 1, Content: content, Reactions: galleryReactions()}
 			for i, line := range r.RenderBody(msg, st, BodyOptions{Width: width}) {
 				if got := cell.Width(line); got > width {
 					t.Fatalf("%s at width %d: line %d is %d cells: %q",

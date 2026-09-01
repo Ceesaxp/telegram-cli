@@ -78,6 +78,10 @@ type Message struct {
 	ReplyToMessageID int64
 
 	Content MessageContent
+
+	// Reactions are the emoji tallies on this message, in the order
+	// Telegram ranks them. Nil when nobody has reacted.
+	Reactions []*Reaction
 }
 
 // MessageContent is the payload of a message.
@@ -88,6 +92,11 @@ type MessageContent interface {
 // MessageText is a plain text message.
 type MessageText struct {
 	Text *FormattedText
+
+	// WebPage is the link preview Telegram attached to the text, or nil.
+	// It hangs off the text rather than replacing it: the preview is a
+	// second reading of a link the sender already wrote out.
+	WebPage *WebPage
 }
 
 // MessagePhoto is a photo message.
@@ -234,6 +243,11 @@ type Document struct {
 type VoiceNote struct {
 	Duration int32
 	File     *File
+
+	// Waveform is one amplitude per sample, each 0–31, already unpacked
+	// from the five-bit encoding Telegram sends. Nil when the sender's
+	// client did not compute one.
+	Waveform []byte
 }
 
 // VideoNote is a round video file.
@@ -277,9 +291,75 @@ type Contact struct {
 	PhoneNumber string
 }
 
-// Poll is a poll (question only; answers are not rendered).
+// Poll is a poll: its question, its answers, and whatever tallies the
+// server sent with them.
 type Poll struct {
 	Question string
+	Options  []*PollOption
+
+	// TotalVoterCount is how many people have voted, which is not the sum
+	// of the options: a multiple-choice poll counts one voter once and
+	// their answers several times.
+	TotalVoterCount int32
+
+	// ResultsKnown is whether the server sent per-option tallies at all.
+	// A poll that hides its results until it closes sends none, and its
+	// options must then be drawn without bars — an empty bar is a result,
+	// not the absence of one.
+	ResultsKnown bool
+
+	IsAnonymous    bool
+	IsClosed       bool
+	MultipleChoice bool
+	IsQuiz         bool
+
+	// CloseDate is the unix time the poll closes, 0 when it has no
+	// scheduled end.
+	CloseDate int32
+}
+
+// PollOption is one answer of a poll.
+type PollOption struct {
+	Text       string
+	VoterCount int32
+
+	// Percent is this option's share of the vote, apportioned by largest
+	// remainder so that the options of a poll sum to exactly 100.
+	Percent int32
+
+	// Chosen is whether the local user picked this option. Correct is
+	// whether a quiz counts it as the right answer — set only once the
+	// user has answered, since that is when Telegram sends it.
+	Chosen  bool
+	Correct bool
+}
+
+// Reaction is one emoji's tally on a message.
+type Reaction struct {
+	// Emoji is the reaction's emoticon, empty for a custom one.
+	Emoji string
+
+	// CustomEmojiID identifies a custom emoji reaction, whose artwork is
+	// a document this client does not fetch; 0 for a standard reaction.
+	// A chip drawn from it says a reaction exists and admits it cannot
+	// show which, rather than substituting an emoji nobody sent.
+	CustomEmojiID int64
+
+	Count int32
+
+	// Chosen is whether the local user is one of the reactors. Telegram
+	// omits it from the copies of a message it sends to everyone (the
+	// "min" form), so a false here can mean "not known".
+	Chosen bool
+}
+
+// WebPage is the link preview Telegram attaches to a message's text.
+type WebPage struct {
+	URL         string
+	DisplayURL  string
+	SiteName    string
+	Title       string
+	Description string
 }
 
 // FormattedText is text with formatting entities.
@@ -711,6 +791,10 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 		msg.IsForwarded = true
 	}
 
+	if reactions, ok := m.GetReactions(); ok {
+		msg.Reactions = reactionsFromTG(reactions)
+	}
+
 	entities, _ := m.GetEntities()
 	caption := formattedTextFromTG(m.Message, entities)
 
@@ -810,10 +894,13 @@ func (c *Client) contentFromMedia(media tg.MessageMediaClass, caption *Formatted
 		}}
 
 	case *tg.MessageMediaPoll:
-		return &MessagePoll{Poll: &Poll{Question: sanitizeTerminal(m.Poll.Question.Text)}}
+		return &MessagePoll{Poll: pollFromTG(m.Poll, m.Results)}
 
 	case *tg.MessageMediaWebPage:
-		return nil // fall back to the message text
+		// A preview is an attachment ON the text, not instead of it: the
+		// message is still the sentence the sender wrote, with a second
+		// reading of one of its links below.
+		return &MessageText{Text: caption, WebPage: webPageFromTG(m.Webpage)}
 
 	default:
 		return &MessageUnsupported{Type: media.TypeName()}
@@ -831,6 +918,7 @@ func (c *Client) contentFromDocument(doc *tg.Document, caption *FormattedText) M
 		isVoice   bool
 		isSticker bool
 		animated  bool
+		waveform  []byte
 		sticker   string
 		title     string
 		performer string
@@ -856,6 +944,7 @@ func (c *Client) contentFromDocument(doc *tg.Document, caption *FormattedText) M
 			performer, _ = a.GetPerformer()
 			title = sanitizeTerminal(title)
 			performer = sanitizeTerminal(performer)
+			waveform, _ = a.GetWaveform()
 		case *tg.DocumentAttributeSticker:
 			isSticker = true
 			sticker = sanitizeTerminal(a.Alt)
@@ -893,6 +982,7 @@ func (c *Client) contentFromDocument(doc *tg.Document, caption *FormattedText) M
 		return &MessageVoiceNote{VoiceNote: &VoiceNote{
 			Duration: int32(duration),
 			File:     file,
+			Waveform: decodeWaveform(waveform),
 		}, Caption: caption}
 	case isAudio:
 		return &MessageAudio{Audio: &Audio{

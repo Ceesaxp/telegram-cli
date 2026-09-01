@@ -110,9 +110,11 @@ same file to your system viewer if the terminal draws it badly. `y` copies
 the selected message's text, `space` plays a voice note, and `M` clears the
 unread badge without moving your place in the history.
 
-What is **not** there yet: four blocks whose data this client does not map —
-reactions, poll results, link previews, and a voice note's waveform. Those are
-Telegram mapping work rather than rendering; see
+Reactions render as chips under the message, polls show their answers with
+scaled bars and percentages, a link preview gets a cyan rule with the host,
+title and two lines of description, and a voice note draws its 24-cell
+waveform beside its duration. What is **not** there is a voice note's
+transcript — that is a Telegram premium call this client does not make; see
 [TUI 2.0 design](#tui-20-design).
 
 ## Quick Start
@@ -971,9 +973,12 @@ Also landed, invisibly: `internal/ui/cell` (terminal geometry),
 `internal/ui/golden` (the fixture harness), the interaction-mode resolver, and
 the `:` command palette.
 
-**Still to come:** four content blocks are waiting on Telegram data this
-client does not map — reactions, poll results, link previews, and a voice
-note's waveform.
+All four content blocks that were waiting on Telegram data — reactions, poll
+results, link previews and a voice note's waveform — are now mapped and
+drawn. What is left is byte equality against the goldens: the blocks render,
+but reconciling them with the fixture cell for cell is a pass of its own. A
+voice note's transcript stays absent — it is a premium RPC this client does
+not make.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a

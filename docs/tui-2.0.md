@@ -698,22 +698,87 @@ background is what separates the chip; the spaces only widen it.
 
 ### 16. Four blocks the goldens draw have no data behind them
 
-Reactions, poll results, link previews, and a voice note's waveform and
-transcript are all in the fixtures and none of them are rendered. Each is
-waiting on a data source, not on a renderer:
+**Resolved.** All four are mapped and drawn; this entry is kept because the
+reasoning in it is what shaped the renderers that replaced it.
 
-| Block | What is missing | What it would take |
+| Block | What was missing | What it took |
 | --- | --- | --- |
-| Reactions | no field on `telegram.Message` | map `Message.Reactions` from gotd, and a domain type |
-| Poll options, counts, closing time | `Poll` carries the question only | map `MessageMediaPoll`'s answers and results |
-| Link preview | no web-page type at all | map `messageMediaWebPage` |
-| Voice waveform | no amplitude data | map `DocumentAttributeAudio.Waveform` |
-| Voice transcript | no transcription call | a Telegram premium RPC this client does not make |
+| Reactions | no field on `telegram.Message` | `telegram.Reaction` and `reactionsFromTG`, plus `updateMessageReactions` routed into the refetch an edit already takes |
+| Poll options, counts, closing time | `Poll` carried the question only | `PollOption`, `pollFromTG`, and `updateMessagePoll` on the same route |
+| Link preview | no web-page type at all | `telegram.WebPage` on `MessageText`, from `messageMediaWebPage` |
+| Voice waveform | no amplitude data | `decodeWaveform` over `DocumentAttributeAudio.Waveform` |
+| Voice transcript | no transcription call | still absent: a Telegram premium RPC this client does not make |
 
-What IS rendered from each is the part that exists: a poll shows its
-question, a voice note its duration. A poll drawn with empty bars would state
-a result, and a waveform drawn from nothing would be the one part of the card
-that looks like measurement and is not.
+The principle the old entry argued for is now the shape of the code rather
+than the reason for its absence. A poll drawn with empty bars would state a
+result, so `Poll.ResultsKnown` records whether the server sent tallies at all
+and a poll that hides its results until it closes renders as its answers and
+nothing else. A waveform drawn from nothing would be the one part of a card
+that looks like measurement and is not, so a voice note whose sender computed
+no amplitudes keeps the card it had. A custom emoji reaction is drawn with a
+neutral mark rather than a borrowed 👍: the count is real and the thing
+counted is not knowable without fetching a document.
+
+Two things the mapping had to get right, neither of them visible in the
+table:
+
+**Tallies are keyed, not zipped.** `PollResults.Results` arrives in its own
+order, addressed by each answer's opaque `option` bytes, and is empty
+entirely for a poll whose results are hidden. Pairing it with `Poll.Answers`
+by position would attach the right numbers to the wrong answers in exactly
+the case nobody would check.
+
+**Percentages are apportioned, not rounded.** Three equal thirds round to 33
+each, and a reader adds them up. Largest-remainder apportionment makes the
+options of a poll sum to exactly 100, which is why the design record's poll
+reads 64/27/9 rather than 63/27/9. `TotalVoterCount` stays the server's own
+number rather than the sum of the tallies, because a multiple-choice poll
+counts one voter once and their answers several times.
+
+### 16a. The gallery's poll is not framed, and neither is this one
+
+"Polls are framed, with option state, scaled bars, percentages, and a
+metadata footer" — but `blocks-100x52.txt` draws the poll with no frame at
+all, and the role table's mention of poll frames is the only other support
+for one.
+
+The fixture wins. A frame earns its place on a code block because the block
+is a quotation of something with its own indentation, and on a media card
+because the badge box is what makes consecutive attachments line up. A poll
+is already a shape: a column of marks, a column of answers, and a column of
+bars all sharing one scale. Boxing it costs two cells of body width on every
+row and adds nothing the alignment does not already do.
+
+Three details of the poll's own layout are this renderer's rather than the
+fixture's, and each is a case the hand-drawn gallery does not contain:
+
+- **The percentage field is four cells, not three.** The fixture never draws
+  a 100% option; a three-cell field would have to reflow when one arrives.
+- **Parts drop in a fixed order as the pane narrows** — the bar first, then
+  the percentage, then the state mark. The bar can be read off the number
+  beside it and the number cannot be read off anything, and a row that has
+  spent two of its five cells on a ring has stopped saying what is being
+  voted on.
+- **The answer column is the width of the longest answer**, not of whatever
+  is left over. Bars a screen away from the words they belong to are two
+  separate lists.
+
+### 16b. A voice note with a waveform is one row, and one row is the card
+
+The design record gives voice notes "a 24-cell waveform, duration, playback
+state, and transcript affordance" and the gallery draws exactly that, on a
+single line, at a hundred columns — where every other attachment in the same
+fixture gets the three-row framed card.
+
+That is not an inconsistency in the fixture. The bar IS the card's subject:
+it says how long the note is, where the speech is in it, and whether it is
+speech at all, which is everything the name row of a media card was carrying
+and more. So a voice note with amplitudes takes the collapsed one-line form
+at any width, and one without them keeps the framed card, whose "voice note"
+label is then the only thing left to say.
+
+The glyph changed with it, from ♪ to ▶. `space` plays the selected voice
+note, and the mark on the row is now the affordance rather than a category.
 
 ### 17. The composer's view tests moved; its behaviour tests did not
 
@@ -1817,7 +1882,7 @@ whatever the style was. For a hidden spoiler, which IS its colour, that
 assertion could only ever pass, on a screen showing the text in plain sight.
 
 Reactions, poll results, link previews and voice waveforms are not here
-because their data is not; see divergence 16 for what each would take. Media
+because their data is not — since resolved; see divergence 16. Media
 rendering is metadata-only for everything except a photo whose thumbnail has
 already been downloaded, which still draws — `ui.inline_images` (decision 10)
 lands with the rest of the config migration in phase 5.
