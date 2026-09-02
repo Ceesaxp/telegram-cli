@@ -162,6 +162,24 @@ immediately undoes.
       looks like a path must not silently become an attachment instead of
       the message somebody meant to send.
 
+- [ ] **The `ctrl+t` attach surface wants redrawing — placeholder, awaiting a
+      design.** Raised in field use, and not to be actioned here: it is going
+      to a designer first.
+
+      What is on screen today is `dialog.NewPrompt(…, "Attach File", "Path to
+      file:")` — a centred modal you type a path into, which is the idiom TUI
+      2.0 replaced everywhere else. Every other surface that asks for
+      something is now a row: the reaction picker, the reply bar, the filter
+      header, the `:` palette. This one is the last of the old shape still
+      reachable by a key (the contacts overlay below is the other).
+
+      Two things belong in whatever replaces it rather than beside it. The
+      drop-a-file item above is the same surface and the same question — a
+      path arriving by paste rather than by keystroke — and a redesign that
+      lands first would have to be reopened to take it. And typing a path is
+      the part nobody wants to do at all, so the design question is probably
+      not "what shape is the prompt" but "what does the reader pick from".
+
 ### Raised in priority by TUI 2.0
 
 - [ ] **SIGINT handler `os.Exit(0)`** — `cmd/teletui` skips bubbletea
@@ -186,6 +204,57 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
+### People — contacts and identity
+
+Raised in field use on 2026-09-02. Three items, and the second and third are
+one piece of work: both need `users.getFullUser`, which this client has never
+called — `channels.getFullChannel` is the only "full" RPC it makes. One RPC,
+two surfaces, so they should land together rather than the second one
+discovering the first already fetched what it needs.
+
+- [ ] **Contacts are read but nothing else.** The reading works and is worth
+      stating precisely, because the item is smaller than it looks:
+      `Client.GetContacts` calls `contacts.getContacts` and seeds the peers
+      manager from the result, and the `alt+c` overlay, the REST endpoint and
+      the MCP tool all go through it.
+
+      What is actually thin is everything around that:
+
+      - **No way to add one.** `contacts.importContacts` and
+        `contacts.addContact` are unimplemented, so a contact can only be
+        acquired by having one already. Adding one needs a phone number or a
+        username, and those are two different RPCs with two different failure
+        modes — a number Telegram does not know comes back as an *imported
+        nothing* rather than an error, which is the case to get right.
+      - **The overlay is pre-TUI-2.0.** A centred box drawing
+        `widgets.List`'s default row: name, `@username`, an online dot. No
+        sigil, no two-line row, no filter header, sorted by first name and
+        nothing else. It and `ctrl+t` are the two surfaces the redesign never
+        reached, and they are the same kind of problem.
+
+- [ ] **The rail says nothing about the person in a 1:1.** `sectionsFor`
+      gives a private chat files and links and no identity section at all;
+      the header supplies a name and the rail supplies media. Everything a
+      DM is actually about — who this is, their `@username`, the bio, when
+      they were last seen, what you have in common — is on screen nowhere.
+
+      Decision 6 still holds: nothing fetched on chat open, only when the
+      rail is opened. That is what makes this affordable — `users.getFullUser`
+      is one call, made once per chat per generation, cached beside the three
+      sections that already work that way.
+
+- [ ] **A palette command for the cursored message's sender**, in any chat
+      type. In a group or a channel this is the only way to find out who
+      somebody is without leaving for another client; in a DM it is the same
+      facts the rail item above would show, reached from a message rather
+      than from the chat.
+
+      The thread grid already knows the cursored message's identity — that is
+      what `r`, `y` and `+` act on — so the command has its argument for
+      free. What it needs is the fetch, and the decision about where the
+      answer goes: a rail section, an overlay, or the rail forced open on the
+      person rather than the chat.
+
 ## TUI 2.0 — design closed, every panel shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
@@ -203,7 +272,7 @@ Every phase in the plan has now shipped, both release blockers are
 discharged, the four content blocks that were waiting on Telegram data are
 mapped and drawn, and the goldens are asserted byte for byte. **TUI 2.0 is
 complete.** What is left in this section is the work that was never part of
-it — the compose line's editing gaps, mouse selection — plus the block
+it — the compose line's editing gaps, text selection — plus the block
 gallery, which is the one fixture with no scene behind it yet.
 
 Field feedback has its own item below: the compose line's editing keymaps are
@@ -318,6 +387,26 @@ thinner than either convention implies.
       Check the modifier gesture on the terminals in use before building
       anything: if it works everywhere that matters, the whole item is a
       README paragraph.
+
+- [ ] **`v` visual selection in the thread**, which is the same need as the
+      item above reached by the keyboard, and the one route that owes nothing
+      to what the terminal happens to do with a drag. Raised in field use.
+
+      It is the largest of the three, because it is the first thing in the
+      thread grid that needs a *region* rather than a cursor. The grid's
+      whole scrolling machinery — `scrollToMessage`, `sliceLines`,
+      `visibleMessages` — is built on one line count per message, and a
+      selection has an anchor, a head, and a rendering that has to survive
+      both of them scrolling out of view. Deliberately kept out of the render
+      cache key once already, for exactly this reason.
+
+      It also has to decide what it selects. `v` over lines is cheap and
+      matches how the grid is indexed; `v` over characters is what somebody
+      pressing `v` expects, and means mapping a cell back to a rune through
+      wrapping, entity styling and the gutter. Pick one before writing any of
+      it. Whichever it is, `y` is the exit — `y` on a selection copies the
+      selection, `y` without one keeps copying the message, so nothing that
+      works today changes.
 
 - [ ] **Compose-line editing is thinner than the keymap it advertises** ←
       **next**. Raised in field use, and largely a rendering problem that is
@@ -464,15 +553,32 @@ the primary checkout stays free for fixes against a working client.
 
 - [ ] **Remaining palette commands** ← **next, and each is a service, not a
       palette change.** All are authorised by D8; none are blocked on
-      permission:
-      - `pin` / `unpin` — needs a Telegram RPC and domain mapping
-      - `mute <duration>` / `unmute` — needs notification-settings RPCs
-      - `reload-config` — needs runtime config reload; confirm first when the
-        composer holds a draft or attachment (D8)
-      - `theme <name>` — needs every component to accept a theme at runtime;
-        probably falls out of phase 1's theme rework rather than being done
-        separately
-      - `jump <date>` — needs history-by-date
+      permission. `pin` / `unpin` shipped as a key rather than a command
+      (divergence 47); the four below are what remain, costed against the
+      code on 2026-09-02:
+
+      - `mute <duration>` / `unmute` — **the cheapest, and half-built.**
+        Reading is live: `peerMuted` asks `account.getNotifySettings`,
+        `Chat.Muted` is stored and merged, and `ChatMuteChangedMsg` keeps it
+        true from the wire. What is missing is the write —
+        `account.updateNotifySettings` — and a duration grammar, since
+        "mute" has to mean both eight hours and forever.
+      - `jump <date>` — **cheaper than it reads.** `messages.getHistory`
+        takes `OffsetDate` natively and the dialog cursor already passes one;
+        the history call just hardcodes zero. The work is not the RPC, it is
+        parsing what somebody types as a date and landing the scroll on a
+        message the line index has never loaded.
+      - `theme <name>` — **mostly wired.** `theme.RolesFor(name, trueColor)`
+        is the single entry point, thirteen components take `SetRoles`, and
+        `ui.theme` is already a config key. Two gaps: there are only two
+        palettes in the binary, and nothing calls `SetRoles` after startup.
+        Decide first whether a theme is a name compiled in or a TOML file a
+        reader writes — that is the whole size of the item.
+      - `reload-config` — **do it with `theme`, not before it.** A reload has
+        to re-derive roles and push them through the same thirteen
+        components, which is the wiring `theme <name>` needs anyway. Its own
+        share is D8's confirmation when the composer holds a draft or a
+        staged attachment.
 
       They are absent from the registry rather than stubbed: an entry that
       cannot run teaches a command that does not exist.
