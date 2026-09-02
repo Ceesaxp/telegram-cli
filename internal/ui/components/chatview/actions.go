@@ -134,16 +134,10 @@ func (m Model) OverlayPhotoCmd() tea.Cmd {
 	if msg == nil {
 		return nil
 	}
-	photo, ok := msg.Content.(*telegram.MessagePhoto)
-	if !ok || photo.Photo == nil {
+	key, caption, ok := m.overlayPicture(msg)
+	if !ok {
 		return nil
 	}
-	key := fileKey(bestPhotoSizeFile(photo.Photo))
-	if key == "" {
-		return nil
-	}
-
-	caption := m.photoCaption(msg, photo.Photo)
 	tg := m.tg
 
 	return tea.Batch(
@@ -159,6 +153,56 @@ func (m Model) OverlayPhotoCmd() tea.Cmd {
 			return OpenedPhotoMsg{Path: file.Path}
 		},
 	)
+}
+
+// overlayPicture is the file a message's picture is in and the line the
+// overlay names it with, or reports that the message has no picture.
+//
+// Two kinds of message qualify, because two kinds of message are a picture.
+// A photo is the obvious one. A DOCUMENT whose type is image/* is the one
+// that used to fall through: a screenshot dragged into a chat, or anything
+// sent with "send as file" to keep it from being recompressed, arrives as a
+// document and is a picture all the same.
+//
+// The card already says so — an image-typed document gets the IMG badge and
+// the ▣ mark rather than the DOC ones — and a badge that says "this draws
+// in your terminal" over a file that opens in Preview is the kind of false
+// fact in fixed-width type this design rejects everywhere else. So the
+// badge is kept and enter made true, rather than the other way round.
+func (m Model) overlayPicture(msg *telegram.Message) (key, caption string, ok bool) {
+	switch c := msg.Content.(type) {
+	case *telegram.MessagePhoto:
+		if c.Photo == nil {
+			return "", "", false
+		}
+		if key = fileKey(bestPhotoSizeFile(c.Photo)); key == "" {
+			return "", "", false
+		}
+		return key, m.photoCaption(msg, c.Photo), true
+
+	case *telegram.MessageDocument:
+		if c.Document == nil || !strings.HasPrefix(c.Document.MimeType, "image/") {
+			return "", "", false
+		}
+		if key = fileKey(c.Document.File); key == "" {
+			return "", "", false
+		}
+		return key, m.documentPictureCaption(msg, c.Document), true
+	}
+	return "", "", false
+}
+
+// documentPictureCaption names a picture that arrived as a file: its own
+// name, which a photo does not have, and who sent it.
+//
+// No dimensions, where photoCaption has them — a document does not carry
+// them, and the overlay is about to draw the picture anyway.
+func (m Model) documentPictureCaption(msg *telegram.Message, doc *telegram.Document) string {
+	name, _ := m.senderFor(msg)
+	if doc.FileName == "" {
+		return strings.Join([]string{"image", name}, " · ")
+	}
+	return strings.Join([]string{doc.FileName, name}, " · ")
 }
 
 // photoCaption names the picture in the overlay's header: who sent it, when,

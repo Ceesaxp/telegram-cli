@@ -24,6 +24,16 @@ type ChatEntry struct {
 	// has no name at all), and a row for one of those must not spend the
 	// rest of the session claiming to be loading.
 	Unresolved bool
+
+	// MemberCount is a group or channel's total, 0 when nobody has asked
+	// yet. It is NOT part of a dialog — a dialog says who a chat is, not
+	// how many people are in it — so it arrives from a separate full-info
+	// call, and [ChatStore.Set] and [ChatStore.Merge] leave it alone.
+	//
+	// It lives here rather than in the two components that want it so
+	// they cannot disagree, and so the second one to need it does not
+	// make the call again.
+	MemberCount int32
 }
 
 // ChatStore is a thread-safe in-memory cache of chats.
@@ -107,6 +117,57 @@ func (s *ChatStore) Merge(chat *telegram.Chat) {
 	if chat.Photo != nil {
 		entry.Chat.Photo = chat.Photo
 	}
+}
+
+// SetMemberCount records a chat's total membership.
+//
+// A zero is dropped rather than stored: every caller gets it from a
+// full-info call, and a call that failed hands back the zero value. Storing
+// that would replace a number this client knows with one it does not, and
+// the header would go from "24 members" to silence on a refresh.
+func (s *ChatStore) SetMemberCount(chatID int64, count int32) {
+	if count <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.chats[chatID]
+	if !ok {
+		entry = &ChatEntry{Unresolved: true, Chat: &telegram.Chat{ID: chatID}}
+		s.chats[chatID] = entry
+	}
+	entry.MemberCount = count
+}
+
+// MemberCount is a chat's total membership, 0 when it is not known.
+func (s *ChatStore) MemberCount(chatID int64) int32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if entry, ok := s.chats[chatID]; ok {
+		return entry.MemberCount
+	}
+	return 0
+}
+
+// TotalUnread is how many unread messages there are across every chat.
+//
+// Summed on demand rather than kept as a running total: an incremental
+// counter has to be right on every path that changes a chat's unread count,
+// and the one that forgets leaves a number on screen that drifts further
+// from the truth the longer the session runs.
+func (s *ChatStore) TotalUnread() int32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int32
+	for _, entry := range s.chats {
+		if entry.UnreadCount > 0 {
+			total += entry.UnreadCount
+		}
+	}
+	return total
 }
 
 // Get returns a chat entry by ID.

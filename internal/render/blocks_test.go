@@ -504,3 +504,111 @@ func TestEveryBodyLineFitsAndClosesItsStyles(t *testing.T) {
 		}
 	}
 }
+
+// TestACodeFrameOffersTheWayOut. A code block is the one thing in a thread
+// somebody wants OUT of the terminal, and y is how.
+func TestACodeFrameOffersTheWayOut(t *testing.T) {
+	body := formatted("x\ny\nz", span(0, 5, &telegram.TextEntityTypePreCode{Language: "sql"}))
+
+	wide := ansi.Strip(strings.Join(renderBlocks(body, testRoles(), 60, textOpts{}), "\n"))
+	if !strings.Contains(wide, "y to yank") {
+		t.Fatalf("a wide frame did not offer y:\n%s", wide)
+	}
+	if !strings.Contains(wide, "3 lines") {
+		t.Fatalf("the size went with it:\n%s", wide)
+	}
+
+	// It gives way before the size does: the size cannot be recovered by
+	// reading the code, and the key can be found on the help card.
+	narrow := ansi.Strip(strings.Join(renderBlocks(body, testRoles(), 26, textOpts{}), "\n"))
+	if strings.Contains(narrow, "y to yank") {
+		t.Fatalf("a narrow frame spent cells on y:\n%s", narrow)
+	}
+	if !strings.Contains(narrow, "3 lines") {
+		t.Fatalf("the narrow frame dropped the size instead:\n%s", narrow)
+	}
+}
+
+// TestACodeFrameKeepsACellInsideItsRightBorder, so a truncated line's
+// ellipsis does not sit against the frame and read as the last character of
+// the code.
+func TestACodeFrameKeepsACellInsideItsRightBorder(t *testing.T) {
+	long := strings.Repeat("wide ", 40)
+	body := formatted(long, span(0, len([]rune(long)), &telegram.TextEntityTypePre{}))
+
+	lines := renderBlocks(body, testRoles(), 60, textOpts{})
+	if len(lines) < 2 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	row := ansi.Strip(lines[1])
+	if !strings.HasSuffix(row, "… │") {
+		t.Fatalf("row = %q, want a cell of pad inside the border", row)
+	}
+}
+
+// TestACrampedCodeFrameSpendsEveryCellOnCode. At the narrow gutter the pad
+// is the first thing to go: there is nothing left to spend it on.
+func TestACrampedCodeFrameSpendsEveryCellOnCode(t *testing.T) {
+	long := strings.Repeat("wide ", 40)
+	body := formatted(long, span(0, len([]rune(long)), &telegram.TextEntityTypePre{}))
+
+	lines := renderBlocks(body, testRoles(), 26, textOpts{})
+	row := ansi.Strip(lines[1])
+	if strings.HasSuffix(row, "… │") {
+		t.Fatalf("row = %q, want the pad given up at this width", row)
+	}
+	if !strings.HasSuffix(row, "…│") {
+		t.Fatalf("row = %q", row)
+	}
+}
+
+// TestAnImageSentAsAFileGetsThePictureCard. The badge is what tells a
+// reader whether enter will draw something in the terminal or hand a file
+// to their system, and that follows the content rather than the envelope.
+func TestAnImageSentAsAFileGetsThePictureCard(t *testing.T) {
+	card, ok := mediaCardFor(&telegram.MessageDocument{Document: &telegram.Document{
+		FileName: "auth-p95-2608.png", MimeType: "image/png",
+		File: &telegram.File{ID: "d", Size: 188_416},
+	}})
+	if !ok {
+		t.Fatal("no card")
+	}
+	if card.badge != "IMG" || card.glyph != "▣" {
+		t.Errorf("badge/glyph = %q/%q, want IMG/▣", card.badge, card.glyph)
+	}
+	if card.name != "auth-p95-2608.png" {
+		t.Errorf("name = %q", card.name)
+	}
+
+	patch, _ := mediaCardFor(&telegram.MessageDocument{Document: &telegram.Document{
+		FileName: "backoff.patch", MimeType: "text/x-patch",
+	}})
+	if patch.badge != "DOC" {
+		t.Errorf("a patch got the %q badge", patch.badge)
+	}
+}
+
+// TestACaptionIsDrawnAboveItsCard. The caption is what the sender wrote and
+// the card is what this client worked out about the file; the sentence
+// introducing an attachment reads as a caption above it and as an
+// afterthought below.
+func TestACaptionIsDrawnAboveItsCard(t *testing.T) {
+	r := newTestRenderer()
+	lines := r.RenderBody(&telegram.Message{ID: 1, Content: &telegram.MessageDocument{
+		Document: &telegram.Document{
+			FileName: "auth-p95-2608.png", MimeType: "image/png",
+			File: &telegram.File{ID: "d", Size: 188_416},
+		},
+		Caption: &telegram.FormattedText{Text: "Rollout paused — can you look?"},
+	}}, store.NewStore(), BodyOptions{Width: 60})
+
+	joined := ansi.Strip(strings.Join(lines, "\n"))
+	caption := strings.Index(joined, "Rollout paused")
+	card := strings.Index(joined, "auth-p95-2608.png")
+	if caption < 0 || card < 0 {
+		t.Fatalf("a part is missing:\n%s", joined)
+	}
+	if card < caption {
+		t.Fatalf("the card was drawn above its caption:\n%s", joined)
+	}
+}

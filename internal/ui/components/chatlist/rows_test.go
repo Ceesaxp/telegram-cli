@@ -33,8 +33,10 @@ func TestRowGeometryMatchesTheGolden(t *testing.T) {
 		Title:    "infra-oncall",
 		Subtitle: "nadia: rebased, CI green",
 		Meta:     "2m",
-		Badge:    "4",
-		Kind:     int(telegram.ChatTypeSupergroup),
+		// As refreshList builds it: the brackets are part of the badge,
+		// not decoration renderRow adds.
+		Badge: unreadBadge(4, false),
+		Kind:  int(telegram.ChatTypeSupergroup),
 	}, true, true, 38)
 
 	title, preview := []rune(lines[0]), []rune(lines[1])
@@ -60,10 +62,10 @@ func TestRowGeometryMatchesTheGolden(t *testing.T) {
 	if got := string(preview[3:9]); got != "nadia:" {
 		t.Errorf("preview starts %q at col 3", got)
 	}
-	// The badge is the count padded one cell either side, so " 4 " occupies
-	// the same three cells the fixture writes as "[4]".
-	if got := string(preview[34:37]); got != " 4 " {
-		t.Errorf("cols 34-36 = %q, want the padded unread badge", got)
+	// The brackets are the padding now, and they say whether the chat is
+	// muted on a terminal that cannot show the difference in colour.
+	if got := string(preview[34:37]); got != "[4]" {
+		t.Errorf("cols 34-36 = %q, want the unread badge", got)
 	}
 }
 

@@ -46,6 +46,17 @@ func (m Model) searchCmd(chatID int64, filter telegram.MediaFilter, limit int32)
 // than an empty list, which the rail would otherwise show as "none" — a group
 // that says it has no members is worse than one that says it could not find
 // out.
+//
+// It does NOT ask how many members there are. The participants call returns
+// a page rather than a count, and "+192 more" computed from a page is a lie
+// about a group of two hundred — but the thread header needs the same total
+// and asks for it on every chat open, rail or no rail, so a second request
+// here would be the same question twice on the way to the same screen. The
+// count comes off the store; see memberSection.
+//
+// A basic group's total arrives with its members for free, so that one is
+// written THROUGH to the store rather than thrown away: it is the same
+// number the header wants, already paid for.
 func (m Model) membersCmd(chatID int64) tea.Cmd {
 	gen, tg := m.gen, m.tg
 	basic := m.chatTypeOf(chatID) == telegram.ChatTypeBasicGroup
@@ -64,14 +75,7 @@ func (m Model) membersCmd(chatID int64) tea.Cmd {
 		if err != nil {
 			return membersResultMsg{gen: gen, chatID: chatID, err: err}
 		}
-		// The total needs a second call: participants returns a page, not a
-		// count, and "+192 more" computed from the page is a lie about a
-		// group of two hundred. Both run once, when the rail opens.
-		count := len(members)
-		if info, err := tg.GetSupergroupFullInfo(chatID); err == nil {
-			count = int(info.MemberCount)
-		}
-		return membersResultMsg{gen: gen, chatID: chatID, members: members, count: count}
+		return membersResultMsg{gen: gen, chatID: chatID, members: members}
 	}
 }
 
@@ -101,9 +105,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if d == nil {
 			return m, nil
 		}
-		d.membersState, d.members, d.memberCount = stateReady, msg.members, msg.count
+		d.membersState, d.members = stateReady, msg.members
 		if msg.err != nil {
 			d.membersState = stateFailed
+		}
+		// A count the members call happened to bring with it (a basic
+		// group's full info) belongs to every surface that draws this
+		// chat, not to the rail.
+		if msg.count > 0 && m.store != nil {
+			m.store.Chats.SetMemberCount(msg.chatID, int32(msg.count))
 		}
 
 	case telegram.NewMessageMsg:

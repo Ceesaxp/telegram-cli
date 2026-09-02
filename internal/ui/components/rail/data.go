@@ -48,10 +48,6 @@ type chatData struct {
 
 	membersState sectionState
 	members      []*telegram.ChatMember
-	// memberCount is the chat's TOTAL, which the participants call does not
-	// return. It is what makes "+192 more" honest rather than a count of
-	// what one page happened to hold.
-	memberCount int
 }
 
 // SetStore wires the data sources. A rail without them still renders its
@@ -60,6 +56,37 @@ type chatData struct {
 func (m *Model) SetStore(s *store.Store, tg *telegram.Client) {
 	m.store = s
 	m.tg = tg
+}
+
+// SetDataForTest installs a chat's rail sections directly, as though every
+// fetch had already answered.
+//
+// The three sections arrive from three commands this component starts
+// itself, against a client a test does not have. Without a seam a rail in a
+// test says "unavailable" in every section, which is the one state the
+// goldens do not draw. Same reason and same shape as
+// chatlist.MarkLoadedForTest.
+func (m *Model) SetDataForTest(chatID int64, pinned, files []*telegram.Message,
+	members []*telegram.ChatMember, memberCount int) {
+	if m.data == nil {
+		m.data = map[int64]*chatData{}
+	}
+	m.chatID = chatID
+	m.data[chatID] = &chatData{
+		gen:          m.gen,
+		pinnedState:  stateReady,
+		pinned:       pinned,
+		filesState:   stateReady,
+		files:        files,
+		linksState:   stateReady,
+		membersState: stateReady,
+		members:      members,
+	}
+	// The total lives in the store, where every surface that draws this
+	// chat reads it — see memberSection.
+	if memberCount > 0 && m.store != nil {
+		m.store.Chats.SetMemberCount(chatID, int32(memberCount))
+	}
 }
 
 // Open points the rail at a chat and starts fetching what that chat's
@@ -233,10 +260,28 @@ func (m Model) messageRow(msg *telegram.Message, kind RowKind) Row {
 		row.Right = render.SenderName(msg, m.store)
 	case RowFile:
 		row.Text, row.Right = fileSummary(msg)
+		if isImageFile(msg) {
+			row.Kind = RowFileImage
+		}
 	case RowLink:
 		row.Text = linkSummary(msg)
 	}
 	return row
+}
+
+// isImageFile reports whether a shared file is a picture, so its row can
+// carry the same mark the media card gives one.
+//
+// The MIME type, not the extension: it is what the sender's client
+// declared, and a screenshot saved as ".dat" is still a picture.
+func isImageFile(msg *telegram.Message) bool {
+	switch c := msg.Content.(type) {
+	case *telegram.MessagePhoto:
+		return true
+	case *telegram.MessageDocument:
+		return c.Document != nil && strings.HasPrefix(c.Document.MimeType, "image/")
+	}
+	return false
 }
 
 // memberSection lists people, online first.
@@ -252,14 +297,25 @@ func (m Model) memberSection(d *chatData) Section {
 	for _, member := range d.members[:shown] {
 		s.Rows = append(s.Rows, m.memberRow(member))
 	}
-	if d.memberCount > shown {
-		s.Count = d.memberCount
+
+	// The total comes off the store, which is where whoever asked for it
+	// put it — the thread header asks on every chat open, and a basic
+	// group's members call writes the one it got for free. Zero means
+	// nobody has been told yet, and the remainder row is simply absent
+	// until they are: a section that says "+0 more" or counts the page it
+	// happens to hold is worse than one that waits a beat.
+	total := 0
+	if m.store != nil {
+		total = int(m.store.Chats.MemberCount(m.chatID))
+	}
+	if total > shown {
+		s.Count = total
 	}
 	// The remainder counts against the chat's real member total, not
 	// against how many the participants call happened to return: a group of
 	// two hundred returns two hundred, and "+192 more" is the honest number
 	// either way.
-	if rest := d.memberCount - shown; rest > 0 {
+	if rest := total - shown; rest > 0 {
 		s.Rows = append(s.Rows, Row{Kind: RowMore, Text: "+" + strconv.Itoa(rest) + " more"})
 	}
 	return s

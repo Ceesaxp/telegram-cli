@@ -45,7 +45,20 @@ type StorageConfig struct {
 }
 
 type UIConfig struct {
-	Theme           string `toml:"theme"`
+	Theme string `toml:"theme"`
+
+	// TimestampFormat and DateFormat are READ BACK AND WRITTEN OUT, and
+	// nothing consults them. Every time on screen has a fixed form chosen
+	// for the column it sits in: the thread's clock is 15:04 because the
+	// grid gives it five cells and puts the date in a day divider, the
+	// chat list is relative because a chat list is read for recency, and a
+	// day divider names the day. A Go layout string cannot express those,
+	// and one that overrode all three would break the column widths the
+	// frame is built on.
+	//
+	// Kept so an existing config round-trips rather than losing keys on
+	// -migrate-config. Marked here, and in config.example.toml, so nobody
+	// spends an afternoon finding out they do nothing.
 	TimestampFormat string `toml:"timestamp_format"`
 	DateFormat      string `toml:"date_format"`
 
@@ -270,8 +283,15 @@ type MediaConfig struct {
 	VoicePlayer         string `toml:"voice_player"`
 	VideoPlayer         string `toml:"video_player"`
 	AutoDownloadPhotos  bool   `toml:"auto_download_photos"`
-	AutoDownloadVoice   bool   `toml:"auto_download_voice"`
 	AutoDownloadLimitMB int    `toml:"auto_download_limit_mb"`
+
+	// AutoDownloadVoice is read back and written out, and nothing consults
+	// it. Voice notes are never prefetched: one is fetched when you press
+	// space on it, which is the only moment anybody wants the bytes, and
+	// turning that off would mean a key that does nothing. Kept for config
+	// round-tripping — see TimestampFormat for the same reasoning at
+	// length.
+	AutoDownloadVoice bool `toml:"auto_download_voice"`
 }
 
 type NotificationConfig struct {

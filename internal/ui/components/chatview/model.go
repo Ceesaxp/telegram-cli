@@ -142,6 +142,12 @@ type Model struct {
 	renderer *render.MessageRenderer
 	cache    *gridCache
 
+	// bufferIndex is this chat's 1-based position in the chat list, 0 when
+	// nobody has said. The panel cannot work it out — the list is the app's
+	// — so it is told, and it says nothing rather than guessing a number
+	// the reader would then look for and not find.
+	bufferIndex int
+
 	voice *media.VoicePlayer
 	video *media.VideoPlayer
 
@@ -384,6 +390,24 @@ func (m *Model) SetSize(w, h int) {
 
 func (m *Model) SetFocused(focused bool) { m.focused = focused }
 func (m *Model) SetMyUserId(id int64)    { m.myUserId = id }
+
+// SetBufferIndex tells the header which row of the chat list this thread
+// is. Zero clears it.
+func (m *Model) SetBufferIndex(n int) { m.bufferIndex = n }
+
+// MarkLoadedForTest puts the panel into the state a finished history load
+// puts it in, for messages a test has already put in the store.
+//
+// historyLoadedMsg is unexported and arrives from a command this component
+// starts itself, so a test in another package cannot get the panel past its
+// "Loading messages..." line without a seam. Same reason and same shape as
+// chatlist.MarkLoadedForTest.
+func (m *Model) MarkLoadedForTest() {
+	m.loading = false
+	m.loadStatus = ""
+	m.resolveUnreadDivider()
+	m.cache.clear()
+}
 
 // SetReservedKeys tells chatview which keys are already claimed by
 // bindings outside this package — every app-level key (quit, panel focus,
@@ -884,8 +908,49 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	gen, tg := m.gen, m.tg
 	return tea.Batch(
 		m.loadHistoryCmd(gen, chatID, 0),
+		m.memberCountCmd(chatID),
 		func() tea.Msg { tg.OpenChat(chatID); return nil },
 	)
+}
+
+// memberCountMsg carries a chat's total membership back.
+type memberCountMsg struct {
+	chatID int64
+	count  int32
+}
+
+// memberCountCmd asks how many people are in a group or channel.
+//
+// Private chats are skipped: "2 members" under somebody's name is not a
+// fact anyone needed. A chat whose count is already known is skipped too —
+// a membership does not change often enough to be worth a request on every
+// open, and the number is on screen either way.
+//
+// The answer lands in the STORE rather than in this model, so the rail does
+// not ask again when it opens and the two cannot end up showing different
+// numbers for the same group.
+func (m *Model) memberCountCmd(chatID int64) tea.Cmd {
+	entry, ok := m.store.Chats.Get(chatID)
+	if !ok || entry.Chat == nil ||
+		entry.Chat.Type == telegram.ChatTypePrivate || entry.MemberCount > 0 {
+		return nil
+	}
+
+	tg, basic := m.tg, entry.Chat.Type == telegram.ChatTypeBasicGroup
+	return func() tea.Msg {
+		var count int32
+		if basic {
+			if info, err := tg.GetBasicGroupFullInfo(chatID); err == nil {
+				count = info.MemberCount
+			}
+		} else if info, err := tg.GetSupergroupFullInfo(chatID); err == nil {
+			count = info.MemberCount
+		}
+		// No generation check: the result is keyed by the chat it was asked
+		// about, so a late answer is still the right answer for that chat
+		// and lands beside it rather than on whatever is open now.
+		return memberCountMsg{chatID: chatID, count: count}
+	}
 }
 
 type historyLoadedMsg struct {
@@ -1546,6 +1611,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.BlurMsg:
 		m.blurred = true
+
+	case memberCountMsg:
+		m.store.Chats.SetMemberCount(msg.chatID, msg.count)
 
 	case telegram.MessageEditedMsg:
 		if msg.ChatId == m.chatID {
@@ -2412,6 +2480,12 @@ func (m Model) renderHeader() string {
 	// indistinguishable from a key the thread ignores — which is what a
 	// digit WAS here until the count prefix existed.
 	right := m.headerPosition()
+	if marker := m.scrollMarker(); marker != "" {
+		right += "  " + marker
+	}
+	if m.bufferIndex > 0 {
+		right = "buf " + strconv.Itoa(m.bufferIndex) + " │ " + right
+	}
 	if n := m.countLabel(); n != "" {
 		right = n + "  " + right
 	}
@@ -2426,7 +2500,7 @@ func (m Model) renderHeader() string {
 	// media affordance — outranks the standing description, because the
 	// standing description is still true a second later and the transient
 	// is the thing that just changed.
-	subtitle := kind
+	subtitle := m.chatKindSubtitle(kind)
 	switch {
 	case m.mediaStatus != "":
 		subtitle = m.mediaStatus
@@ -2471,6 +2545,56 @@ func (m Model) renderHeader() string {
 	// The header is panel, and the thread column's surface is bg, so this
 	// one does paint: it is a real exception rather than a repeat.
 	return cell.Fill(r.Panel, line, m.width)
+}
+
+// chatKindSubtitle is the standing description of a thread: what kind of
+// chat it is, and how many people are in it once that is known.
+//
+// The member count is a separate call from the dialog that named the chat,
+// so it arrives late or not at all; a chat whose count nobody has fetched
+// says only what it is. A group that reported one member says "1 member",
+// because the alternative is a renderer inventing plurals for a number it
+// was given.
+func (m Model) chatKindSubtitle(kind string) string {
+	count := m.store.Chats.MemberCount(m.chatID)
+	if kind == "" || count <= 0 {
+		return kind
+	}
+	unit := " members"
+	if count == 1 {
+		unit = " member"
+	}
+	return kind + " · " + strconv.Itoa(int(count)) + unit
+}
+
+// scrollMarker is where the reader is in the history, as a word rather than
+// a second pair of numbers.
+//
+// "ln 214/214" already says it exactly, and a reader still has to compare
+// two numbers to answer the only question they were asking: is there more
+// below me. The marker answers it at a glance, which is why vi has had one
+// for fifty years and why the design record asks for one here.
+//
+// Only the ends are named. A percentage in the middle would be a third
+// number saying what the first two already say.
+func (m Model) scrollMarker() string {
+	total := totalRenderedLines(m.lineCounts())
+	if total == 0 {
+		return ""
+	}
+	visible := m.bodyHeight()
+	atBottom := m.scrollOffset <= 0
+	atTop := m.scrollOffset >= total-visible
+
+	switch {
+	case atTop && atBottom:
+		return "all"
+	case atBottom:
+		return "bot"
+	case atTop:
+		return "top"
+	}
+	return ""
 }
 
 // headerPosition is the "ln 214/214" cell: the last visible rendered line

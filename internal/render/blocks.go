@@ -18,6 +18,11 @@ import (
 // frame stops reading as one object.
 const maxBlockWidth = 84
 
+// minYankRule is how much rule has to survive for the code frame's header
+// to spend cells advertising y. Below it the rule stops reading as a frame
+// and starts reading as a caption with a box drawn round it.
+const minYankRule = 14
+
 // minCardWidth is the body width a three-row media card needs. Below it the
 // card collapses to a single line — both forms are in the goldens
 // (frame-137x29 draws the card, frame-120x40 the collapsed line).
@@ -303,11 +308,17 @@ func renderCodeBlock(text, language string, roles theme.Roles, width int) []stri
 	// A comfortable gutter is " N   "; a cramped one is "N  ". The wide
 	// form is what the goldens draw at 137 columns and the narrow one what
 	// they draw at 120, so both are real rather than one being a fallback.
-	lead, trail := 1, 3
-	if frameW-2-numW-lead-trail < 24 {
-		lead, trail = 0, 2
+	// A cell of pad inside the right border, so a truncated line's
+	// ellipsis does not sit against the frame and read as the last
+	// character of the code. It goes with the comfortable gutter and is
+	// the first thing the cramped one gives up: at that width every cell
+	// is already spoken for by the code itself.
+	lead, trail, rightPad := 1, 3, 1
+	if frameW-2-numW-lead-trail-rightPad < 24 {
+		lead, trail, rightPad = 0, 2, 0
 	}
-	codeW := frameW - 2 - numW - lead - trail
+
+	codeW := frameW - 2 - numW - lead - trail - rightPad
 	if codeW < 1 {
 		codeW = 1
 	}
@@ -327,6 +338,7 @@ func renderCodeBlock(text, language string, roles theme.Roles, width int) []stri
 				num.Render(cell.PadLeft(strconv.Itoa(i+1), numW))+
 				strings.Repeat(" ", trail)+
 				body+
+				strings.Repeat(" ", rightPad)+
 				border.Render("│"))
 	}
 	out = append(out, border.Render("└"+strings.Repeat("─", frameW-2)+"┘"))
@@ -344,6 +356,15 @@ func codeHeader(language string, n, frameW int, border, tag, meta lipgloss.Style
 	right := strconv.Itoa(n) + " lines"
 	if n == 1 {
 		right = "1 line"
+	}
+
+	// The yank affordance rides on the size, and gives way before it. A
+	// code block is the one thing in a thread somebody wants OUT of the
+	// terminal — into an editor, a shell, a ticket — and y is how, which
+	// is worth a few cells of a rule that is otherwise decoration.
+	const yank = " · y to yank"
+	if frameW-cell.Width(right)-cell.Width(yank) >= minYankRule {
+		right += yank
 	}
 
 	left := "┌"

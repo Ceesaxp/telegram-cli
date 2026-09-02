@@ -29,11 +29,12 @@ func framedModel(t *testing.T, w, h int) Model {
 // for, and the one that must pass from day one: every rendered row is
 // exactly the terminal width.
 //
-// This is width only, deliberately. Byte equality against the fixtures is
-// the design contract, but it cannot pass until the thread grid, the chat
-// list rows and the rail all land — the goldens are renders of a finished
-// TUI 2.0. Separating the two assertions by lifetime is exactly why
-// golden.Compare reports them as different DiffKinds.
+// This is width only, and stays that way: it renders an EMPTY client, which
+// no fixture draws. Byte equality against the fixtures is asserted next
+// door by TestFrameMatchesTheGoldens, against a fixed scene. The two are
+// separate because they answer different questions — this one asks whether
+// the frame holds together with nothing in it, which is the state a client
+// starts in and the one no golden covers.
 func TestFrameRowsAreExactlyWide(t *testing.T) {
 	for _, size := range goldenSizes {
 		t.Run(sizeName(size.w, size.h), func(t *testing.T) {

@@ -598,17 +598,25 @@ that key in the same mode.
 
 ### 10. The thread header omits the buffer number and the bot mark
 
-The goldens draw the header's right group as `buf 2 │ ln 214/214  bot`. Only
-`ln 214/214` is rendered.
+**Resolved**, and one word of it was read wrong for eight phases.
 
 `buf N` is a chat's index among the open buffers, which the thread panel does
-not know — the app does. `bot` needs a flag on the chat that the client does
-not map today. Both are omitted rather than filled with a plausible number,
-for the same reason the top bar's placeholders were a recorded release
-blocker: a false fact stated in fixed-width type is worse than a missing one.
+not know — the app does. It is told now, on the same tick that refreshes the
+two chrome rows, so it cannot be left describing where a chat used to be. The
+number is the chat list's ROW, not a stable id: a vi buffer number is worth
+having because `:b2` goes there, this client has no such command, and the
+only number worth printing is the one the reader can act on — the row they
+can see to the left of the header.
 
-They come back when the data reaches the panel, and the right group is
-measured first, so widening it will not cost the position cell.
+`bot` was recorded here as "a flag on the chat that the client does not map",
+reading it as the bot-account mark the prose lists beside the buffer number
+and the scroll position. That reading cannot be right: all six fixtures draw
+it, and all six draw a GROUP. It is vi's ruler — `214,1  Bot` — and every
+fixture drawing it at `ln 214/214` is a thread scrolled to the end.
+
+So it is a scroll marker, and it names only the ends: `bot`, `top`, `all`
+when the whole history fits, nothing in between. A percentage in the middle
+would be a third number saying what the first two already say.
 
 ### 11. Outgoing state has three marks, not four
 
@@ -1469,6 +1477,138 @@ invariant is held by an AST test that walks `internal/telegram` and fails if
 `chatFromUser`, `chatFromBasicGroup` or `chatFromChannel` is called from
 anywhere but `resolvedChat` and the dialog path. Reverting the fix makes it
 name the function and the line.
+
+### 42. Byte equality, and the eleven cells the fixtures got wrong
+
+Byte equality against the goldens is asserted. `TestFrameMatchesTheGoldens`
+renders a fixed scene at each fixture's size and compares every cell of all
+six frames — the five reference sizes plus the wide-rune stress fixture.
+
+**The clock had to be pinnable first.** Almost every label on the frame is
+relative: the top bar's wall clock, the chat list's "2m" and "yd", the
+thread's day dividers. `render.PinClock` fixes the instant and the tests fix
+`time.Local` alongside it, because a timestamp formatted through the local
+zone renders 20:44 in Berlin and 18:44 in London and a fixture can hold only
+one of them. Production never writes the pin; an atomic rather than a plain
+variable so a test that sets it cannot race the renderer under `-race`.
+
+Five things the fixtures drew were not in the client, and each turned out to
+be worth having on its own terms:
+
+| Field | What it says |
+| --- | --- |
+| `2m` `14m` `yd` `2d` in the chat list | recency, which is what a chat list is read for — where "Mon 09:12" made the reader do the subtraction on every row |
+| `group · 24 members` | the size of the room you are typing into, from the full-info call the rail already made; it lands in the store so the two cannot disagree and the second one to want it does not ask again |
+| `buf N` | which row of the list this thread is |
+| `bot` / `top` / `all` | whether there is more below, without comparing two numbers — see divergence 10 |
+| `idx 214 msgs · 9 buffers · 37 unread` | how much there is, each part omitted when it would say nothing |
+
+Three more differences were the client's own drawing being one cell out, and
+the fixture was right: a code frame keeps a cell of pad inside its right
+border so a truncated line's ellipsis does not read as the last character of
+the code (and gives that cell up at the cramped gutter, where the fixture
+does too); the unread badge's brackets replace the spaces that used to pad
+it, which costs nothing and says whether a chat is muted on a terminal with
+no colour; and the chat list's motion hints sit at the FOOT of the column
+rather than wherever the list happens to end.
+
+**Thirty-one rows of a hundred and eighty-three were regenerated.** Five
+sixths of the hand-drawn design survives verbatim, which is the useful
+number: it says the fixtures were drawn against a real design rather than
+sketched. What changed falls into three kinds.
+
+*Numbers derived from the scene.* `ln 214/214`, `idx 214 msgs`, `buf 2`. The
+scene has twelve messages in the open chat and infra-oncall is its first
+row; 214 was a plausible number written twice into two cells that measure
+different things.
+
+*Facts a hand drawing got wrong.* `buf 2` on a chat drawn first in its own
+list. `bot: ` prefixing a channel post in `ops-alerts` while the identical
+row in `tape/changelog` has none — a channel's posts are the channel's, so
+neither has one now. A reply quoting `4412 ready for the second approval?`
+attributed to ivo, whose only visible message says something else; the quote
+now cites the message that is actually there. A quote taking the TAIL of the
+message it cites rather than its beginning.
+
+*Things Telegram does not send.* `1440×720` on a file — a document carries
+no dimensions, and a photo carries no filename, so the fixture's card was
+four facts from two different types. It is a document now, with the name,
+the size and the extension, and the card gives an image-typed document the
+IMG badge and the ▣ mark rather than the DOC one: the badge tells a reader
+whether enter will draw something in the terminal or hand a file to their
+system, and that follows the content, not the envelope. `· 6 online` is
+gone: counting online members means fetching every member, and counting
+among the page you happened to fetch understates a group of two hundred —
+the same reason divergence 18 gives for taking the member total from full
+info rather than from the participants call.
+
+Two cells are the client's key names rather than the fixture's: `enter open`
+where the drawing says `o open` (both keys work; enter is the one that draws
+it in the terminal), and the composer's reply preview truncated where it now
+fits.
+
+### 43. A read receipt after a row of reactions
+
+Reactions render below the body, and the outgoing-state mark is appended to
+a message's last body line. Those two rules now meet: an outgoing message
+with reactions puts its `✓✓` after the chips, where it reads as though it
+belonged to the last of them.
+
+Left as it is, and recorded rather than fixed, because the alternative is
+worse than the problem. The grid appends the mark to the last line it is
+given; teaching it which of those lines are reactions means the body
+renderer telling it, which is a second channel between two components that
+currently share one. The mark is faint and the chips are bracketed, and no
+fixture draws the combination — the wide-rune scene is the only place it
+occurs at all.
+
+### 44. Four review findings, and the one that was wrong
+
+**A relative label goes stale where an absolute one cannot.** `refreshList`
+runs when the LIST changes — a message arrives, a folder is switched, a
+filter is typed — and in a quiet session none of those happen. So a row that
+said `2m` when it was built went on saying `2m` for the rest of the
+afternoon, which is a defect the `15:04` it replaced could not have had.
+
+The label is now computed on the way OUT, in `ageMeta`, from the instant the
+row carries beside it. The chrome tick already draws a frame every second,
+and a label recomputed when it is about to be drawn cannot be stale by
+construction. `refreshList` stopped formatting one at all: two places
+deciding the same thing means the copy that is not the authority is the one
+that rots.
+
+**A badge that promised something enter did not do.** An image-typed
+document gets the IMG badge and the ▣ mark, justified here as "the badge
+tells a reader whether enter will draw something in the terminal or hand a
+file to their system". `OverlayPhotoCmd` took a `MessagePhoto` and nothing
+else, so enter on a screenshot sent with "send as file" opened Preview — a
+false fact in fixed-width type, which is the thing this design refuses
+everywhere else. The overlay takes both now. The badge was kept and enter
+made true, rather than the other way round.
+
+**The same question twice on the way to the same screen.** The thread
+header asks how many members a chat has on every open and puts the answer in
+the store; the rail asked again for its "+192 more" row. Two requests, and
+two answers that could disagree. The rail reads the store now, and the
+budget is written down as a test: `GetSupergroupFullInfo` returns a count
+and nothing else, so it has exactly one caller; `GetBasicGroupFullInfo`
+returns the MEMBERS as well and a basic group has no other route to them, so
+it has two — and the rail writes the count it got for free through to the
+store rather than keeping it.
+
+**The one that was wrong.** Review reported that the header's buffer number
+was refreshed only on the chrome tick, so a freshly opened chat would show
+none, or the previous chat's. It does not: `switchComposerTo` recomputes the
+layout, which refreshes the chrome, which sets the number — on the frame the
+chat opens. Checked by putting the reported code back and running the test
+against it, which passes.
+
+The finding was still worth having. The behaviour was correct and nobody
+had ever asserted it, and it rides on a chain — open, switch composer,
+recompute layout, refresh chrome — that reads like an accident even when it
+is not. `TestOpeningAChatNumbersItImmediately` holds it now. The explicit
+`SetBufferIndex` added while investigating came back out: a line no mutation
+can kill is a line that is not doing anything.
 
 ## Decisions
 

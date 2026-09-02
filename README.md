@@ -22,6 +22,7 @@
 - **Chat Management** — Private chats, groups, supergroups, channels
 - **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see Keybindings below); Telegram-compatible pinned/include/exclude filter semantics
 - **Thread Grid** — Messages on a fixed time / sender / body grid rather than bubbles: one body column the whole conversation aligns to, deterministic per-sender colours, day and unread dividers, single-row reply quotes, and delivery marks read from the chat's read markers. Real ANSI-aware word wrap, measured in display cells
+- **Where You Are** — The chat list times are relative (`2m`, `4h`, `yd`, `2d`), because a list is read for recency. The thread header carries the chat's kind and member count, which buffer you are in, and a `bot`/`top`/`all` marker beside the line position, so "is there more below" is answered without comparing two numbers. The hint bar counts what there is — `idx 12 msgs · 9 buffers · 37 unread` — dropping each part when it would say nothing
 - **Content Blocks** — Framed, numbered code fences with diff and comment colouring and horizontal truncation (code is never re-wrapped); ruled block quotes; hanging-indent lists; metadata cards for attachments that collapse to one line on a narrow pane; spoilers drawn in their own background until `x` reveals them
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
 - **Incoming Rich Text** — Bold, italic, underline, strikethrough, inline code, links, mentions and spoilers rendered from Telegram's own text entities in a semantic palette, so what you see is what was sent rather than a Markdown round-trip. Overlapping and nested spans are layered rather than replayed
@@ -33,7 +34,6 @@
 - **Clipboard Paste** — `Ctrl+V` attaches a clipboard image or file reference and sends it as an inline photo (or document, when the format can't be a photo)
 - **Search** — Search chats, messages, and the global Telegram directory; selecting a result jumps straight to that message, scrolled and centred, paging back through history if needed
 - **Contacts** — Contact list with online status indicators
-- **Group Info** — Member list, admin roles, group description (component exists; not yet reachable from a keybinding — see [TODO.md](TODO.md))
 - **Help Overlay** — `?` opens a scrollable, lazygit-style keybinding cheat sheet built from the same bindings the app dispatches on, so it can't drift out of sync
 - **Composer Editing Modes** — emacs (readline) or vi (modal, real cursor semantics) line editing, selectable or auto-detected from `$VISUAL`/`$EDITOR`; `Ctrl+O` edits the draft in a full external editor
 - **Mode Badge** — NORMAL / INSERT / COMMAND at the head of the composer row, derived from what the next key will actually do rather than from a separate flag, so it cannot contradict the keymap
@@ -54,29 +54,39 @@
 ## Screenshot
 
 ```
- tg │ 1:All 2:Work 3:Channels                  ● connected · 2 devices │ 15:22
- / filter chats…                  4/4 │ # infra-oncall │ group        ln 22/22
-▌# infra-oncall                 08:15 │ TODAY ──────────────────────────────
-▌    sam: the offending query   [2]   │   15:02           sam  the offending
- @ Alice                        13:24 │                        query, for the
-     see you tomorrow                 │                        record:
- ! Telegram muted               08:03 │                        ┌ sql ── 4 li…
-     Login code: 12345                │                        │1  SELECT s.…
- @ BotFather                    14:38 │                        │2  - WHERE s…
-     /newbot                    [81]  │                        │3  + WHERE s…
-                                      │                        └────────────┘
-                                      │ 2 NEW ──────────────────────────────
-                                      │   15:18         Alice  ▤ notes.md  6 KB · md
-                                      │ ▌ 15:20           you  perfect ✓
-                                      │                   ···  Alice is typi…
- j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for command
- q quit  i compose  : command  r reply  e edit  ? keymap        4 buffers
+ tg │ 1:all 2:unread 3:work 4:channels 5:archive ● connected · 1 device │ 21:04
+ / filter chats…          9/9 │ # infra-oncall │ group ·… buf 1 │ ln 45/45  bot
+▌# infra-oncall         2m    │   20:47     nadia  That is the migration
+▌  nadia: rebased, CI gr… [4] │                    backfill, not the rollout.
+ @ Nadia Feld           6m    │                    It drains in ~20 min.
+   you: pushing the tag now   │   20:52       you  Confirmed from the queue
+ # relay-protocol       14m   │                    dashboard. Resuming.  ✓✓
+   ivo: the 429 is upstr… [2] │ 4 NEW ─────────────────────────────────────────
+ ~ wire notes           1h    │   20:58       ivo  Resumed. Canary at 5%.
+   draft: saved locally       │   21:01     nadia  ↳ ivo Resumed. Canary at 5%.
+ ! ops-alerts muted     2h    │                    Rebased onto main, CI is
+   p95 back under 400ms  (31) │                    green now. 4412 ready for
+ @ Mira Okonkwo         4h    │                    the second approval.
+   sounds good — thurs then   │   21:02       sam  Approved. Merging behind the
+ # design-crit          yd    │                    flag.
+   you: left comments on 3    │                    [🚀 4]
+ ! tape/changelog muted yd    │ ▌ 21:03       ivo  Good. I will write the
+   v0.4.1 — keymap overhaul   │ ▌                  incident note either way —
+ @ Jonas Vik            2d    │ ▌                  cheap to have, expensive to
+   thanks, that unblocked me  │ ▌                  reconstruct.
+                              │               ···  nadia is typing…
+                              │ reply ↳ nadia: Rebased onto main, … esc to drop
+ j/k move  g/G ends  u unread │ NORMAL › i to compose · : for commands       md
+ q quit  i compose  : command  r reply      idx 12 msgs · 9 buffers · 37 unread
 ```
+
+That is not a mock-up. It is [`docs/fixtures/frame-80x24.txt`](docs/fixtures/frame-80x24.txt)
+verbatim — one of six frames the renderer is asserted against **cell for
+cell**, so the picture cannot drift from the program.
 
 The **frame** is TUI 2.0: a one-row top bar with folder tabs and connection
 state, borderless columns divided by single-cell rules, and a context-sensitive
-hint bar at the foot. Every row is exactly the terminal width, asserted by
-tests against [`docs/fixtures/`](docs/fixtures/).
+hint bar at the foot. Every row is exactly the terminal width.
 
 The **chat list** is TUI 2.0 too: two-line rows, a type sigil instead of an
 avatar (`@` DM, `#` group, `!` channel, `~` saved messages), a filter header
@@ -974,17 +984,18 @@ Also landed, invisibly: `internal/ui/cell` (terminal geometry),
 the `:` command palette.
 
 All four content blocks that were waiting on Telegram data — reactions, poll
-results, link previews and a voice note's waveform — are now mapped and
-drawn. What is left is byte equality against the goldens: the blocks render,
-but reconciling them with the fixture cell for cell is a pass of its own. A
-voice note's transcript stays absent — it is a premium RPC this client does
-not make.
+results, link previews and a voice note's waveform — are mapped and drawn,
+and the frame is now asserted against the goldens **byte for byte** at all
+six fixture sizes. A voice note's transcript stays absent: it is a premium
+RPC this client does not make.
 
 Visual sign-off is settled. [docs/fixtures/](docs/fixtures/) holds cell-exact
 golden renderings at 80×24, 100×30, 120×40, 137×29, and 200×60, plus a
 CJK/emoji/RTL/ZWJ fixture and a block gallery; every line is exactly its stated
 display width. They are the acceptance artifact for frame integrity and column
-alignment, and they are what the rendering tests will assert against. The
+alignment, and every one but the block gallery is now asserted cell for cell
+against a fixed scene — `go test ./internal/app -run TestFrameMatchesTheGoldens`,
+with `-update` to regenerate after a deliberate copy change. The
 original design handoff is archived unmodified in
 [docs/handoff/](docs/handoff/) — read it as history, not as instructions, since
 review has since overturned several of its points.

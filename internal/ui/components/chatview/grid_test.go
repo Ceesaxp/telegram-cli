@@ -69,7 +69,9 @@ func TestThreadGridRendersTheDocumentedLayout(t *testing.T) {
 	rule := strings.Repeat("─", 67-cell.Width(" "+day+" ")-1)
 
 	want := []string{
-		" # infra-oncall │ group                                   ln 12/12 ",
+		// "all" because this whole history fits on screen: the marker
+		// says which end the reader is at, and here both.
+		" # infra-oncall │ group                              ln 12/12  all ",
 		" " + day + " " + rule + " ",
 		"   " + clock + "         nadia  Rollout paused — session hits spiked on    ",
 		"                        the auth path.                             ",

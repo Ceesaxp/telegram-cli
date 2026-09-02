@@ -14,9 +14,14 @@ type ListItem struct {
 	Title    string
 	Subtitle string
 	Badge    string
-	Meta     string
-	Online   bool
-	Muted    bool // chat notifications are muted; render dimmed
+
+	// MetaAt is the instant Meta describes, or 0 when Meta is not a time.
+	// A relative label goes stale where an absolute one cannot, so the
+	// owner keeps the fact beside the sentence about it.
+	MetaAt int32
+	Meta   string
+	Online bool
+	Muted  bool // chat notifications are muted; render dimmed
 
 	// Kind and Saved describe what the item IS, for callers whose rows
 	// show a type mark. TUI 2.0's chat list uses them for its sigil, which
