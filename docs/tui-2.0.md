@@ -1610,6 +1610,40 @@ is not. `TestOpeningAChatNumbersItImmediately` holds it now. The explicit
 `SetBufferIndex` added while investigating came back out: a line no mutation
 can kill is a line that is not doing anything.
 
+### 45. The reply that had nowhere to type
+
+`r` opened a reply and the row you type into was not on screen. Going out to
+`$EDITOR` with ctrl+o and coming back made it appear, which made it look
+like an editor problem and is the opposite of one.
+
+`EnterReplyMode` grows the composer to two rows — the quoted message, and
+the line under it — and the frame budgets the composer's rows from
+`layout.ComposerHeight`, not from the composer. Nothing recomputed the
+layout, so the thread kept the row and the composer drew two into a budget
+of one. The bar is the first of those two, so the bar is what you saw. The
+line was rendered, correctly, one row below the bottom of its column.
+
+Returning from `$EDITOR` fixed it because the terminal is resized on the way
+out and back, and `tea.WindowSizeMsg` is one of the few things that DID
+recompute the layout.
+
+**The reconciliation is not in the switch.** `Update`'s switch has
+sixty-five early returns, and a step at the bottom of it is a step that runs
+for most messages and silently not for the ones that take a shortcut — the
+reply action being one. So `Update` is now a wrapper: it calls the switch,
+then reconciles, and there is no path through it that skips the second half.
+
+The check itself is one line and holds for every way the composer changes
+shape, not just this one: a reply bar, an attachment chip, a notice, the
+expanded form. The alternative is each of those remembering to say so, and
+one of them forgetting — which is the same rule as divergence 39, and this
+is what forgetting looks like from the outside.
+
+It does nothing before the first `WindowSizeMsg`. A layout computed from a
+zero terminal hands every panel a zero region, which is not a smaller frame
+but no frame, and the panels would have to be told their sizes all over
+again.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

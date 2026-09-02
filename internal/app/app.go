@@ -305,7 +305,46 @@ const noticeEditAttach = "⚠ cannot attach while editing"
 // transient notice would own the hint bar until something replaced it.
 func (m Model) Init() tea.Cmd { return chromeTick() }
 
+// Update handles one message and then reconciles the frame with whatever it
+// did.
+//
+// The reconciliation is here rather than at the end of the switch because
+// the switch has sixty-five early returns, and a step that only runs when
+// the code happens to fall out of the bottom is a step that runs for most
+// messages and silently not for the ones that matter.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+
+	updated, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+
+	// The composer changes height on its own — a reply bar, an attachment
+	// chip, a notice, the expanded form — and the frame budgets its rows
+	// from the layout rather than from the composer. One check, on the way
+	// out of every update, because the alternative is every path that can
+	// change the composer's shape remembering to say so, and one of them
+	// forgetting.
+	//
+	// That is not hypothetical: it is why r opened a reply with no input
+	// row. EnterReplyMode grew the composer to two rows, the layout still
+	// budgeted one, and the frame drew the reply bar and cut off the line
+	// you were meant to type into. It came back on the next resize, which
+	// is why editing in $EDITOR and returning appeared to fix it.
+	// Only once there is a frame to reconcile with. Before the first
+	// WindowSizeMsg the terminal's size is unknown, and computing a layout
+	// from a zero one hands every panel a zero region — which is not a
+	// smaller frame, it is no frame, and the panels would have to be told
+	// their real sizes all over again.
+	if updated.width > 0 && updated.height > 0 &&
+		updated.composer.Rows() != updated.layout.ComposerHeight {
+		updated.updateLayout()
+	}
+	return updated, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
