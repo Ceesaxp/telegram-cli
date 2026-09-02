@@ -135,161 +135,65 @@ immediately undoes.
       2.0 and defers albums, which need slice-based composer state, ordering
       and caption rules, and Telegram multi-media send. Blocked, not dropped.
 
-- [ ] **Drop a file on the terminal to attach it.** Raised in field use.
-      Dragging a file onto a terminal is how people already hand a path to a
-      program, and it is the natural gesture for `ctrl+t` — which currently
-      opens a prompt you have to TYPE a path into, and typing a path is the
-      part nobody wants to do.
+- [x] **Drop a file on the terminal to attach it.** Shipped with the picker
+      below, which is where it belonged: a drop is a path arriving at the
+      surface that collects paths.
 
-      A terminal delivers a drop as a PASTE of the path, not as a key
-      sequence, and there are two reasons it does nothing here today:
+      Both blockers turned out as recorded. A terminal delivers a drop as a
+      PASTE, so `dialog.Model.Update` — which handled `tea.KeyPressMsg` and
+      nothing else — dropped it on the floor; the app now routes
+      `tea.PasteMsg` to the picker before anything else sees it. And the
+      path arrives shell-quoted in three spellings, all of which
+      `attach.UnquotePath` undoes: backslash-escaped (iTerm2, Terminal.app),
+      quoted, and a percent-encoded `file://` URL.
 
-      - `dialog.Model.Update` handles `tea.KeyPressMsg` and nothing else, so
-        a `tea.PasteMsg` arriving while the attach prompt is open is
-        dropped on the floor. The prompt's input is where the path is going;
-        it has to accept one.
-      - The path arrives SHELL-QUOTED. Terminals escape it the way a shell
-        needs it — `/Users/a/My\ Files/x.png` on iTerm2 and Terminal.app,
-        `'/Users/a/My Files/x.png'` elsewhere, and a `file://` URL from some
-        Linux terminals — so what lands is not a path a stat call will find.
-        Unquoting it is the actual work, and getting it wrong on a name with
-        a space in it fails on exactly the files people drag.
+      The question that had to be settled first — how to tell a dropped path
+      from pasted prose, for a drop onto the composer with no picker open —
+      is settled strictly. `attach.LooksLikePath` requires one line, rooted
+      or home-relative or a URL, and a file that is actually there. A paste
+      containing a newline is refused even when it names a real file, since
+      a newline is legal in a filename but a paste with one in it is far
+      more likely to be two things.
 
-      Worth doing beyond the prompt: a drop onto the composer with no prompt
-      open is unambiguous too, and could stage the attachment directly. That
-      wants a rule for telling a dropped path from pasted prose, which is
-      the thing to decide before writing any of it — a paste that merely
-      looks like a path must not silently become an attachment instead of
-      the message somebody meant to send.
 
-- [ ] **The `ctrl+t` attach picker — designed, reviewed, ready to build.**
-      Spec at [docs/handoff/attach-picker.md](docs/handoff/attach-picker.md),
-      received 2026-09-02 and archived verbatim beside the original handoff.
+- [x] **The `ctrl+t` attach picker.** Shipped. Spec at
+      [docs/handoff/attach-picker.md](docs/handoff/attach-picker.md),
+      received 2026-09-02 and archived verbatim; the build and its ten
+      departures from that spec are
+      [divergences 49 and 50](docs/tui-2.0.md#49-the-attach-picker-replaces-the-last-dialog).
 
-      A new `internal/ui/components/attach/`: the palette's twin rather than
-      the dialog's — 60 cells, the same anchor, the same `▌` marker, the same
-      key-hint footer, no buttons. A prompt row with an inline ghost
-      suggestion, up to six entries carrying type glyph, name, size and
-      mtime, a state row under a `rule-soft` divider, and `⇥` to complete. It
-      deletes the last GUI dialog in the client.
+      `internal/ui/components/attach` is the palette's twin — 60 cells, the
+      same anchor, the same `▌` marker, no buttons — with a prompt row, a
+      ghost completion, six entries carrying type glyph, name, size and
+      mtime, a state row and a hint footer. It deleted the last GUI dialog
+      in the client: `dialog.KindPrompt`, its input and view branches, the
+      prompt hint and `DialogResultMsg.Input` are gone, and `dialog.Kind` is
+      down to the two that are genuinely a two-button and a one-button
+      question. `theme.OverlayInput` stayed — `auth` and `search` call it.
 
-      **It names the right defect.** The old prompt always attached as a
-      document — `replaceAttachment(strings.TrimSpace(msg.Input), false)`,
-      hardcoded `false` — while `ctrl+v` sends an image as a photo. The state
-      row says which one before you commit, and a toggle key changes it.
+      **It fixed a defect nobody had reported.** The prompt passed a
+      hardcoded `false` for `asPhoto`, so `ctrl+t` always attached as a
+      document while `ctrl+v` attached the very same image as a photo. The
+      state row now says which before you commit.
 
-      Reviewed against the code on 2026-09-02. The geometry holds and both
-      load-bearing claims check out: `attach-file` really is the only
-      `dialog.NewPrompt` caller, and the glyphs really do exist. Ten points
-      against it, none a reason to wait; the keys and the colours were
-      settled the same day and are recorded here as answers rather than
-      questions.
+      **Dropping a file on the terminal works**, which closes the item that
+      was tracked separately above. A drop arrives as a shell-quoted paste,
+      in three spellings; the picker unquotes all of them, and a drop with
+      no picker open stages the file only when the paste is unambiguously a
+      path to a file that exists.
 
-      - **Two colour literals are not in the palette — both become `Dim`.**
-        `#7f8a93` (the path's directory part) and `#9aa4ac` (a directory
-        entry's name) sit between `Dim` (`#5c666e`) and `Fg` (`#c9ced4`) and
-        match no role, so `TestNoColourLiteralsOutsideThePalette` fails on
-        sight. `Dim` is documented as "secondary copy", which is what both
-        of them are.
+      Two things found on the way. `enter` consulted the typed path before
+      the cursor, and with no tail that path IS the directory being browsed
+      — so it re-entered the current folder forever and the cursor was never
+      reachable. And the help card and README had been advertising
+      `ctrl+p`/`ctrl+n` for the palette since the day those chords were
+      deliberately removed.
 
-        The substitution *widens* the separation the spec was reaching for
-        rather than approximating it: `Dim` against `Bright` in the prompt
-        row, and `Dim` against `Fg` in the entry rows, where `#9aa4ac`
-        against `#c9ced4` was barely a difference at all.
+      71 mutants, no survivors. Two of them could not be killed at first,
+      which was the code doing something twice: `Close` reset four things
+      `Open` resets again, and `^t` re-checked what `AsPhoto` already knows.
+      Both are one line now.
 
-        The decisive argument is the light theme, where the roles invert and
-        a literal cannot: `#7f8a93` and `#9aa4ac` are light greys, and the
-        light panel is `#f4f6f8`. They would be very nearly invisible.
-
-        Everything else the spec names is already a role and stands —
-        `Amber` glyph and no-match, `Bright` tail, `Ghost` suggestion,
-        mtime and directory glyph, `Cyan` cursor and selection bar, `Faint`
-        size, `RuleSoft` divider, `Fg`/`Faint` state row, `Red` for no such
-        directory. One caveat worth knowing rather than fixing: `Ghost` and
-        `Faint` are adjacent under the 256-colour profile (239/240 dark,
-        247/245 light), so the size and mtime columns read as one weight
-        there. They stay legible on position and content, and it is a
-        property of the shipped palette, not of this component.
-      - **`^h` collides with backspace — drop it, and let `⌫` do the work.**
-        The picker binds both to different things, `⌫` to delete a character
-        and `^h` to go up a directory, and outside the Kitty protocol a
-        terminal sends 0x08 for both.
-
-        The fix is not a second binding but a better reading of the first:
-        when the typed tail is empty and the path ends in `/`, `⌫` removes
-        the whole last segment. That IS "up one directory", it is what a
-        shell user's fingers already do, and it makes the collision harmless
-        — a terminal that sends 0x08 for `^h` now does the right thing by
-        accident instead of the wrong thing on half the terminals. `←` stays
-        as the explicit synonym.
-      - **`^p`/`^n` move the selection; `^t` toggles photo/document.** The
-        spec has `^p` on the toggle, but the palette binds `^p`/`^n` to
-        selection movement (divergence 9) and the picker is its twin by
-        construction — a reader arrives having already learned it, and would
-        press `^p` to move up and silently change how their file sends. It
-        collides with the composer's expand chord as well.
-
-        The toggle goes to `^t`: the key that opened the surface, already
-        under the finger and already meaning "attach", bound to nothing else
-        inside an overlay, and safe on every terminal. Rejected — `^y`
-        (claimed by the emacs composer keymap item), `alt+p` (Option arrives
-        as a composed character on macOS, Wave 4), `^i` (is Tab), `^s`/`^q`
-        (flow control), `^o` (the composer's `$EDITOR` chord). `^x` is the
-        fallback if `^t` turns out to read as "close".
-      - **`▷` for video does not exist.** `render/media.go` draws `▶` for
-        video, animation, voice and audio alike, so the spec's own principle
-        — a file looks the same here as it will in the thread — argues
-        against its own table. Either `▷` lands in the media card too, or
-        the picker uses `▶`.
-      - **`theme.OverlayInput` is not dead** and must not go with the prompt:
-        `auth` and `search` both call it. The rest of the cleanup list is
-        right — `KindPrompt`, its `Update` branch and the prompt-specific
-        hint all go.
-      - **The mode wiring is one word ambiguous.** "Resolves like the palette
-        does" would mean COMMAND; a surface whose printables type is INSERT,
-        which is what `textOverlayOpen` already gives the prompt. Swap
-        `promptOpen` for the picker in that same slot and nothing else in
-        `mode.go` moves.
-      - **"After it closes" describes a composer that did not ship.** The
-        expanded header is `compose ┬ sends as`, not `1 photo`; the chip is
-        `attachmentChip`'s one-row bar ending in `esc to drop`, not
-        `▣ name ✕` under the source column. Switching to expanded and INSERT
-        with the attachment staged is free and worth doing; redrawing the
-        chip is a separate change to a shipped surface, and `✕` is a click
-        affordance on a row with no click handling.
-      - **Six rows, not the palette's eight** — deliberate, and right for a
-        reason the spec does not give: the divider and the state row cost two
-        lines, so six holds the overlay at the palette's eleven. Record it,
-        or somebody will "fix" it to match.
-      - **The `~/` floor makes half the filesystem unreachable.** "`⌫`
-        never past `~/`" leaves no route to `/etc/hosts`, and the spec
-        offers no other one. Floor at the empty prompt instead: a leading
-        `/` goes absolute and `~` goes home, which is the same guard against
-        deleting into nothing without the dead end. `^u` clears the path
-        outright, because every other text surface in this app has it and
-        its absence would be the odd thing.
-      - **The drop-a-file item above is this item's other half.** A path
-        arriving by paste, shell-quoted, is the same question, and the
-        picker's prompt row is where it lands. Build them together.
-
-      The key list as settled, which is what the footer should read from:
-
-      | Key | Action |
-      |---|---|
-      | printable | appended to the path; list and suggestion refilter live |
-      | `⇥` | complete to the cursored entry, `/` on a directory |
-      | `↵` | descend into a directory, or attach a file and close |
-      | `↑` `↓` `^p` `^n` | move the cursor — never `j`/`k`, a path holds both |
-      | `⌫` | delete a character; on an empty tail, up one directory |
-      | `←` | up one directory, explicitly |
-      | `^t` | photo/document, images only; inert and says so otherwise |
-      | `^u` | clear the path |
-      | `esc` | cancel, staging nothing |
-
-      Everything the picker needs beyond the drawing is new: reading a
-      directory, `~` expansion, completion, and a size/mtime column. None of
-      it is hard and all of it is code this repo does not have, so cost it as
-      a component plus a small filesystem layer rather than as a redraw.
 
 ### Raised in priority by TUI 2.0
 

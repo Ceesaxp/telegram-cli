@@ -271,6 +271,8 @@ func canonicalSection(title string) string {
 		return "overlays"
 	case strings.HasPrefix(title, "Command palette"):
 		return "palette"
+	case strings.HasPrefix(title, "Attach picker"):
+		return "attach"
 	}
 	return ""
 }

@@ -133,70 +133,6 @@ func TestConfirmIgnoresJAndK(t *testing.T) {
 	}
 }
 
-// TestPromptDefaultsToOK is the data-loss regression: a prompt COLLECTS
-// something, so the reflex after typing — Enter — has to accept it. This
-// dialog used to start on Cancel, which silently discarded the path the
-// user had just typed into the attach-file flow.
-func TestPromptDefaultsToOK(t *testing.T) {
-	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
-	if m.buttonIdx != len(m.buttons)-1 {
-		t.Fatalf("a fresh prompt highlights button %d (%q), want the last one (OK)",
-			m.buttonIdx, m.buttons[m.buttonIdx])
-	}
-	if !strings.Contains(ansi.Strip(m.View()), "[ OK ]") {
-		t.Fatalf("a fresh prompt does not show OK as highlighted:\n%s", ansi.Strip(m.View()))
-	}
-}
-
-// TestPromptTypeThenEnterCarriesTheInput is the attach-file flow
-// end-to-end: type a path, press Enter, get it back.
-func TestPromptTypeThenEnterCarriesTheInput(t *testing.T) {
-	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
-
-	for _, r := range "/tmp/a.png" {
-		m, _ = press(m, key(r))
-	}
-	_, cmd := press(m, specialKey(tea.KeyEnter))
-
-	got := result(t, cmd)
-	if !got.Confirmed {
-		t.Fatal("type-then-enter did not confirm the prompt: the typed path would be discarded")
-	}
-	if got.Input != "/tmp/a.png" {
-		t.Fatalf("prompt result Input = %q, want %q", got.Input, "/tmp/a.png")
-	}
-	if got.ID != "attach-file" {
-		t.Fatalf("prompt result ID = %q, want %q", got.ID, "attach-file")
-	}
-}
-
-// TestPromptTreatsMovementLettersAsText: a prompt dialog's input owns
-// every printable — the attach-file dialog takes a path, and paths
-// contain j's and k's.
-func TestPromptTreatsMovementLettersAsText(t *testing.T) {
-	m := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
-
-	start := m.buttonIdx
-	m, _ = press(m, key('j'), key('k'), key('.'), key('t'), key('x'), key('t'))
-	if m.input != "jk.txt" {
-		t.Fatalf("prompt input = %q, want %q — j/k must be text in a prompt", m.input, "jk.txt")
-	}
-	if m.buttonIdx != start {
-		t.Fatalf("j/k moved the prompt's button highlight to %d, want %d", m.buttonIdx, start)
-	}
-
-	// Arrows and tab are not text, so they still choose a button — here
-	// moving OFF the default OK and onto Cancel.
-	m, _ = press(m, specialKey(tea.KeyTab))
-	if m.buttonIdx != 0 {
-		t.Fatalf("tab in a prompt: buttonIdx = %d, want 0 (Cancel)", m.buttonIdx)
-	}
-	_, cmd := press(m, specialKey(tea.KeyEnter))
-	if got := result(t, cmd); got.Confirmed {
-		t.Fatalf("enter on the highlighted Cancel confirmed: %+v", got)
-	}
-}
-
 func TestEscCancels(t *testing.T) {
 	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 	m, _ = press(m, specialKey(tea.KeyRight)) // highlight Confirm
@@ -247,14 +183,6 @@ func TestViewShowsTheMovementHint(t *testing.T) {
 		}
 	}
 
-	// A prompt leads with Enter, because that is the reflex at the end of
-	// typing and here it accepts what was typed.
-	p := NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:")
-	plain = ansi.Strip(p.View())
-	if !strings.Contains(plain, "enter: accept input") {
-		t.Fatalf("prompt View() does not say Enter accepts the input:\n%s", plain)
-	}
-
 	// A single-button alert has nothing to choose between, so it says so.
 	a := NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke")
 	plain = ansi.Strip(a.View())
@@ -275,7 +203,6 @@ func TestHintNamesOnlyKeysTheDialogGets(t *testing.T) {
 	dialogs := map[string]Model{
 		"confirm": NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?"),
 		"alert":   NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke"),
-		"prompt":  NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:"),
 	}
 	for name, m := range dialogs {
 		plain := ansi.Strip(m.renderHint())
@@ -294,7 +221,6 @@ func TestViewIsARectangle(t *testing.T) {
 	dialogs := map[string]Model{
 		"confirm": NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?"),
 		"alert":   NewAlert(theme.DarkRoles(false), "oops", "Error", "Something broke"),
-		"prompt":  NewPrompt(theme.DarkRoles(false), "attach-file", "Attach File", "Path to file:"),
 	}
 	for name, m := range dialogs {
 		t.Run(name, func(t *testing.T) {

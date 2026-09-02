@@ -1826,6 +1826,124 @@ became threads — so they assert up front that the letter is still free and
 say why if it is not, rather than failing later as a confusing dispatch
 error.
 
+### 49. The attach picker replaces the last dialog
+
+`Ctrl+T` raised `dialog.NewPrompt` — a centred rounded box with a title, a
+blind 30-column field and a `[ Cancel ] [ OK ]` row. It was the last GUI
+dialog in the client: it had buttons, it had title case, it could not
+complete a path, and it could not tell you whether what you typed existed
+until after it had failed. `internal/ui/components/attach` replaces it, from
+a design supplied on 2026-09-02 and archived at
+[docs/handoff/attach-picker.md](handoff/attach-picker.md).
+
+**It is the palette's twin, not the dialog's.** Same 60 cells, same anchor
+eight rows down, same `▌` marker, same key-hint footer, no buttons anywhere.
+The palette collects a command and this collects a path; everything on screen
+is derived from what has been typed, the way a shell derives completions.
+
+**Six rows where the palette takes eight.** Not an inconsistency: this
+overlay carries a divider and a state row the palette does not, so six holds
+the whole surface at the palette's eleven lines — which is what has to fit a
+24-row terminal with the overlay anchored eight rows down.
+
+**The defect underneath it.** The prompt passed a hardcoded `false` for
+`asPhoto`, so `Ctrl+T` always attached as a document while `Ctrl+V` attached
+the very same image as a photo. Two ways to attach one file that disagreed
+about what it was, and nothing on screen said so. The state row now states
+the send mode before you commit and `^t` changes it.
+
+**Colours: two literals became `Dim`.** The supplied design specified
+`#7f8a93` for the path's directory part and `#9aa4ac` for a directory's name.
+Neither is a role — they sit between `Dim` (`#5c666e`) and `Fg` (`#c9ced4`) —
+so `TestNoColourLiteralsOutsideThePalette` refuses them, and under the light
+theme they are two light greys on a `#f4f6f8` panel. `Dim` is documented as
+"secondary copy", which is what both of them are, and the substitution widens
+the separation the design was reaching for rather than approximating it:
+`#9aa4ac` against `#c9ced4` was barely a difference at all.
+
+**Keys: three changes, all from collisions.**
+
+`^p` was specified for the send-mode toggle. It is the composer's expand
+chord, and on a list overlay it reads as "move up" to anyone who has used
+one. The toggle went to `^t` — the key that opened the surface, already under
+the finger, already meaning "attach", bound to nothing else inside an
+overlay. Rejected on the way: `^y` (claimed by the emacs composer keymap
+item), `alt+p` (Option arrives as a composed character on macOS, Wave 4),
+`^i` (is Tab), `^s`/`^q` (flow control), `^o` (the composer's `$EDITOR`
+chord).
+
+`^h` was specified for "up one directory" beside `⌫` for "delete a
+character". Outside the Kitty protocol a terminal sends 0x08 for both, so
+that pair works on some terminals and quietly does the wrong thing on the
+rest. It is not bound at all: `⌫` on an empty tail removes the last path
+segment, which IS "up one directory" and is what a shell user's fingers
+already do — so a terminal that conflates the two lands on the right
+behaviour by accident. `←` is the explicit spelling.
+
+Movement is the arrows and nothing else, which is the palette's rule
+([divergence 9](#9-the-palette-navigates-with-arrows-not-jk)) and not the
+`^p`/`^n` pair the settled key list first proposed. The palette took those
+off as a second way to do one thing; adding them back here would have put the
+pair straight out of step again.
+
+**`⌫` is not fenced at `~/`.** The design floored it there, which leaves no
+route to `/etc/hosts` and offers no other one. The floor is the empty prompt:
+a leading `/` goes absolute, `~` goes home, and an empty path lists the
+working directory the way a shell would.
+
+**Enter consults the typed path only when there is a tail to it.** A whole
+typed or pasted path names the file somebody means, and attaching the
+highlighted row instead would attach a different one — but with no tail the
+typed path IS the directory being browsed. It resolves on every keystroke, so
+a rule that consulted it first made Enter re-enter the current folder forever
+and the cursor was never reachable. Found by the mutation pass, not by
+reading.
+
+**A file looks the same here as it will in the thread.** The glyphs are the
+media card's, which means audio and video share `▶`: `render/media.go` draws
+it for video, animation, voice and audio alike. The design's table gave video
+its own `▷`, which exists nowhere in the client and would have taught a
+distinction the thread does not make. `▸` for a directory is this component's
+own — a directory is never a message.
+
+**What did not change: the composer.** The design asked the picker to close
+into the composer's *expanded* form so the staged chip would be visible while
+the caption is typed, with a header reading `1 photo` and a chip ending in
+`✕`. The chip is visible in the inline form already — `Rows` grows by one for
+it and `View` draws it above the prompt — so expanding would spend eight rows
+of a twenty-four-row terminal showing something that is on screen either way.
+The expanded header is `compose ┬ sends as`, not `1 photo`, and the chip ends
+in `esc to drop`, not `✕`, which is a click affordance on a row with no click
+handling. The picker focuses the composer (which is what puts it in INSERT,
+[divergence 36](#36-the-composer-remembered-a-mode-across-the-door))
+and stages the file; redrawing a shipped surface is a separate change.
+
+**What did not go with the prompt: `theme.OverlayInput`.** The design listed
+it as dead alongside `KindPrompt`. `auth` and `search` both call it. The rest
+of the cleanup was right — `KindPrompt`, its `Update` branch, its `View`
+branch and the prompt-specific hint are gone, and `dialog.Kind` is down to
+the two that are genuinely a two-button and a one-button question.
+`DialogResultMsg.Input` went with them, since nothing collects text through a
+dialog any more.
+
+**Found on the way in:** the help card advertised `ctrl+p / ctrl+n` for the
+palette. `palette.TestTheEmacsChordsDoNotNavigate` removed them deliberately
+— one spelling per action — and the card and the README went on listing them
+for four phases. A key you can only discover is inert by pressing it.
+
+### 50. The cursor goes before the suggestion, not after it
+
+The supplied design puts the ghost completion after the typed tail and the
+block cursor after THAT, so the block marks where Tab would land.
+
+It marks where typing lands instead. A cursor states where the next character
+goes, and the suggestion is text nobody has entered; a block drawn past it
+sits where typing does not happen. That is the same defect as
+[divergence 28](#28-vis-two-cursors-are-drawn-differently) — the
+caret drawn as a gap — and as the field report behind
+[divergence 46](#46-a-caret-is-a-position-a-terminal-has-only-cells), in the
+one surface that is nothing but a caret and a path.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

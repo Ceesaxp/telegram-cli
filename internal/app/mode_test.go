@@ -221,14 +221,17 @@ func TestModeAfterEmacsEscape(t *testing.T) {
 }
 
 // TestModeForOverlays checks the wiring picks the right question for each
-// overlay: a prompt collects text, a confirm does not.
+// overlay: the attach picker collects text, a confirm does not.
 func TestModeForOverlays(t *testing.T) {
-	t.Run("prompt dialog collects text", func(t *testing.T) {
+	// The picker inherited this from the prompt dialog it replaced, and it
+	// is INSERT rather than COMMAND for the reason the prompt was: its
+	// printables build a path. A badge reading COMMAND over a surface that
+	// types would be describing the wrong keyboard.
+	t.Run("attach picker collects text", func(t *testing.T) {
 		m := mainModel(t, PanelChatList)
-		d := dialog.NewPrompt(m.roles, "attach", "Attach file", "Path:")
-		m.dialog = &d
+		m.attach.Open(t.TempDir())
 		if got := m.Mode(); got != ModeInsert {
-			t.Errorf("prompt: Mode() = %v, want INSERT", got)
+			t.Errorf("attach picker: Mode() = %v, want INSERT", got)
 		}
 	})
 
