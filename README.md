@@ -24,6 +24,9 @@
 - **Thread Grid** — Messages on a fixed time / sender / body grid rather than bubbles: one body column the whole conversation aligns to, deterministic per-sender colours, day and unread dividers, single-row reply quotes, and delivery marks read from the chat's read markers. Real ANSI-aware word wrap, measured in display cells
 - **Where You Are** — The chat list times are relative (`2m`, `4h`, `yd`, `2d`), because a list is read for recency. The thread header carries the chat's kind and member count, which buffer you are in, and a `bot`/`top`/`all` marker beside the line position, so "is there more below" is answered without comparing two numbers. The hint bar counts what there is — `idx 12 msgs · 9 buffers · 37 unread` — dropping each part when it would say nothing
 - **Content Blocks** — Framed, numbered code fences with diff and comment colouring and horizontal truncation (code is never re-wrapped); ruled block quotes; hanging-indent lists; metadata cards for attachments that collapse to one line on a narrow pane; spoilers drawn in their own background until `x` reveals them
+- **Reactions** — `+` on a message opens a one-row picker of Telegram's twelve defaults; pick with `1`-`9`/`0`, the arrows, or `enter`. It opens on the one you already left, so pressing `enter` takes it off. Nothing is written locally — the chips redraw from what the server says
+- **Channel Discussions** — A channel post with comments says so under it — `12 comments · t to open`, amber when there is something new — and `t` jumps to the linked group at the post's own copy. Nothing said it before: a channel looked like a place where nothing could be said back
+- **Pinned Messages** — `p` pins the selected message or unpins it, reading which from the message itself so one key does both. Silent: no "X pinned a message" line goes into the chat. The context rail lists a chat's pins
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
 - **Incoming Rich Text** — Bold, italic, underline, strikethrough, inline code, links, mentions and spoilers rendered from Telegram's own text entities in a semantic palette, so what you see is what was sent rather than a Markdown round-trip. Overlapping and nested spans are layered rather than replayed
 - **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
@@ -290,6 +293,9 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `s` | Save attachment into `storage.download_dir` under the sender's filename (see [Where files go](#where-files-go)) |
 | `space` | Play the selected voice note or audio message |
 | `y` | Copy the selected message's text to the system clipboard |
+| `+` | React to the selected message — a one-row picker; `enter` on the one you already left takes it off |
+| `p` | Pin the selected message, or unpin it when it is already pinned. Silent: no "X pinned a message" line goes into the chat |
+| `t` | Open the discussion under a channel post — jumps to the linked group at the post's own copy, where the comments hang off it |
 | `M` | Mark this chat read without moving the scroll or the unread divider |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` | Compose a message |

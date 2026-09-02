@@ -209,3 +209,66 @@ func TestAFilesPictureIsNamedByItsFilename(t *testing.T) {
 		t.Fatalf("caption = %q, want the filename in it", caption)
 	}
 }
+
+// TestTOnAMessageWithNoDiscussionSaysSo. A key that does nothing on nine
+// messages out of ten teaches people it is broken, so it says why instead.
+func TestTOnAMessageWithNoDiscussionSaysSo(t *testing.T) {
+	m := headerModel(t, telegram.ChatTypeChannel)
+	m.SetFocused(true)
+	m.store.Messages.Append(testChatID, textMessage(1, 11, "shipped"))
+	m.cache.clear()
+
+	_, cmd := m.handleKey(key('t'))
+	if cmd == nil {
+		t.Fatal("t produced nothing at all")
+	}
+	notice, ok := cmd().(MediaPlayMsg)
+	if !ok {
+		t.Fatalf("got %T, want a notice", cmd())
+	}
+	if !strings.Contains(notice.Info, "no discussion") {
+		t.Errorf("notice = %q", notice.Info)
+	}
+}
+
+// TestTOnAChannelPostAsksForItsDiscussion.
+func TestTOnAChannelPostAsksForItsDiscussion(t *testing.T) {
+	m := headerModel(t, telegram.ChatTypeChannel)
+	m.SetFocused(true)
+
+	post := textMessage(1, 11, "shipped")
+	post.IsChannelPost = true
+	post.Comments = &telegram.Comments{Count: 12, ChatID: -100777}
+	m.store.Messages.Append(testChatID, post)
+	m.cache.clear()
+
+	_, cmd := m.handleKey(key('t'))
+	if cmd == nil {
+		t.Fatal("t produced nothing")
+	}
+	action, ok := cmd().(MessageActionMsg)
+	if !ok {
+		t.Fatalf("got %T, want a MessageActionMsg", cmd())
+	}
+	if action.Action != "thread" || action.MessageId != 1 {
+		t.Errorf("got %+v", action)
+	}
+}
+
+// TestADiscussionWithNowhereToGoIsRefused. Telegram sometimes reports a
+// discussion without naming the group it is in; the row says so and the key
+// declines rather than opening chat zero.
+func TestADiscussionWithNowhereToGoIsRefused(t *testing.T) {
+	m := headerModel(t, telegram.ChatTypeChannel)
+	m.SetFocused(true)
+
+	post := textMessage(1, 11, "shipped")
+	post.Comments = &telegram.Comments{Count: 3}
+	m.store.Messages.Append(testChatID, post)
+	m.cache.clear()
+
+	_, cmd := m.handleKey(key('t'))
+	if _, ok := cmd().(MediaPlayMsg); !ok {
+		t.Fatalf("got %T, want the refusal", cmd())
+	}
+}

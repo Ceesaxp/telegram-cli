@@ -6,6 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // decodeKey runs a raw terminal byte sequence through the ultraviolet event
@@ -319,5 +322,51 @@ func TestMultiLineIsIndependentOfHeight(t *testing.T) {
 	ta.Update(tea.PasteMsg{Content: "one\ntwo"})
 	if ta.Value != "one two" {
 		t.Errorf("single-line widget kept newlines at height 8: %q", ta.Value)
+	}
+}
+
+// TestTheCaretNeverWidensALine.
+//
+// A caret is a position between characters and a terminal has only cells,
+// so drawing the position as an inserted block made the rest of the line
+// step one cell right — "123" with the caret before the 3 came out as four
+// cells, and the 3 appeared to move the moment the caret arrived.
+func TestTheCaretNeverWidensALine(t *testing.T) {
+	for cursor := range 3 {
+		got := withCursor([]rune("123"), cursor)
+		if w := cell.Width(got); w != 3 {
+			t.Errorf("caret at %d: %d cells, want 3 — %q", cursor, w, ansi.Strip(got))
+		}
+		if strings.Contains(got, "█") {
+			t.Errorf("caret at %d: a block was wedged into %q", cursor, ansi.Strip(got))
+		}
+		if ansi.Strip(got) != "123" {
+			t.Errorf("caret at %d: the text was disturbed: %q", cursor, ansi.Strip(got))
+		}
+	}
+
+	// At the end there is nothing to draw on, so the block IS the caret and
+	// costs a cell no character was using.
+	end := withCursor([]rune("123"), 3)
+	if ansi.Strip(end) != "123█" {
+		t.Errorf("at the end: %q, want 123 and a block", ansi.Strip(end))
+	}
+}
+
+// TestTheCaretIsVisibleAtTheEndOfALine. A caret on a newline has no
+// character to draw on either: underlining the line break would preserve
+// the break and show the reader nothing.
+func TestTheCaretIsVisibleAtTheEndOfALine(t *testing.T) {
+	runes := []rune("ab\ncd")
+	got := withCursor(runes, 2) // on the newline
+
+	if !strings.Contains(got, "█") {
+		t.Fatalf("the caret vanished at the end of the line: %q", ansi.Strip(got))
+	}
+	if lines := strings.Split(ansi.Strip(got), "\n"); len(lines) != 2 {
+		t.Fatalf("the caret ate the line break: %q", ansi.Strip(got))
+	}
+	if ansi.Strip(got) != "ab█\ncd" {
+		t.Fatalf("got %q, want the caret at the end of the first line", ansi.Strip(got))
 	}
 }

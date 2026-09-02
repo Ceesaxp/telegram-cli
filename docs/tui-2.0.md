@@ -1610,6 +1610,222 @@ is not. `TestOpeningAChatNumbersItImmediately` holds it now. The explicit
 `SetBufferIndex` added while investigating came back out: a line no mutation
 can kill is a line that is not doing anything.
 
+### 45. The reply that had nowhere to type
+
+`r` opened a reply and the row you type into was not on screen. Going out to
+`$EDITOR` with ctrl+o and coming back made it appear, which made it look
+like an editor problem and is the opposite of one.
+
+`EnterReplyMode` grows the composer to two rows — the quoted message, and
+the line under it — and the frame budgets the composer's rows from
+`layout.ComposerHeight`, not from the composer. Nothing recomputed the
+layout, so the thread kept the row and the composer drew two into a budget
+of one. The bar is the first of those two, so the bar is what you saw. The
+line was rendered, correctly, one row below the bottom of its column.
+
+Returning from `$EDITOR` fixed it because the terminal is resized on the way
+out and back, and `tea.WindowSizeMsg` is one of the few things that DID
+recompute the layout.
+
+**The reconciliation is not in the switch.** `Update`'s switch has
+sixty-five early returns, and a step at the bottom of it is a step that runs
+for most messages and silently not for the ones that take a shortcut — the
+reply action being one. So `Update` is now a wrapper: it calls the switch,
+then reconciles, and there is no path through it that skips the second half.
+
+The check itself is one line and holds for every way the composer changes
+shape, not just this one: a reply bar, an attachment chip, a notice, the
+expanded form. The alternative is each of those remembering to say so, and
+one of them forgetting — which is the same rule as divergence 39, and this
+is what forgetting looks like from the outside.
+
+It does nothing before the first `WindowSizeMsg`, and without a branch for
+it: a layout computed from a zero terminal has a zero body to spend, so its
+composer height comes out zero — which is what an unsized model's layout
+already holds. The two agree and nothing is relaid out. The explicit guard
+that was there first turned out to be a line no mutant could kill, which is
+the same test this record applied to `SetBufferIndex` in divergence 44; a
+test holds the behaviour instead.
+
+**Review found the fix incomplete, twice over.** Below twenty rows the
+layout sets `InlineComposerOnly` and forced the composer to exactly one row,
+so a reply drew its quote bar into that row and the frame clipped the prompt
+underneath — the same defect, surviving at the sizes it was least visible
+at. And the guard compared what the composer ASKED for against what it was
+GRANTED, which at those heights differ permanently: it recomputed the whole
+frame on every message for the rest of the session, changing nothing.
+
+Three things came out of that:
+
+- **The flag was over-broad.** It is about the EXPANDED form — its own
+  documentation says so — and it was also crushing the reply bar and the
+  attachment chip, which cost one row between them and are what say what the
+  row below them is for. It caps at `InlineComposerHeight + MaxContextRows`
+  now rather than forcing one, so a twelve-row terminal still has a row to
+  spare for a quote.
+- **The composer never draws past its grant, and sheds the right row.**
+  `View` cuts from the FRONT: a composer showing what you are replying to
+  with no way to reply is worse than one showing only the reply.
+- **`Rows()` is what it wants, not what it got.** A first attempt capped
+  `Rows()` by the granted height, which is a loop — the layout budgets FROM
+  `Rows()` — and collapsed every composer to one row. The two are separate,
+  and the guard is `layoutStale`, which compares against the layout the
+  current state COMPUTES to and therefore converges by construction.
+
+The wasted relayout is the part no screen assertion can see: it produces the
+same layout, so nothing moves. It took naming the predicate to make it
+testable at all.
+
+### 46. A caret is a position; a terminal has only cells
+
+Pressing `i` in the middle of a line moved the rest of it one cell right.
+"123" with the caret before the 3 drew as `12█3` — four cells for three
+characters — so the 3 stepped sideways the moment the caret arrived, and it
+read as though `i` had typed a space.
+
+Divergence 36 got the semantics right and the rendering wrong. In INSERT the
+caret genuinely is a GAP between characters, and this drew the gap as an
+inserted block, which is the one thing a terminal cannot do: a cell is
+occupied or it is not, and a block between two characters has to come from
+somewhere. No terminal editor does it. A block cursor in vim COVERS the
+next character; it never pushes it.
+
+Both modes draw ON the character now, and neither changes the line's width.
+They stay apart by how rather than by where — reverse video for normal, an
+underline for insert, which is the pair vim asks the terminal for and leaves
+the character legible in the mode where you are adding to it.
+
+At the end of a line, and on a line break, there is nothing to draw on and
+the block IS the caret. That is also what a terminal does there, and it
+costs a cell no character was using.
+
+The same defect was in `widgets.TextArea`, which the expanded composer draws
+through, in both its single- and multi-line paths. The newline case is the
+one that needed saying out loud: underlining a line break preserves the
+break and shows the reader nothing, so a caret at the end of a line in a
+multi-line draft would simply have been invisible.
+
+### 47. Reacting and pinning, which the design record only ever read
+
+Every mention of reactions in this document is about DRAWING them. The
+reconciliation table costs them as "extend Telegram mapping/domain, or
+omit"; divergence 16 maps them; divergence 42 measures the chips. Nothing
+anywhere says how somebody puts one on. Same for pins: the rail lists them,
+and nothing pins.
+
+So both are new ground, and the decisions are here rather than inherited.
+
+**A row, not a palette command.** Reacting is a thing you do TO a message,
+and the message is already under the cursor. Routing it through `:` would
+mean naming the message a second time, in a surface that has no idea which
+one you meant. `+` opens a one-row picker over the cursored message; `p`
+toggles its pin.
+
+**The row takes the hint bar's row.** It is one row and it is transient,
+which is what that row is for — and the message being reacted to has to stay
+on screen, which a centred card would cover. It owns the keyboard while it
+is open, like the palette, because twelve choices and two ways out is the
+whole surface and anything falling through would act on the message the row
+is asking about.
+
+**A fixed set of twelve.** Telegram serves a global list and lets a chat
+narrow it, so the honest set for a chat is two requests away, and a chooser
+that has to load is a chooser you press and then wait at. The twelve are
+Telegram's own defaults in its own order. A chat that has narrowed its set
+refuses the rest, and the refusal says so — which is a worse experience than
+knowing in advance and a better one than a picker that stalls.
+
+**Choosing the one you already left takes it off.** Telegram models removing
+a reaction as sending an empty list — there is no separate call — so the
+picker opens ON your own reaction and `enter` is the whole gesture. Which
+one is yours is read off the message's `Chosen` flag rather than remembered:
+a client keeping its own copy would disagree with the server the first time
+you reacted from a phone.
+
+**One reaction at a time**, which is what a non-premium account is allowed.
+The request would take several, and sending several to an account that
+cannot have them fails the whole call — a worse way to learn about a limit
+than not offering it.
+
+**Nothing is written locally.** The server answers with
+`updateMessageReactions`, which already routes into the refetch an edit
+takes (divergence 16), so the chips redraw from what Telegram says rather
+than from what this client hoped. A reaction the server refused does not sit
+on screen as though it had worked.
+
+**Pinning is silent.** It normally posts a service message into the chat —
+"X pinned a message" — and a pin key that also writes a line into everyone's
+history is a key people learn not to press. The pin is what was asked for;
+the announcement was not.
+
+**One pin key, not two.** `tg.Message.Pinned` is mapped now, so `p` can tell
+which way to go. A pin key that cannot tell has to be pressed and then
+checked, and the place to check is the rail, which may not even be open.
+
+`+` and `p` join chatview's claimed surface, so a configured mnemonic cannot
+silently shadow either. Three tests that used `p` as an example of a free
+key now use `t` — the collision resolver refusing it is the resolver
+working.
+
+### 48. `t` comes back, for threads
+
+Divergence 2 freed `t` when the voice-note transcript left the fixtures, and
+said: "Should threads arrive later, they get a fresh binding decision rather
+than inheriting one that was never specified." This is that decision. `t`
+opens the discussion under a channel post.
+
+**Nothing said the discussion existed.** A channel is a broadcast — nobody
+can answer a post in the channel itself — and the answers go to a group
+linked to it. This client drew the post and stopped there, so a channel
+looked like a place where nothing could be said back, which is the opposite
+of what its author set up. There was no way to find out otherwise from
+inside the client.
+
+**The row is words, not a mark.** The vocabulary of glyphs is already spoken
+for — ↳ is a reply quote, ▪ a pin, ▹ a link, ▣ a picture — and a twelfth
+mark that has to be learned buys nothing over a sentence that can be read.
+It follows the code frame's `4 lines · y to yank`: what there is, then the
+key that gets you to it.
+
+    12 comments · t to open
+
+**Zero is a real answer.** A discussion nobody has used yet reads "no
+comments yet" rather than "0 comments", which looks like a broken counter
+where the words read as an invitation.
+
+**The key is offered only where it leads somewhere.** Telegram sometimes
+reports a discussion without naming the group it is in. The row still says
+how many there are, and says nothing about `t` — a key advertised on a row
+that cannot act is worse than a row that only counts.
+
+**Unread needs both halves.** Telegram sends the newest comment's id and
+this account's read mark together or not at all. With only one of them
+"unread" would be a guess about somebody's attention, so the row says `new`
+— in the amber the unread divider uses, because it is the same fact — only
+when it has both.
+
+**The jump is a round trip, and lands on the post's own copy.** A post's
+comments are not in the channel: Telegram copies the post into the linked
+group and the comments are replies to that copy, whose message id this
+client has never seen. `messages.getDiscussionMessage` is the only thing
+that knows the translation, so the jump happens on its answer rather than on
+the keypress, and it opens at that message rather than at the top of the
+group.
+
+The linked group is announced on the way, through `GetChat` rather than off
+the `Chats` the response already carries. Those are peers, and a chat built
+from a peer carries `Muted=false` — which the store would merge over a group
+the reader had muted on purpose. That is divergence 39 exactly, and the AST
+guard beside it **refused this when it was first written that way**: the
+first draft looped over `res.Chats` calling `chatFromChannel`, and the test
+named the file and line.
+
+`t` joins chatview's claimed surface. Three tests have now had to move the
+letter they use as an example of a free mnemonic — `p` became pin, `t`
+became threads — so they assert up front that the letter is still free and
+say why if it is not, rather than failing later as a confusing dispatch
+error.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

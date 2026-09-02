@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -612,5 +613,150 @@ func TestAMultipleChoicePollWithNoTotalStillComparesItsOptions(t *testing.T) {
 	if poll.Options[0].Percent <= poll.Options[1].Percent {
 		t.Fatalf("the options do not compare: %d%% and %d%%",
 			poll.Options[0].Percent, poll.Options[1].Percent)
+	}
+}
+
+// TestReactionAndPinAreOneRequestEach. Both are things you do to somebody
+// else's message, both answer with an update, and neither writes anything
+// locally — so the only thing this layer can get wrong is the request.
+func TestReactionAndPinAreOneRequestEach(t *testing.T) {
+	source := readTelegramSource(t, "reactions.go")
+
+	// Removing a reaction is an empty list, not a second call. Two names
+	// for one request is how they drift apart.
+	if strings.Count(source, "MessagesSendReaction(") != 1 {
+		t.Error("SetReaction does not make exactly one send-reaction request")
+	}
+	if !strings.Contains(source, `if emoji != "" {`) {
+		t.Error("SetReaction does not treat an empty emoji as a removal")
+	}
+
+	// Pinning normally posts "X pinned a message" into the chat. A pin key
+	// that also writes a line into everybody's history is a key people
+	// learn not to press.
+	if !strings.Contains(source, "Silent: true") {
+		t.Error("SetPinned announces itself in the chat")
+	}
+	if !strings.Contains(source, "Unpin:  !pinned") {
+		t.Error("SetPinned cannot unpin")
+	}
+}
+
+func readTelegramSource(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// TestAPinnedMessageSaysSo. It is what lets one key toggle: a pin key that
+// cannot tell says "pinned" to something already pinned, and the place to
+// check is the rail — which may not even be open.
+func TestAPinnedMessageSaysSo(t *testing.T) {
+	c := &Client{files: newFileRegistry()}
+
+	pinned := c.messageFromTG(&tg.Message{
+		ID: 9, PeerID: &tg.PeerUser{UserID: 4}, Message: "hello", Pinned: true,
+	})
+	if !pinned.IsPinned {
+		t.Error("a pinned message did not say so")
+	}
+
+	plain := c.messageFromTG(&tg.Message{
+		ID: 9, PeerID: &tg.PeerUser{UserID: 4}, Message: "hello",
+	})
+	if plain.IsPinned {
+		t.Error("an ordinary message claims to be pinned")
+	}
+}
+
+// TestOnlyAChannelPostHasComments.
+//
+// Telegram uses one structure for two different things: the comment count on
+// a channel post, whose comments live in a group linked to the channel, and
+// the reply count on a group message, which is a thread inside the group
+// itself. Only the first has somewhere else to go, and only the first is
+// what a channel reader is looking for.
+func TestOnlyAChannelPostHasComments(t *testing.T) {
+	post := tg.MessageReplies{Comments: true, Replies: 12}
+	post.SetChannelID(777)
+
+	got := commentsFromTG(post)
+	if got == nil {
+		t.Fatal("a channel post with comments produced none")
+	}
+	if got.Count != 12 {
+		t.Errorf("count = %d, want 12", got.Count)
+	}
+	if got.ChatID != channelChatID(777) {
+		t.Errorf("chat = %d, want the linked group %d", got.ChatID, channelChatID(777))
+	}
+
+	// A group message's reply thread is not a discussion to go to.
+	if got := commentsFromTG(tg.MessageReplies{Replies: 4}); got != nil {
+		t.Errorf("a group thread produced %+v, want nil", got)
+	}
+}
+
+// TestADiscussionWithNoGroupNamedStillCounts. Telegram sometimes reports a
+// discussion without naming the group it is in; the row can still say how
+// many there are, and offers no key rather than one that goes nowhere.
+func TestADiscussionWithNoGroupNamedStillCounts(t *testing.T) {
+	got := commentsFromTG(tg.MessageReplies{Comments: true, Replies: 3})
+	if got == nil {
+		t.Fatal("no comments")
+	}
+	if got.ChatID != 0 {
+		t.Errorf("chat = %d, want 0 — nobody named one", got.ChatID)
+	}
+	if got.Count != 3 {
+		t.Errorf("count = %d, want 3", got.Count)
+	}
+}
+
+// TestUnreadCommentsNeedBothHalves. Telegram sends the newest id and the
+// read mark together or not at all; without the read mark there is nothing
+// to compare, and "unread" would be a guess about somebody's attention.
+func TestUnreadCommentsNeedBothHalves(t *testing.T) {
+	both := tg.MessageReplies{Comments: true, Replies: 5}
+	both.SetMaxID(90)
+	both.SetReadMaxID(80)
+	if got := commentsFromTG(both); !got.Unread {
+		t.Error("newer than the read mark and not reported as unread")
+	}
+
+	caughtUp := tg.MessageReplies{Comments: true, Replies: 5}
+	caughtUp.SetMaxID(80)
+	caughtUp.SetReadMaxID(80)
+	if got := commentsFromTG(caughtUp); got.Unread {
+		t.Error("read up to the newest and still reported as unread")
+	}
+
+	half := tg.MessageReplies{Comments: true, Replies: 5}
+	half.SetMaxID(90)
+	if got := commentsFromTG(half); got.Unread {
+		t.Error("no read mark and still reported as unread")
+	}
+}
+
+// TestAMessagesCommentsAreMapped covers the wiring, not the conversion.
+func TestAMessagesCommentsAreMapped(t *testing.T) {
+	c := &Client{files: newFileRegistry()}
+
+	m := &tg.Message{ID: 9, PeerID: &tg.PeerChannel{ChannelID: 5}, Message: "post"}
+	replies := tg.MessageReplies{Comments: true, Replies: 7}
+	replies.SetChannelID(777)
+	m.SetReplies(replies)
+
+	if got := c.messageFromTG(m).Comments; got == nil || got.Count != 7 {
+		t.Fatalf("comments = %+v", got)
+	}
+	plain := c.messageFromTG(&tg.Message{
+		ID: 9, PeerID: &tg.PeerChannel{ChannelID: 5}, Message: "post",
+	})
+	if plain.Comments != nil {
+		t.Fatalf("a post with no discussion has %+v", plain.Comments)
 	}
 }

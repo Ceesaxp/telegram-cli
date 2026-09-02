@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // viDraft is a composer in vi mode with a draft already typed, ready for
@@ -91,20 +92,100 @@ func TestAnEmptyLineKeepsTheBlockCaret(t *testing.T) {
 	}
 }
 
-// Emacs mode never has a character-cursor: its caret is always a gap, because
-// that is always where the next keystroke lands.
-func TestEmacsModeAlwaysDrawsTheBlock(t *testing.T) {
+// Emacs mode never draws vi's character-cursor: its caret is always a gap,
+// because that is always where the next keystroke lands. The gap is drawn
+// as an underline on the character it precedes — a position, not a cell, and
+// a terminal has only cells.
+func TestEmacsModeNeverDrawsTheNormalModeCaret(t *testing.T) {
 	m := sized(t, 60)
 	m.SetEditingMode(ModeEmacs)
 	m.SetFocused(true)
 	m.textarea.InsertString("12345678")
 	m.textarea.MoveLineStart()
 
-	if !strings.Contains(ansi.Strip(m.View()), cursorBlock) {
-		t.Errorf("emacs mode lost its block caret:\n%s", ansi.Strip(m.View()))
+	if caretColumn(m.View()) < 0 {
+		t.Errorf("emacs mode lost its caret:\n%s", ansi.Strip(m.View()))
 	}
 	if strings.Contains(m.View(), "\x1b[7m") {
 		t.Errorf("emacs mode drew a character-cursor:\n%s",
 			strings.ReplaceAll(m.View(), "\x1b", "ESC"))
+	}
+
+	// At the end of the line there is nothing to underline, so the block is
+	// the caret — the same fallback every mode takes.
+	m.textarea.MoveLineEnd()
+	if !strings.Contains(ansi.Strip(m.View()), cursorBlock) {
+		t.Errorf("emacs mode lost its block at the end of the line:\n%s",
+			ansi.Strip(m.View()))
+	}
+}
+
+// TestTheCaretNeverWidensTheLine.
+//
+// A caret is a position between characters and a terminal has only cells,
+// so drawing the position as an inserted block made the rest of the line
+// step one cell right: "123" with the caret before the 3 came out as four
+// cells, and the 3 appeared to move the moment you pressed i. It read as
+// though i had typed a space.
+func TestTheCaretNeverWidensTheLine(t *testing.T) {
+	for _, mode := range []EditingMode{ModeEmacs, ModeVi} {
+		m := sized(t, 60)
+		m.SetEditingMode(mode)
+		m.SetFocused(true)
+		m.textarea.InsertString("123")
+
+		// At the end there is nothing to draw on, so the caret is a block
+		// and costs the cell no character was using.
+		m.textarea.MoveLineEnd()
+		atEnd := cell.Width(ansi.Strip(m.draftLine(60)))
+
+		// Anywhere else it draws ON a character and costs nothing.
+		for cursor := range 3 {
+			m.textarea.Cursor = cursor
+			line := ansi.Strip(m.draftLine(60))
+			if got := cell.Width(line); got != atEnd-1 {
+				t.Errorf("%v with the caret at %d: line is %d cells, want %d — %q",
+					mode, cursor, got, atEnd-1, line)
+			}
+			if strings.Contains(line, cursorBlock) {
+				t.Errorf("%v with the caret at %d: a block was wedged into %q",
+					mode, cursor, line)
+			}
+			if !strings.Contains(line, "123") {
+				t.Errorf("%v with the caret at %d: the text was disturbed: %q",
+					mode, cursor, line)
+			}
+		}
+	}
+}
+
+// TestTheTwoModesStayApart. Both draw on the character now, so the shape is
+// the only thing left telling a reader which mode they are in besides the
+// badge — reverse for normal, an underline for insert, which is the pair vim
+// asks the terminal for.
+func TestTheTwoModesStayApart(t *testing.T) {
+	draw := func(mode EditingMode, normal bool) string {
+		m := sized(t, 60)
+		m.SetEditingMode(mode)
+		m.SetFocused(true)
+		m.textarea.InsertString("123")
+		m.textarea.Cursor = 1
+		if normal {
+			m.vi = viNormal
+		}
+		return m.draftLine(60)
+	}
+
+	insert, normal := draw(ModeVi, false), draw(ModeVi, true)
+	if insert == normal {
+		t.Fatal("insert and normal draw the caret identically")
+	}
+	if !strings.Contains(normal, "\x1b[7m") {
+		t.Errorf("normal mode is not reverse video: %q",
+			strings.ReplaceAll(normal, "\x1b", "ESC"))
+	}
+	if !strings.Contains(insert, "\x1b[4") {
+		t.Errorf("insert mode is not underlined: %q",
+			strings.ReplaceAll(insert, "\x1b", "ESC"))
 	}
 }

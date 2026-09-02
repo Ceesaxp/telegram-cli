@@ -122,10 +122,18 @@ func (m Model) Expanded() bool { return m.expanded }
 // the rows the composer is about to use — a composer that rendered more rows
 // than it asked for would push the bottom of the history off screen, and one
 // that rendered fewer would leave a hole.
+// Rows is how many rows the composer WANTS: one to type into, and one each
+// for the context above it.
+//
+// What it wants, not what it was given — the layout budgets from this, and
+// a Rows that reported its own budget back would be a loop that settles on
+// one row and never grows. What it actually DRAWS is bounded separately;
+// see View.
 func (m Model) Rows() int {
 	if m.expanded {
 		return expandedRows
 	}
+
 	rows := 1
 	if m.mode != ModeNormal {
 		rows++ // the reply or edit bar
@@ -146,6 +154,11 @@ func (m Model) View() string {
 		return strings.Join(m.expandedView(), "\n")
 	}
 
+	// Context first, the prompt last, and then cut from the FRONT to the
+	// budget. The prompt is the row a client is for — a composer showing
+	// what you are replying to and no way to reply is worse than one that
+	// shows only the reply — so the context rows are what give way, newest
+	// first, the same order they would be read in.
 	var rows []string
 	if bar := m.contextBar(); bar != "" {
 		rows = append(rows, bar)
@@ -154,6 +167,15 @@ func (m Model) View() string {
 		rows = append(rows, chip)
 	}
 	rows = append(rows, m.promptRow(m.width))
+
+	// Cut from the FRONT to the budget the layout granted. The frame
+	// reserves that many rows and clips whatever comes past them — and the
+	// row it clips is the last one, which is the row you type into. That is
+	// how a reply on a nineteen-row terminal came out as a quote bar with
+	// nowhere to put the answer.
+	if m.height > 0 && len(rows) > m.height {
+		rows = rows[len(rows)-m.height:]
+	}
 	return strings.Join(rows, "\n")
 }
 
@@ -239,31 +261,41 @@ func (m Model) promptContent(width int) (string, lipgloss.Style) {
 // conventions the current mode uses.
 //
 // vi has two cursors, and drawing both the same way is what made normal mode
-// read as broken. In INSERT the caret is a GAP between characters, so a block
-// belongs before the character at the cursor: typing puts text there. In
-// NORMAL the cursor sits ON a character — that is why Escape appears to step
-// back one, why x deletes "the character under the cursor", and why i inserts
-// before it — so the caret has to be that character, drawn in reverse video,
-// not a block wedged in front of it.
+// read as broken. In NORMAL the cursor sits ON a character — that is why
+// Escape appears to step back one, why x deletes "the character under the
+// cursor", and why i inserts before it — so the caret is that character in
+// reverse video. In INSERT the caret is a GAP between characters, because
+// typing puts text there.
 //
-// Drawing normal mode's cursor as a gap is why "type 12345678, press Escape"
-// looked like the caret had jumped between the 7 and the 8. It had not moved
-// anywhere it should not be; it was on the 8, drawn as though it were before
-// it.
+// A gap is a position, not a cell, and a terminal has only cells. Drawing
+// the gap as an inserted block was the mistake: "123" with the caret before
+// the 3 came out as "12█3", four cells for three characters, and the 3
+// visibly stepped right the moment you pressed i. No terminal editor does
+// that — a block cursor in vim covers the next character, it does not push
+// it — and the movement reads as though i had typed a space.
 //
-// At the end of a line there is no character to sit on — an empty line, or a
-// line whose last character was just deleted — so both modes fall back to the
-// block.
+// So both modes now draw ON the character and neither changes the line's
+// width. They stay apart by HOW: reverse video for normal, an underline for
+// insert, which is the same pair of shapes vim asks the terminal for and
+// leaves the character legible in the mode where you are adding to it.
+//
+// At the end of a line there is no character to draw on — an empty line, or
+// a line whose last character was just deleted — so both fall back to the
+// block, which is what a terminal does there too.
 func (m Model) drawCursor(runes []rune, start, cursor, end int) string {
 	head, tail := string(runes[start:cursor]), string(runes[cursor:end])
-
-	if !m.IsViNormalMode() || cursor >= end {
+	if cursor >= end {
 		return head + cursorBlock + tail
+	}
+
+	caret := lipgloss.NewStyle().Underline(true)
+	if m.IsViNormalMode() {
+		caret = lipgloss.NewStyle().Reverse(true)
 	}
 
 	on := string(runes[cursor])
 	rest := string(runes[cursor+1 : end])
-	return head + lipgloss.NewStyle().Reverse(true).Render(on) + rest
+	return head + caret.Render(on) + rest
 }
 
 // cursorBlock is what the composer draws where the caret is.

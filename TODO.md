@@ -711,6 +711,19 @@ the primary checkout stays free for fixes against a working client.
       chat's worth of every block in the design record — so it wants its
       own fixture harness rather than a sixth entry in the frame table.
 
+- [x] **Reacting and pinning.** The design record only ever read reactions;
+      nothing anywhere said how somebody puts one on, and nothing pinned. `+`
+      opens a one-row picker of Telegram's twelve defaults over the cursored
+      message, and `p` toggles its pin. Both are recorded as divergence 47,
+      which is where the decisions live — a row rather than a palette
+      command, a fixed set rather than the chat's own, choosing your own
+      reaction to take it off, one pin key rather than two, and a silent pin.
+
+- [x] **Channel discussions.** A channel post with comments says so under it
+      and `t` opens them in the linked group, at the post's own copy. `t` was
+      freed by divergence 2, which said a threads feature would get a fresh
+      binding decision; divergence 48 is that decision.
+
 ### Documentation debt that comes due when code ships
 
 - [x] README no longer advertises Message Bubbles or Profile Avatars, its

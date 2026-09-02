@@ -145,6 +145,8 @@ func (m *Model) refreshChrome() {
 	// chrome rows so it cannot be left describing where a chat used to be.
 	m.chatView.SetBufferIndex(m.chatList.BufferIndex(m.chatView.ChatId()))
 
+	m.reactions.SetWidth(m.width)
+
 	m.hintBar.SetWidth(m.width)
 	m.hintBar.SetHints(m.hintsForMode())
 	m.hintBar.SetRight(m.hintBarCounters())

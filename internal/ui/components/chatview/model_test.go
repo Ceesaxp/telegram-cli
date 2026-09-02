@@ -1746,11 +1746,18 @@ func TestSetKeysDefaultsUnchanged(t *testing.T) {
 // TestSetKeysConfiguredValuesDispatch checks that a non-default Keys value
 // takes effect for both the mnemonic (replace) and motion (add) fields.
 func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
+	// "b" has to be a key this panel does not claim, or the collision
+	// resolver refuses it and the dispatch below fails for a reason that
+	// has nothing to do with what this test is about. Said out loud here
+	// because it has now moved three times — p to t to b — each time a new
+	// message action claimed the letter it was using.
+	requireFreeKey(t, "b")
+
 	m := keysTestModel()
 	m.SetKeys(Keys{
 		Reply:      "ctrl+r",
 		Edit:       "v",
-		Delete:     "p",
+		Delete:     "b",
 		ScrollUp:   "w",
 		ScrollDown: "z",
 		PageUp:     "u",
@@ -1763,8 +1770,8 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	if _, cmd := m.handleKey(key('v')); dispatchedAction(t, cmd).Action != "edit" {
 		t.Fatalf("expected configured 'v' to edit")
 	}
-	if _, cmd := m.handleKey(key('p')); dispatchedAction(t, cmd).Action != "delete" {
-		t.Fatalf("expected configured 'p' to delete")
+	if _, cmd := m.handleKey(key('b')); dispatchedAction(t, cmd).Action != "delete" {
+		t.Fatalf("expected configured 'b' to delete")
 	}
 
 	// Replace semantics: the old mnemonic letters no longer do anything.
@@ -1892,7 +1899,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	accepted.SetKeys(Keys{
 		Reply:      "ctrl+r",
 		Edit:       "v",
-		Delete:     "p",
+		Delete:     "b",
 		ScrollUp:   "w",
 		ScrollDown: "z",
 		PageUp:     "u",
@@ -1900,7 +1907,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	})
 	got = accepted.ActiveKeys()
 	want = Keys{
-		Reply: "ctrl+r", Edit: "v", Delete: "p",
+		Reply: "ctrl+r", Edit: "v", Delete: "b",
 		ScrollUp: "w", ScrollDown: "z", PageUp: "u", PageDown: "i",
 	}
 	if got != want {
@@ -2063,5 +2070,15 @@ func TestSetKeysMotionsUnaffectedByMnemonicResolution(t *testing.T) {
 	m3, _ := m.handleKey(specialKey(tea.KeyUp))
 	if m3.scrollOffset <= before {
 		t.Fatalf("expected the built-in up arrow to still scroll up alongside the configured extra")
+	}
+}
+
+// requireFreeKey fails with the reason rather than the symptom when a test's
+// example mnemonic has been claimed by a real binding since it was written.
+func requireFreeKey(t *testing.T, key string) {
+	t.Helper()
+	if chatViewFixedKeys()[key] {
+		t.Fatalf("%q is a claimed key now — this test needs one that is not, "+
+			"and the collision resolver is right to refuse it", key)
 	}
 }
