@@ -436,10 +436,35 @@ func (t *TextArea) View() string {
 	start, end := textWindow(len(display), cursor, visible)
 	content := string(display[start:end])
 	if t.Focused {
-		content = string(display[start:cursor]) + "█" + string(display[cursor:end])
+		content = withCursor(display[start:end], cursor-start)
 	}
 
 	return t.Style.Width(t.Width).Render(content)
+}
+
+// withCursor draws the caret at position without changing the line's width.
+//
+// ON the character rather than wedged in front of it. A caret is a position
+// between characters and a terminal has only cells, so an inserted block
+// makes the rest of the line step one cell right — "123" with the caret
+// before the 3 comes out as "12█3", four cells for three characters, and
+// the 3 appears to move the moment the caret arrives. No terminal editor
+// does that: a block cursor covers the next character, it does not push it.
+//
+// An underline rather than a block, so the character under the caret stays
+// legible in the mode where you are adding to it. At the end of the text,
+// and at the end of a line, there is nothing to draw on and the block is
+// the caret — which is what a terminal does there too.
+func withCursor(runes []rune, cursor int) string {
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(runes) || runes[cursor] == '\n' {
+		return string(runes[:cursor]) + "█" + string(runes[cursor:])
+	}
+	return string(runes[:cursor]) +
+		lipgloss.NewStyle().Underline(true).Render(string(runes[cursor])) +
+		string(runes[cursor+1:])
 }
 
 // multiLineContent splits Value into rows, places the cursor glyph, and
@@ -447,7 +472,7 @@ func (t *TextArea) View() string {
 func (t *TextArea) multiLineContent(runes []rune, cursor int) string {
 	content := t.Value
 	if t.Focused {
-		content = string(runes[:cursor]) + "█" + string(runes[cursor:])
+		content = withCursor(runes, cursor)
 	}
 	// Height is a layout number and may not have arrived yet; one row is the
 	// smallest window that can still show the cursor.

@@ -36,7 +36,7 @@ func TestTheCursorFollowsTheMotions(t *testing.T) {
 	m.SetFocused(true)
 	m.textarea.InsertString("hello world")
 
-	at := func() int { return strings.Index(ansi.Strip(m.View()), cursorBlock) }
+	at := func() int { return caretColumn(m.View()) }
 
 	end := at()
 	if end < 0 {
@@ -67,4 +67,27 @@ func TestTheEmptyComposerStillSaysWhatItIsFor(t *testing.T) {
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "type a message") {
 		t.Errorf("the cursor replaced the placeholder instead of preceding it:\n%s", view)
 	}
+}
+
+// caretColumn is where the caret is drawn, in display cells from the start
+// of the row, or -1 when there is none.
+//
+// By POSITION rather than by glyph. The caret is a block only where there
+// is no character under it; everywhere else it is the character itself,
+// styled — so a test that looks for the block finds nothing mid-line and
+// concludes the cursor has vanished, which is what these two did.
+func caretColumn(view string) int {
+	if i := strings.Index(ansi.Strip(view), cursorBlock); i >= 0 {
+		return i
+	}
+	// A styled character: find where its escape sequence opens and measure
+	// the visible text before it. Underline is matched on the prefix
+	// because lipgloss writes it as "4;4" — the attribute and its style —
+	// rather than as a bare 4.
+	for _, open := range []string{"\x1b[7m", "\x1b[4"} {
+		if i := strings.Index(view, open); i >= 0 {
+			return len(ansi.Strip(view[:i]))
+		}
+	}
+	return -1
 }

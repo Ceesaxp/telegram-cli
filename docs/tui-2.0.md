@@ -1644,6 +1644,35 @@ zero terminal hands every panel a zero region, which is not a smaller frame
 but no frame, and the panels would have to be told their sizes all over
 again.
 
+### 46. A caret is a position; a terminal has only cells
+
+Pressing `i` in the middle of a line moved the rest of it one cell right.
+"123" with the caret before the 3 drew as `12█3` — four cells for three
+characters — so the 3 stepped sideways the moment the caret arrived, and it
+read as though `i` had typed a space.
+
+Divergence 36 got the semantics right and the rendering wrong. In INSERT the
+caret genuinely is a GAP between characters, and this drew the gap as an
+inserted block, which is the one thing a terminal cannot do: a cell is
+occupied or it is not, and a block between two characters has to come from
+somewhere. No terminal editor does it. A block cursor in vim COVERS the
+next character; it never pushes it.
+
+Both modes draw ON the character now, and neither changes the line's width.
+They stay apart by how rather than by where — reverse video for normal, an
+underline for insert, which is the pair vim asks the terminal for and leaves
+the character legible in the mode where you are adding to it.
+
+At the end of a line, and on a line break, there is nothing to draw on and
+the block IS the caret. That is also what a terminal does there, and it
+costs a cell no character was using.
+
+The same defect was in `widgets.TextArea`, which the expanded composer draws
+through, in both its single- and multi-line paths. The newline case is the
+one that needed saying out loud: underlining a line break preserves the
+break and shows the reader nothing, so a caret at the end of a line in a
+multi-line draft would simply have been invisible.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
