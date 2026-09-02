@@ -134,7 +134,15 @@ transcript — that is a Telegram premium call this client does not make; see
 
 ### Prebuilt binaries
 
-Download the latest release for your platform from [Releases](https://github.com/imtaqin/telegram-cli/releases) — Linux, macOS, Windows, and Android/Termux (arm64). Each archive contains all three binaries: `tele-tui`, `telegram-mcp`, `telegram-api`. Releases are fully automatic: every push to `main` bumps the patch version, tags, builds, and publishes (use `#minor` / `#major` in a commit message to bump those instead).
+Download the latest release for your platform from [Releases](https://github.com/imtaqin/telegram-cli/releases) — Linux, macOS, Windows, and Android/Termux (arm64). Each archive contains all three binaries (`tele-tui`, `telegram-mcp`, `telegram-api`) plus this README, the LICENSE, and `config.example.toml`, which documents every setting. Verify what you downloaded against the release's `checksums.txt`.
+
+Ask a binary what it is with `tele-tui -version` (or `version`, or `--version` — and the same on the other two):
+
+```
+tele-tui v0.4.2 (a1b2c3d, go1.25, darwin/arm64)
+```
+
+Releases are fully automatic: every push to `main` bumps the patch version, tags, builds, and publishes (use `#minor` / `#major` in a commit message to bump those instead).
 
 ### Build from source
 
@@ -148,6 +156,17 @@ make run
 ```
 
 Pure Go, no CGO, no native dependencies — a plain `go build` works everywhere.
+
+To build the release archive itself:
+
+```bash
+make dist                          # this machine
+make dist GOOS=linux GOARCH=arm64  # somewhere else
+make dist-all                      # every platform the release publishes
+make checksums                     # checksums.txt over whatever is in dist/
+```
+
+`make dist` is what the release workflow runs, rather than a second recipe that would have to be kept in step with it — so what you can build and open locally is the artifact people download. It stamps the version from `git describe`, which `make version` will print; override with `make dist VERSION=v1.0.0-rc1`.
 
 ### Prerequisites
 

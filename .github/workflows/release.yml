@@ -77,42 +77,24 @@ jobs:
           go-version: '1.25'
           cache: true
 
-      - name: Build all binaries
-        env:
-          GOOS: ${{ matrix.target.goos }}
-          GOARCH: ${{ matrix.target.goarch }}
-          CGO_ENABLED: 0
+      # Through the Makefile rather than repeated here. A second packaging
+      # path is a second thing to keep in step, and the one nobody runs by
+      # hand is the one that rots — which is how config.example.toml came
+      # to be missing from every archive this workflow ever published.
+      #
+      # `make dist` also stamps the version into the binaries, so a
+      # downloaded build can say what it is.
+      - name: Build and package
         run: |
-          set -e
-          EXT=""; [ "$GOOS" = "windows" ] && EXT=".exe"
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/tele-tui${EXT}" ./cmd/teletui
-          go build -trimpath -ldflags="-s -w" -o "dist/telegram-mcp${EXT}" ./cmd/telegram-mcp
-          go build -trimpath -ldflags="-s -w" -o "dist/telegram-api${EXT}" ./cmd/telegram-api
-
-      - name: Package
-        env:
-          GOOS: ${{ matrix.target.goos }}
-          GOARCH: ${{ matrix.target.goarch }}
-          VERSION: ${{ needs.version.outputs.tag }}
-        run: |
-          set -e
-          PKG="telegram-cli_${VERSION}_${GOOS}_${GOARCH}"
-          mkdir -p "stage/${PKG}"
-          cp dist/* "stage/${PKG}/"
-          cp README.md LICENSE "stage/${PKG}/"
-          mkdir -p release
-          cd stage
-          if [ "$GOOS" = "windows" ]; then
-            zip -r "../release/${PKG}.zip" "${PKG}"
-          else
-            tar -czf "../release/${PKG}.tar.gz" "${PKG}"
-          fi
+          make dist \
+            GOOS=${{ matrix.target.goos }} \
+            GOARCH=${{ matrix.target.goarch }} \
+            VERSION=${{ needs.version.outputs.tag }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
-          path: release/
+          path: dist/
           retention-days: 7
 
   publish:

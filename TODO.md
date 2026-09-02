@@ -724,6 +724,25 @@ the primary checkout stays free for fixes against a working client.
       freed by divergence 2, which said a threads feature would get a fresh
       binding decision; divergence 48 is that decision.
 
+- [x] **`make dist`, and a version a binary can state.** The release
+      workflow already cross-compiled and published; what was missing was a
+      way to build the same archive locally, `config.example.toml` inside it,
+      and any version at all — a downloaded binary could not say what it was,
+      and neither could a bug report.
+
+      `make dist` / `dist-all` / `checksums` package it, and the workflow
+      calls `make dist` rather than repeating the recipe. Two packaging paths
+      are two things to keep in step, and the one nobody runs by hand is the
+      one that rots — which is how the config reference came to be missing
+      from every archive published so far.
+
+      `internal/version` is one package rather than a variable in each of the
+      three mains: three ldflags is three chances to forget one, and a build
+      where two binaries agree and the third says "dev" is a build nobody can
+      report against. Checked before flag parsing, because two of the three
+      read their first argument as a subcommand and because `-version` has to
+      answer on a machine where the config is broken.
+
 ### Documentation debt that comes due when code ships
 
 - [x] README no longer advertises Message Bubbles or Profile Avatars, its

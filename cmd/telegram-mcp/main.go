@@ -28,11 +28,19 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/mcpserver"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
+	"github.com/imtaqin/telegram-cli/internal/version"
 )
 
 const loginHint = "session not authorized, run 'telegram-mcp login' first"
 
 func main() {
+	// Before anything else: both of these take a subcommand as their first
+	// argument and would otherwise read "version" as one.
+	if version.Asked(os.Args[1:]) {
+		fmt.Println(version.String("telegram-mcp"))
+		return
+	}
+
 	// stdout is reserved for JSON-RPC — everything else goes to stderr.
 	log.SetOutput(os.Stderr)
 	log.SetPrefix("telegram-mcp: ")
