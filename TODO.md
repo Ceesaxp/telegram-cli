@@ -135,6 +135,33 @@ immediately undoes.
       2.0 and defers albums, which need slice-based composer state, ordering
       and caption rules, and Telegram multi-media send. Blocked, not dropped.
 
+- [ ] **Drop a file on the terminal to attach it.** Raised in field use.
+      Dragging a file onto a terminal is how people already hand a path to a
+      program, and it is the natural gesture for `ctrl+t` — which currently
+      opens a prompt you have to TYPE a path into, and typing a path is the
+      part nobody wants to do.
+
+      A terminal delivers a drop as a PASTE of the path, not as a key
+      sequence, and there are two reasons it does nothing here today:
+
+      - `dialog.Model.Update` handles `tea.KeyPressMsg` and nothing else, so
+        a `tea.PasteMsg` arriving while the attach prompt is open is
+        dropped on the floor. The prompt's input is where the path is going;
+        it has to accept one.
+      - The path arrives SHELL-QUOTED. Terminals escape it the way a shell
+        needs it — `/Users/a/My\ Files/x.png` on iTerm2 and Terminal.app,
+        `'/Users/a/My Files/x.png'` elsewhere, and a `file://` URL from some
+        Linux terminals — so what lands is not a path a stat call will find.
+        Unquoting it is the actual work, and getting it wrong on a name with
+        a space in it fails on exactly the files people drag.
+
+      Worth doing beyond the prompt: a drop onto the composer with no prompt
+      open is unambiguous too, and could stage the attachment directly. That
+      wants a rule for telling a dropped path from pasted prose, which is
+      the thing to decide before writing any of it — a paste that merely
+      looks like a path must not silently become an attachment instead of
+      the message somebody meant to send.
+
 ### Raised in priority by TUI 2.0
 
 - [ ] **SIGINT handler `os.Exit(0)`** — `cmd/teletui` skips bubbletea
