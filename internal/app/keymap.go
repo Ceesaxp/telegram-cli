@@ -455,6 +455,8 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "s", Desc: "Save attachment"},
 			{Keys: "space", Desc: "Play the selected voice note"},
 			{Keys: "y", Desc: "Copy the selected message's text"},
+			{Keys: "+", Desc: "React — pick one, or press it again to take it off"},
+			{Keys: "p", Desc: "Pin or unpin the selected message"},
 			{Keys: "M", Desc: "Mark this chat read without moving"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
 			{Keys: "i", Desc: "Compose a message"},

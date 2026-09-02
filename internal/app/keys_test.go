@@ -1482,7 +1482,11 @@ func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
 // exact drift this wave exists to remove.
 func TestChatViewKeysComeFromConfig(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Keys.Reply = "p"
+	// "t" rather than "p": p is the pin key now, and a configured mnemonic
+	// that collides with a claimed one is refused rather than double-bound
+	// — which is the collision resolver working, not a failure to
+	// configure.
+	cfg.Keys.Reply = "t"
 	cfg.Keys.EditMessage = "Option+E"
 	cfg.Keys.DeleteMessage = "v"
 	cfg.Keys.ScrollUp = "u"
@@ -1501,8 +1505,8 @@ func TestChatViewKeysComeFromConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("no reply/edit/delete row")
 	}
-	if row.Keys != "p / alt+e / v" {
-		t.Errorf("reply row = %q, want the configured \"p / alt+e / v\"", row.Keys)
+	if row.Keys != "t / alt+e / v" {
+		t.Errorf("reply row = %q, want the configured \"t / alt+e / v\"", row.Keys)
 	}
 
 	// Motions are additive in chatview: a configured scroll key is an extra

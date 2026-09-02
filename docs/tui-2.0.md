@@ -1673,6 +1673,68 @@ one that needed saying out loud: underlining a line break preserves the
 break and shows the reader nothing, so a caret at the end of a line in a
 multi-line draft would simply have been invisible.
 
+### 47. Reacting and pinning, which the design record only ever read
+
+Every mention of reactions in this document is about DRAWING them. The
+reconciliation table costs them as "extend Telegram mapping/domain, or
+omit"; divergence 16 maps them; divergence 42 measures the chips. Nothing
+anywhere says how somebody puts one on. Same for pins: the rail lists them,
+and nothing pins.
+
+So both are new ground, and the decisions are here rather than inherited.
+
+**A row, not a palette command.** Reacting is a thing you do TO a message,
+and the message is already under the cursor. Routing it through `:` would
+mean naming the message a second time, in a surface that has no idea which
+one you meant. `+` opens a one-row picker over the cursored message; `p`
+toggles its pin.
+
+**The row takes the hint bar's row.** It is one row and it is transient,
+which is what that row is for — and the message being reacted to has to stay
+on screen, which a centred card would cover. It owns the keyboard while it
+is open, like the palette, because twelve choices and two ways out is the
+whole surface and anything falling through would act on the message the row
+is asking about.
+
+**A fixed set of twelve.** Telegram serves a global list and lets a chat
+narrow it, so the honest set for a chat is two requests away, and a chooser
+that has to load is a chooser you press and then wait at. The twelve are
+Telegram's own defaults in its own order. A chat that has narrowed its set
+refuses the rest, and the refusal says so — which is a worse experience than
+knowing in advance and a better one than a picker that stalls.
+
+**Choosing the one you already left takes it off.** Telegram models removing
+a reaction as sending an empty list — there is no separate call — so the
+picker opens ON your own reaction and `enter` is the whole gesture. Which
+one is yours is read off the message's `Chosen` flag rather than remembered:
+a client keeping its own copy would disagree with the server the first time
+you reacted from a phone.
+
+**One reaction at a time**, which is what a non-premium account is allowed.
+The request would take several, and sending several to an account that
+cannot have them fails the whole call — a worse way to learn about a limit
+than not offering it.
+
+**Nothing is written locally.** The server answers with
+`updateMessageReactions`, which already routes into the refetch an edit
+takes (divergence 16), so the chips redraw from what Telegram says rather
+than from what this client hoped. A reaction the server refused does not sit
+on screen as though it had worked.
+
+**Pinning is silent.** It normally posts a service message into the chat —
+"X pinned a message" — and a pin key that also writes a line into everyone's
+history is a key people learn not to press. The pin is what was asked for;
+the announcement was not.
+
+**One pin key, not two.** `tg.Message.Pinned` is mapped now, so `p` can tell
+which way to go. A pin key that cannot tell has to be pressed and then
+checked, and the place to check is the rail, which may not even be open.
+
+`+` and `p` join chatview's claimed surface, so a configured mnemonic cannot
+silently shadow either. Three tests that used `p` as an example of a free
+key now use `t` — the collision resolver refusing it is the resolver
+working.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

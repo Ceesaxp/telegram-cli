@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -612,5 +613,61 @@ func TestAMultipleChoicePollWithNoTotalStillComparesItsOptions(t *testing.T) {
 	if poll.Options[0].Percent <= poll.Options[1].Percent {
 		t.Fatalf("the options do not compare: %d%% and %d%%",
 			poll.Options[0].Percent, poll.Options[1].Percent)
+	}
+}
+
+// TestReactionAndPinAreOneRequestEach. Both are things you do to somebody
+// else's message, both answer with an update, and neither writes anything
+// locally — so the only thing this layer can get wrong is the request.
+func TestReactionAndPinAreOneRequestEach(t *testing.T) {
+	source := readTelegramSource(t, "reactions.go")
+
+	// Removing a reaction is an empty list, not a second call. Two names
+	// for one request is how they drift apart.
+	if strings.Count(source, "MessagesSendReaction(") != 1 {
+		t.Error("SetReaction does not make exactly one send-reaction request")
+	}
+	if !strings.Contains(source, `if emoji != "" {`) {
+		t.Error("SetReaction does not treat an empty emoji as a removal")
+	}
+
+	// Pinning normally posts "X pinned a message" into the chat. A pin key
+	// that also writes a line into everybody's history is a key people
+	// learn not to press.
+	if !strings.Contains(source, "Silent: true") {
+		t.Error("SetPinned announces itself in the chat")
+	}
+	if !strings.Contains(source, "Unpin:  !pinned") {
+		t.Error("SetPinned cannot unpin")
+	}
+}
+
+func readTelegramSource(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// TestAPinnedMessageSaysSo. It is what lets one key toggle: a pin key that
+// cannot tell says "pinned" to something already pinned, and the place to
+// check is the rail — which may not even be open.
+func TestAPinnedMessageSaysSo(t *testing.T) {
+	c := &Client{files: newFileRegistry()}
+
+	pinned := c.messageFromTG(&tg.Message{
+		ID: 9, PeerID: &tg.PeerUser{UserID: 4}, Message: "hello", Pinned: true,
+	})
+	if !pinned.IsPinned {
+		t.Error("a pinned message did not say so")
+	}
+
+	plain := c.messageFromTG(&tg.Message{
+		ID: 9, PeerID: &tg.PeerUser{UserID: 4}, Message: "hello",
+	})
+	if plain.IsPinned {
+		t.Error("an ordinary message claims to be pinned")
 	}
 }

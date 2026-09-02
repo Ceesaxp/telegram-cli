@@ -497,6 +497,9 @@ func chatViewFixedKeys() map[string]bool {
 		// onto it), so a user reading this list and their config file see
 		// the same word.
 		"y": true, "M": true, "space": true,
+		// Reacting and pinning. Claimed like the rest of the message
+		// actions, so a configured mnemonic cannot silently shadow one.
+		"+": true, "p": true,
 		// Message-wise cursor motion. See cursor.go for why } and { rather
 		// than something with a letter in it.
 		"}": true, "{": true,
@@ -1796,6 +1799,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, m.messageAction("edit")
 	case kp.Matches(m.keys.delete):
 		return m, m.messageAction("delete")
+
+	// '+' opens the reaction row over the cursored message, and 'p'
+	// toggles its pin. Both are things you do TO a message, so both take
+	// the message the cursor is already on rather than asking again.
+	case kp.Matches("+"):
+		return m, m.messageAction("react")
+	case kp.Matches("p"):
+		return m, m.messageAction("pin")
 
 	// Enter opens the cursored message's media. A photo raises the overlay;
 	// everything else keeps going to the platform, because a video or a

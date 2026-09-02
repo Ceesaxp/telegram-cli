@@ -75,6 +75,12 @@ type Message struct {
 	IsChannelPost bool
 	IsForwarded   bool
 
+	// IsPinned is whether this message is one of the chat's pinned ones.
+	// It is what lets one key toggle: a pin key that cannot tell says
+	// "pinned" to something already pinned, and the reader has to open the
+	// rail to find out what it did.
+	IsPinned bool
+
 	ReplyToMessageID int64
 
 	Content MessageContent
@@ -765,6 +771,7 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 		Date:          int32(m.Date),
 		IsOutgoing:    m.Out,
 		IsChannelPost: m.Post,
+		IsPinned:      m.Pinned,
 	}
 
 	if from, ok := m.GetFromID(); ok {

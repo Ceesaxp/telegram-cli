@@ -27,6 +27,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/mediaview"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/rail"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/reactionpicker"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
 	"github.com/imtaqin/telegram-cli/internal/ui/layout"
@@ -47,6 +48,7 @@ type Model struct {
 	search    search.Model
 	help      help.Model
 	palette   palette.Model
+	reactions reactionpicker.Model
 	topBar    topbar.Model
 	hintBar   hintbar.Model
 	rail      rail.Model
@@ -214,6 +216,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		search:     search.New(s, tg, roles),
 		help:       help.New(roles),
 		palette:    palette.New(roles),
+		reactions:  reactionpicker.New(roles),
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
 		rail:       rail.New(roles),
@@ -389,6 +392,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// printable has to reach the query or a command whose name
 			// contains that letter could never be typed. Nothing below
 			// runs until it closes.
+			// The reaction row owns the keyboard while it is open. It is
+			// twelve choices and two ways out; anything that fell through
+			// to the thread underneath would act on the message the row is
+			// asking about.
+			if m.reactions.IsVisible() {
+				var cmd tea.Cmd
+				m.reactions, cmd = m.reactions.Update(msg)
+				return m, cmd
+			}
+
 			if m.palette.IsVisible() {
 				var action palette.Action
 				m.palette, action = m.palette.Update(msg)
@@ -927,6 +940,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the store: this switch runs ahead of the chat list that does the
 		// storing, so the store still holds the unresolved stub.
 		cmds = append(cmds, m.releaseNotices(msg.Chat))
+
+	case reactionpicker.ChosenMsg:
+		cmds = append(cmds, m.sendReaction(msg))
+
+	case reactionpicker.CancelledMsg:
+		// Nothing to undo: the row never touched the message.
 
 	case chatlist.ChatSelectedMsg:
 		cmds = append(cmds, m.openChatAt(msg.ChatId, 0))
@@ -1546,8 +1565,87 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 		m.pendingDeleteMessageId = msg.MessageId
 		d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
 		m.dialog = &d
+
+	case "react":
+		m.reactions.Open(msg.ChatId, msg.MessageId, m.myReactionOn(msg.ChatId, msg.MessageId))
+
+	case "pin":
+		return m, m.togglePin(msg.ChatId, msg.MessageId)
 	}
 	return m, nil
+}
+
+// myReactionOn is the reaction this account has already left on a message,
+// or "" — which is what lets the picker open on it and take it back off.
+//
+// Read off the message rather than remembered: Telegram sends the chosen
+// flag with the tallies, and a client keeping its own copy of what it
+// reacted with would disagree with the server the first time somebody
+// reacted from their phone.
+func (m Model) myReactionOn(chatID, messageID int64) string {
+	for _, message := range m.store.Messages.Get(chatID) {
+		if message.ID != messageID {
+			continue
+		}
+		for _, reaction := range message.Reactions {
+			if reaction.Chosen {
+				return reaction.Emoji
+			}
+		}
+		return ""
+	}
+	return ""
+}
+
+// messagePinned is whether a loaded message is one of the chat's pinned
+// ones. A message nobody has loaded is not pinned as far as this client
+// knows, and pinning something already pinned is what Telegram does with a
+// second pin: nothing.
+func (m Model) messagePinned(chatID, messageID int64) bool {
+	for _, message := range m.store.Messages.Get(chatID) {
+		if message.ID == messageID {
+			return message.IsPinned
+		}
+	}
+	return false
+}
+
+// sendReaction puts the chosen reaction on the message, or takes the
+// existing one off when the picker reported an empty one.
+//
+// Nothing is written locally. The server answers with updateMessageReactions
+// and that already routes into the refetch an edit takes, so the chips
+// redraw from what Telegram says rather than from what this client hoped —
+// which is what stops a reaction the server refused from sitting on screen
+// as though it had worked.
+func (m Model) sendReaction(msg reactionpicker.ChosenMsg) tea.Cmd {
+	tg := m.tg
+	return func() tea.Msg {
+		if err := tg.SetReaction(msg.ChatId, msg.MessageId, msg.Emoji); err != nil {
+			return ErrorMsg{Err: err}
+		}
+		return nil
+	}
+}
+
+// togglePin pins the cursored message, or unpins it when it is already
+// pinned.
+//
+// One key rather than two, because the message says which it is. A pin key
+// that cannot tell has to be pressed and then checked, and the place to
+// check is the rail — which may not even be open.
+func (m Model) togglePin(chatID, messageID int64) tea.Cmd {
+	pinned := m.messagePinned(chatID, messageID)
+	tg := m.tg
+	return func() tea.Msg {
+		if err := tg.SetPinned(chatID, messageID, !pinned); err != nil {
+			return ErrorMsg{Err: err}
+		}
+		if pinned {
+			return chatview.MediaPlayMsg{Status: "info", Info: "unpinned"}
+		}
+		return chatview.MediaPlayMsg{Status: "info", Info: "pinned"}
+	}
 }
 
 func (m *Model) setFocus(panel FocusPanel) {
@@ -1717,6 +1815,18 @@ func (m Model) View() tea.View {
 		content = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Top,
 			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.palette.View()))
+	}
+
+	// The reaction row goes in the hint bar's row rather than over the
+	// frame. It is one row and it is transient, which is what that row is
+	// for — and the message it is asking about has to stay on screen, which
+	// a centred card would cover.
+	if m.reactions.IsVisible() && m.screen == ScreenMain {
+		rows := strings.Split(content, "\n")
+		if len(rows) > 0 {
+			rows[len(rows)-1] = m.reactions.View()
+			content = strings.Join(rows, "\n")
+		}
 	}
 
 	// An overlay replaces the frame, and lipgloss.Place pads what is left
