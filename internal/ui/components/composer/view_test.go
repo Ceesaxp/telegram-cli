@@ -25,7 +25,10 @@ func TestMain(m *testing.M) {
 func sized(t *testing.T, width int) Model {
 	t.Helper()
 	m := New(theme.DarkRoles(false))
-	m.SetSize(width, 1)
+	// Room for everything it might ask for, so these cases exercise the
+	// rows they are about. What happens when the budget is SMALLER than
+	// the ask is its own test — see TestThePromptSurvivesAShortBudget.
+	m.SetSize(width, expandedRows)
 	m.SetChatId(1)
 	return m
 }
@@ -42,8 +45,13 @@ func sized(t *testing.T, width int) Model {
 func rows(t *testing.T, m Model) []string {
 	t.Helper()
 	out := strings.Split(m.View(), "\n")
-	if len(out) != m.Rows() {
-		t.Fatalf("View drew %d rows, Rows() promised %d", len(out), m.Rows())
+	// Rows() is what the composer WANTS and m.height is what it was
+	// granted; it draws the smaller of the two. The frame reserves Rows()
+	// and clips past it, so drawing more than the grant is how the row you
+	// type into ends up off the bottom.
+	if want := min(m.Rows(), m.height); len(out) != want {
+		t.Fatalf("View drew %d rows, want %d (asked for %d, granted %d)",
+			len(out), want, m.Rows(), m.height)
 	}
 	for i, line := range out {
 		if got := cell.Width(line); got != m.width {
@@ -350,5 +358,71 @@ func TestNoticeTakesTheRow(t *testing.T) {
 	}
 	if !strings.Contains(view, "INSERT") {
 		t.Errorf("the notice hid the mode badge:\n%s", view)
+	}
+}
+
+// TestThePromptSurvivesAShortBudget.
+//
+// A terminal under twenty rows grants the composer fewer rows than a reply
+// wants, and the frame clips what comes past the grant — the LAST row,
+// which is the row you type into. A composer showing what you are replying
+// to and no way to reply is worse than one that shows only the reply.
+func TestThePromptSurvivesAShortBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*Model)
+	}{
+		{"reply", func(m *Model) { m.EnterReplyMode(7, "nadia: rebased, CI green") }},
+		{"attachment", func(m *Model) { m.SetAttachment("/tmp/a.png", true) }},
+		{"both", func(m *Model) {
+			m.EnterReplyMode(7, "nadia: rebased")
+			m.SetAttachment("/tmp/a.png", false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sized(t, 60)
+			m.SetFocused(true)
+			tc.setup(&m)
+
+			for budget := 1; budget <= m.Rows(); budget++ {
+				m.SetSize(60, budget)
+				lines := strings.Split(m.View(), "\n")
+
+				if len(lines) != budget {
+					t.Fatalf("budget %d: drew %d rows", budget, len(lines))
+				}
+				// The prompt is the last row, always: it is what the
+				// context rows are context FOR.
+				last := ansi.Strip(lines[len(lines)-1])
+				if !strings.Contains(last, "›") {
+					t.Fatalf("budget %d: the last row is not the prompt: %q", budget, last)
+				}
+				for i, line := range lines {
+					if got := cell.Width(line); got != 60 {
+						t.Errorf("budget %d row %d is %d cells", budget, i, got)
+					}
+					if open := cell.OpenStyle(line); open != "" {
+						t.Errorf("budget %d row %d leaves %q open", budget, i, open)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRowsIsWhatItWantsNotWhatItGot. The layout budgets from Rows(), so a
+// Rows() that reported its own budget back would settle on one row and
+// never grow again.
+func TestRowsIsWhatItWantsNotWhatItGot(t *testing.T) {
+	m := sized(t, 60)
+	m.EnterReplyMode(7, "nadia: rebased")
+
+	m.SetSize(60, 1)
+	if got := m.Rows(); got != 2 {
+		t.Fatalf("granted 1 row, Rows() = %d, want the 2 it wants", got)
+	}
+	m.SetSize(60, 2)
+	if got := m.Rows(); got != 2 {
+		t.Fatalf("granted 2 rows, Rows() = %d", got)
 	}
 }

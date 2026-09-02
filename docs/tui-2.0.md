@@ -1639,10 +1639,42 @@ expanded form. The alternative is each of those remembering to say so, and
 one of them forgetting — which is the same rule as divergence 39, and this
 is what forgetting looks like from the outside.
 
-It does nothing before the first `WindowSizeMsg`. A layout computed from a
-zero terminal hands every panel a zero region, which is not a smaller frame
-but no frame, and the panels would have to be told their sizes all over
-again.
+It does nothing before the first `WindowSizeMsg`, and without a branch for
+it: a layout computed from a zero terminal has a zero body to spend, so its
+composer height comes out zero — which is what an unsized model's layout
+already holds. The two agree and nothing is relaid out. The explicit guard
+that was there first turned out to be a line no mutant could kill, which is
+the same test this record applied to `SetBufferIndex` in divergence 44; a
+test holds the behaviour instead.
+
+**Review found the fix incomplete, twice over.** Below twenty rows the
+layout sets `InlineComposerOnly` and forced the composer to exactly one row,
+so a reply drew its quote bar into that row and the frame clipped the prompt
+underneath — the same defect, surviving at the sizes it was least visible
+at. And the guard compared what the composer ASKED for against what it was
+GRANTED, which at those heights differ permanently: it recomputed the whole
+frame on every message for the rest of the session, changing nothing.
+
+Three things came out of that:
+
+- **The flag was over-broad.** It is about the EXPANDED form — its own
+  documentation says so — and it was also crushing the reply bar and the
+  attachment chip, which cost one row between them and are what say what the
+  row below them is for. It caps at `InlineComposerHeight + MaxContextRows`
+  now rather than forcing one, so a twelve-row terminal still has a row to
+  spare for a quote.
+- **The composer never draws past its grant, and sheds the right row.**
+  `View` cuts from the FRONT: a composer showing what you are replying to
+  with no way to reply is worse than one showing only the reply.
+- **`Rows()` is what it wants, not what it got.** A first attempt capped
+  `Rows()` by the granted height, which is a loop — the layout budgets FROM
+  `Rows()` — and collapsed every composer to one row. The two are separate,
+  and the guard is `layoutStale`, which compares against the layout the
+  current state COMPUTES to and therefore converges by construction.
+
+The wasted relayout is the part no screen assertion can see: it produces the
+same layout, so nothing moves. It took naming the predicate to make it
+testable at all.
 
 ### 46. A caret is a position; a terminal has only cells
 

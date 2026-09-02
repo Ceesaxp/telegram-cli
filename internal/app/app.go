@@ -335,13 +335,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// budgeted one, and the frame drew the reply bar and cut off the line
 	// you were meant to type into. It came back on the next resize, which
 	// is why editing in $EDITOR and returning appeared to fix it.
-	// Only once there is a frame to reconcile with. Before the first
-	// WindowSizeMsg the terminal's size is unknown, and computing a layout
-	// from a zero one hands every panel a zero region — which is not a
-	// smaller frame, it is no frame, and the panels would have to be told
-	// their real sizes all over again.
-	if updated.width > 0 && updated.height > 0 &&
-		updated.composer.Rows() != updated.layout.ComposerHeight {
+	if updated.layoutStale() {
 		updated.updateLayout()
 	}
 	return updated, cmd
@@ -1731,6 +1725,31 @@ func (m *Model) toggleRail() tea.Cmd {
 		return nil
 	}
 	return m.openRailFor(m.chatView.ChatId())
+}
+
+// layoutStale reports whether the frame's row budget no longer matches what
+// the current state would compute to.
+//
+// Against the COMPUTED layout rather than against the composer's own row
+// count. A short terminal grants the composer fewer rows than it asks for —
+// see layout.MaxContextRows — so comparing the ask to the grant finds a
+// difference no relayout can close, and recomputes the whole frame on every
+// message for the rest of the session. layout.Compute is pure and cheap,
+// and comparing its answer converges by construction: after updateLayout
+// the two agree, whatever the terminal was able to give.
+//
+// False before the first WindowSizeMsg, and without a branch for it: a
+// layout computed from a zero terminal has a zero body to spend, so its
+// composer height comes out zero — which is what an unsized model's layout
+// already holds. The two agree, and nothing is relaid out.
+//
+// That mattered: an earlier version DID relayout there, and handed every
+// panel a zero region — not a smaller frame but no frame, with every panel
+// needing to be told its real size again. TestAnUnsizedFrameIsNeverStale
+// holds it, because a guard here could not be told from no guard at all.
+func (m Model) layoutStale() bool {
+	want := layout.Compute(m.width, m.height, m.composer.Rows(), m.railOpen)
+	return want.ComposerHeight != m.layout.ComposerHeight
 }
 
 func (m *Model) updateLayout() {

@@ -28,6 +28,11 @@ const (
 	RuleWidth = 1
 	// InlineComposerHeight is the composer's default single row.
 	InlineComposerHeight = 1
+	// MaxContextRows is how much a short terminal will spend above the
+	// prompt on saying what it is for: a reply quote, or an attachment
+	// chip. One, because past that the thread stops being readable and the
+	// composer knows to shed the rest itself.
+	MaxContextRows = 1
 )
 
 // Width thresholds. See [Compute] for the precedence these encode.
@@ -154,9 +159,16 @@ func Compute(width, height, composerRows int, railEnabled bool) Layout {
 	// would leave a hole under it or push the thread off the bottom.
 	l.ComposerHeight = max(composerRows, InlineComposerHeight)
 	if l.InlineComposerOnly {
-		// Too few rows to give the expanded form its eight: the thread would
-		// have nothing left. The composer is told, and stays inline.
-		l.ComposerHeight = InlineComposerHeight
+		// Too few rows to give the expanded form its eight: the thread
+		// would have nothing left. The composer is told, and stays inline.
+		//
+		// Capped rather than forced to one. The flag is about the EXPANDED
+		// form — its own doc says so — and forcing a single row also
+		// crushed the reply bar and the attachment chip, which cost one row
+		// between them and are the two things that say what the row below
+		// them is for. A terminal short enough to refuse eight rows still
+		// has one to spare for a quote.
+		l.ComposerHeight = min(l.ComposerHeight, InlineComposerHeight+MaxContextRows)
 	}
 	if l.ComposerHeight > l.BodyHeight {
 		l.ComposerHeight = l.BodyHeight

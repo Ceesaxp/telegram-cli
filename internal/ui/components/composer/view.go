@@ -122,10 +122,18 @@ func (m Model) Expanded() bool { return m.expanded }
 // the rows the composer is about to use — a composer that rendered more rows
 // than it asked for would push the bottom of the history off screen, and one
 // that rendered fewer would leave a hole.
+// Rows is how many rows the composer WANTS: one to type into, and one each
+// for the context above it.
+//
+// What it wants, not what it was given — the layout budgets from this, and
+// a Rows that reported its own budget back would be a loop that settles on
+// one row and never grows. What it actually DRAWS is bounded separately;
+// see View.
 func (m Model) Rows() int {
 	if m.expanded {
 		return expandedRows
 	}
+
 	rows := 1
 	if m.mode != ModeNormal {
 		rows++ // the reply or edit bar
@@ -146,6 +154,11 @@ func (m Model) View() string {
 		return strings.Join(m.expandedView(), "\n")
 	}
 
+	// Context first, the prompt last, and then cut from the FRONT to the
+	// budget. The prompt is the row a client is for — a composer showing
+	// what you are replying to and no way to reply is worse than one that
+	// shows only the reply — so the context rows are what give way, newest
+	// first, the same order they would be read in.
 	var rows []string
 	if bar := m.contextBar(); bar != "" {
 		rows = append(rows, bar)
@@ -154,6 +167,15 @@ func (m Model) View() string {
 		rows = append(rows, chip)
 	}
 	rows = append(rows, m.promptRow(m.width))
+
+	// Cut from the FRONT to the budget the layout granted. The frame
+	// reserves that many rows and clips whatever comes past them — and the
+	// row it clips is the last one, which is the row you type into. That is
+	// how a reply on a nineteen-row terminal came out as a quote bar with
+	// nowhere to put the answer.
+	if m.height > 0 && len(rows) > m.height {
+		rows = rows[len(rows)-m.height:]
+	}
 	return strings.Join(rows, "\n")
 }
 
