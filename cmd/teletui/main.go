@@ -18,9 +18,18 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/version"
 )
 
 func main() {
+	// Before anything else, including the debug log and the config: a
+	// binary has to be able to say what it is on a machine where the rest
+	// of it will not start.
+	if version.Asked(os.Args[1:]) {
+		fmt.Println(version.String("tele-tui"))
+		return
+	}
+
 	// The TUI owns the terminal in raw mode, so any stray write to stderr
 	// lands in the middle of a rendered frame — the Telegram client logs
 	// "connection state: connecting" from goroutines its constructor starts,

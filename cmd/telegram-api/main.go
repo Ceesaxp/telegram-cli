@@ -27,11 +27,19 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/config"
 	"github.com/imtaqin/telegram-cli/internal/restapi"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/imtaqin/telegram-cli/internal/version"
 )
 
 const loginHint = "session not authorized, run 'telegram-api login' first"
 
 func main() {
+	// Before anything else: both of these take a subcommand as their first
+	// argument and would otherwise read "version" as one.
+	if version.Asked(os.Args[1:]) {
+		fmt.Println(version.String("telegram-api"))
+		return
+	}
+
 	log.SetOutput(os.Stderr)
 	log.SetPrefix("telegram-api: ")
 
