@@ -180,28 +180,62 @@ immediately undoes.
 
       Reviewed against the code on 2026-09-02. The geometry holds and both
       load-bearing claims check out: `attach-file` really is the only
-      `dialog.NewPrompt` caller, and the glyphs really do exist. Nine things
-      want settling first, and none of them is a reason to wait:
+      `dialog.NewPrompt` caller, and the glyphs really do exist. Ten points
+      against it, none a reason to wait; the keys and the colours were
+      settled the same day and are recorded here as answers rather than
+      questions.
 
-      - **Two colour literals are not in the palette.** `#7f8a93` and
-        `#9aa4ac` sit between `Dim` (`#5c666e`) and `Fg` (`#c9ced4`) and
-        match no role. `TestNoColourLiteralsOutsideThePalette` fails on
-        sight, and under the 256-colour profile or the light theme they are
-        simply wrong. `Dim` for the path's directory part and for a
-        directory entry's name, keeping `Bright` for the typed tail and `Fg`
-        for a file name, is the contrast ordering the spec asks for in roles
-        that already ship.
-      - **`^h` collides with backspace on the terminals that matter.** The
-        picker binds both — `⌫` deletes a character, `^h` goes up a
-        directory — and outside the Kitty protocol a terminal sends 0x08 for
-        both. `←` is the safe primary; `^h` is decoder-verified or dropped,
-        the way the newline chords were in Wave 6.
-      - **`^p` means "move the selection up" one surface over.** The palette
-        binds `ctrl+p`/`ctrl+n` for exactly that (divergence 9), and the
-        picker is its twin by construction. A reader who learned the palette
-        will press `^p` here to move up and silently change how their file
-        sends. It collides with the composer's expand chord as well. The
-        toggle wants another key.
+      - **Two colour literals are not in the palette — both become `Dim`.**
+        `#7f8a93` (the path's directory part) and `#9aa4ac` (a directory
+        entry's name) sit between `Dim` (`#5c666e`) and `Fg` (`#c9ced4`) and
+        match no role, so `TestNoColourLiteralsOutsideThePalette` fails on
+        sight. `Dim` is documented as "secondary copy", which is what both
+        of them are.
+
+        The substitution *widens* the separation the spec was reaching for
+        rather than approximating it: `Dim` against `Bright` in the prompt
+        row, and `Dim` against `Fg` in the entry rows, where `#9aa4ac`
+        against `#c9ced4` was barely a difference at all.
+
+        The decisive argument is the light theme, where the roles invert and
+        a literal cannot: `#7f8a93` and `#9aa4ac` are light greys, and the
+        light panel is `#f4f6f8`. They would be very nearly invisible.
+
+        Everything else the spec names is already a role and stands —
+        `Amber` glyph and no-match, `Bright` tail, `Ghost` suggestion,
+        mtime and directory glyph, `Cyan` cursor and selection bar, `Faint`
+        size, `RuleSoft` divider, `Fg`/`Faint` state row, `Red` for no such
+        directory. One caveat worth knowing rather than fixing: `Ghost` and
+        `Faint` are adjacent under the 256-colour profile (239/240 dark,
+        247/245 light), so the size and mtime columns read as one weight
+        there. They stay legible on position and content, and it is a
+        property of the shipped palette, not of this component.
+      - **`^h` collides with backspace — drop it, and let `⌫` do the work.**
+        The picker binds both to different things, `⌫` to delete a character
+        and `^h` to go up a directory, and outside the Kitty protocol a
+        terminal sends 0x08 for both.
+
+        The fix is not a second binding but a better reading of the first:
+        when the typed tail is empty and the path ends in `/`, `⌫` removes
+        the whole last segment. That IS "up one directory", it is what a
+        shell user's fingers already do, and it makes the collision harmless
+        — a terminal that sends 0x08 for `^h` now does the right thing by
+        accident instead of the wrong thing on half the terminals. `←` stays
+        as the explicit synonym.
+      - **`^p`/`^n` move the selection; `^t` toggles photo/document.** The
+        spec has `^p` on the toggle, but the palette binds `^p`/`^n` to
+        selection movement (divergence 9) and the picker is its twin by
+        construction — a reader arrives having already learned it, and would
+        press `^p` to move up and silently change how their file sends. It
+        collides with the composer's expand chord as well.
+
+        The toggle goes to `^t`: the key that opened the surface, already
+        under the finger and already meaning "attach", bound to nothing else
+        inside an overlay, and safe on every terminal. Rejected — `^y`
+        (claimed by the emacs composer keymap item), `alt+p` (Option arrives
+        as a composed character on macOS, Wave 4), `^i` (is Tab), `^s`/`^q`
+        (flow control), `^o` (the composer's `$EDITOR` chord). `^x` is the
+        fallback if `^t` turns out to read as "close".
       - **`▷` for video does not exist.** `render/media.go` draws `▶` for
         video, animation, voice and audio alike, so the spec's own principle
         — a file looks the same here as it will in the thread — argues
@@ -227,9 +261,30 @@ immediately undoes.
         reason the spec does not give: the divider and the state row cost two
         lines, so six holds the overlay at the palette's eleven. Record it,
         or somebody will "fix" it to match.
+      - **The `~/` floor makes half the filesystem unreachable.** "`⌫`
+        never past `~/`" leaves no route to `/etc/hosts`, and the spec
+        offers no other one. Floor at the empty prompt instead: a leading
+        `/` goes absolute and `~` goes home, which is the same guard against
+        deleting into nothing without the dead end. `^u` clears the path
+        outright, because every other text surface in this app has it and
+        its absence would be the odd thing.
       - **The drop-a-file item above is this item's other half.** A path
         arriving by paste, shell-quoted, is the same question, and the
         picker's prompt row is where it lands. Build them together.
+
+      The key list as settled, which is what the footer should read from:
+
+      | Key | Action |
+      |---|---|
+      | printable | appended to the path; list and suggestion refilter live |
+      | `⇥` | complete to the cursored entry, `/` on a directory |
+      | `↵` | descend into a directory, or attach a file and close |
+      | `↑` `↓` `^p` `^n` | move the cursor — never `j`/`k`, a path holds both |
+      | `⌫` | delete a character; on an empty tail, up one directory |
+      | `←` | up one directory, explicitly |
+      | `^t` | photo/document, images only; inert and says so otherwise |
+      | `^u` | clear the path |
+      | `esc` | cancel, staging nothing |
 
       Everything the picker needs beyond the drawing is new: reading a
       directory, `~` expansion, completion, and a size/mtime column. None of
