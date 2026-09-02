@@ -1735,6 +1735,65 @@ silently shadow either. Three tests that used `p` as an example of a free
 key now use `t` — the collision resolver refusing it is the resolver
 working.
 
+### 48. `t` comes back, for threads
+
+Divergence 2 freed `t` when the voice-note transcript left the fixtures, and
+said: "Should threads arrive later, they get a fresh binding decision rather
+than inheriting one that was never specified." This is that decision. `t`
+opens the discussion under a channel post.
+
+**Nothing said the discussion existed.** A channel is a broadcast — nobody
+can answer a post in the channel itself — and the answers go to a group
+linked to it. This client drew the post and stopped there, so a channel
+looked like a place where nothing could be said back, which is the opposite
+of what its author set up. There was no way to find out otherwise from
+inside the client.
+
+**The row is words, not a mark.** The vocabulary of glyphs is already spoken
+for — ↳ is a reply quote, ▪ a pin, ▹ a link, ▣ a picture — and a twelfth
+mark that has to be learned buys nothing over a sentence that can be read.
+It follows the code frame's `4 lines · y to yank`: what there is, then the
+key that gets you to it.
+
+    12 comments · t to open
+
+**Zero is a real answer.** A discussion nobody has used yet reads "no
+comments yet" rather than "0 comments", which looks like a broken counter
+where the words read as an invitation.
+
+**The key is offered only where it leads somewhere.** Telegram sometimes
+reports a discussion without naming the group it is in. The row still says
+how many there are, and says nothing about `t` — a key advertised on a row
+that cannot act is worse than a row that only counts.
+
+**Unread needs both halves.** Telegram sends the newest comment's id and
+this account's read mark together or not at all. With only one of them
+"unread" would be a guess about somebody's attention, so the row says `new`
+— in the amber the unread divider uses, because it is the same fact — only
+when it has both.
+
+**The jump is a round trip, and lands on the post's own copy.** A post's
+comments are not in the channel: Telegram copies the post into the linked
+group and the comments are replies to that copy, whose message id this
+client has never seen. `messages.getDiscussionMessage` is the only thing
+that knows the translation, so the jump happens on its answer rather than on
+the keypress, and it opens at that message rather than at the top of the
+group.
+
+The linked group is announced on the way, through `GetChat` rather than off
+the `Chats` the response already carries. Those are peers, and a chat built
+from a peer carries `Muted=false` — which the store would merge over a group
+the reader had muted on purpose. That is divergence 39 exactly, and the AST
+guard beside it **refused this when it was first written that way**: the
+first draft looped over `res.Chats` calling `chatFromChannel`, and the test
+named the file and line.
+
+`t` joins chatview's claimed surface. Three tests have now had to move the
+letter they use as an example of a free mnemonic — `p` became pin, `t`
+became threads — so they assert up front that the letter is still free and
+say why if it is not, rather than failing later as a confusing dispatch
+error.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

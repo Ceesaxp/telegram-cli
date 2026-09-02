@@ -142,3 +142,47 @@ func TestMyReactionIsReadOffTheMessage(t *testing.T) {
 		t.Errorf("a message that is not loaded reported %q", got)
 	}
 }
+
+// TestTOnAChannelPostGoesToTheDiscussion — or tries to: the lookup is a
+// round trip, so what is checkable here is that the key produces one.
+func TestTOnAChannelPostGoesToTheDiscussion(t *testing.T) {
+	m := reactModel(t, nil, false)
+	m.store.Messages.Append(1, &telegram.Message{
+		ID: 6, ChatID: 1, IsChannelPost: true,
+		SenderID: &telegram.MessageSenderChat{ChatID: 1},
+		Content:  &telegram.MessageText{Text: &telegram.FormattedText{Text: "shipped"}},
+		Comments: &telegram.Comments{Count: 12, ChatID: -100777},
+	})
+
+	_, cmd := m.Update(chatview.MessageActionMsg{Action: "thread", ChatId: 1, MessageId: 6})
+	if cmd == nil {
+		t.Fatal("thread produced no command")
+	}
+}
+
+// TestTheDiscussionOpensAtThePostsOwnCopy, not at the top of the linked
+// group: the comments hang off that message, and the top of the group is not
+// where the reader was going.
+func TestTheDiscussionOpensAtThePostsOwnCopy(t *testing.T) {
+	m := reactModel(t, nil, false)
+	m.store.Chats.Set(&telegram.Chat{
+		ID: -100777, Title: "infra-oncall chat", Type: telegram.ChatTypeSupergroup, Order: 2,
+	})
+	m.chatList.MarkLoadedForTest()
+	_ = m.chatList.View()
+
+	opened, _ := m.Update(openDiscussionMsg{ChatId: -100777, MessageId: 4412})
+	m = opened.(Model)
+
+	if got := m.chatView.ChatId(); got != -100777 {
+		t.Fatalf("opened chat %d, want the linked group", got)
+	}
+	if got := ansi.Strip(m.chatView.View()); !strings.Contains(got, "infra-oncall chat") {
+		t.Fatalf("the header does not name the group:\n%s", got)
+	}
+	// At the post's own copy. The comments hang off that message, and the
+	// top of the group is not where the reader was going.
+	if got := m.chatView.TargetMessageId(); got != 4412 {
+		t.Fatalf("aimed at message %d, want the post's copy 4412", got)
+	}
+}

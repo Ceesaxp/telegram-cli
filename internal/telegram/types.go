@@ -88,6 +88,32 @@ type Message struct {
 	// Reactions are the emoji tallies on this message, in the order
 	// Telegram ranks them. Nil when nobody has reacted.
 	Reactions []*Reaction
+
+	// Comments is the discussion thread under a channel post, nil for a
+	// post with no linked group and for every message that is not one.
+	Comments *Comments
+}
+
+// Comments is the discussion a channel post has, in the group linked to the
+// channel.
+//
+// A channel is a broadcast: nobody can answer a post in the channel itself.
+// A linked group is where the answers go, and a client that does not say so
+// makes a channel look like a place where nothing can be said back — which
+// is the opposite of what the post's author set up.
+type Comments struct {
+	// Count is how many comments there are. Zero is a real answer: the
+	// discussion exists and nobody has used it yet.
+	Count int32
+
+	// ChatID is the linked discussion group, in this client's canonical
+	// form, or 0 when Telegram did not name it. Without it there is
+	// nowhere to go, so the row says how many there are and offers no key.
+	ChatID int64
+
+	// Unread is whether anything has been said since this account last
+	// looked.
+	Unread bool
 }
 
 // MessageContent is the payload of a message.
@@ -800,6 +826,10 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 
 	if reactions, ok := m.GetReactions(); ok {
 		msg.Reactions = reactionsFromTG(reactions)
+	}
+
+	if replies, ok := m.GetReplies(); ok {
+		msg.Comments = commentsFromTG(replies)
 	}
 
 	entities, _ := m.GetEntities()

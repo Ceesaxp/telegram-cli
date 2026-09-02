@@ -941,6 +941,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// storing, so the store still holds the unresolved stub.
 		cmds = append(cmds, m.releaseNotices(msg.Chat))
 
+	case openDiscussionMsg:
+		// Straight to the post's copy in the linked group, the same way a
+		// search result opens: the comments hang off it, and the top of
+		// the group is not where the reader was going.
+		cmds = append(cmds, m.openChatAt(msg.ChatId, msg.MessageId))
+
 	case reactionpicker.ChosenMsg:
 		cmds = append(cmds, m.sendReaction(msg))
 
@@ -1571,6 +1577,9 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 
 	case "pin":
 		return m, m.togglePin(msg.ChatId, msg.MessageId)
+
+	case "thread":
+		return m, m.openDiscussion(msg.ChatId, msg.MessageId)
 	}
 	return m, nil
 }
@@ -1595,6 +1604,30 @@ func (m Model) myReactionOn(chatID, messageID int64) string {
 		return ""
 	}
 	return ""
+}
+
+// openDiscussionMsg is where a channel post's comments turned out to live.
+type openDiscussionMsg struct {
+	ChatId    int64
+	MessageId int64
+}
+
+// openDiscussion finds where a channel post's comments live and goes there.
+//
+// Two steps rather than one, because the answer is not local: a post's
+// comments are in a group linked to the channel, as replies to a copy of the
+// post whose message id this client has never seen. The lookup is the only
+// thing that knows the translation, and it is a round trip — so the jump
+// happens on the answer rather than on the keypress.
+func (m Model) openDiscussion(chatID, messageID int64) tea.Cmd {
+	tg := m.tg
+	return func() tea.Msg {
+		discussionChat, discussionMsg, err := tg.DiscussionMessage(chatID, messageID)
+		if err != nil {
+			return ErrorMsg{Err: err}
+		}
+		return openDiscussionMsg{ChatId: discussionChat, MessageId: discussionMsg}
+	}
 }
 
 // messagePinned is whether a loaded message is one of the chat's pinned

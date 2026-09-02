@@ -210,9 +210,15 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 	out = append(out, rc.blocks...)
 	out = append(out, rc.trailer...)
 
-	// Reactions belong to the MESSAGE, not to its content: a photo and a
-	// poll are reacted to the same way, so they are appended once here
-	// rather than by every branch of renderContent.
+	// The discussion under a channel post, then the reactions. Both belong
+	// to the MESSAGE rather than to its content — a photo and a poll are
+	// reacted to the same way — so both are appended once here rather than
+	// by every branch of renderContent.
+	//
+	// Comments above reactions: the comments row is a way OUT of this
+	// message and the chips are a fact about it, and a row that leads
+	// somewhere reads as the end of the block.
+	out = append(out, renderComments(msg.Comments, r.roles, width)...)
 	out = append(out, renderReactions(msg.Reactions, r.roles, width)...)
 
 	if len(out) == 0 {

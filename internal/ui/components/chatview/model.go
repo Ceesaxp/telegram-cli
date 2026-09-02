@@ -369,6 +369,15 @@ func (m *Model) ApplyMedia(cfg config.MediaConfig) {
 // ChatId is the chat currently open in this panel, 0 when none.
 func (m Model) ChatId() int64 { return m.chatID }
 
+// TargetMessageId is the message the panel is still trying to scroll to,
+// or 0 when it is simply showing the newest.
+//
+// Exported for the callers that OPEN a chat at a message — a search result,
+// a channel post's discussion — because "did it aim at the right message"
+// is otherwise only observable after the history has loaded and scrolled,
+// which is two round trips a test does not have.
+func (m Model) TargetMessageId() int64 { return m.targetMsgID }
+
 // SearchActive reports whether the in-chat search input is open. While it
 // is, every key belongs to the input: the host must route input events to
 // this panel without consuming them first (esc, quick-type, etc.).
@@ -497,9 +506,10 @@ func chatViewFixedKeys() map[string]bool {
 		// onto it), so a user reading this list and their config file see
 		// the same word.
 		"y": true, "M": true, "space": true,
-		// Reacting and pinning. Claimed like the rest of the message
-		// actions, so a configured mnemonic cannot silently shadow one.
-		"+": true, "p": true,
+		// Reacting, pinning, and opening a channel post's discussion.
+		// Claimed like the rest of the message actions, so a configured
+		// mnemonic cannot silently shadow one.
+		"+": true, "p": true, "t": true,
 		// Message-wise cursor motion. See cursor.go for why } and { rather
 		// than something with a letter in it.
 		"}": true, "{": true,
@@ -1807,6 +1817,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, m.messageAction("react")
 	case kp.Matches("p"):
 		return m, m.messageAction("pin")
+
+	// 't' opens the discussion under a channel post. Only where there is
+	// one: a key that does nothing on nine messages out of ten teaches
+	// people it is broken, so it says so instead.
+	case kp.Matches("t"):
+		if msg := m.cursorMessage(); msg == nil || msg.Comments == nil ||
+			msg.Comments.ChatID == 0 {
+			return m, func() tea.Msg {
+				return MediaPlayMsg{Status: "info", Info: "no discussion on this message"}
+			}
+		}
+		return m, m.messageAction("thread")
 
 	// Enter opens the cursored message's media. A photo raises the overlay;
 	// everything else keeps going to the platform, because a video or a
