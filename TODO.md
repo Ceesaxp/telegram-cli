@@ -162,23 +162,79 @@ immediately undoes.
       looks like a path must not silently become an attachment instead of
       the message somebody meant to send.
 
-- [ ] **The `ctrl+t` attach surface wants redrawing — placeholder, awaiting a
-      design.** Raised in field use, and not to be actioned here: it is going
-      to a designer first.
+- [ ] **The `ctrl+t` attach picker — designed, reviewed, ready to build.**
+      Spec at [docs/handoff/attach-picker.md](docs/handoff/attach-picker.md),
+      received 2026-09-02 and archived verbatim beside the original handoff.
 
-      What is on screen today is `dialog.NewPrompt(…, "Attach File", "Path to
-      file:")` — a centred modal you type a path into, which is the idiom TUI
-      2.0 replaced everywhere else. Every other surface that asks for
-      something is now a row: the reaction picker, the reply bar, the filter
-      header, the `:` palette. This one is the last of the old shape still
-      reachable by a key (the contacts overlay below is the other).
+      A new `internal/ui/components/attach/`: the palette's twin rather than
+      the dialog's — 60 cells, the same anchor, the same `▌` marker, the same
+      key-hint footer, no buttons. A prompt row with an inline ghost
+      suggestion, up to six entries carrying type glyph, name, size and
+      mtime, a state row under a `rule-soft` divider, and `⇥` to complete. It
+      deletes the last GUI dialog in the client.
 
-      Two things belong in whatever replaces it rather than beside it. The
-      drop-a-file item above is the same surface and the same question — a
-      path arriving by paste rather than by keystroke — and a redesign that
-      lands first would have to be reopened to take it. And typing a path is
-      the part nobody wants to do at all, so the design question is probably
-      not "what shape is the prompt" but "what does the reader pick from".
+      **It names the right defect.** The old prompt always attached as a
+      document — `replaceAttachment(strings.TrimSpace(msg.Input), false)`,
+      hardcoded `false` — while `ctrl+v` sends an image as a photo. The state
+      row says which one before you commit, and a toggle key changes it.
+
+      Reviewed against the code on 2026-09-02. The geometry holds and both
+      load-bearing claims check out: `attach-file` really is the only
+      `dialog.NewPrompt` caller, and the glyphs really do exist. Nine things
+      want settling first, and none of them is a reason to wait:
+
+      - **Two colour literals are not in the palette.** `#7f8a93` and
+        `#9aa4ac` sit between `Dim` (`#5c666e`) and `Fg` (`#c9ced4`) and
+        match no role. `TestNoColourLiteralsOutsideThePalette` fails on
+        sight, and under the 256-colour profile or the light theme they are
+        simply wrong. `Dim` for the path's directory part and for a
+        directory entry's name, keeping `Bright` for the typed tail and `Fg`
+        for a file name, is the contrast ordering the spec asks for in roles
+        that already ship.
+      - **`^h` collides with backspace on the terminals that matter.** The
+        picker binds both — `⌫` deletes a character, `^h` goes up a
+        directory — and outside the Kitty protocol a terminal sends 0x08 for
+        both. `←` is the safe primary; `^h` is decoder-verified or dropped,
+        the way the newline chords were in Wave 6.
+      - **`^p` means "move the selection up" one surface over.** The palette
+        binds `ctrl+p`/`ctrl+n` for exactly that (divergence 9), and the
+        picker is its twin by construction. A reader who learned the palette
+        will press `^p` here to move up and silently change how their file
+        sends. It collides with the composer's expand chord as well. The
+        toggle wants another key.
+      - **`▷` for video does not exist.** `render/media.go` draws `▶` for
+        video, animation, voice and audio alike, so the spec's own principle
+        — a file looks the same here as it will in the thread — argues
+        against its own table. Either `▷` lands in the media card too, or
+        the picker uses `▶`.
+      - **`theme.OverlayInput` is not dead** and must not go with the prompt:
+        `auth` and `search` both call it. The rest of the cleanup list is
+        right — `KindPrompt`, its `Update` branch and the prompt-specific
+        hint all go.
+      - **The mode wiring is one word ambiguous.** "Resolves like the palette
+        does" would mean COMMAND; a surface whose printables type is INSERT,
+        which is what `textOverlayOpen` already gives the prompt. Swap
+        `promptOpen` for the picker in that same slot and nothing else in
+        `mode.go` moves.
+      - **"After it closes" describes a composer that did not ship.** The
+        expanded header is `compose ┬ sends as`, not `1 photo`; the chip is
+        `attachmentChip`'s one-row bar ending in `esc to drop`, not
+        `▣ name ✕` under the source column. Switching to expanded and INSERT
+        with the attachment staged is free and worth doing; redrawing the
+        chip is a separate change to a shipped surface, and `✕` is a click
+        affordance on a row with no click handling.
+      - **Six rows, not the palette's eight** — deliberate, and right for a
+        reason the spec does not give: the divider and the state row cost two
+        lines, so six holds the overlay at the palette's eleven. Record it,
+        or somebody will "fix" it to match.
+      - **The drop-a-file item above is this item's other half.** A path
+        arriving by paste, shell-quoted, is the same question, and the
+        picker's prompt row is where it lands. Build them together.
+
+      Everything the picker needs beyond the drawing is new: reading a
+      directory, `~` expansion, completion, and a size/mtime column. None of
+      it is hard and all of it is code this repo does not have, so cost it as
+      a component plus a small filesystem layer rather than as a redraw.
 
 ### Raised in priority by TUI 2.0
 
