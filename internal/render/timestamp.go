@@ -3,13 +3,52 @@ package render
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// clock is the source of "now" for every timestamp this package formats.
+type clock func() time.Time
+
+// pinned holds a replacement clock, or nil for the real one.
+//
+// A seam rather than a parameter. Almost every label here is RELATIVE — "2m",
+// "yd", "TODAY" — so the same message renders differently every minute, and a
+// frame that cannot be reproduced cannot be asserted against a golden. The
+// alternative is threading a time through every component that draws a
+// timestamp, which is most of them, to serve one caller.
+//
+// Production never writes it. An atomic rather than a plain variable so a
+// test that pins the clock cannot race the renderer under -race.
+var pinned atomic.Pointer[clock]
+
+// Now is the instant the renderer measures against: the real clock, unless
+// a test has pinned one.
+func Now() time.Time {
+	if c := pinned.Load(); c != nil {
+		return (*c)()
+	}
+	return time.Now()
+}
+
+// PinClock fixes the renderer's clock at t and returns the function that
+// restores the previous one. Callers must restore it — a leaked pin makes
+// every later test in the process render at somebody else's instant.
+func PinClock(t time.Time) (restore func()) {
+	return PinClockFunc(func() time.Time { return t })
+}
+
+// PinClockFunc is PinClock with a moving clock, for the tests that need one
+// instant per call rather than one for the whole test.
+func PinClockFunc(c clock) (restore func()) {
+	previous := pinned.Swap(&c)
+	return func() { pinned.Store(previous) }
+}
 
 // FormatTimestamp formats a Unix timestamp for display.
 func FormatTimestamp(ts int32) string {
 	t := time.Unix(int64(ts), 0).Local()
-	now := time.Now()
+	now := Now()
 
 	if sameDay(t, now) {
 		return t.Format("15:04")
@@ -37,20 +76,10 @@ func FormatTimestamp(ts int32) string {
 // and anything older falls back to an ISO date.
 func FormatTimestampSmart(ts int32) string {
 	t := time.Unix(int64(ts), 0).Local()
-	now := time.Now().Local()
+	now := Now().Local()
 
-	// Compare calendar days, not raw 24h durations: a Local-location day
-	// crossing a DST transition can be 23 or 25 hours long, which would
-	// make Sub(...).Hours()/24 truncate to the wrong day count (e.g. an
-	// actual "yesterday" reading as 0 days ago across a spring-forward
-	// transition). Re-anchor both dates' Y/M/D components in UTC — a
-	// location with no DST — so the subtraction is always an exact
-	// multiple of 24h and daysAgo comes out exact.
-	ty, tm, td := t.Date()
-	ny, nm, nd := now.Date()
-	today := time.Date(ny, nm, nd, 0, 0, 0, 0, time.UTC)
-	day := time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)
-	daysAgo := int(today.Sub(day) / (24 * time.Hour))
+	// Calendar days, not raw 24h durations — see calendarDaysBetween.
+	daysAgo := calendarDaysBetween(t, now)
 
 	switch {
 	case daysAgo == 0:
@@ -77,13 +106,19 @@ func FormatClock(ts int32) string {
 // anything recent while "12 AUG 2024" is what you need once it does not.
 func FormatDayLabel(ts int32) string {
 	t := time.Unix(int64(ts), 0).Local()
-	now := time.Now().Local()
+	now := Now().Local()
 
-	switch {
-	case sameDay(t, now):
+	switch days := calendarDaysBetween(t, now); {
+	case days == 0:
 		return "TODAY"
-	case sameDay(t, now.AddDate(0, 0, -1)):
+	case days == 1:
 		return "YESTERDAY"
+	case days <= 6:
+		// Within the week the weekday is the part a reader actually
+		// navigates by — "that was Tuesday" is how anyone remembers a
+		// conversation from three days ago, and "26 AUG" makes them count
+		// backwards to find out whether it was.
+		return strings.ToUpper(t.Format("Mon 2 Jan"))
 	case t.Year() == now.Year():
 		return strings.ToUpper(t.Format("2 Jan"))
 	default:
@@ -100,7 +135,7 @@ func SameDay(a, b int32) bool {
 // FormatRelativeTime returns a relative time string (e.g., "2m ago").
 func FormatRelativeTime(ts int32) string {
 	t := time.Unix(int64(ts), 0)
-	d := time.Since(t)
+	d := Now().Sub(t)
 
 	switch {
 	case d < time.Minute:
@@ -117,28 +152,57 @@ func FormatRelativeTime(ts int32) string {
 }
 
 // FormatRelativeShort is a relative time in the smallest space that still
-// says something: "now", "4m", "4h", "2d", or a date once weeks have passed.
+// says something: "now", "4m", "4h", "yd", "2d", or a date once weeks have
+// passed.
 //
-// The rail's right-hand field is four cells. "4h ago" does not fit beside a
-// name and the "ago" is the half that carries no information — a relative
-// time is already relative.
+// The rail's right-hand field is four cells and the chat list's is five.
+// "4h ago" does not fit beside a name, and the "ago" is the half that
+// carries no information — a relative time is already relative.
+//
+// Hours give way to days at the DAY boundary, not at twenty-four hours.
+// "23h" for something sent at nine last night is arithmetic; what the
+// reader wants to know is whether it happened today, and a message from
+// yesterday evening reading "14h" while one from this morning reads "6h"
+// puts them on the same scale when the useful distinction is the night
+// between them.
 func FormatRelativeShort(ts int32) string {
 	if ts == 0 {
 		return ""
 	}
-	d := time.Since(time.Unix(int64(ts), 0))
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
+	then := time.Unix(int64(ts), 0).Local()
+	now := Now().Local()
+
+	if d := now.Sub(then); d < time.Hour {
+		if d < time.Minute {
+			return "now"
+		}
 		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 7*24*time.Hour:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	default:
-		return time.Unix(int64(ts), 0).Local().Format("2 Jan")
 	}
+
+	switch days := calendarDaysBetween(then, now); {
+	case days <= 0:
+		return fmt.Sprintf("%dh", int(now.Sub(then).Hours()))
+	case days == 1:
+		return "yd"
+	case days <= 6:
+		return fmt.Sprintf("%dd", days)
+	default:
+		return then.Format("2 Jan")
+	}
+}
+
+// calendarDaysBetween is how many local calendar days separate then and now.
+//
+// Both dates are re-anchored in UTC before subtracting, for the reason
+// FormatTimestampSmart gives at length: a local day crossing a DST
+// transition is 23 or 25 hours long, and dividing a raw duration by 24
+// hours puts an actual "yesterday" on the wrong side of the boundary twice
+// a year.
+func calendarDaysBetween(then, now time.Time) int {
+	ty, tm, td := then.Date()
+	ny, nm, nd := now.Date()
+	return int(time.Date(ny, nm, nd, 0, 0, 0, 0, time.UTC).
+		Sub(time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)) / (24 * time.Hour))
 }
 
 // FormatLastSeen formats a user's last seen timestamp.

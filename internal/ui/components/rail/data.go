@@ -62,6 +62,33 @@ func (m *Model) SetStore(s *store.Store, tg *telegram.Client) {
 	m.tg = tg
 }
 
+// SetDataForTest installs a chat's rail sections directly, as though every
+// fetch had already answered.
+//
+// The three sections arrive from three commands this component starts
+// itself, against a client a test does not have. Without a seam a rail in a
+// test says "unavailable" in every section, which is the one state the
+// goldens do not draw. Same reason and same shape as
+// chatlist.MarkLoadedForTest.
+func (m *Model) SetDataForTest(chatID int64, pinned, files []*telegram.Message,
+	members []*telegram.ChatMember, memberCount int) {
+	if m.data == nil {
+		m.data = map[int64]*chatData{}
+	}
+	m.chatID = chatID
+	m.data[chatID] = &chatData{
+		gen:          m.gen,
+		pinnedState:  stateReady,
+		pinned:       pinned,
+		filesState:   stateReady,
+		files:        files,
+		linksState:   stateReady,
+		membersState: stateReady,
+		members:      members,
+		memberCount:  memberCount,
+	}
+}
+
 // Open points the rail at a chat and starts fetching what that chat's
 // sections need (decision 6).
 //
@@ -233,10 +260,28 @@ func (m Model) messageRow(msg *telegram.Message, kind RowKind) Row {
 		row.Right = render.SenderName(msg, m.store)
 	case RowFile:
 		row.Text, row.Right = fileSummary(msg)
+		if isImageFile(msg) {
+			row.Kind = RowFileImage
+		}
 	case RowLink:
 		row.Text = linkSummary(msg)
 	}
 	return row
+}
+
+// isImageFile reports whether a shared file is a picture, so its row can
+// carry the same mark the media card gives one.
+//
+// The MIME type, not the extension: it is what the sender's client
+// declared, and a screenshot saved as ".dat" is still a picture.
+func isImageFile(msg *telegram.Message) bool {
+	switch c := msg.Content.(type) {
+	case *telegram.MessagePhoto:
+		return true
+	case *telegram.MessageDocument:
+		return c.Document != nil && strings.HasPrefix(c.Document.MimeType, "image/")
+	}
+	return false
 }
 
 // memberSection lists people, online first.

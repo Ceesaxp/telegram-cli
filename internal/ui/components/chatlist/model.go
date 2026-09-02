@@ -511,12 +511,42 @@ func (m Model) ActiveFolderIndex() int {
 // see rather than the total held in the store.
 func (m Model) Count() int { return len(m.list.Items) }
 
+// BufferIndex is a chat's 1-based row in the list as it currently stands,
+// or 0 when the chat is not in it — filtered out, in another folder, or not
+// loaded.
+//
+// Position rather than a stable id. A vi buffer number is worth having
+// because :b2 goes there; this client has no such command, so the only
+// number worth printing is the one the reader can act on, which is the row
+// they can see to the left of the header.
+func (m Model) BufferIndex(chatID int64) int {
+	want := fmt.Sprintf("%d", chatID)
+	for i, item := range m.list.Items {
+		if item.ID == want {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // CycleFolder moves the active folder tab by delta (wrapping around) and
 // refilters the chat list to match.
 // SetFoldersForTest installs folders by title. It exists so tests in other
 // packages — the app's top-bar click routing, chiefly — can set up a folder
 // list without constructing telegram.ChatFolder values or faking a server
 // response.
+// MarkLoadedForTest puts the list into the state chatsLoadedMsg puts it in.
+//
+// The message is unexported and arrives from a command this component
+// starts itself, so a test in another package cannot get the list past its
+// spinner without a seam. Same reason and same shape as SetFoldersForTest
+// below.
+func (m *Model) MarkLoadedForTest() {
+	m.loading = false
+	m.spinner.Active = false
+	m.markDirty()
+}
+
 func (m *Model) SetFoldersForTest(titles []string) {
 	folders := make([]*telegram.ChatFolder, 0, len(titles))
 	for i, title := range titles {
@@ -883,8 +913,12 @@ func (m *Model) refreshList() {
 		preview := ""
 		meta := ""
 		if entry.LastMessage != nil {
-			preview = messagePreview(entry.LastMessage)
-			meta = render.FormatTimestampSmart(entry.LastMessage.Date)
+			preview = m.previewWithSender(entry)
+			// Relative, not absolute. A chat list is read for recency —
+			// "which of these has moved" — and "Mon 09:12" makes the
+			// reader do the subtraction on every row to find out. The
+			// column is five cells either way.
+			meta = render.FormatRelativeShort(entry.LastMessage.Date)
 		}
 		// A parked draft outranks the last message in the preview row
 		// (decision 13). What somebody else said is still in the chat when
@@ -896,7 +930,7 @@ func (m *Model) refreshList() {
 
 		badge := ""
 		if entry.UnreadCount > 0 {
-			badge = fmt.Sprintf("%d", entry.UnreadCount)
+			badge = unreadBadge(entry.UnreadCount, entry.Chat.Muted)
 		}
 
 		online := false
@@ -930,6 +964,53 @@ func (m *Model) refreshList() {
 			}
 		}
 	}
+}
+
+// unreadBadge is the count in the brackets that say how loudly it is
+// waiting: square for a chat that will interrupt you, round for one you
+// have muted.
+//
+// The number alone is the same claim either way, and the two chats are not
+// the same thing to a reader scanning the column — one of them is work and
+// the other is a tally. Brackets carry it without a second colour, which
+// the row has already spent on the sigil.
+func unreadBadge(count int32, muted bool) string {
+	if muted {
+		return fmt.Sprintf("(%d)", count)
+	}
+	return fmt.Sprintf("[%d]", count)
+}
+
+// previewWithSender is a chat's preview row: who spoke, then what they
+// said.
+//
+// The name is prefixed only where it tells the reader something. Your own
+// messages get "you:" everywhere, because "did I answer that" is the
+// question a preview row is most often asked. A group gets the sender's
+// name, because a group has several. A one-to-one chat gets neither: the
+// name is already the row's title. Nor does a channel, where every post is
+// from the channel and the prefix would repeat the title back.
+func (m Model) previewWithSender(entry *store.ChatEntry) string {
+	text := messagePreview(entry.LastMessage)
+	if text == "" {
+		return ""
+	}
+
+	sender, ok := entry.LastMessage.SenderID.(*telegram.MessageSenderUser)
+	if !ok {
+		return text
+	}
+
+	switch {
+	case sender.UserID == m.myUserID && m.myUserID != 0:
+		return "you: " + text
+	case entry.Chat.Type == telegram.ChatTypeBasicGroup,
+		entry.Chat.Type == telegram.ChatTypeSupergroup:
+		if name := m.store.Users.DisplayName(sender.UserID); name != "" && name != "Unknown" {
+			return name + ": " + text
+		}
+	}
+	return text
 }
 
 // unresolvedTitle stands in for a chat this client has heard from but has
@@ -1177,11 +1258,19 @@ func (m Model) View() string {
 	// Folder tabs used to live at the top of this column; TUI 2.0 moves
 	// them to the frame's top bar and gives this row to the filter instead.
 	// Selection and key handling stayed here — only the drawing moved.
-	return strings.Join([]string{
-		m.renderFilterHeader(m.width),
-		m.list.View(),
+	// The list is padded out to its budget so the hints stay at the FOOT of
+	// the column. Left to itself the list is as tall as it has rows, and a
+	// nine-chat list in a forty-row terminal would put the motion hints
+	// two thirds of the way up the screen, level with nothing.
+	rows := strings.Split(m.list.View(), "\n")
+	for len(rows) < m.list.Height {
+		rows = append(rows, "")
+	}
+
+	return strings.Join(append(
+		append([]string{m.renderFilterHeader(m.width)}, rows...),
 		m.renderListFooter(m.width),
-	}, "\n")
+	), "\n")
 }
 
 // Folder-tab rendering and its hit-test used to live here. They moved to

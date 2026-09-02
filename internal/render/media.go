@@ -98,6 +98,13 @@ func mediaCardFor(content telegram.MessageContent) (mediaCard, bool) {
 
 	case *telegram.MessageDocument:
 		card := mediaCard{badge: "DOC", glyph: "▤", name: "file", actions: "enter open · s save"}
+		// A picture sent as a file is still a picture. The badge is what
+		// tells a reader whether pressing enter will draw something in the
+		// terminal or hand a file to their system, and that answer follows
+		// the CONTENT rather than the envelope Telegram put it in.
+		if c.Document != nil && strings.HasPrefix(c.Document.MimeType, "image/") {
+			card.badge, card.glyph, card.name = "IMG", "▣", "image"
+		}
 		if c.Document != nil {
 			if c.Document.FileName != "" {
 				card.name = c.Document.FileName

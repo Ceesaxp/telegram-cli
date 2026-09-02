@@ -598,17 +598,25 @@ that key in the same mode.
 
 ### 10. The thread header omits the buffer number and the bot mark
 
-The goldens draw the header's right group as `buf 2 │ ln 214/214  bot`. Only
-`ln 214/214` is rendered.
+**Resolved**, and one word of it was read wrong for eight phases.
 
 `buf N` is a chat's index among the open buffers, which the thread panel does
-not know — the app does. `bot` needs a flag on the chat that the client does
-not map today. Both are omitted rather than filled with a plausible number,
-for the same reason the top bar's placeholders were a recorded release
-blocker: a false fact stated in fixed-width type is worse than a missing one.
+not know — the app does. It is told now, on the same tick that refreshes the
+two chrome rows, so it cannot be left describing where a chat used to be. The
+number is the chat list's ROW, not a stable id: a vi buffer number is worth
+having because `:b2` goes there, this client has no such command, and the
+only number worth printing is the one the reader can act on — the row they
+can see to the left of the header.
 
-They come back when the data reaches the panel, and the right group is
-measured first, so widening it will not cost the position cell.
+`bot` was recorded here as "a flag on the chat that the client does not map",
+reading it as the bot-account mark the prose lists beside the buffer number
+and the scroll position. That reading cannot be right: all six fixtures draw
+it, and all six draw a GROUP. It is vi's ruler — `214,1  Bot` — and every
+fixture drawing it at `ln 214/214` is a thread scrolled to the end.
+
+So it is a scroll marker, and it names only the ends: `bot`, `top`, `all`
+when the whole history fits, nothing in between. A percentage in the middle
+would be a third number saying what the first two already say.
 
 ### 11. Outgoing state has three marks, not four
 
@@ -1469,6 +1477,90 @@ invariant is held by an AST test that walks `internal/telegram` and fails if
 `chatFromUser`, `chatFromBasicGroup` or `chatFromChannel` is called from
 anywhere but `resolvedChat` and the dialog path. Reverting the fix makes it
 name the function and the line.
+
+### 42. Byte equality, and the eleven cells the fixtures got wrong
+
+Byte equality against the goldens is asserted. `TestFrameMatchesTheGoldens`
+renders a fixed scene at each fixture's size and compares every cell of all
+six frames — the five reference sizes plus the wide-rune stress fixture.
+
+**The clock had to be pinnable first.** Almost every label on the frame is
+relative: the top bar's wall clock, the chat list's "2m" and "yd", the
+thread's day dividers. `render.PinClock` fixes the instant and the tests fix
+`time.Local` alongside it, because a timestamp formatted through the local
+zone renders 20:44 in Berlin and 18:44 in London and a fixture can hold only
+one of them. Production never writes the pin; an atomic rather than a plain
+variable so a test that sets it cannot race the renderer under `-race`.
+
+Five things the fixtures drew were not in the client, and each turned out to
+be worth having on its own terms:
+
+| Field | What it says |
+| --- | --- |
+| `2m` `14m` `yd` `2d` in the chat list | recency, which is what a chat list is read for — where "Mon 09:12" made the reader do the subtraction on every row |
+| `group · 24 members` | the size of the room you are typing into, from the full-info call the rail already made; it lands in the store so the two cannot disagree and the second one to want it does not ask again |
+| `buf N` | which row of the list this thread is |
+| `bot` / `top` / `all` | whether there is more below, without comparing two numbers — see divergence 10 |
+| `idx 214 msgs · 9 buffers · 37 unread` | how much there is, each part omitted when it would say nothing |
+
+Three more differences were the client's own drawing being one cell out, and
+the fixture was right: a code frame keeps a cell of pad inside its right
+border so a truncated line's ellipsis does not read as the last character of
+the code (and gives that cell up at the cramped gutter, where the fixture
+does too); the unread badge's brackets replace the spaces that used to pad
+it, which costs nothing and says whether a chat is muted on a terminal with
+no colour; and the chat list's motion hints sit at the FOOT of the column
+rather than wherever the list happens to end.
+
+**Thirty-one rows of a hundred and eighty-three were regenerated.** Five
+sixths of the hand-drawn design survives verbatim, which is the useful
+number: it says the fixtures were drawn against a real design rather than
+sketched. What changed falls into three kinds.
+
+*Numbers derived from the scene.* `ln 214/214`, `idx 214 msgs`, `buf 2`. The
+scene has twelve messages in the open chat and infra-oncall is its first
+row; 214 was a plausible number written twice into two cells that measure
+different things.
+
+*Facts a hand drawing got wrong.* `buf 2` on a chat drawn first in its own
+list. `bot: ` prefixing a channel post in `ops-alerts` while the identical
+row in `tape/changelog` has none — a channel's posts are the channel's, so
+neither has one now. A reply quoting `4412 ready for the second approval?`
+attributed to ivo, whose only visible message says something else; the quote
+now cites the message that is actually there. A quote taking the TAIL of the
+message it cites rather than its beginning.
+
+*Things Telegram does not send.* `1440×720` on a file — a document carries
+no dimensions, and a photo carries no filename, so the fixture's card was
+four facts from two different types. It is a document now, with the name,
+the size and the extension, and the card gives an image-typed document the
+IMG badge and the ▣ mark rather than the DOC one: the badge tells a reader
+whether enter will draw something in the terminal or hand a file to their
+system, and that follows the content, not the envelope. `· 6 online` is
+gone: counting online members means fetching every member, and counting
+among the page you happened to fetch understates a group of two hundred —
+the same reason divergence 18 gives for taking the member total from full
+info rather than from the participants call.
+
+Two cells are the client's key names rather than the fixture's: `enter open`
+where the drawing says `o open` (both keys work; enter is the one that draws
+it in the terminal), and the composer's reply preview truncated where it now
+fits.
+
+### 43. A read receipt after a row of reactions
+
+Reactions render below the body, and the outgoing-state mark is appended to
+a message's last body line. Those two rules now meet: an outgoing message
+with reactions puts its `✓✓` after the chips, where it reads as though it
+belonged to the last of them.
+
+Left as it is, and recorded rather than fixed, because the alternative is
+worse than the problem. The grid appends the mark to the last line it is
+given; teaching it which of those lines are reactions means the body
+renderer telling it, which is a second channel between two components that
+currently share one. The mark is faint and the chips are bracketed, and no
+fixture draws the combination — the wide-rune scene is the only place it
+occurs at all.
 
 ## Decisions
 

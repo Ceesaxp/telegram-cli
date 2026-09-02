@@ -2,7 +2,7 @@
 # every line below is exactly 200 display cells wide
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
  tg │ 1:all 2:unread 3:work 4:channels 5:archive                                                                                                                         ● connected · 1 device │ 21:04 
- / filter chats…                  9/9 │ # infra-oncall │ group · 24 members · 6 online                                                           buf 2 │ ln 214/214  bot │ PINNED                       
+ / filter chats…                  9/9 │ # infra-oncall │ group · 24 members                                                                        buf 1 │ ln 29/29  all │ PINNED                       
 ▌# infra-oncall                 2m    │                                                                                                                                  │ ▪ Deploy window 14:00–1… ivo 
 ▌  nadia: rebased, CI green       [4] │                                                                                                                                  │ ▪ Runbook: auth p95 s… nadia 
  @ Nadia Feld                   6m    │                                                                                                                                  │                              
@@ -12,7 +12,7 @@
  ~ wire notes                   1h    │                                                                                                                                  │ ● sam                        
    draft: saved locally               │                                                                                                                                  │ ○ mira                    4h 
  ! ops-alerts muted             2h    │                                                                                                                                  │ ○ jonas                   2d 
-   bot: p95 back under 400ms     (31) │                                                                                                                                  │ · +19 more                   
+   p95 back under 400ms          (31) │                                                                                                                                  │ · +19 more                   
  @ Mira Okonkwo                 4h    │                                                                                                                                  │                              
    sounds good — thurs then           │                                                                                                                                  │ FILES                        
  # design-crit                  yd    │                                                                                                                                  │ ▣ auth-p95-2608.png     184K 
@@ -33,13 +33,13 @@
                                       │   09:14         nadia  Two PRs from me. 4412 is the retry backoff, 4419 is cosmetic.                                             │                              
                                       │                        [👍 3]                                                                                                    │                              
                                       │   09:15           you  Taking 4412. Backoff caps at 30s?  ✓✓                                                                     │                              
-                                      │   09:16         nadia  ↳ you Backoff caps at 30s?                                                                                │                              
+                                      │   09:16         nadia  ↳ you Taking 4412. Backoff caps at 30s?                                                                   │                              
                                       │                        Yes, jittered. Full ±20%.                                                                                 │                              
                                       │ TODAY ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │                              
                                       │   20:41           ivo  Rollout paused — session hits spiked on the auth path. @nadia can you look?                               │                              
                                       │                        ┌──────┐  ▣ auth-p95-2608.png                                                                             │                              
-                                      │                        │ IMG  │  1440×720 · 184 KB · png                                                                         │                              
-                                      │                        └──────┘  o open · s save                                                                                 │                              
+                                      │                        │ IMG  │  184 KB · png                                                                                    │                              
+                                      │                        └──────┘  enter open · s save                                                                             │                              
                                       │                        [👀 5] [🔥 2]                                                                                             │                              
                                       │   20:44           sam  The offending query, for the record:                                                                      │                              
                                       │                        ┌ sql ──────────────────────────────────────────────────────── 4 lines · y to yank ┐                      │                              
@@ -52,13 +52,13 @@
                                       │   20:52           you  Confirmed from the queue dashboard. Resuming.  ✓✓                                                         │                              
                                       │ 4 NEW ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │                              
                                       │   20:58           ivo  Resumed. Canary at 5%.                                                                                    │                              
-                                      │   21:01         nadia  ↳ ivo 4412 ready for the second approval?                                                                 │                              
+                                      │   21:01         nadia  ↳ ivo Resumed. Canary at 5%.                                                                              │                              
                                       │                        Rebased onto main, CI is green now. 4412 ready for the second approval.                                   │                              
                                       │   21:02           sam  Approved. Merging behind the flag.                                                                        │                              
                                       │                        [🚀 4]                                                                                                    │                              
                                       │ ▌ 21:03           ivo  Good. I will write the incident note either way — cheap to have, expensive to reconstruct.                │                              
                                       │                   ···  nadia is typing…                                                                                          │                              
-                                      │ reply ↳ nadia: Rebased onto main, CI is green now.                                                                   esc to drop │                              
+                                      │ reply ↳ nadia: Rebased onto main, CI is green now. 4412 ready for the second approval.                               esc to drop │                              
  j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                                                                                        md │                              
- q quit  i compose  : command  r reply  y yank  e edit  ? keymap                                                                                                   idx 214 msgs · 9 buffers · 37 unread 
+ q quit  i compose  : command  r reply  y yank  e edit  ? keymap                                                                                                    idx 12 msgs · 9 buffers · 37 unread 
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

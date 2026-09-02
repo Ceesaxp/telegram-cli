@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imtaqin/telegram-cli/internal/render"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
@@ -129,13 +130,20 @@ func (m *Model) notify(text string) {
 func (m *Model) refreshChrome() {
 	m.topBar.SetWidth(m.width)
 	m.topBar.SetFolders(m.topBarFolders())
-	m.topBar.SetClock(time.Now().Format("15:04"))
+	// render.Now rather than time.Now: this is the one wall clock on
+	// screen, and a golden frame that cannot fix it cannot be asserted.
+	m.topBar.SetClock(render.Now().Format("15:04"))
 
 	// Zero until account.getAuthorizations answers, and zero drops the
 	// cell — the top bar says nothing about devices rather than guessing at
 	// a number. Decision 7's other placeholder, the transport version, is
 	// gone rather than wired: gotd speaks MTProto 2.0 and nothing else.
 	m.topBar.SetDevices(m.deviceCount)
+
+	// The header's buffer number is the chat list's row, and the list
+	// reorders as messages arrive. Refreshed on the same tick as the two
+	// chrome rows so it cannot be left describing where a chat used to be.
+	m.chatView.SetBufferIndex(m.chatList.BufferIndex(m.chatView.ChatId()))
 
 	m.hintBar.SetWidth(m.width)
 	m.hintBar.SetHints(m.hintsForMode())
@@ -216,8 +224,26 @@ func (m Model) hintsForMode() []hintbar.Hint {
 
 // hintBarCounters is the right-hand group: how much there is, rather than
 // what can be pressed.
+//
+// Three counts, and each is omitted when it would say nothing. Before any
+// chat is open there is no history to size, and a client with nothing
+// unread should not spend six cells saying "0 unread" — the interesting
+// state is the one where the number is not zero.
+//
+// The bar cuts from the LEFT if it has to, so the order is a priority
+// ranking: what is unread outlives how many chats there are, which outlives
+// the size of the history you are already looking at.
 func (m Model) hintBarCounters() string {
-	return fmt.Sprintf("%d buffers", m.chatList.Count())
+	var parts []string
+
+	if n := m.store.Messages.Count(m.chatView.ChatId()); n > 0 {
+		parts = append(parts, fmt.Sprintf("idx %d msgs", n))
+	}
+	parts = append(parts, fmt.Sprintf("%d buffers", m.chatList.Count()))
+	if n := m.store.Chats.TotalUnread(); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d unread", n))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // topBarConnState maps the client's connection state onto the dot.

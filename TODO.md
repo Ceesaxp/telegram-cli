@@ -173,11 +173,11 @@ context rail have all landed; bubbles, avatars, Glamour, the status bar and
 the group-info overlay are gone with them.
 
 Every phase in the plan has now shipped, both release blockers are
-discharged, and the four content blocks that were waiting on Telegram data
-are mapped and drawn. What is left is byte equality against the goldens: the
-blocks render, but reconciling them with the fixture cell for cell is a pass
-of its own — see "Byte equality against the goldens" below. The goldens stay
-asserted on width until it lands.
+discharged, the four content blocks that were waiting on Telegram data are
+mapped and drawn, and the goldens are asserted byte for byte. **TUI 2.0 is
+complete.** What is left in this section is the work that was never part of
+it — the compose line's editing gaps, mouse selection — plus the block
+gallery, which is the one fixture with no scene behind it yet.
 
 Field feedback has its own item below: the compose line's editing keymaps are
 thinner than either convention implies.
@@ -677,15 +677,39 @@ the primary checkout stays free for fixes against a working client.
       cell is deleted: gotd speaks MTProto 2.0 and nothing else, so the cell
       could only ever have shown one string. See D7 above.
 
-- [ ] **Byte equality against the goldens.** Only width is asserted
-      today. The four content blocks now render, so the last structural
-      blocker is the media overlay; what remains beyond it is reconciliation
-      rather than absence. Known differences, each deliberate and recorded in
-      divergences 16a and 16b: the poll's percentage field is four cells
-      wide rather than three (the gallery never draws a 100% option), a voice
-      note's row carries its file size, and neither a transcript affordance
-      nor `transcript: t` exists to draw. That separation is why
-      `golden.Compare` reports width and content as different `DiffKind`s.
+- [x] **Byte equality against the goldens.** `TestFrameMatchesTheGoldens`
+      renders a fixed scene at each fixture's size and compares every cell
+      of all six frames — the five reference sizes plus the wide-rune
+      stress fixture. `-update` regenerates one from the renderer, and
+      prints the rows it changed, because a regeneration is how a copy
+      change lands and also how a layout bug becomes the expected output.
+
+      **The clock had to be pinnable first.** Almost every label on the
+      frame is relative, so `render.PinClock` fixes the instant and the
+      tests fix `time.Local` with it — a timestamp formatted through the
+      local zone renders 20:44 in Berlin and 18:44 in London, and a fixture
+      can hold only one.
+
+      Five fields the fixtures drew were not in the client and are now:
+      relative chat-list times (`2m`, `yd`, `2d`), the thread header's
+      member count, its buffer number, its `bot`/`top`/`all` scroll marker,
+      and the hint bar's `idx N msgs · N buffers · N unread`. Three more
+      differences were the client's drawing being one cell out and the
+      fixture right: a cell of pad inside the code frame's right border,
+      brackets on the unread badge in place of its spaces, and the chat
+      list's motion hints at the foot of the column.
+
+      Thirty-one rows of a hundred and eighty-three were regenerated —
+      numbers derived from the scene, facts a hand drawing got wrong, and
+      things Telegram does not send. Every one is accounted for in
+      divergence 42; divergence 10's reading of `bot` was corrected there
+      as well.
+
+- [ ] **A scene for the block gallery.** `blocks-100x52.txt` is validated
+      for width and self-consistency but has no scene behind it, so its
+      content is not asserted. It is a gallery rather than a session — one
+      chat's worth of every block in the design record — so it wants its
+      own fixture harness rather than a sixth entry in the frame table.
 
 ### Documentation debt that comes due when code ships
 

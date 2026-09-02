@@ -18,8 +18,11 @@ import (
 //   - art is pre-rendered raster or block art. It is a grid of cells at
 //     fixed column positions and is only ever CROPPED, never wrapped: a
 //     word wrapper run over it reflows the rows into noise.
-//   - blocks are already-laid-out lines drawn ABOVE the text: a metadata
-//     card, or a poll's question, options and footer.
+//   - blocks are already-laid-out lines drawn UNDER the text: a metadata
+//     card, or a poll's question, options and footer. Under, because a
+//     caption is what the sender wrote and the card is what this client
+//     worked out about the file — and the sentence introducing an
+//     attachment reads as a caption above it and as an afterthought below.
 //   - text is the message body or an attachment's caption, with its
 //     entities intact, so blocks and inline spans can be rendered from it.
 //   - note is plain text with no entities: service events, and the honest
@@ -193,7 +196,6 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 			out = append(out, cell.Clamp(line, width))
 		}
 	}
-	out = append(out, rc.blocks...)
 	if rc.note != "" {
 		// A note is this client's own words about the message — "poll ·",
 		// "[unsupported]" — so it carries no entities and nothing to link.
@@ -205,6 +207,7 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 			links:  r.hyperlinks,
 		})...)
 	}
+	out = append(out, rc.blocks...)
 	out = append(out, rc.trailer...)
 
 	// Reactions belong to the MESSAGE, not to its content: a photo and a

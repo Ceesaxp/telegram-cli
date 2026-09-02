@@ -123,10 +123,14 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	return []string{cell.Fit(line1, width), cell.Fit(line2, width)}
 }
 
-// renderBadge draws the unread chip: the count with one cell of padding
-// either side, so its width is len(count)+2.
+// renderBadge draws the unread chip.
 //
-// A muted chat's badge is present but subdued rather than absent — the count
+// The brackets ARE the padding now — square for a chat that will interrupt
+// you, round for one you have muted — so the width is the same as the
+// spaces they replaced and the mute state survives being read on a terminal
+// with no colour, or by somebody who cannot tell the two backgrounds apart.
+//
+// A muted chat's badge is present but subdued rather than absent: the count
 // still matters, it just is not asking for attention.
 func (m Model) renderBadge(item widgets.ListItem) string {
 	if item.Badge == "" {
@@ -136,7 +140,7 @@ func (m Model) renderBadge(item widgets.ListItem) string {
 	if item.Muted {
 		style = lipgloss.NewStyle().Background(m.roles.Sel).Foreground(m.roles.Dim)
 	}
-	return style.Render(" " + item.Badge + " ")
+	return style.Render(item.Badge)
 }
 
 // renderFilterHeader is the chat list's first row: an amber slash, the live

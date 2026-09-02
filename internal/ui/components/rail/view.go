@@ -50,8 +50,12 @@ const (
 	// RowMemberOnline and RowMemberOffline are people, filled or hollow.
 	RowMemberOnline
 	RowMemberOffline
-	// RowFile is a shared document or photo.
+	// RowFile is a shared document.
 	RowFile
+	// RowFileImage is a shared file that is a picture. It gets the mark
+	// the media card gives a photo, so the same file is the same glyph
+	// wherever it is drawn.
+	RowFileImage
 	// RowLink is a shared link.
 	RowLink
 	// RowMore is the "+N more" remainder under a capped list.
@@ -210,6 +214,8 @@ func (m Model) glyphFor(row Row) (string, lipgloss.Color) {
 		return "○", r.Ghost
 	case RowFile:
 		return "▤", r.Amber
+	case RowFileImage:
+		return "▣", r.Amber
 	case RowLink:
 		return "▹", r.Cyan
 	default:
