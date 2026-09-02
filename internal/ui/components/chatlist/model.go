@@ -2,6 +2,7 @@ package chatlist
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -975,11 +976,22 @@ func (m *Model) refreshList() {
 // the other is a tally. Brackets carry it without a second colour, which
 // the row has already spent on the sigil.
 func unreadBadge(count int32, muted bool) string {
-	if muted {
-		return fmt.Sprintf("(%d)", count)
+	// Capped, as the design record has always specified. Past a thousand
+	// the exact number has stopped being information — nobody reads 1,483
+	// differently from 2,904 — and it is a column the preview has to give
+	// cells back to, one per digit, for a count that says the same thing.
+	text := strconv.Itoa(int(count))
+	if count > maxUnreadBadge {
+		text = strconv.Itoa(maxUnreadBadge) + "+"
 	}
-	return fmt.Sprintf("[%d]", count)
+	if muted {
+		return "(" + text + ")"
+	}
+	return "[" + text + "]"
 }
+
+// maxUnreadBadge is the largest count drawn exactly.
+const maxUnreadBadge = 999
 
 // previewWithSender is a chat's preview row: who spoke, then what they
 // said.

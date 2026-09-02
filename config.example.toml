@@ -21,7 +21,17 @@ download_dir = "~/Downloads"
 # UI preferences
 [ui]
 theme = "dark"               # "dark" or "light"
-timestamp_format = "15:04"   # Go time format
+
+# INERT. Both are read back and written out so an existing config
+# round-trips, and nothing consults either one.
+#
+# Every time on screen has a fixed form chosen for the column it sits in:
+# the thread's clock is 15:04 because the grid gives it five cells and puts
+# the date in a day divider above; the chat list is relative — 2m, 4h, yd,
+# 2d — because a chat list is read for recency; a day divider names the day.
+# One layout string cannot express three different jobs, and one that
+# overrode all three would break the column widths the frame is built on.
+timestamp_format = "15:04"
 date_format = "2006-01-02"
 
 # Where a photo is drawn.
@@ -93,8 +103,12 @@ max_image_height = 20        # rows
 voice_player = "mpv"         # "mpv", "ffplay", "paplay"
 video_player = "mpv"         # "mpv", "vlc", "xdg-open"
 auto_download_photos = true
-auto_download_voice = true
 auto_download_limit_mb = 10
+
+# INERT, and kept for the same round-tripping reason as ui.timestamp_format.
+# Voice notes are never prefetched: one is fetched when you press space on
+# it, which is the only moment anybody wants the bytes.
+auto_download_voice = true
 
 # Notification settings
 [notifications]

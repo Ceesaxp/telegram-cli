@@ -2,6 +2,7 @@ package app
 
 import (
 	"flag"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,5 +111,41 @@ func TestTheSceneIsNotTheWallClock(t *testing.T) {
 	if strings.Contains(view, time.Now().Format("15:04")) &&
 		time.Now().Format("15:04") != sceneNow.Format("15:04") {
 		t.Fatal("the top bar shows the wall clock")
+	}
+}
+
+// TestTheReadmeScreenshotIsAFixture.
+//
+// The README's screenshot used to be hand-drawn, and had drifted: absolute
+// times where the client draws relative ones, a header missing two fields,
+// a hint bar missing two counts. A picture of a program that is maintained
+// by hand is a picture that goes stale, and the one in the README is the
+// first thing anybody sees.
+//
+// It is frame-80x24 verbatim now, which is asserted against the renderer
+// above — so this only has to check that the two have not been allowed to
+// disagree.
+func TestTheReadmeScreenshotIsAFixture(t *testing.T) {
+	dir, err := golden.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := golden.Load(filepath.Join(dir, "frame-80x24.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(filepath.Dir(dir), "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Trailing blanks are not visible in a fixture and are noise in a
+	// markdown block, so the README carries the rows right-trimmed.
+	for i, row := range f.Lines {
+		want := strings.TrimRight(row, " ")
+		if !strings.Contains(string(readme), want) {
+			t.Fatalf("README is missing row %d of frame-80x24:\n  %q", i+1, want)
+		}
 	}
 }

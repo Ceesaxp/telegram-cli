@@ -100,3 +100,29 @@ func TestBufferIndexIsTheRowTheReaderCanSee(t *testing.T) {
 		}
 	}
 }
+
+// TestTheUnreadBadgeIsCapped, as the design record has always specified.
+// Past a thousand the exact number has stopped being information, and it is
+// a column the preview has to give a cell back to for every digit.
+func TestTheUnreadBadgeIsCapped(t *testing.T) {
+	cases := map[int32]string{
+		1:     "[1]",
+		999:   "[999]",
+		1000:  "[999+]",
+		48213: "[999+]",
+	}
+	for count, want := range cases {
+		if got := unreadBadge(count, false); got != want {
+			t.Errorf("unreadBadge(%d) = %q, want %q", count, got, want)
+		}
+	}
+	if got := unreadBadge(48213, true); got != "(999+)" {
+		t.Errorf("a muted badge = %q, want (999+)", got)
+	}
+
+	// The cap is what bounds the column: without it the badge grows a cell
+	// per digit and takes them from the preview beside it.
+	if len(unreadBadge(48213, false)) > len("[9999]") {
+		t.Errorf("an uncapped badge: %q", unreadBadge(48213, false))
+	}
+}
