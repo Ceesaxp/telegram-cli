@@ -912,14 +912,15 @@ func (m *Model) refreshList() {
 		}
 
 		preview := ""
-		meta := ""
+		metaAt := int32(0)
 		if entry.LastMessage != nil {
+			// The INSTANT, not a sentence about it. ageMeta turns this
+			// into "2m" on the way to the screen, and is the only place
+			// that does — a label formatted here as well would be the same
+			// decision made twice, and the copy made here would be the one
+			// that goes stale.
+			metaAt = entry.LastMessage.Date
 			preview = m.previewWithSender(entry)
-			// Relative, not absolute. A chat list is read for recency —
-			// "which of these has moved" — and "Mon 09:12" makes the
-			// reader do the subtraction on every row to find out. The
-			// column is five cells either way.
-			meta = render.FormatRelativeShort(entry.LastMessage.Date)
 		}
 		// A parked draft outranks the last message in the preview row
 		// (decision 13). What somebody else said is still in the chat when
@@ -949,7 +950,7 @@ func (m *Model) refreshList() {
 			Saved:    entry.Chat.ID == m.myUserID,
 			Subtitle: preview,
 			Badge:    badge,
-			Meta:     meta,
+			MetaAt:   metaAt,
 			Online:   online,
 			Muted:    entry.Chat.Muted,
 		})
@@ -963,6 +964,31 @@ func (m *Model) refreshList() {
 				m.list.SelectIndex(i)
 				break
 			}
+		}
+	}
+}
+
+// ageMeta recomputes each row's relative time.
+//
+// A relative label goes stale where an absolute one cannot. refreshList
+// runs when the LIST changes — a message arrives, a folder is switched, a
+// filter is typed — and in a quiet session none of those happen, so a row
+// that said "2m" when it was built went on saying "2m" for the rest of the
+// afternoon. The store still holds the date; only the sentence about it
+// expired.
+//
+// Done on the way out rather than on a timer of its own: the chrome tick
+// already draws a frame every second, and a label that is recomputed when
+// it is about to be drawn cannot be stale by construction. It is a handful
+// of rows and a subtraction each.
+func (m Model) ageMeta() {
+	for i := range m.list.Items {
+		if at := m.list.Items[i].MetaAt; at != 0 {
+			// Relative, not absolute. A chat list is read for recency —
+			// "which of these has moved" — and "Mon 09:12" makes the
+			// reader do the subtraction on every row to find out. The
+			// column is five cells either way.
+			m.list.Items[i].Meta = render.FormatRelativeShort(at)
 		}
 	}
 }
@@ -1266,6 +1292,7 @@ func (m Model) View() string {
 	if *m.dirty {
 		m.refreshList()
 	}
+	m.ageMeta()
 
 	// Folder tabs used to live at the top of this column; TUI 2.0 moves
 	// them to the frame's top bar and gives this row to the filter instead.

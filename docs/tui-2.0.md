@@ -1562,6 +1562,54 @@ currently share one. The mark is faint and the chips are bracketed, and no
 fixture draws the combination — the wide-rune scene is the only place it
 occurs at all.
 
+### 44. Four review findings, and the one that was wrong
+
+**A relative label goes stale where an absolute one cannot.** `refreshList`
+runs when the LIST changes — a message arrives, a folder is switched, a
+filter is typed — and in a quiet session none of those happen. So a row that
+said `2m` when it was built went on saying `2m` for the rest of the
+afternoon, which is a defect the `15:04` it replaced could not have had.
+
+The label is now computed on the way OUT, in `ageMeta`, from the instant the
+row carries beside it. The chrome tick already draws a frame every second,
+and a label recomputed when it is about to be drawn cannot be stale by
+construction. `refreshList` stopped formatting one at all: two places
+deciding the same thing means the copy that is not the authority is the one
+that rots.
+
+**A badge that promised something enter did not do.** An image-typed
+document gets the IMG badge and the ▣ mark, justified here as "the badge
+tells a reader whether enter will draw something in the terminal or hand a
+file to their system". `OverlayPhotoCmd` took a `MessagePhoto` and nothing
+else, so enter on a screenshot sent with "send as file" opened Preview — a
+false fact in fixed-width type, which is the thing this design refuses
+everywhere else. The overlay takes both now. The badge was kept and enter
+made true, rather than the other way round.
+
+**The same question twice on the way to the same screen.** The thread
+header asks how many members a chat has on every open and puts the answer in
+the store; the rail asked again for its "+192 more" row. Two requests, and
+two answers that could disagree. The rail reads the store now, and the
+budget is written down as a test: `GetSupergroupFullInfo` returns a count
+and nothing else, so it has exactly one caller; `GetBasicGroupFullInfo`
+returns the MEMBERS as well and a basic group has no other route to them, so
+it has two — and the rail writes the count it got for free through to the
+store rather than keeping it.
+
+**The one that was wrong.** Review reported that the header's buffer number
+was refreshed only on the chrome tick, so a freshly opened chat would show
+none, or the previous chat's. It does not: `switchComposerTo` recomputes the
+layout, which refreshes the chrome, which sets the number — on the frame the
+chat opens. Checked by putting the reported code back and running the test
+against it, which passes.
+
+The finding was still worth having. The behaviour was correct and nobody
+had ever asserted it, and it rides on a chain — open, switch composer,
+recompute layout, refresh chrome — that reads like an accident even when it
+is not. `TestOpeningAChatNumbersItImmediately` holds it now. The explicit
+`SetBufferIndex` added while investigating came back out: a line no mutation
+can kill is a line that is not doing anything.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

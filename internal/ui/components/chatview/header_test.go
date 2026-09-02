@@ -136,3 +136,76 @@ func TestTheScrollMarkerIsInTheRightGroup(t *testing.T) {
 		t.Fatalf("got %q, want the right group last", got)
 	}
 }
+
+// TestAPictureSentAsAFileOpensInTheTerminal.
+//
+// The card gives an image-typed document the IMG badge and the ▣ mark, on
+// the stated grounds that the badge says whether enter draws it here or
+// hands it to your system. That was only half true: the overlay took a
+// MessagePhoto and nothing else, so enter on a screenshot sent with "send
+// as file" fell through and opened Preview.
+func TestAPictureSentAsAFileOpensInTheTerminal(t *testing.T) {
+	m := newTestModel()
+
+	cases := map[string]struct {
+		content telegram.MessageContent
+		want    bool
+	}{
+		"a photo": {&telegram.MessagePhoto{Photo: &telegram.Photo{
+			ID: 1, Sizes: []*telegram.PhotoSize{{Type: "y", Width: 8, Height: 8,
+				File: &telegram.File{ID: "photo:1:y"}}},
+		}}, true},
+		"a png sent as a file": {&telegram.MessageDocument{Document: &telegram.Document{
+			FileName: "auth-p95-2608.png", MimeType: "image/png",
+			File: &telegram.File{ID: "doc:1"},
+		}}, true},
+		"a patch": {&telegram.MessageDocument{Document: &telegram.Document{
+			FileName: "backoff.patch", MimeType: "text/x-patch",
+			File: &telegram.File{ID: "doc:2"},
+		}}, false},
+		"a voice note": {&telegram.MessageVoiceNote{
+			VoiceNote: &telegram.VoiceNote{File: &telegram.File{ID: "v"}},
+		}, false},
+		"an image with no file behind it": {&telegram.MessageDocument{Document: &telegram.Document{
+			FileName: "gone.png", MimeType: "image/png",
+		}}, false},
+	}
+
+	for name, tc := range cases {
+		msg := &telegram.Message{
+			ID: 1, ChatID: testChatID,
+			SenderID: &telegram.MessageSenderUser{UserID: 11},
+			Content:  tc.content,
+		}
+		_, caption, ok := m.overlayPicture(msg)
+		if ok != tc.want {
+			t.Errorf("%s: overlayPicture ok = %v, want %v", name, ok, tc.want)
+			continue
+		}
+		if ok && caption == "" {
+			t.Errorf("%s: the overlay would open with no caption", name)
+		}
+	}
+}
+
+// TestAFilesPictureIsNamedByItsFilename, which is the thing a photo does
+// not have and the reason it was sent as a file in the first place.
+func TestAFilesPictureIsNamedByItsFilename(t *testing.T) {
+	m := newTestModel()
+	msg := &telegram.Message{
+		ID: 1, ChatID: testChatID,
+		SenderID: &telegram.MessageSenderUser{UserID: 11},
+		Content: &telegram.MessageDocument{Document: &telegram.Document{
+			FileName: "auth-p95-2608.png", MimeType: "image/png",
+			File: &telegram.File{ID: "doc:1"},
+		}},
+	}
+
+	_, caption, ok := m.overlayPicture(msg)
+	if !ok {
+		t.Fatal("no picture")
+	}
+	if !strings.Contains(caption, "auth-p95-2608.png") {
+		t.Fatalf("caption = %q, want the filename in it", caption)
+	}
+}

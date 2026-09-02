@@ -890,32 +890,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.releaseNotices(msg.Chat))
 
 	case chatlist.ChatSelectedMsg:
-		entry, ok := m.store.Chats.Get(msg.ChatId)
-		title := ""
-		if ok && entry.Chat != nil {
-			title = entry.Chat.Title
-		}
-		cmd := m.chatView.OpenChat(msg.ChatId, title)
-		m.switchComposerTo(msg.ChatId)
-		m.setFocus(PanelChatView)
-		cmds = append(cmds, cmd, m.openRailFor(msg.ChatId))
+		cmds = append(cmds, m.openChatAt(msg.ChatId, 0))
 
 	case contacts.ContactSelectedMsg:
 		m.contacts.SetVisible(false)
 		cmds = append(cmds, m.openPrivateChat(msg.UserId))
 
 	case search.SearchResultMsg:
-		entry, ok := m.store.Chats.Get(msg.ChatId)
-		title := ""
-		if ok && entry.Chat != nil {
-			title = entry.Chat.Title
-		}
 		// Jump straight to the matched message rather than the bottom of
 		// the chat.
-		cmd := m.chatView.OpenChatAt(msg.ChatId, title, msg.MessageId)
-		m.switchComposerTo(msg.ChatId)
-		m.setFocus(PanelChatView)
-		cmds = append(cmds, cmd, m.openRailFor(msg.ChatId))
+		cmds = append(cmds, m.openChatAt(msg.ChatId, msg.MessageId))
 
 	case composer.MessageSubmittedMsg:
 		// Focus deliberately stays on the composer after a send. Chatting
@@ -1388,6 +1372,30 @@ func pasteFromClipboard(chatID int64) tea.Cmd {
 		}
 		return ClipboardPastedMsg{ChatId: chatID, Path: res.Path, IsImage: res.IsImage}
 	}
+}
+
+// openChatAt is every way a chat gets opened: the list, a search result, and
+// a contact by way of the list.
+//
+// One function because the four steps are not optional and were copied out
+// twice. The header's buffer number rides along on switchComposerTo, which
+// recomputes the layout and therefore refreshes the chrome — so it is
+// correct on the frame the chat opens, not on the next tick. That is a
+// chain rather than a statement, and TestOpeningAChatNumbersItImmediately
+// is what holds it: the number was previously nobody's assertion.
+//
+// targetMsgID of 0 means the newest message, which is plain OpenChat.
+func (m *Model) openChatAt(chatID int64, targetMsgID int64) tea.Cmd {
+	title := ""
+	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
+		title = entry.Chat.Title
+	}
+
+	cmd := m.chatView.OpenChatAt(chatID, title, targetMsgID)
+	m.switchComposerTo(chatID)
+	m.setFocus(PanelChatView)
+
+	return tea.Batch(cmd, m.openRailFor(chatID))
 }
 
 func (m *Model) openPrivateChat(userID int64) tea.Cmd {

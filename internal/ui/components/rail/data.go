@@ -48,10 +48,6 @@ type chatData struct {
 
 	membersState sectionState
 	members      []*telegram.ChatMember
-	// memberCount is the chat's TOTAL, which the participants call does not
-	// return. It is what makes "+192 more" honest rather than a count of
-	// what one page happened to hold.
-	memberCount int
 }
 
 // SetStore wires the data sources. A rail without them still renders its
@@ -85,7 +81,11 @@ func (m *Model) SetDataForTest(chatID int64, pinned, files []*telegram.Message,
 		linksState:   stateReady,
 		membersState: stateReady,
 		members:      members,
-		memberCount:  memberCount,
+	}
+	// The total lives in the store, where every surface that draws this
+	// chat reads it — see memberSection.
+	if memberCount > 0 && m.store != nil {
+		m.store.Chats.SetMemberCount(chatID, int32(memberCount))
 	}
 }
 
@@ -297,14 +297,25 @@ func (m Model) memberSection(d *chatData) Section {
 	for _, member := range d.members[:shown] {
 		s.Rows = append(s.Rows, m.memberRow(member))
 	}
-	if d.memberCount > shown {
-		s.Count = d.memberCount
+
+	// The total comes off the store, which is where whoever asked for it
+	// put it — the thread header asks on every chat open, and a basic
+	// group's members call writes the one it got for free. Zero means
+	// nobody has been told yet, and the remainder row is simply absent
+	// until they are: a section that says "+0 more" or counts the page it
+	// happens to hold is worse than one that waits a beat.
+	total := 0
+	if m.store != nil {
+		total = int(m.store.Chats.MemberCount(m.chatID))
+	}
+	if total > shown {
+		s.Count = total
 	}
 	// The remainder counts against the chat's real member total, not
 	// against how many the participants call happened to return: a group of
 	// two hundred returns two hundred, and "+192 more" is the honest number
 	// either way.
-	if rest := d.memberCount - shown; rest > 0 {
+	if rest := total - shown; rest > 0 {
 		s.Rows = append(s.Rows, Row{Kind: RowMore, Text: "+" + strconv.Itoa(rest) + " more"})
 	}
 	return s

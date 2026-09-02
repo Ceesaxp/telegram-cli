@@ -204,7 +204,8 @@ func TestMemberRemainderCountsTheChatTotal(t *testing.T) {
 	m.Open(testChatID)
 	d := m.data[testChatID]
 
-	d.membersState, d.memberCount = stateReady, 200
+	d.membersState = stateReady
+	s.Chats.SetMemberCount(testChatID, 200)
 	for i := range 32 {
 		id := int64(100 + i)
 		s.Users.Set(&telegram.User{ID: id, FirstName: "member"})
@@ -314,7 +315,8 @@ func TestEveryRowIsExactlyTheRailWidth(t *testing.T) {
 		s.Users.Set(&telegram.User{ID: 200, FirstName: strings.Repeat("長い名前", 4)})
 		d.pinnedState = stateReady
 		d.pinned = []*telegram.Message{textMessage(1, 200, strings.Repeat("pinned ", 20))}
-		d.membersState, d.memberCount = stateReady, 40
+		d.membersState = stateReady
+		s.Chats.SetMemberCount(testChatID, 40)
 		d.members = []*telegram.ChatMember{{
 			MemberID: &telegram.MessageSenderUser{UserID: 200},
 			Status:   &telegram.ChatMemberStatusCreator{},

@@ -1,7 +1,13 @@
 package chatlist
 
 import (
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/imtaqin/telegram-cli/internal/render"
+	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -124,5 +130,66 @@ func TestTheUnreadBadgeIsCapped(t *testing.T) {
 	// per digit and takes them from the preview beside it.
 	if len(unreadBadge(48213, false)) > len("[9999]") {
 		t.Errorf("an uncapped badge: %q", unreadBadge(48213, false))
+	}
+}
+
+// TestRelativeTimesAgeWithoutTheListChanging is the defect a relative label
+// has and an absolute one cannot: refreshList runs when the LIST changes,
+// and in a quiet session nothing does, so a row built at "2m" went on
+// saying "2m" for the rest of the afternoon.
+func TestRelativeTimesAgeWithoutTheListChanging(t *testing.T) {
+	now := time.Date(2025, time.August, 29, 21, 4, 0, 0, time.UTC)
+	restore := render.PinClock(now)
+	defer restore()
+
+	local := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = local }()
+
+	sent := int32(now.Add(-2 * time.Minute).Unix())
+
+	// Through the real constructor: a hand-built Model has no list geometry
+	// and View divides by its row height.
+	s := store.NewStore()
+	s.Chats.Set(&telegram.Chat{ID: 1, Type: telegram.ChatTypeSupergroup, Title: "infra-oncall",
+		Order: int64(sent),
+		LastMessage: &telegram.Message{
+			ID: 5, ChatID: 1, Date: sent,
+			SenderID: &telegram.MessageSenderUser{UserID: 11},
+			Content:  &telegram.MessageText{Text: &telegram.FormattedText{Text: "hello"}},
+		}})
+	s.Users.Set(&telegram.User{ID: 11, FirstName: "nadia"})
+
+	m := New(s, nil, theme.DarkRoles(false))
+	m.SetSize(38, 12)
+	m.MarkLoadedForTest()
+
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "2m") {
+		t.Fatalf("first paint:\n%s", got)
+	}
+
+	// Two hours pass and NOTHING arrives: no message, no folder change, no
+	// filter. The only thing that has moved is the clock.
+	restore()
+	defer render.PinClock(now.Add(2 * time.Hour))()
+
+	got := ansi.Strip(m.View())
+	if strings.Contains(got, "2m") {
+		t.Fatalf("the row is still claiming 2m three hours later:\n%s", got)
+	}
+	if !strings.Contains(got, "2h") {
+		t.Fatalf("the row did not age to 2h:\n%s", got)
+	}
+}
+
+// TestAgeingLeavesANonTimeMetaAlone. Not every Meta is a timestamp, and a
+// row that has none must not have one invented for it.
+func TestAgeingLeavesANonTimeMetaAlone(t *testing.T) {
+	m := New(store.NewStore(), nil, theme.DarkRoles(false))
+	m.list.Items = []widgets.ListItem{{ID: "1", Meta: "admin"}}
+
+	m.ageMeta()
+	if got := m.list.Items[0].Meta; got != "admin" {
+		t.Fatalf("Meta = %q, want it untouched", got)
 	}
 }
