@@ -127,7 +127,7 @@ func printUsage(w io.Writer) {
 // writes the MCP server's own session file.
 func runLogin(cfg *config.Config) {
 	authorizer := telegram.NewTUIAuthorizer(cfg)
-	client := telegram.NewClientAsync(cfg, authorizer)
+	client := telegram.NewClient(cfg, authorizer)
 	defer client.Close()
 
 	var mu sync.Mutex
@@ -182,6 +182,10 @@ func runLogin(cfg *config.Config) {
 			}
 		}
 	}()
+
+	if err := client.Start(); err != nil {
+		log.Fatalf("failed to start Telegram client: %v", err)
+	}
 
 	ready := make(chan struct{})
 	go func() {
@@ -260,7 +264,7 @@ func runServe(cfg *config.Config) {
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 	authorizer.NonInteractive = true
 
-	client := telegram.NewRPCClientAsync(cfg, authorizer)
+	client := telegram.NewRPCClient(cfg, authorizer)
 	defer client.Close()
 
 	errCh := make(chan error, 1)
@@ -270,6 +274,9 @@ func runServe(cfg *config.Config) {
 		default:
 		}
 	})
+	if err := client.Start(); err != nil {
+		log.Fatalf("failed to start Telegram client: %v", err)
+	}
 
 	ready := make(chan struct{})
 	go func() {

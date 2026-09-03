@@ -16,25 +16,27 @@ type Listener struct {
 	program *tea.Program
 }
 
-// NewListener registers update handlers on the client's dispatcher.
-// main.go should now pass the wrapper client: telegram.NewListener(tgClient, p).
-func NewListener(client *Client, program *tea.Program) *Listener {
+// NewListener registers update handlers on the client's dispatcher. It must
+// be called before Client.Start; gotd's dispatcher is not safe to mutate once
+// update delivery begins.
+func NewListener(client *Client, program *tea.Program) (*Listener, error) {
 	l := &Listener{
 		client:  client,
 		program: program,
 	}
 	client.setMsgSink(program.Send)
-	l.registerHandlers()
-	return l
+	if err := client.registerUpdateHandlers(l.registerHandlers); err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 // Start is a no-op kept for API compatibility: handlers are registered
 // eagerly in NewListener and dispatch is driven by client.Run.
 func (l *Listener) Start() {}
 
-func (l *Listener) registerHandlers() {
+func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 	c := l.client
-	d := c.dispatcher
 
 	d.OnNewMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
 		l.onMessage(u.Message)

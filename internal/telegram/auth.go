@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
@@ -32,12 +33,18 @@ var ErrLoginRequired = errors.New("login required: run 'telegram-mcp login' firs
 // TUIAuthorizer implements gotd's auth.UserAuthenticator on top of
 // the channel-based flow used by the TUI.
 type TUIAuthorizer struct {
+	callbackMu sync.Mutex
+
 	phoneCh    chan string
 	codeCh     chan string
 	passwordCh chan string
 	phone      string
 	onState    AuthStateCallback
 	onError    func(error)
+	lastState  AuthState
+	lastHint   string
+	hasState   bool
+	pendingErr []error
 
 	// NonInteractive makes Phone/Code/Password fail immediately with
 	// ErrLoginRequired instead of waiting for user input (headless mode).
@@ -59,23 +66,49 @@ func NewTUIAuthorizer(cfg *config.Config) *TUIAuthorizer {
 
 // SetStateCallback sets the callback for auth state changes.
 func (a *TUIAuthorizer) SetStateCallback(cb AuthStateCallback) {
+	a.callbackMu.Lock()
 	a.onState = cb
+	state, hint, replay := a.lastState, a.lastHint, a.hasState && cb != nil
+	a.callbackMu.Unlock()
+	if replay {
+		cb(state, hint)
+	}
 }
 
 // SetErrorCallback sets the callback for fatal auth errors (shown in the TUI).
 func (a *TUIAuthorizer) SetErrorCallback(cb func(error)) {
+	a.callbackMu.Lock()
 	a.onError = cb
+	var pending []error
+	if cb != nil && len(a.pendingErr) != 0 {
+		pending = append(pending, a.pendingErr...)
+		a.pendingErr = nil
+	}
+	a.callbackMu.Unlock()
+	for _, err := range pending {
+		cb(err)
+	}
 }
 
 func (a *TUIAuthorizer) notifyState(state AuthState, hint string) {
-	if a.onState != nil {
-		a.onState(state, hint)
+	a.callbackMu.Lock()
+	a.lastState, a.lastHint, a.hasState = state, hint, true
+	cb := a.onState
+	a.callbackMu.Unlock()
+	if cb != nil {
+		cb(state, hint)
 	}
 }
 
 func (a *TUIAuthorizer) notifyError(err error) {
-	if a.onError != nil {
-		a.onError(err)
+	a.callbackMu.Lock()
+	cb := a.onError
+	if cb == nil {
+		a.pendingErr = append(a.pendingErr, err)
+	}
+	a.callbackMu.Unlock()
+	if cb != nil {
+		cb(err)
 	}
 }
 

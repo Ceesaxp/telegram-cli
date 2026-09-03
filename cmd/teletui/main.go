@@ -7,10 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -85,8 +83,9 @@ func main() {
 	s := store.NewStore()
 	authorizer := telegram.NewTUIAuthorizer(cfg)
 
-	// Start Telegram client in background — it blocks on auth.
-	tgClient := telegram.NewClientAsync(cfg, authorizer)
+	// Construct first: callbacks and the update dispatcher must be fully wired
+	// before Telegram can authenticate or replay an offline update gap.
+	tgClient := telegram.NewClient(cfg, authorizer)
 
 	// Create root model.
 	model := app.New(cfg, tgClient, s, authorizer)
@@ -101,12 +100,18 @@ func main() {
 	authorizer.SetErrorCallback(func(err error) {
 		p.Send(app.AuthErrorMsg{Err: err})
 	})
+	if _, err := telegram.NewListener(tgClient, p); err != nil {
+		_ = tgClient.Close()
+		fatalf("Failed to register Telegram updates: %v", err)
+	}
+	if err := tgClient.Start(); err != nil {
+		_ = tgClient.Close()
+		fatalf("Failed to start Telegram client: %v", err)
+	}
 
-	// Once client is ready, start the update listener.
+	// Once client is ready, load the authenticated account identity.
 	go func() {
 		tgClient.WaitReady()
-		// Registers update handlers on the client's dispatcher.
-		telegram.NewListener(tgClient, p)
 		// Notify TUI that we're authenticated. Retry a few times — the
 		// connection may still be settling right after auth.
 		var me *telegram.User
@@ -130,27 +135,19 @@ func main() {
 		})
 	}()
 
-	// Graceful shutdown.
-	//
-	// Note: clipboard spool files are intentionally not cleaned up here.
+	// Clipboard spool files are intentionally not cleaned up here.
 	// Bubble Tea v2 never waits for in-flight tea.Cmd goroutines on quit, so
 	// deleting the spool dir at exit could race an upload still reading from
 	// it. The next process to run sweeps up this one's spool directory
 	// instead (see internal/clipboard).
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		tgClient.Close()
-		os.Exit(0)
-	}()
-
 	if _, err := p.Run(); err != nil {
-		tgClient.Close()
+		_ = tgClient.Close()
 		fatalf("Error running TUI: %v", err)
 	}
 
-	tgClient.Close()
+	if err := tgClient.Close(); err != nil {
+		fatalf("Error shutting down Telegram client: %v", err)
+	}
 }
 
 // runMigrateConfig implements -migrate-config: back up the config file, bring
