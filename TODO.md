@@ -229,6 +229,12 @@ immediately undoes.
       whose point is the mechanism rather than the wording: a message is
       edge-triggered, so the app would have had to store what it was told.
 
+      Review found the denominator wrong in both surfaces: it counted the
+      whole account where the list narrows by folder first, so a query
+      matching a whole folder announced a narrowing it had not done. The
+      chat list's own header had had that bug all along; this change
+      inherited it by matching it.
+
 ### Untouched by TUI 2.0
 
 - [x] ~~**`config.example.toml` `[keys]` comment is stale**~~ — **already

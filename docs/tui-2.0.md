@@ -2058,6 +2058,21 @@ derivation cannot go stale and cannot be forgotten at a call site; the same
 reason `Model.Mode` has no mode field and `layoutStale` compares the ask to
 the grant rather than trusting a notification.
 
+**The total is the active FOLDER, not the account.** Review caught this one:
+`refreshList` narrows twice, by folder and then by the typed query, and only
+the second is what the reader just did. Counting every stored chat made the
+denominator describe a narrowing the filter had not performed — in a Groups
+folder holding two of an account's three chats, a query matching both groups
+excludes nothing, and "2 of 3 buffers" announces a filter that is not
+filtering. The chat list's own header had the same bug, and this change
+inherited it by matching it: agreeing with the other surface was right, and
+the value they agreed on was wrong.
+
+It is counted inside `refreshList`'s existing loop rather than by a function
+that walks the store again applying the folder predicate a second time. Two
+implementations of "is this chat in this folder" is precisely the drift the
+shared denominator exists to prevent.
+
 **The test is the applied query, not `FilterActive`.** That method reports
 whether the input is OPEN, and `enter` closes the input while leaving the
 filter on. Filtered-with-no-cursor-in-the-header is exactly the state where a

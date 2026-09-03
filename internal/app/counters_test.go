@@ -231,3 +231,77 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// TestTheTotalIsTheFolderNotTheAccount.
+//
+// refreshList narrows twice — by folder, then by the typed query — and only
+// the second of those is what the reader just did. Counting the whole
+// account instead makes the denominator describe a narrowing the filter did
+// not perform: in a Groups folder holding two of three chats, a query
+// matching both groups excludes nothing, and "2 of 3 buffers" announces a
+// filter that is not filtering.
+//
+// Every other counter test uses the All folder, where the two totals
+// coincide and this is invisible.
+func TestTheTotalIsTheFolderNotTheAccount(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Title: "Alice", Type: telegram.ChatTypePrivate})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Title: "alpha-team", Type: telegram.ChatTypeSupergroup})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Title: "alpine-ops", Type: telegram.ChatTypeSupergroup})
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	m.chatList.SetFolderForTest(&telegram.ChatFolder{ID: 7, Title: "Groups", Groups: true})
+	_ = m.chatList.View()
+
+	if got := m.chatList.Count(); got != 2 {
+		t.Fatalf("the Groups folder shows %d chats, want the two groups", got)
+	}
+	if got := m.chatList.TotalCount(); got != 2 {
+		t.Fatalf("TotalCount() = %d in a folder of 2 (out of 3 chats), want 2", got)
+	}
+	if got := m.bufferCount(); got != "2 buffers" {
+		t.Fatalf("unfiltered inside a folder: %q", got)
+	}
+
+	// A query that excludes nothing must still say so.
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "alp")
+	if got := m.chatList.Count(); got != 2 {
+		t.Fatalf("precondition: %q matched %d of the folder's 2", "alp", got)
+	}
+	if got := m.bufferCount(); got != "2 buffers" {
+		t.Errorf("a query matching the whole folder says %q — it announces a "+
+			"narrowing the filter did not do", got)
+	}
+
+	// And one that does exclude something counts against the folder.
+	m = typeIntoFilter(t, m, "ha")
+	if got := m.chatList.Count(); got != 1 {
+		t.Fatalf("precondition: %q matched %d of the folder's 2", "alpha", got)
+	}
+	if got := m.bufferCount(); got != "1 of 2 buffers" {
+		t.Errorf("filtered inside a folder: %q, want %q", got, "1 of 2 buffers")
+	}
+}
+
+// TestTheHeaderAgreesInsideAFolderToo. The chat list draws its own
+// "shown/total" and the hint bar draws one in the frame; they were made to
+// share a denominator, and the folder is where a wrong one shows up.
+func TestTheHeaderAgreesInsideAFolderToo(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Title: "Alice", Type: telegram.ChatTypePrivate})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Title: "alpha-team", Type: telegram.ChatTypeSupergroup})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Title: "alpine-ops", Type: telegram.ChatTypeSupergroup})
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	m.chatList.SetFolderForTest(&telegram.ChatFolder{ID: 7, Title: "Groups", Groups: true})
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "alpha")
+
+	if header := ansi.Strip(m.chatList.View()); !strings.Contains(header, "1/2") {
+		t.Errorf("the filter header does not draw 1/2 inside the folder:\n%s", firstLine(header))
+	}
+	if got := m.bufferCount(); got != "1 of 2 buffers" {
+		t.Errorf("the hint bar says %q while the header says 1/2", got)
+	}
+}
