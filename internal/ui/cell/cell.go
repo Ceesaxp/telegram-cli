@@ -23,6 +23,7 @@
 package cell
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -238,10 +239,112 @@ func linkURI(seq string) (string, bool) {
 // emitting one that closes nothing is how a link leaks in the other
 // direction.
 func Link(uri, text string) string {
-	if uri == "" {
+	safe, ok := SafeLinkURI(uri)
+	if !ok {
+		// Styled, but not clickable. The run keeps its underline and its
+		// colour — it still READS as a link, which is true, it is one —
+		// and the terminal is simply not asked to open it.
 		return text
 	}
-	return "\x1b]8;;" + uri + "\x1b\\" + text + LinkClose
+	return "\x1b]8;;" + safe + "\x1b\\" + text + LinkClose
+}
+
+// linkSchemes are the schemes a terminal may be asked to open.
+//
+// An allowlist rather than a blocklist. A terminal hands the URI straight to
+// the platform opener — xdg-open, open — so the SCHEME decides what runs
+// when the reader clicks, and the set of schemes a machine has handlers for
+// is not knowable from here. These four are the ones a message plausibly
+// means, and everything else is refused rather than enumerated.
+var linkSchemes = map[string]bool{
+	"http":   true,
+	"https":  true,
+	"mailto": true,
+	"tg":     true,
+}
+
+// maxLinkURI is the length beyond which the OSC 8 wrapper is dropped.
+//
+// The convention's own bound. A terminal handed more may truncate it, ignore
+// it, or misparse it — and a truncated URI is a link to somewhere nobody
+// wrote, which is worse than no link.
+const maxLinkURI = 2083
+
+// SafeLinkURI is the URI to put in an OSC 8 sequence, and whether to emit one
+// at all.
+//
+// The URI in a message comes from whoever sent it. sanitizeTerminal already
+// strips the C0/C1 bytes that would break OUT of the sequence, so this is not
+// about escaping the terminal; it is about what the terminal is asked to do
+// once the sequence parses. Three rules:
+//
+//   - the scheme must be one a message plausibly means (see linkSchemes)
+//   - every byte must be printable ASCII, percent-encoded if it is not, since
+//     OSC 8 has no other way to carry one
+//   - the whole thing must fit maxLinkURI
+//
+// Anything else returns false, and [Link] then draws the text without the
+// wrapper. That is the failure-safe direction: the reader still sees a link
+// and can still read where it claims to go, but a click cannot hand an
+// arbitrary scheme to the platform opener.
+//
+// This is the same lesson as the notification sequences (docs/tui-2.0.md,
+// divergence 41): content that goes INSIDE a control sequence needs a
+// different filter from content that goes on the screen, and having sanitised
+// one is no reason to think the other is covered.
+func SafeLinkURI(uri string) (string, bool) {
+	if uri == "" {
+		return "", false
+	}
+
+	parsed, err := url.Parse(uri)
+	// No ToLower: url.Parse lowercases the scheme itself, so folding it
+	// again here would be a second normalisation that nothing can observe.
+	if err != nil || !linkSchemes[parsed.Scheme] {
+		return "", false
+	}
+
+	// url.String encodes the PATH and the fragment and stops there: a query
+	// string, a mailto's opaque part and a tg:// query all come back with
+	// their raw bytes. Those are exactly where a Telegram link carries
+	// non-ASCII — ?q=… searches and tg://resolve?domain=… — so the sweep
+	// below is what makes "printable ASCII only" true rather than usually
+	// true.
+	encoded := percentEncode(parsed.String())
+	if encoded == "" || len(encoded) > maxLinkURI {
+		return "", false
+	}
+	return encoded, true
+}
+
+// percentEncode escapes every byte outside 0x21-0x7E, leaving those already
+// percent-encoded alone.
+func percentEncode(s string) string {
+	safe := true
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x21 || s[i] > 0x7e {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x21 && c <= 0x7e {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0f])
+	}
+	return b.String()
 }
 
 // OpenStyle returns the SGR state left active at the end of s: the
