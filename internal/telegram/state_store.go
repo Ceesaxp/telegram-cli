@@ -227,6 +227,27 @@ type boltPeerStorage struct {
 
 	flush  *time.Timer
 	closed bool
+
+	// flushMu serialises flushes and is what Close waits on.
+	//
+	// Flush detaches the pending set under mu and then commits WITHOUT it,
+	// because a bbolt commit fsyncs and holding mu across one would stall
+	// every Find on the update path. That leaves a window where a batch is
+	// in flight and belongs to nobody: Close could see an empty pending
+	// set, report success, and let the database be closed under a write
+	// that had already started. Holding this for the whole of a flush —
+	// including the commit — is what makes a successful Close mean every
+	// detached batch has landed.
+	flushMu sync.Mutex
+
+	// sealed is set by Close under flushMu. A flush that finds it does
+	// nothing: the database is about to be closed, or already is.
+	sealed bool
+
+	// beforeCommit is a test seam, called after the pending set has been
+	// detached and before it is written. It exists because the window this
+	// mutex closes is otherwise only reachable by luck.
+	beforeCommit func()
 }
 
 // peerFlushDelay is how long a changed hash waits for company.
@@ -322,6 +343,16 @@ func (s *boltPeerStorage) scheduleLocked() {
 // commit fsyncs, and holding the mutex across it would stall every Find on
 // the update path — which is the cost this whole change exists to remove.
 func (s *boltPeerStorage) Flush() error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	if s.sealed {
+		return nil
+	}
+	return s.writePending()
+}
+
+// writePending is the body of a flush. Callers hold flushMu.
+func (s *boltPeerStorage) writePending() error {
 	s.mu.Lock()
 	hashes, phones := s.pending, s.pendingPhones
 	if len(hashes) == 0 && len(phones) == 0 {
@@ -329,7 +360,12 @@ func (s *boltPeerStorage) Flush() error {
 		return nil
 	}
 	s.pending, s.pendingPhones = map[string]int64{}, map[string]string{}
+	before := s.beforeCommit
 	s.mu.Unlock()
+
+	if before != nil {
+		before()
+	}
 
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		if len(hashes) > 0 {
@@ -387,7 +423,16 @@ func (s *boltPeerStorage) Close() error {
 		s.flush = nil
 	}
 	s.mu.Unlock()
-	return s.Flush()
+
+	// Taking flushMu is the wait: a flush already in flight holds it across
+	// its commit, so this blocks until that batch has landed rather than
+	// finding an empty pending set and declaring success over the top of it.
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	err := s.writePending()
+	s.sealed = true
+	return err
 }
 
 // read returns a sub-bucket of this storage's namespace, or nil.

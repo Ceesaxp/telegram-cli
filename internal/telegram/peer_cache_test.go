@@ -561,3 +561,123 @@ func BenchmarkPeerSaves(b *testing.B) {
 		}
 	})
 }
+
+// TestCloseWaitsForAFlushAlreadyInFlight.
+//
+// Flush detaches the pending set under mu and commits without it, so a
+// commit fsync does not stall every Find on the update path. That leaves a
+// window where a batch belongs to nobody: the timer has taken it, the struct
+// no longer has it, and Close — which stops a timer that has already fired
+// and then flushes what it finds — sees nothing pending, reports success,
+// and lets stateStores close the database under a write that had started.
+//
+// The symptom is a "database not open" in the log after a clean shutdown,
+// and a batch of access hashes silently not persisted.
+func TestCloseWaitsForAFlushAlreadyInFlight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	stores, err := openStateStores(path, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := stores.peers
+	ctx := context.Background()
+
+	// Hold a flush open in exactly that window.
+	inWindow := make(chan struct{})
+	release := make(chan struct{})
+	s.mu.Lock()
+	s.beforeCommit = func() {
+		close(inWindow)
+		<-release
+	}
+	s.mu.Unlock()
+
+	if err := s.Save(ctx, key(1), peers.Value{AccessHash: 4242}); err != nil {
+		t.Fatal(err)
+	}
+
+	flushed := make(chan error, 1)
+	go func() { flushed <- s.Flush() }()
+
+	select {
+	case <-inWindow:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the flush never reached the window")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- stores.Close() }()
+
+	// Close must NOT be able to finish while the commit is held open.
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned %v while a batch was still in flight", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-flushed; err != nil {
+		t.Errorf("the in-flight flush failed: %v", err)
+	}
+	if err := <-closed; err != nil {
+		t.Errorf("Close: %v", err)
+	}
+
+	// And the batch it was holding really did land.
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	found := false
+	if err := db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(_ []byte, root *bolt.Bucket) error {
+			b := root.Bucket(peerBucket)
+			if b == nil {
+				return nil
+			}
+			return b.ForEach(func(_, v []byte) error {
+				if hash, ok := decodeInt64(v); ok && hash == 4242 {
+					found = true
+				}
+				return nil
+			})
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Error("Close reported success but the in-flight batch never landed")
+	}
+}
+
+// TestAStrayFlushAfterCloseDoesNothing. A timer that fired just before Close
+// still runs its Flush afterwards; by then the database may be gone.
+func TestAStrayFlushAfterCloseDoesNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	stores, err := openStateStores(path, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := stores.peers
+
+	ctx := context.Background()
+	if err := s.Save(ctx, key(1), peers.Value{AccessHash: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stores.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Something arriving DURING shutdown: gotd applies entities until the
+	// context is done, so the map can gain a hash after the final flush.
+	// Without the seal this is what the stray timer would then try to
+	// write, into a database that is no longer open.
+	if err := s.Save(ctx, key(2), peers.Value{AccessHash: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Errorf("a flush after Close reported %v, want it to do nothing", err)
+	}
+}
