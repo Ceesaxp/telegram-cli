@@ -148,3 +148,107 @@ func readable(s string) string {
 	s = strings.ReplaceAll(s, "\x1b\\", "ST")
 	return strings.ReplaceAll(s, "\x1b", "ESC")
 }
+
+// TestATerminalIsOnlyAskedToOpenSchemesAMessageCouldMean.
+//
+// A terminal hands an OSC 8 URI straight to the platform opener, so the
+// SCHEME decides what runs when the reader clicks — and the URI came from
+// whoever sent the message. sanitizeTerminal strips the bytes that would
+// break out of the sequence; this is about what happens once the sequence
+// parses correctly.
+//
+// The refusal keeps the styling. The run still reads as a link, because it
+// is one and saying otherwise would hide where it claims to go; it just
+// cannot be clicked into the platform opener.
+func TestATerminalIsOnlyAskedToOpenSchemesAMessageCouldMean(t *testing.T) {
+	for _, tc := range []struct {
+		name, uri string
+		clickable bool
+	}{
+		{"https", "https://example.com/docs", true},
+		{"http", "http://example.com", true},
+		{"mailto", "mailto:someone@example.com", true},
+		{"tg", "tg://resolve?domain=telegram", true},
+		{"file", "file:///etc/passwd", false},
+		{"javascript", "javascript:alert(1)", false},
+		{"a scheme nobody has heard of", "custom-handler://run/this", false},
+		{"no scheme at all", "example.com/docs", false},
+		{"upper-case is still the scheme", "HTTPS://example.com", true},
+		{"upper-case does not smuggle one in", "FILE:///etc/passwd", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := linked("see the docs", entity(4, 8, &telegram.TextEntityTypeTextURL{URL: tc.uri}))
+			got := RenderInline(ft, testRoles(), textOpts{links: true})
+
+			if clickable := strings.Contains(got, "\x1b]8;;"); clickable != tc.clickable {
+				t.Errorf("%s: clickable=%v, want %v:\n%s", tc.uri, clickable, tc.clickable, readable(got))
+			}
+			// Either way it is still styled as a link.
+			if !strings.Contains(got, "4m") && !strings.Contains(got, ";4") {
+				t.Errorf("%s: the run lost its underline:\n%s", tc.uri, readable(got))
+			}
+			if !strings.Contains(ansi.Strip(got), "the docs") {
+				t.Errorf("%s: the visible text was dropped", tc.uri)
+			}
+		})
+	}
+}
+
+// TestAnEmittedURIIsPrintableASCII. OSC 8 has no way to carry anything else,
+// and a terminal handed a raw byte may truncate the sequence, ignore it, or
+// misparse it — and a truncated URI is a link to somewhere nobody wrote.
+func TestAnEmittedURIIsPrintableASCII(t *testing.T) {
+	for _, tc := range []struct{ name, uri, want string }{
+		{"a space", "https://example.com/a b", "https://example.com/a%20b"},
+		{"non-ASCII", "https://example.com/café", "https://example.com/caf%C3%A9"},
+		{"already encoded stays put", "https://example.com/a%20b", "https://example.com/a%20b"},
+		// url.String leaves a query alone, so this is the half that needs
+		// the encoder rather than the half net/url already covers.
+		{"non-ASCII in a query", "https://example.com/s?q=café", "https://example.com/s?q=caf%C3%A9"},
+		{"a tg link's query", "tg://resolve?domain=café", "tg://resolve?domain=caf%C3%A9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := linked("see the docs", entity(4, 8, &telegram.TextEntityTypeTextURL{URL: tc.uri}))
+			got := RenderInline(ft, testRoles(), textOpts{links: true})
+
+			want := "\x1b]8;;" + tc.want + "\x1b\\"
+			if !strings.Contains(got, want) {
+				t.Errorf("emitted %s\nwant the sequence to carry %q", readable(got), tc.want)
+			}
+			// The expectation itself must be what the rule describes, or
+			// this test would pin the wrong bytes and still pass.
+			for i := range len(tc.want) {
+				if c := tc.want[i]; c < 0x21 || c > 0x7e {
+					t.Fatalf("the expected URI carries a non-printable byte %#x at %d", c, i)
+				}
+			}
+		})
+	}
+}
+
+// TestAnOverlongURIIsNotEmitted. The convention's own bound is about 2083
+// bytes; past it a terminal may truncate, and half a URI is a link to
+// somewhere else.
+func TestAnOverlongURIIsNotEmitted(t *testing.T) {
+	long := "https://example.com/" + strings.Repeat("a", 2100)
+	ft := linked("see the docs", entity(4, 8, &telegram.TextEntityTypeTextURL{URL: long}))
+
+	got := RenderInline(ft, testRoles(), textOpts{links: true})
+	if strings.Contains(got, "\x1b]8;;") {
+		t.Error("an over-long URI was emitted")
+	}
+	if !strings.Contains(ansi.Strip(got), "the docs") {
+		t.Error("the visible text was dropped with it")
+	}
+}
+
+// TestABareURLEntityStillLinks. The schemeless case is handled before this
+// gate by entityURI, which adds https — the gate must not undo that.
+func TestABareURLEntityStillLinks(t *testing.T) {
+	ft := linked("go to example.com now", entity(6, 11, &telegram.TextEntityTypeURL{}))
+	got := RenderInline(ft, testRoles(), textOpts{links: true})
+
+	if !strings.Contains(got, "\x1b]8;;https://example.com\x1b\\") {
+		t.Errorf("a bare URL no longer links:\n%s", readable(got))
+	}
+}
