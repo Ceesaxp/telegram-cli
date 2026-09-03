@@ -235,17 +235,50 @@ func (m Model) hintsForMode() []hintbar.Hint {
 // The bar cuts from the LEFT if it has to, so the order is a priority
 // ranking: what is unread outlives how many chats there are, which outlives
 // the size of the history you are already looking at.
+//
+// The buffer count says what it is a count OF while a filter is applied.
+// It has always followed the filter — Count is the rendered list — so
+// filtering already dropped it from twelve to three; what it did not do was
+// explain itself, and a number that falls on its own reads as chats going
+// missing. "3 of 12" is the shape the chat list's own filter header already
+// draws in that column, and the attach picker's prompt row after it.
+//
+// Derived here rather than pushed in. Nothing announces a filter change: the
+// list applies it locally and this runs on the next tick, which is a refresh
+// that cannot be forgotten and cannot go stale. See chatlist/messages.go.
 func (m Model) hintBarCounters() string {
 	var parts []string
 
 	if n := m.store.Messages.Count(m.chatView.ChatId()); n > 0 {
 		parts = append(parts, fmt.Sprintf("idx %d msgs", n))
 	}
-	parts = append(parts, fmt.Sprintf("%d buffers", m.chatList.Count()))
+	parts = append(parts, m.bufferCount())
 	if n := m.store.Chats.TotalUnread(); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d unread", n))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// bufferCount is the chat-list count, qualified while the list is filtered.
+//
+// The test is the applied QUERY, not FilterActive: that reports whether the
+// input is open, and `enter` closes the input while leaving the filter on.
+// That state — filtered, but with no cursor blinking in the header to say
+// why — is exactly the one where a bare "3 buffers" misleads, so it is the
+// state this must cover rather than the one it must not.
+//
+// The total is chatlist.TotalCount, which is the denominator the filter
+// header draws, so the two surfaces cannot disagree about the same list.
+func (m Model) bufferCount() string {
+	shown := m.chatList.Count()
+	if m.chatList.FilterQuery() == "" {
+		return fmt.Sprintf("%d buffers", shown)
+	}
+	if total := m.chatList.TotalCount(); total > shown {
+		return fmt.Sprintf("%d of %d buffers", shown, total)
+	}
+	// A filter that excludes nothing is not worth six cells saying so.
+	return fmt.Sprintf("%d buffers", shown)
 }
 
 // topBarConnState maps the client's connection state onto the dot.

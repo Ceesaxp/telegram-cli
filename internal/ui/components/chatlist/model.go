@@ -70,6 +70,13 @@ type Model struct {
 	// throwaway local copy of Model) as well as from Update.
 	dirty *bool
 
+	// inFolder is how many chats the active folder holds before the text
+	// filter, counted by refreshList as it builds the rows. Heap-allocated
+	// for dirty's reason: refreshList runs on a copy of Model when View
+	// triggers it, and a count recorded into that copy would be lost by the
+	// time anything asked for it.
+	inFolder *int
+
 	// resolving is the set of chats a fetch has already been issued for,
 	// so a nameless row asks once rather than on every refresh. Shared by
 	// pointer for the same reason as list and dirty: refreshList runs on a
@@ -93,6 +100,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	sp.Style = lipgloss.NewStyle().Foreground(r.Cyan)
 
 	dirty := false
+	inFolder := 0
 
 	// The filter input reuses the shared single-line TextArea so the
 	// filter query gets the same rune-safe editing (printable-key
@@ -112,6 +120,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		spinner:     sp,
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
 		dirty:       &dirty,
+		inFolder:    &inFolder,
 		resolving:   make(map[int64]bool),
 	}
 	// The row renderer is installed here, not in SetRoles: a component
@@ -202,12 +211,27 @@ func (m *Model) SetSize(width, height int) {
 func (m Model) headerHeight() int { return 1 }
 func (m Model) footerHeight() int { return 1 }
 
-// storeChatCount is the unfiltered total, for the header's "shown/total".
-func (m Model) storeChatCount() int {
-	if m.store == nil {
+// folderTotal is how many chats the active folder holds before the text
+// filter — the denominator for "shown/total".
+//
+// The active FOLDER, not the account. refreshList narrows twice, by folder
+// and then by query, and only the second of those is what the reader just
+// typed: in a Groups folder holding two of an account's three chats, a query
+// matching both groups excludes nothing, and "2 of 3" would be announcing a
+// narrowing that the filter did not do.
+//
+// Counted in refreshList's own loop rather than by a function that walks the
+// store again applying chatInFolder a second time. Two implementations of
+// "is this chat in this folder" is precisely the drift this number exists to
+// avoid, and the loop already visits every candidate.
+func (m Model) folderTotal() int {
+	// Nil on a Model built as a struct literal rather than through New,
+	// which several row-geometry tests do deliberately: they draw one row
+	// and measure it, and nothing has counted anything.
+	if m.inFolder == nil {
 		return 0
 	}
-	return len(m.store.Chats.OrderedChats())
+	return *m.inFolder
 }
 
 // tabBarHeight returns the number of rows reserved for the folder tab
@@ -436,7 +460,7 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.ClearFilter()
-		return m, filteredCmd("")
+		return m, nil
 	case "enter":
 		m.closeFilterInput()
 		return m, nil
@@ -454,14 +478,7 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	m.filter = m.filterInput.Value
 	m.refreshList()
-	return m, filteredCmd(m.filter)
-}
-
-// filteredCmd announces a filter change to the app layer.
-func filteredCmd(query string) tea.Cmd {
-	return func() tea.Msg {
-		return ChatListFilteredMsg{Query: query}
-	}
+	return m, nil
 }
 
 // ActiveChatId returns the currently selected chat ID.
@@ -512,6 +529,17 @@ func (m Model) ActiveFolderIndex() int {
 // see rather than the total held in the store.
 func (m Model) Count() int { return len(m.list.Items) }
 
+// TotalCount is how many chats there are before the filter, which is what
+// makes Count legible: a list that drops from twelve rows to three has not
+// lost nine chats.
+//
+// The SAME denominator the filter header draws (see renderFilterHeader), on
+// purpose. Two surfaces describing one list with different totals is worse
+// than either of them saying nothing, and this is the only way to be sure
+// they agree — the header and the hint bar are in different packages and
+// nothing else would catch them drifting.
+func (m Model) TotalCount() int { return m.folderTotal() }
+
 // BufferIndex is a chat's 1-based row in the list as it currently stands,
 // or 0 when the chat is not in it — filtered out, in another folder, or not
 // loaded.
@@ -546,6 +574,20 @@ func (m *Model) MarkLoadedForTest() {
 	m.loading = false
 	m.spinner.Active = false
 	m.markDirty()
+}
+
+// SetFolderForTest installs one custom folder beside "All" and activates it.
+// It exists because the counter tests need a folder that HOLDS a subset:
+// every other test uses All, where the folder total and the account total
+// coincide and a bug between them is invisible.
+func (m *Model) SetFolderForTest(folder *telegram.ChatFolder) {
+	m.setFolders([]*telegram.ChatFolder{folder})
+	for i, f := range m.folders {
+		if f != nil && f.ID == folder.ID {
+			m.activeFolder = i
+		}
+	}
+	m.refreshList()
 }
 
 func (m *Model) SetFoldersForTest(titles []string) {
@@ -713,7 +755,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// first; when it does, '/' then esc still clears.
 				if m.filter != "" {
 					m.ClearFilter()
-					return m, filteredCmd("")
+					return m, nil
 				}
 				return m, nil
 			case "left", "[":
@@ -895,6 +937,7 @@ func (m *Model) refreshList() {
 
 	chats := orderForFolder(folder, m.store.Chats.OrderedChats())
 	items := make([]widgets.ListItem, 0, len(chats))
+	inFolder := 0
 
 	for _, entry := range chats {
 		if entry.Chat == nil {
@@ -904,6 +947,9 @@ func (m *Model) refreshList() {
 		if !m.chatInFolder(folder, entry) {
 			continue
 		}
+		// Counted before the query, because the query is the thing the
+		// count is describing.
+		inFolder++
 
 		if m.filter != "" {
 			if !strings.Contains(strings.ToLower(entry.Chat.Title), strings.ToLower(m.filter)) {
@@ -956,6 +1002,7 @@ func (m *Model) refreshList() {
 		})
 	}
 
+	*m.inFolder = inFolder
 	m.list.SetItems(items)
 
 	if prevID != "" && prevID != m.list.SelectedID() {

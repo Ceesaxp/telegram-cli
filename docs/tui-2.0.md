@@ -1501,7 +1501,7 @@ be worth having on its own terms:
 | `group · 24 members` | the size of the room you are typing into, from the full-info call the rail already made; it lands in the store so the two cannot disagree and the second one to want it does not ask again |
 | `buf N` | which row of the list this thread is |
 | `bot` / `top` / `all` | whether there is more below, without comparing two numbers — see divergence 10 |
-| `idx 214 msgs · 9 buffers · 37 unread` | how much there is, each part omitted when it would say nothing |
+| `idx 214 msgs · 9 buffers · 37 unread` | how much there is, each part omitted when it would say nothing; the buffer count reads `3 of 9 buffers` while a filter is applied ([divergence 51](#51-the-filter-is-derived-not-announced)) |
 
 Three more differences were the client's own drawing being one cell out, and
 the fixture was right: a code frame keeps a cell of pad inside its right
@@ -2025,6 +2025,58 @@ sits where typing does not happen. That is the same defect as
 caret drawn as a gap — and as the field report behind
 [divergence 46](#46-a-caret-is-a-position-a-terminal-has-only-cells), in the
 one surface that is nothing but a caret and a path.
+
+### 51. The filter is derived, not announced
+
+`chatlist` emitted a `ChatListFilteredMsg` on every filter change, and
+nothing anywhere handled it. The list applies the filter in `refreshList`
+before the command is even returned, so the announcement had nothing left to
+cause; the only thing keeping the type alive was a test asserting it had been
+sent.
+
+**The counters were already following the filter.** `hintBarCounters` reads
+`chatlist.Count`, which is `len(m.list.Items)` — the rendered list — so
+filtering has always dropped "12 buffers" to "3 buffers". `BufferIndex` says
+the same in its own doc comment, naming "filtered out" as a reason it returns
+zero. What was missing was not a link back but a word: a number that falls
+from twelve to three on its own reads as chats going missing.
+
+It says `3 of 12 buffers` now, which is the shape the chat list's own filter
+header already draws in that column (`3/12`) and the attach picker's prompt
+row after it. `chatlist.TotalCount` is deliberately the same denominator the
+header uses — two surfaces describing one list with different totals is worse
+than either of them saying nothing, and they are in different packages, so
+nothing else would catch them drifting.
+
+**The message was the wrong mechanism, not the wrong payload.** It is
+edge-triggered, so the app would have to STORE what it was told — a second
+copy of state `chatlist` already owns, which is the shape of divergence 39,
+where a chat came to be unmuted by opening it. `refreshChrome` re-derives the
+whole chrome from current state on every tick and every layout change, and
+the component already exposes `FilterQuery`, `Count` and `TotalCount`. A
+derivation cannot go stale and cannot be forgotten at a call site; the same
+reason `Model.Mode` has no mode field and `layoutStale` compares the ask to
+the grant rather than trusting a notification.
+
+**The total is the active FOLDER, not the account.** Review caught this one:
+`refreshList` narrows twice, by folder and then by the typed query, and only
+the second is what the reader just did. Counting every stored chat made the
+denominator describe a narrowing the filter had not performed — in a Groups
+folder holding two of an account's three chats, a query matching both groups
+excludes nothing, and "2 of 3 buffers" announces a filter that is not
+filtering. The chat list's own header had the same bug, and this change
+inherited it by matching it: agreeing with the other surface was right, and
+the value they agreed on was wrong.
+
+It is counted inside `refreshList`'s existing loop rather than by a function
+that walks the store again applying the folder predicate a second time. Two
+implementations of "is this chat in this folder" is precisely the drift the
+shared denominator exists to prevent.
+
+**The test is the applied query, not `FilterActive`.** That method reports
+whether the input is OPEN, and `enter` closes the input while leaving the
+filter on. Filtered-with-no-cursor-in-the-header is exactly the state where a
+bare count misleads, so it is the one the qualifier has to cover.
 
 ## Decisions
 

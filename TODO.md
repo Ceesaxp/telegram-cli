@@ -215,6 +215,26 @@ immediately undoes.
       graphics or alt-screen state the shell inherits. Worth fixing before
       the media overlay lands.
 
+- [x] **The chat-list filter told the app and the app never listened.**
+      `ChatListFilteredMsg` was emitted on every filter change and handled
+      nowhere; the filter is applied locally before the command is even
+      returned, so the only thing keeping the type alive was a test
+      asserting it had been sent.
+
+      The counters were already following the filter — `chatlist.Count` is
+      the rendered list — so what was missing was not a link back but a
+      word. The hint bar reads `3 of 12 buffers` now, in the shape the chat
+      list's own filter header already draws. Recorded as
+      [divergence 51](docs/tui-2.0.md#51-the-filter-is-derived-not-announced),
+      whose point is the mechanism rather than the wording: a message is
+      edge-triggered, so the app would have had to store what it was told.
+
+      Review found the denominator wrong in both surfaces: it counted the
+      whole account where the list narrows by folder first, so a query
+      matching a whole folder announced a narrowing it had not done. The
+      chat list's own header had had that bug all along; this change
+      inherited it by matching it.
+
 ### Untouched by TUI 2.0
 
 - [x] ~~**`config.example.toml` `[keys]` comment is stale**~~ — **already

@@ -158,7 +158,7 @@ func (m Model) renderFilterHeader(width int) string {
 		query += "█"
 	}
 
-	count := itoa(len(m.list.Items)) + "/" + itoa(m.storeChatCount())
+	count := itoa(len(m.list.Items)) + "/" + itoa(m.folderTotal())
 	countW := cell.Width(count)
 
 	queryW := width - rowTextCol - countW - rowTrailW

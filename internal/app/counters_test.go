@@ -114,3 +114,194 @@ func TestOpeningAChatNumbersItImmediately(t *testing.T) {
 		t.Fatalf("the header kept the previous chat's number:\n%s", got)
 	}
 }
+
+// TestTheBufferCountSaysWhatItIsACountOf.
+//
+// The count has always followed the filter — chatlist.Count is the rendered
+// list — so filtering already dropped it. What it did not do was say why,
+// and a number falling from twelve to three on its own reads as chats going
+// missing rather than as a list being narrowed.
+func TestTheBufferCountSaysWhatItIsACountOf(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+
+	if got := m.bufferCount(); got != "3 buffers" {
+		t.Fatalf("unfiltered: %q, want %q", got, "3 buffers")
+	}
+
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	if n := m.chatList.Count(); n != 2 {
+		t.Fatalf("precondition: the filter shows %d of 3", n)
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("filtered: %q, want %q", got, "2 of 3 buffers")
+	}
+	if !strings.Contains(m.hintBarCounters(), "2 of 3 buffers") {
+		t.Errorf("the hint bar does not carry it: %q", m.hintBarCounters())
+	}
+}
+
+// TestTheQualifierSurvivesClosingTheFilterInput.
+//
+// enter closes the input and leaves the filter applied. That is the state
+// where a bare count misleads most — the header has no cursor in it any
+// more, so nothing else on screen is obviously mid-filter — which is why
+// this reads the applied query rather than FilterActive.
+func TestTheQualifierSurvivesClosingTheFilterInput(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	m.chatList, _ = m.chatList.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.chatList.FilterActive() {
+		t.Fatal("precondition: enter did not close the input")
+	}
+	if m.chatList.FilterQuery() == "" {
+		t.Fatal("precondition: enter dropped the filter as well as the input")
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("with the input closed: %q, want the count still qualified", got)
+	}
+}
+
+// TestAFilterThatExcludesNothingIsNotAnnounced. Six cells to say a list is
+// the same size as itself is six cells the unread count could have had.
+func TestAFilterThatExcludesNothingIsNotAnnounced(t *testing.T) {
+	m := filterModel(t, "Alpha", "Alpine", "Alto")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	if n := m.chatList.Count(); n != 3 {
+		t.Fatalf("precondition: the filter excluded something (%d of 3)", n)
+	}
+	if got := m.bufferCount(); got != "3 buffers" {
+		t.Errorf("a filter matching everything says %q", got)
+	}
+}
+
+// TestTheTwoSurfacesAgreeAboutTheSameList. The chat list's filter header
+// draws its own "shown/total" in that column; the hint bar draws one in the
+// frame. Different packages, one list — nothing else would catch them
+// drifting apart.
+func TestTheTwoSurfacesAgreeAboutTheSameList(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	header := ansi.Strip(m.chatList.View())
+	if !strings.Contains(header, "2/3") {
+		t.Fatalf("the filter header does not draw 2/3:\n%s", firstLine(header))
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("the hint bar says %q while the header says 2/3", got)
+	}
+}
+
+// filterModel is a main-screen model whose chat list holds the named chats.
+func filterModel(t *testing.T, titles ...string) Model {
+	t.Helper()
+	m := mainModel(t, PanelChatList)
+	for i, title := range titles {
+		m.store.Chats.Set(&telegram.Chat{
+			ID: int64(100 + i), Title: title, Type: telegram.ChatTypePrivate,
+		})
+	}
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	_ = m.chatList.View() // the list only counts what it has drawn
+	if got := m.chatList.Count(); got != len(titles) {
+		t.Fatalf("the list holds %d chats, want %d", got, len(titles))
+	}
+	return m
+}
+
+func typeIntoFilter(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for _, r := range text {
+		m.chatList, _ = m.chatList.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return m
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// TestTheTotalIsTheFolderNotTheAccount.
+//
+// refreshList narrows twice — by folder, then by the typed query — and only
+// the second of those is what the reader just did. Counting the whole
+// account instead makes the denominator describe a narrowing the filter did
+// not perform: in a Groups folder holding two of three chats, a query
+// matching both groups excludes nothing, and "2 of 3 buffers" announces a
+// filter that is not filtering.
+//
+// Every other counter test uses the All folder, where the two totals
+// coincide and this is invisible.
+func TestTheTotalIsTheFolderNotTheAccount(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Title: "Alice", Type: telegram.ChatTypePrivate})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Title: "alpha-team", Type: telegram.ChatTypeSupergroup})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Title: "alpine-ops", Type: telegram.ChatTypeSupergroup})
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	m.chatList.SetFolderForTest(&telegram.ChatFolder{ID: 7, Title: "Groups", Groups: true})
+	_ = m.chatList.View()
+
+	if got := m.chatList.Count(); got != 2 {
+		t.Fatalf("the Groups folder shows %d chats, want the two groups", got)
+	}
+	if got := m.chatList.TotalCount(); got != 2 {
+		t.Fatalf("TotalCount() = %d in a folder of 2 (out of 3 chats), want 2", got)
+	}
+	if got := m.bufferCount(); got != "2 buffers" {
+		t.Fatalf("unfiltered inside a folder: %q", got)
+	}
+
+	// A query that excludes nothing must still say so.
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "alp")
+	if got := m.chatList.Count(); got != 2 {
+		t.Fatalf("precondition: %q matched %d of the folder's 2", "alp", got)
+	}
+	if got := m.bufferCount(); got != "2 buffers" {
+		t.Errorf("a query matching the whole folder says %q — it announces a "+
+			"narrowing the filter did not do", got)
+	}
+
+	// And one that does exclude something counts against the folder.
+	m = typeIntoFilter(t, m, "ha")
+	if got := m.chatList.Count(); got != 1 {
+		t.Fatalf("precondition: %q matched %d of the folder's 2", "alpha", got)
+	}
+	if got := m.bufferCount(); got != "1 of 2 buffers" {
+		t.Errorf("filtered inside a folder: %q, want %q", got, "1 of 2 buffers")
+	}
+}
+
+// TestTheHeaderAgreesInsideAFolderToo. The chat list draws its own
+// "shown/total" and the hint bar draws one in the frame; they were made to
+// share a denominator, and the folder is where a wrong one shows up.
+func TestTheHeaderAgreesInsideAFolderToo(t *testing.T) {
+	m := mainModel(t, PanelChatList)
+	m.store.Chats.Set(&telegram.Chat{ID: 1, Title: "Alice", Type: telegram.ChatTypePrivate})
+	m.store.Chats.Set(&telegram.Chat{ID: 2, Title: "alpha-team", Type: telegram.ChatTypeSupergroup})
+	m.store.Chats.Set(&telegram.Chat{ID: 3, Title: "alpine-ops", Type: telegram.ChatTypeSupergroup})
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	m.chatList.SetFolderForTest(&telegram.ChatFolder{ID: 7, Title: "Groups", Groups: true})
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "alpha")
+
+	if header := ansi.Strip(m.chatList.View()); !strings.Contains(header, "1/2") {
+		t.Errorf("the filter header does not draw 1/2 inside the folder:\n%s", firstLine(header))
+	}
+	if got := m.bufferCount(); got != "1 of 2 buffers" {
+		t.Errorf("the hint bar says %q while the header says 1/2", got)
+	}
+}
