@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/gotd/td/constant"
@@ -11,28 +12,85 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-// LoadChats fetches the dialog list and pushes every chat to the UI
-// as a ChatUpdateMsg (this replaces tdlib's updateNewChat flow).
+// LoadChats fetches the first page of the dialog list and pushes every chat
+// to the UI as a ChatUpdateMsg (this replaces tdlib's updateNewChat flow).
+//
+// It also arms the pager: whatever it stopped at is where [LoadMoreChats]
+// carries on from, so the reader can reach dialogs older than the first
+// page without the client fetching an account's entire history at startup.
 func (c *Client) LoadChats(limit int) error {
-	chats, err := c.ListChats(limit)
+	return c.loadChatsWith(c.listChatsPage, limit)
+}
+
+func (c *Client) loadChatsWith(fetch dialogPageFetcher, limit int) error {
+	c.dialogs.reset()
+	_, err := c.pageWith(fetch, limit)
+	return err
+}
+
+// LoadMoreChats fetches the next page after whatever has been loaded so
+// far, pushing each chat to the UI. It reports how many arrived; zero means
+// the list is exhausted and asking again will not change that.
+func (c *Client) LoadMoreChats(limit int) (int, error) {
+	return c.loadChatPage(limit)
+}
+
+// MoreChatsToLoad reports whether the dialog list has more to give. False
+// once a short page has arrived, so the UI can stop asking rather than
+// issuing a request per keystroke at the bottom of the list.
+func (c *Client) MoreChatsToLoad() bool {
+	c.dialogs.mu.Lock()
+	defer c.dialogs.mu.Unlock()
+	return !c.dialogs.done
+}
+
+// loadChatPage advances the pager by up to limit dialogs.
+func (c *Client) loadChatPage(limit int) (int, error) {
+	return c.pageWith(c.listChatsPage, limit)
+}
+
+// pageWith is loadChatPage against a supplied fetcher, so the pager's own
+// rules — start over, carry on, stop when exhausted — can be exercised
+// without a server.
+func (c *Client) pageWith(fetch dialogPageFetcher, limit int) (int, error) {
+	c.dialogs.mu.Lock()
+	if c.dialogs.done {
+		c.dialogs.mu.Unlock()
+		return 0, nil
+	}
+	cursor := c.dialogs.cursor
+	c.dialogs.mu.Unlock()
+
+	chats, next, done, err := pageDialogs(fetch, cursor, limit)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	var totalUnread, unmutedUnread int32
+	c.dialogs.mu.Lock()
+	c.dialogs.cursor, c.dialogs.done = next, done
+	c.dialogs.mu.Unlock()
+
 	for _, chat := range chats {
-		totalUnread += chat.UnreadCount
-		if !chat.Muted {
-			unmutedUnread += chat.UnreadCount
-		}
 		c.send(ChatUpdateMsg{Chat: chat})
 	}
+	return len(chats), nil
+}
 
-	c.send(UnreadCountMsg{
-		UnreadCount:        totalUnread,
-		UnreadUnmutedCount: unmutedUnread,
-	})
-	return nil
+// dialogPager is where the dialog list has been read up to.
+//
+// On the client rather than handed to the UI: the cursor is a gotd
+// InputPeer, and a chat list that had to hold one would be a UI component
+// carrying a protocol type it can do nothing else with.
+type dialogPager struct {
+	mu     sync.Mutex
+	cursor dialogCursor
+	done   bool
+}
+
+func (p *dialogPager) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cursor, p.done = dialogCursor{}, false
 }
 
 // dialogsPageSize is the largest dialog page Telegram will return.
@@ -51,32 +109,54 @@ type dialogCursor struct {
 	peer tg.InputPeerClass
 }
 
-// ListChats fetches the dialog list without emitting any UI events.
-// Telegram returns at most 100 dialogs per request, so larger limits are
-// served by paginating until limit is reached or a short page arrives.
+// ListChats fetches the dialog list from the beginning without emitting any
+// UI events. Telegram returns at most 100 dialogs per request, so larger
+// limits are served by paginating until limit is reached or a short page
+// arrives.
 func (c *Client) ListChats(limit int) ([]*Chat, error) {
+	chats, _, _, err := c.listChatsFrom(dialogCursor{}, limit)
+	return chats, err
+}
+
+// listChatsFrom is the paging loop both entry points share.
+//
+// It returns the chats, the cursor to continue from, and whether the list is
+// exhausted — a short page, a page with nothing to continue from, or a
+// cursor the server did not advance. That last one is not paranoia: an
+// unchanged cursor is a loop that never ends, and it is the failure mode a
+// paging bug takes.
+func (c *Client) listChatsFrom(cursor dialogCursor, limit int) ([]*Chat, dialogCursor, bool, error) {
+	return pageDialogs(c.listChatsPage, cursor, limit)
+}
+
+// dialogPageFetcher is one request for one page: the same shape as
+// [Client.listChatsPage], as a function so the paging RULES can be exercised
+// without a server. Every decision that ends or advances pagination lives in
+// pageDialogs below; listChatsPage only fetches and converts.
+type dialogPageFetcher func(cursor dialogCursor, limit int) ([]*Chat, dialogCursor, int, error)
+
+func pageDialogs(fetch dialogPageFetcher, cursor dialogCursor, limit int) (chats []*Chat, next dialogCursor, done bool, err error) {
 	if limit <= 0 {
 		limit = dialogsPageSize
 	}
 	if limit > MaxDialogsLimit {
 		limit = MaxDialogsLimit
 	}
+	if cursor.peer == nil {
+		cursor.peer = &tg.InputPeerEmpty{}
+	}
 
-	var (
-		out    []*Chat
-		seen   = make(map[int64]bool, limit)
-		cursor = dialogCursor{peer: &tg.InputPeerEmpty{}}
-	)
+	seen := make(map[int64]bool, limit)
 
-	for len(out) < limit {
-		pageLimit := limit - len(out)
+	for len(chats) < limit {
+		pageLimit := limit - len(chats)
 		if pageLimit > dialogsPageSize {
 			pageLimit = dialogsPageSize
 		}
 
-		page, next, raw, err := c.listChatsPage(cursor, pageLimit)
+		page, after, raw, err := fetch(cursor, pageLimit)
 		if err != nil {
-			return nil, err
+			return nil, cursor, false, err
 		}
 
 		for _, chat := range page {
@@ -84,22 +164,57 @@ func (c *Client) ListChats(limit int) ([]*Chat, error) {
 				continue
 			}
 			seen[chat.ID] = true
-			out = append(out, chat)
-			if len(out) == limit {
+			chats = append(chats, chat)
+			if len(chats) == limit {
 				break
 			}
 		}
 
-		// A short page is the end of the list. next.peer is nil when the
+		// A short page is the end of the list. after.peer is nil when the
 		// page held no usable dialog to continue from, and an unchanged
 		// cursor would loop forever.
-		if raw < pageLimit || next.peer == nil ||
-			(next.date == cursor.date && next.id == cursor.id) {
-			break
+		//
+		// The PEER is part of "unchanged". A message id is scoped to its
+		// peer, so two dialogs in different channels can share an id and a
+		// date; comparing only those two would call the cursor stalled when
+		// it had in fact moved, and every older dialog would be dropped for
+		// the rest of the session.
+		if raw < pageLimit || after.peer == nil || sameCursor(after, cursor) {
+			return chats, cursor, true, nil
 		}
-		cursor = next
+		cursor = after
 	}
-	return out, nil
+	return chats, cursor, false, nil
+}
+
+// sameCursor reports whether two cursors point at the same dialog.
+//
+// By peer IDENTITY rather than by comparing the InputPeer values: those are
+// interfaces over structs that carry access hashes, which the server is free
+// to reissue, and two values describing one peer would then compare unequal.
+// What matters here is only whether pagination advanced.
+func sameCursor(a, b dialogCursor) bool {
+	return a.date == b.date && a.id == b.id && peerIdentity(a.peer) == peerIdentity(b.peer)
+}
+
+// peerIdentity is a peer's ID, ignoring its access hash. Zero for the
+// self/empty peers and for anything unrecognised, which is safe in the one
+// place this is used: an unrecognised peer compares equal only to another
+// unrecognised one, and the surrounding checks still bound the loop.
+func peerIdentity(p tg.InputPeerClass) int64 {
+	switch v := p.(type) {
+	case *tg.InputPeerUser:
+		return v.UserID
+	case *tg.InputPeerChat:
+		return v.ChatID
+	case *tg.InputPeerChannel:
+		return v.ChannelID
+	case *tg.InputPeerUserFromMessage:
+		return v.UserID
+	case *tg.InputPeerChannelFromMessage:
+		return v.ChannelID
+	}
+	return 0
 }
 
 // listChatsPage fetches one page of dialogs. It returns the converted

@@ -1437,12 +1437,14 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// The wheel moves the same cursor the keyboard does, so it asks for
+		// the next page on the same terms — a mouse user would otherwise
+		// reach the last loaded dialog and never get another.
+		delta := 1
 		if up {
-			m.chatList.ScrollBy(-1)
-		} else {
-			m.chatList.ScrollBy(1)
+			delta = -1
 		}
-		return m, nil
+		return m, m.chatList.ScrollBy(delta)
 	}
 
 	if row := m.bodyRow(y); row >= 0 && row < m.layout.ThreadHeight {

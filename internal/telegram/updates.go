@@ -106,12 +106,6 @@ type ConnectionStateMsg struct {
 	State ConnectionState
 }
 
-// UnreadCountMsg is sent when global unread counts change.
-type UnreadCountMsg struct {
-	UnreadCount        int32
-	UnreadUnmutedCount int32
-}
-
 // MessageSendSucceededMsg is sent when a message is successfully sent.
 type MessageSendSucceededMsg struct {
 	Message      *Message

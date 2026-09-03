@@ -68,6 +68,7 @@ transcript — that is a Telegram premium call this client does not make; see
 - **Video** — Open videos in external player (`mpv` / `vlc` / `xdg-open`)
 - **File Transfer** — Save with `s` into `storage.download_dir` (`~/Downloads` by default) under the sender's own filename, never overwriting; open with `Enter`, progress bar during sync
 - **Clipboard Paste** — `Ctrl+V` attaches a clipboard image or file reference and sends it as an inline photo (or document, when the format can't be a photo)
+- **A chat list that goes back further than one page** — the first fifty dialogs load at startup and the next page is fetched as the cursor nears the bottom, so an account with hundreds of chats is scrollable rather than searchable-only. The unread total counts the chats that are loaded, and grows as more arrive
 - **Search** — Search chats, messages, and the global Telegram directory; selecting a result jumps straight to that message, scrolled and centred, paging back through history if needed
 - **Contacts** — Contact list with online status indicators
 - **Help Overlay** — `?` opens a scrollable, lazygit-style keybinding cheat sheet built from the same bindings the app dispatches on, so it can't drift out of sync
