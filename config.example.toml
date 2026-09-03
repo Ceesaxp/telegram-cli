@@ -14,7 +14,10 @@ session_file = "~/.local/share/tele-tui/session.json"
 # once. This is not where "save this" saves to — that is download_dir.
 files_dir = "~/.local/share/tele-tui/files"
 
-# Where 's' puts a copy, under the sender's own filename.
+# Where 's' puts a copy, under the sender's own filename — and where the
+# ctrl+t attach picker opens the first time, so the place the client saves to
+# is the place it offers back. After that the picker reopens wherever it was
+# last left.
 download_dir = "~/Downloads"
 # state_file = "~/.local/share/tele-tui/state.db"  # update/peer state DB (default: state.db next to session_file)
 

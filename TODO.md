@@ -135,6 +135,78 @@ immediately undoes.
       2.0 and defers albums, which need slice-based composer state, ordering
       and caption rules, and Telegram multi-media send. Blocked, not dropped.
 
+- [x] **Drop a file on the terminal to attach it.** Shipped with the picker
+      below, which is where it belonged: a drop is a path arriving at the
+      surface that collects paths.
+
+      Both blockers turned out as recorded. A terminal delivers a drop as a
+      PASTE, so `dialog.Model.Update` — which handled `tea.KeyPressMsg` and
+      nothing else — dropped it on the floor; the app now routes
+      `tea.PasteMsg` to the picker before anything else sees it. And the
+      path arrives shell-quoted in three spellings, all of which
+      `attach.UnquotePath` undoes: backslash-escaped (iTerm2, Terminal.app),
+      quoted, and a percent-encoded `file://` URL.
+
+      The question that had to be settled first — how to tell a dropped path
+      from pasted prose, for a drop onto the composer with no picker open —
+      is settled strictly. `attach.LooksLikePath` requires one line, rooted
+      or home-relative or a URL, and a file that is actually there. A paste
+      containing a newline is refused even when it names a real file, since
+      a newline is legal in a filename but a paste with one in it is far
+      more likely to be two things.
+
+
+- [x] **The `ctrl+t` attach picker.** Shipped. Spec at
+      [docs/handoff/attach-picker.md](docs/handoff/attach-picker.md),
+      received 2026-09-02 and archived verbatim; the build and its ten
+      departures from that spec are
+      [divergences 49 and 50](docs/tui-2.0.md#49-the-attach-picker-replaces-the-last-dialog).
+
+      `internal/ui/components/attach` is the palette's twin — 60 cells, the
+      same anchor, the same `▌` marker, no buttons — with a prompt row, a
+      ghost completion, six entries carrying type glyph, name, size and
+      mtime, a state row and a hint footer. It deleted the last GUI dialog
+      in the client: `dialog.KindPrompt`, its input and view branches, the
+      prompt hint and `DialogResultMsg.Input` are gone, and `dialog.Kind` is
+      down to the two that are genuinely a two-button and a one-button
+      question. `theme.OverlayInput` stayed — `auth` and `search` call it.
+
+      **It fixed a defect nobody had reported.** The prompt passed a
+      hardcoded `false` for `asPhoto`, so `ctrl+t` always attached as a
+      document while `ctrl+v` attached the very same image as a photo. The
+      state row now says which before you commit.
+
+      **Dropping a file on the terminal works**, which closes the item that
+      was tracked separately above. A drop arrives as a shell-quoted paste,
+      in three spellings; the picker unquotes all of them, and a drop with
+      no picker open stages the file only when the paste is unambiguously a
+      path to a file that exists.
+
+      Two things found on the way. `enter` consulted the typed path before
+      the cursor, and with no tail that path IS the directory being browsed
+      — so it re-entered the current folder forever and the cursor was never
+      reachable. And the help card and README had been advertising
+      `ctrl+p`/`ctrl+n` for the palette since the day those chords were
+      deliberately removed.
+
+      Review found nine things, five of them the same three problems seen
+      by both reviewers — recorded as
+      [divergence 49a](docs/tui-2.0.md#49a-what-review-found-in-the-picker).
+      Two were real substitutions rather than roughness: an exactly typed
+      path lost to the case-insensitive cursor, so typing `foo.txt` beside
+      a `Foo.txt` staged the other file; and Windows could not open its own
+      configured directory, because the package mixed native and slash
+      separators. Paths are one spelling inside the package now, with the
+      separator behind a test seam — the platform's CI job only
+      cross-compiles, so nothing else would ever exercise those rules.
+
+      87 mutants, no survivors. Four lines turned out to be doing nothing,
+      found the same way each time: `Close` reset four things `Open` resets
+      again, `^t` re-checked what `AsPhoto` already knows, `reload` reset a
+      window `refilter` resets immediately after, and `parentOf` special-
+      cased a volume that `withSlash` already handled.
+
+
 ### Raised in priority by TUI 2.0
 
 - [ ] **SIGINT handler `os.Exit(0)`** — `cmd/teletui` skips bubbletea
@@ -159,6 +231,57 @@ immediately undoes.
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`
       (currently always a document)
 
+### People — contacts and identity
+
+Raised in field use on 2026-09-02. Three items, and the second and third are
+one piece of work: both need `users.getFullUser`, which this client has never
+called — `channels.getFullChannel` is the only "full" RPC it makes. One RPC,
+two surfaces, so they should land together rather than the second one
+discovering the first already fetched what it needs.
+
+- [ ] **Contacts are read but nothing else.** The reading works and is worth
+      stating precisely, because the item is smaller than it looks:
+      `Client.GetContacts` calls `contacts.getContacts` and seeds the peers
+      manager from the result, and the `alt+c` overlay, the REST endpoint and
+      the MCP tool all go through it.
+
+      What is actually thin is everything around that:
+
+      - **No way to add one.** `contacts.importContacts` and
+        `contacts.addContact` are unimplemented, so a contact can only be
+        acquired by having one already. Adding one needs a phone number or a
+        username, and those are two different RPCs with two different failure
+        modes — a number Telegram does not know comes back as an *imported
+        nothing* rather than an error, which is the case to get right.
+      - **The overlay is pre-TUI-2.0.** A centred box drawing
+        `widgets.List`'s default row: name, `@username`, an online dot. No
+        sigil, no two-line row, no filter header, sorted by first name and
+        nothing else. It and `ctrl+t` are the two surfaces the redesign never
+        reached, and they are the same kind of problem.
+
+- [ ] **The rail says nothing about the person in a 1:1.** `sectionsFor`
+      gives a private chat files and links and no identity section at all;
+      the header supplies a name and the rail supplies media. Everything a
+      DM is actually about — who this is, their `@username`, the bio, when
+      they were last seen, what you have in common — is on screen nowhere.
+
+      Decision 6 still holds: nothing fetched on chat open, only when the
+      rail is opened. That is what makes this affordable — `users.getFullUser`
+      is one call, made once per chat per generation, cached beside the three
+      sections that already work that way.
+
+- [ ] **A palette command for the cursored message's sender**, in any chat
+      type. In a group or a channel this is the only way to find out who
+      somebody is without leaving for another client; in a DM it is the same
+      facts the rail item above would show, reached from a message rather
+      than from the chat.
+
+      The thread grid already knows the cursored message's identity — that is
+      what `r`, `y` and `+` act on — so the command has its argument for
+      free. What it needs is the fetch, and the decision about where the
+      answer goes: a rail section, an overlay, or the rail forced open on the
+      person rather than the chat.
+
 ## TUI 2.0 — design closed, every panel shipped
 
 Design record: [docs/tui-2.0.md](docs/tui-2.0.md), now contracted — all
@@ -176,7 +299,7 @@ Every phase in the plan has now shipped, both release blockers are
 discharged, the four content blocks that were waiting on Telegram data are
 mapped and drawn, and the goldens are asserted byte for byte. **TUI 2.0 is
 complete.** What is left in this section is the work that was never part of
-it — the compose line's editing gaps, mouse selection — plus the block
+it — the compose line's editing gaps, text selection — plus the block
 gallery, which is the one fixture with no scene behind it yet.
 
 Field feedback has its own item below: the compose line's editing keymaps are
@@ -291,6 +414,26 @@ thinner than either convention implies.
       Check the modifier gesture on the terminals in use before building
       anything: if it works everywhere that matters, the whole item is a
       README paragraph.
+
+- [ ] **`v` visual selection in the thread**, which is the same need as the
+      item above reached by the keyboard, and the one route that owes nothing
+      to what the terminal happens to do with a drag. Raised in field use.
+
+      It is the largest of the three, because it is the first thing in the
+      thread grid that needs a *region* rather than a cursor. The grid's
+      whole scrolling machinery — `scrollToMessage`, `sliceLines`,
+      `visibleMessages` — is built on one line count per message, and a
+      selection has an anchor, a head, and a rendering that has to survive
+      both of them scrolling out of view. Deliberately kept out of the render
+      cache key once already, for exactly this reason.
+
+      It also has to decide what it selects. `v` over lines is cheap and
+      matches how the grid is indexed; `v` over characters is what somebody
+      pressing `v` expects, and means mapping a cell back to a rune through
+      wrapping, entity styling and the gutter. Pick one before writing any of
+      it. Whichever it is, `y` is the exit — `y` on a selection copies the
+      selection, `y` without one keeps copying the message, so nothing that
+      works today changes.
 
 - [ ] **Compose-line editing is thinner than the keymap it advertises** ←
       **next**. Raised in field use, and largely a rendering problem that is
@@ -437,15 +580,32 @@ the primary checkout stays free for fixes against a working client.
 
 - [ ] **Remaining palette commands** ← **next, and each is a service, not a
       palette change.** All are authorised by D8; none are blocked on
-      permission:
-      - `pin` / `unpin` — needs a Telegram RPC and domain mapping
-      - `mute <duration>` / `unmute` — needs notification-settings RPCs
-      - `reload-config` — needs runtime config reload; confirm first when the
-        composer holds a draft or attachment (D8)
-      - `theme <name>` — needs every component to accept a theme at runtime;
-        probably falls out of phase 1's theme rework rather than being done
-        separately
-      - `jump <date>` — needs history-by-date
+      permission. `pin` / `unpin` shipped as a key rather than a command
+      (divergence 47); the four below are what remain, costed against the
+      code on 2026-09-02:
+
+      - `mute <duration>` / `unmute` — **the cheapest, and half-built.**
+        Reading is live: `peerMuted` asks `account.getNotifySettings`,
+        `Chat.Muted` is stored and merged, and `ChatMuteChangedMsg` keeps it
+        true from the wire. What is missing is the write —
+        `account.updateNotifySettings` — and a duration grammar, since
+        "mute" has to mean both eight hours and forever.
+      - `jump <date>` — **cheaper than it reads.** `messages.getHistory`
+        takes `OffsetDate` natively and the dialog cursor already passes one;
+        the history call just hardcodes zero. The work is not the RPC, it is
+        parsing what somebody types as a date and landing the scroll on a
+        message the line index has never loaded.
+      - `theme <name>` — **mostly wired.** `theme.RolesFor(name, trueColor)`
+        is the single entry point, thirteen components take `SetRoles`, and
+        `ui.theme` is already a config key. Two gaps: there are only two
+        palettes in the binary, and nothing calls `SetRoles` after startup.
+        Decide first whether a theme is a name compiled in or a TOML file a
+        reader writes — that is the whole size of the item.
+      - `reload-config` — **do it with `theme`, not before it.** A reload has
+        to re-derive roles and push them through the same thirteen
+        components, which is the wiring `theme <name>` needs anyway. Its own
+        share is D8's confirmation when the composer holds a draft or a
+        staged attachment.
 
       They are absent from the registry rather than stubbed: an entry that
       cannot run teaches a command that does not exist.

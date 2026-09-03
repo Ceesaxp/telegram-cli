@@ -1,7 +1,5 @@
 package app
 
-import "github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
-
 // InteractionMode is the app-level answer to one question: will the next
 // printable key be typed as text, or acted on as a command?
 //
@@ -126,7 +124,6 @@ func (m Model) Mode() InteractionMode {
 // overlay is wired up here and nowhere else.
 func (m Model) modeInputs() modeInputs {
 	dialogOpen := m.dialog != nil && m.dialog.IsVisible()
-	promptOpen := dialogOpen && m.dialog.Kind() == dialog.KindPrompt
 
 	return modeInputs{
 		screen: m.screen,
@@ -134,10 +131,14 @@ func (m Model) modeInputs() modeInputs {
 
 		paletteOpen: m.palette.IsVisible(),
 
-		textOverlayOpen: m.search.IsVisible() || promptOpen,
+		// The attach picker is INSERT, not COMMAND: its printables build a
+		// path, which is what this slot has always meant. It took the
+		// prompt dialog's place here when the picker replaced it, and
+		// nothing else about the resolver moved.
+		textOverlayOpen: m.search.IsVisible() || m.attach.IsVisible(),
 		navOverlayOpen: m.help.IsVisible() ||
 			m.contacts.IsVisible() ||
-			(dialogOpen && !promptOpen),
+			dialogOpen,
 
 		composerViNormal: m.composer.IsViNormalMode(),
 	}

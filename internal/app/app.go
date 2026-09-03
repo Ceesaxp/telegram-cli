@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/store"
 	"github.com/imtaqin/telegram-cli/internal/telegram"
 	"github.com/imtaqin/telegram-cli/internal/ui/cell"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/attach"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
@@ -49,6 +51,7 @@ type Model struct {
 	help      help.Model
 	palette   palette.Model
 	reactions reactionpicker.Model
+	attach    attach.Model
 	topBar    topbar.Model
 	hintBar   hintbar.Model
 	rail      rail.Model
@@ -216,6 +219,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		search:     search.New(s, tg, roles),
 		help:       help.New(roles),
 		palette:    palette.New(roles),
+		attach:     attach.New(roles),
 		reactions:  reactionpicker.New(roles),
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
@@ -394,6 +398,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.reactions, cmd = m.reactions.Update(msg)
 				return m, cmd
+			}
+
+			// The attach picker owns the keyboard on the same terms as
+			// the palette, and ahead of it: it is a text surface whose
+			// printables build a path, so a filename containing any
+			// bound letter has to be typeable.
+			if m.attach.IsVisible() {
+				var action attach.Action
+				m.attach, action = m.attach.Update(msg)
+				switch action {
+				case attach.ActionCancel:
+					m.attach.Close()
+				case attach.ActionAttach:
+					if path, asPhoto, ok := m.attach.Chosen(); ok {
+						m.attach.Close()
+						return m.stageAttachment(path, asPhoto)
+					}
+				}
+				return m, nil
 			}
 
 			if m.palette.IsVisible() {
@@ -1019,6 +1042,38 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrorMsg:
 		m.notify(fmt.Sprintf("⚠ %v", msg.Err))
 
+	// A file dropped on the terminal arrives as a PASTE of its path, not as
+	// keystrokes — the terminal is typing a command line for you, escaped
+	// the way a shell would need it. Dragging a file is how people already
+	// hand a path to a program, and it is the gesture Ctrl+T exists to
+	// serve; see attach.UnquotePath for the three spellings in use.
+	case tea.PasteMsg:
+		if m.attach.IsVisible() {
+			m.attach = m.attach.Paste(msg.Content)
+			return m, nil
+		}
+
+		// With no picker open the same paste is ambiguous — it could be
+		// the message somebody meant to send. attach.ResolvePath is
+		// deliberately strict about that, and everything it refuses falls
+		// through to the composer as ordinary text.
+		//
+		// Nothing may be over the frame. An overlay owns input while it is
+		// up, and a paste that staged an attachment behind a confirm dialog
+		// would change state the reader cannot see and move focus under a
+		// modal that is still on screen.
+		//
+		// The composer's own chat rather than the list's selection: it is
+		// the composer the file is staged on and the composer that sends
+		// it, so it is the composer that has to have somewhere to send.
+		if m.screen == ScreenMain && !m.keyboardOwnedByOverlay() &&
+			m.composer.ChatId() != 0 && !m.composer.IsEditing() {
+			if path, ok := attach.ResolvePath(msg.Content); ok {
+				m.notify("attached " + filepath.Base(path))
+				return m.stageAttachment(path, attach.IsImage(path))
+			}
+		}
+
 	case composer.AttachRequestedMsg:
 		if m.composer.IsEditing() {
 			// An edit cannot carry media; do not let the dialog recreate
@@ -1026,8 +1081,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notify(noticeEditAttach)
 			break
 		}
-		d := dialog.NewPrompt(m.roles, "attach-file", "Attach File", "Path to file:")
-		m.dialog = &d
+		m.attach.Open(m.config.Storage.DownloadDir)
 
 	case composer.ResizedMsg:
 		// The composer's row count comes out of the thread's budget, so a
@@ -1079,10 +1133,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingDeleteMessageId = 0
 
 		switch msg.ID {
-		case "attach-file":
-			if msg.Confirmed && strings.TrimSpace(msg.Input) != "" {
-				m.replaceAttachment(strings.TrimSpace(msg.Input), false)
-			}
 		case "quit":
 			// A cancelled confirm returns to exactly where the user was:
 			// the dialog is already cleared above and no state was touched
@@ -1405,6 +1455,26 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		// scrolling does, so it has to kick off the same lazy loads.
 		return m, m.chatView.LazyMediaCmd()
 	}
+	return m, nil
+}
+
+// stageAttachment puts a picked file on the composer and leaves the reader
+// where the caption goes.
+//
+// Focus moves to the composer, which is what puts it in INSERT: SetFocused
+// resets vi's submode on the unfocused-to-focused transition (divergence
+// 36). Choosing a file is almost always followed by saying what it is, and
+// closing back onto the chat list would make that two more keystrokes.
+//
+// It does NOT expand the composer, which the picker's spec asked for so that
+// the staged chip would be visible while the caption is typed. The chip is
+// visible in the inline form already — Rows grows by one for it and View
+// draws it above the prompt — so expanding would spend eight rows of a
+// twenty-four-row terminal to show something already on screen. See
+// divergence 50.
+func (m Model) stageAttachment(path string, asPhoto bool) (tea.Model, tea.Cmd) {
+	m.replaceAttachment(path, asPhoto)
+	m.setFocus(PanelComposer)
 	return m, nil
 }
 
@@ -1869,6 +1939,14 @@ func (m Model) View() tea.View {
 			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.palette.View()))
 	}
 
+	// The picker sits where the palette sits, for the palette's reason: the
+	// chat it is attaching to stays visible underneath.
+	if m.attach.IsVisible() && m.screen == ScreenMain {
+		content = lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Top,
+			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.attach.View()))
+	}
+
 	// The reaction row goes in the hint bar's row rather than over the
 	// frame. It is one row and it is transient, which is what that row is
 	// for — and the message it is asking about has to stay on screen, which
@@ -1975,11 +2053,28 @@ func (m Model) deviceCountCmd() tea.Cmd {
 	}
 }
 
+// keyboardOwnedByOverlay reports whether something other than the panels is
+// taking input.
+//
+// [overlayOpen] is about DRAWING; this is about whose a keystroke or a paste
+// is, and the two lists differ. The reaction row draws into the hint bar's
+// own row and the media overlay draws the whole screen, so neither is
+// "placed" — but both own the keyboard while they are up, and a paste that
+// reached the composer behind either of them would act on state the reader
+// cannot see.
+func (m Model) keyboardOwnedByOverlay() bool {
+	return m.overlayOpen() ||
+		m.contacts.IsVisible() ||
+		(m.reactions.IsVisible() && m.screen == ScreenMain) ||
+		(m.mediaView.IsVisible() && m.screen == ScreenMain)
+}
+
 // overlayOpen reports whether something is drawn over the frame rather than
-// inside it. The four are the ones View places with lipgloss.Place.
+// inside it. The five are the ones View places with lipgloss.Place.
 func (m Model) overlayOpen() bool {
 	return (m.dialog != nil && m.dialog.IsVisible()) ||
 		m.search.IsVisible() ||
 		(m.help.IsVisible() && m.screen == ScreenMain) ||
-		(m.palette.IsVisible() && m.screen == ScreenMain)
+		(m.palette.IsVisible() && m.screen == ScreenMain) ||
+		(m.attach.IsVisible() && m.screen == ScreenMain)
 }

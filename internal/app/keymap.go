@@ -91,7 +91,7 @@ import (
 //	enter              send
 //	ctrl+j, shift+ent  insert a newline
 //	esc                cancel reply/edit/attachment, then leave the panel
-//	ctrl+t             attach a file
+//	ctrl+t             attach a file (opens the picker)
 //	ctrl+v             paste a clipboard image
 //	ctrl+o             edit the draft in $VISUAL/$EDITOR
 //	ctrl+p             expand the composer, and back
@@ -409,12 +409,28 @@ func (m Model) helpSections() []help.Section {
 		// printable key has to reach the query, or ":keymap" and
 		// ":mark-read" could not be typed.
 		{Title: "Command palette", Bindings: []help.Binding{
+			// One spelling per action: ctrl+p/ctrl+n were taken off the
+			// palette as a second way to do what the arrows already did,
+			// and this card went on advertising them — a key that has to
+			// be discovered by pressing it and finding it inert.
 			{Keys: "up / down", Desc: "Move the selection"},
-			{Keys: "ctrl+p / ctrl+n", Desc: "Move the selection"},
 			{Keys: "tab", Desc: "Complete the highlighted command"},
 			{Keys: "enter", Desc: "Run the command"},
 			{Keys: "esc", Desc: "Cancel without running"},
 			{Keys: "ctrl+u", Desc: "Clear the query"},
+		}},
+		// The attach picker is the palette's twin and its card says so: the
+		// arrows and nothing else, for the same reason — a path may contain
+		// any letter, so every printable has to reach it.
+		{Title: "Attach picker", Bindings: []help.Binding{
+			{Keys: "up / down", Desc: "Move the selection"},
+			{Keys: "tab", Desc: "Complete the path to the highlighted entry"},
+			{Keys: "enter", Desc: "Enter a directory, or attach a file"},
+			{Keys: "backspace", Desc: "Delete a character; up a directory when there is none"},
+			{Keys: "left", Desc: "Up one directory"},
+			{Keys: "ctrl+t", Desc: "Send an image as a photo or as a document"},
+			{Keys: "ctrl+u", Desc: "Clear the path"},
+			{Keys: "esc", Desc: "Cancel without attaching"},
 		}},
 		{Title: "Chat list", Bindings: []help.Binding{
 			{Keys: "j / k", Desc: "Next / previous chat"},

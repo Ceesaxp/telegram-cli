@@ -433,7 +433,6 @@ and it does not change anything that already worked.
 | Key | Action |
 |-----|--------|
 | `up` / `down` | Move the selection |
-| `ctrl+p` / `ctrl+n` | Move the selection |
 | `tab` | Complete the highlighted command |
 | `enter` | Run the command |
 | `esc` | Cancel without running |
@@ -448,6 +447,44 @@ exactly-typed name always sorts to the top so `Enter` runs what you typed.
 **Navigation is the arrows, not `j`/`k`** — every printable key has to reach
 the query, or commands whose names contain those letters (`keymap`,
 `mark-read`) could not be typed at all.
+
+### Attach picker (`ctrl+t`)
+
+`ctrl+t` opens a path being typed, the directory it names, and what is in it.
+It is the command palette's twin: same width, same anchor, same selection
+marker, no buttons — the palette collects a command and this collects a path.
+
+| Key | Action |
+|-----|--------|
+| `up` / `down` | Move the selection |
+| `tab` | Complete the path to the highlighted entry |
+| `enter` | Enter a directory, or attach a file and close |
+| `backspace` | Delete a character; up one directory when there is none left |
+| `left` | Up one directory |
+| `ctrl+t` | Send an image as a photo, or as a document |
+| `ctrl+u` | Clear the path |
+| `esc` | Cancel without attaching |
+
+Every other printable key extends the path, which is why navigation is the
+arrows here too: a filename may contain any letter.
+
+**It says how the file will send before you commit.** An image goes as a
+photo — recompressed, shown inline — and anything else as a document, with
+the original bytes. `ctrl+t` changes that for an image and says so on the
+state row. The prompt this replaced always attached as a document, silently,
+while `ctrl+v` attached the same image as a photo.
+
+**Dotfiles are hidden until you type a leading dot**, the way a shell hides
+them. Matching is a case-insensitive prefix, because the default macOS
+filesystem is itself case-insensitive.
+
+**Dropping a file on the terminal works** anywhere `ctrl+t` does. A terminal
+delivers a drop as a paste of the path, escaped the way a shell would need it
+(`/Users/a/My\ Files/x.png`, a quoted path, or a `file://` URL); the picker
+unquotes all three. Dropping one with no picker open stages it directly, but
+only when the paste is unambiguously a path to a file that exists — anything
+else is typed into the message, because a paste that merely resembles a path
+must not silently become an attachment.
 
 `:` only opens the palette where a bare letter is not text. With the composer
 focused it types a colon like any other character; the sole exception is vi
