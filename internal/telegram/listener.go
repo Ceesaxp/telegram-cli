@@ -16,25 +16,30 @@ type Listener struct {
 	program *tea.Program
 }
 
-// NewListener registers update handlers on the client's dispatcher.
-// main.go should now pass the wrapper client: telegram.NewListener(tgClient, p).
-func NewListener(client *Client, program *tea.Program) *Listener {
+// NewListener registers update handlers on the client's dispatcher. It must
+// be called before Client.Start; gotd's dispatcher is not safe to mutate once
+// update delivery begins.
+func NewListener(client *Client, program *tea.Program) (*Listener, error) {
 	l := &Listener{
 		client:  client,
 		program: program,
 	}
-	client.setMsgSink(program.Send)
-	l.registerHandlers()
-	return l
+	if err := client.registerUpdateHandlers(l.registerHandlers); err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
-// Start is a no-op kept for API compatibility: handlers are registered
-// eagerly in NewListener and dispatch is driven by client.Run.
-func (l *Listener) Start() {}
+// Start attaches the Bubble Tea sink and starts Telegram. Call it from a
+// goroutine immediately before Program.Run: attaching can replay buffered
+// startup notices, and Program.Send intentionally blocks until Run begins.
+func (l *Listener) Start() error {
+	l.client.setMsgSink(l.program.Send)
+	return l.client.Start()
+}
 
-func (l *Listener) registerHandlers() {
+func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 	c := l.client
-	d := c.dispatcher
 
 	d.OnNewMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
 		l.onMessage(u.Message)

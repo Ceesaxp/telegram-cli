@@ -33,6 +33,13 @@ type Client struct {
 	cancel     context.CancelFunc
 	files      *fileRegistry
 
+	lifecycleMu sync.Mutex
+	started     bool
+	closed      bool
+	done        chan struct{}
+	run         func(context.Context)
+	finishOnce  sync.Once
+
 	// stores holds the persistent update state and peer cache. Nil when
 	// the state database could not be opened (or must not be opened, see
 	// stateDBTarget) — gotd then falls back to in-memory storage.
@@ -55,22 +62,36 @@ type Client struct {
 	pendingNotices []tea.Msg
 }
 
-// NewClientAsync starts the gotd client in the background.
-// The client blocks on authorization — call this before starting the TUI
-// so the auth UI can feed credentials via the authorizer channels.
-func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
-	return newClientAsync(cfg, authorizer, false)
+// NewClient constructs an update-receiving client without starting it.
+// Register callbacks and update handlers before calling Start.
+func NewClient(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	return newClient(cfg, authorizer, false)
 }
 
-// NewRPCClientAsync is like NewClientAsync but runs the client in
+// NewRPCClient constructs an RPC-only client without starting it.
 // no-updates mode: the connection never subscribes to the update stream,
 // so it does not compete with the TUI (or other processes sharing the
 // same session) for realtime updates. Used by telegram-mcp serve.
-func NewRPCClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
-	return newClientAsync(cfg, authorizer, true)
+func NewRPCClient(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	return newClient(cfg, authorizer, true)
 }
 
-func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *Client {
+// NewClientAsync is retained for callers that have nothing to register before
+// startup. Interactive frontends should use NewClient and Start explicitly.
+func NewClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	c := NewClient(cfg, authorizer)
+	_ = c.Start()
+	return c
+}
+
+// NewRPCClientAsync is the compatibility form of NewRPCClient.
+func NewRPCClientAsync(cfg *config.Config, authorizer *TUIAuthorizer) *Client {
+	c := NewRPCClient(cfg, authorizer)
+	_ = c.Start()
+	return c
+}
+
+func newClient(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *Client {
 	os.MkdirAll(filepath.Dir(cfg.Storage.SessionFile), 0o700)
 	os.MkdirAll(cfg.Storage.FilesDir, 0o700)
 
@@ -100,6 +121,7 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 	c := &Client{
 		config:     cfg,
 		ready:      make(chan struct{}),
+		done:       make(chan struct{}),
 		files:      newFileRegistry(),
 		dispatcher: dispatcher,
 		stores:     stores,
@@ -171,10 +193,8 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 		return hint
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancel = cancel
-
-	go func() {
+	c.run = func(ctx context.Context) {
+		defer c.finish()
 		// The state database outlives every gotd write, so close it only
 		// once Run has returned (i.e. after Close cancelled the context).
 		defer func() {
@@ -286,9 +306,48 @@ func newClientAsync(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates boo
 		}
 
 		authorizer.notifyState(AuthStateClosed, "")
-	}()
+	}
 
 	return c
+}
+
+var (
+	ErrClientStarted = errors.New("telegram client already started")
+	ErrClientClosed  = errors.New("telegram client already closed")
+)
+
+// registerUpdateHandlers installs handlers while the dispatcher is still
+// private to the constructing goroutine. The gotd dispatcher is a plain map,
+// so mutation after Start would race update delivery.
+func (c *Client) registerUpdateHandlers(register func(tg.UpdateDispatcher)) error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed {
+		return ErrClientClosed
+	}
+	if c.started {
+		return ErrClientStarted
+	}
+	register(c.dispatcher)
+	return nil
+}
+
+// Start begins authentication and update delivery after all callbacks and
+// update handlers have been registered.
+func (c *Client) Start() error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed {
+		return ErrClientClosed
+	}
+	if c.started {
+		return ErrClientStarted
+	}
+	c.started = true
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = cancel
+	go c.run(ctx)
+	return nil
 }
 
 // WaitReady blocks until the client is authorized and ready.
@@ -306,12 +365,58 @@ func (c *Client) IsReady() bool {
 	}
 }
 
-// Close shuts the client down.
-func (c *Client) Close() {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.cancel != nil {
+const closeTimeout = 5 * time.Second
+
+// Close shuts the client down and waits for its run loop and state-store
+// cleanup to finish, up to a short process-shutdown bound.
+func (c *Client) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+	defer cancel()
+	return c.CloseContext(ctx)
+}
+
+// CloseContext is Close with a caller-provided shutdown bound.
+func (c *Client) CloseContext(ctx context.Context) error {
+	c.lifecycleMu.Lock()
+	if c.done == nil {
+		c.done = make(chan struct{})
+	}
+	done := c.done
+	if !c.started {
+		if c.closed {
+			c.lifecycleMu.Unlock()
+			return waitForClientDone(ctx, done)
+		}
+		c.closed = true
+		stores := c.stores
+		c.stores = nil
+		c.lifecycleMu.Unlock()
+		if stores != nil {
+			if err := stores.Close(); err != nil {
+				log.Printf("closing state db: %s", err)
+			}
+		}
+		c.finish()
+		return nil
+	}
+	if !c.closed {
+		c.closed = true
 		c.cancel()
+	}
+	c.lifecycleMu.Unlock()
+	return waitForClientDone(ctx, done)
+}
+
+func (c *Client) finish() {
+	c.finishOnce.Do(func() { close(c.done) })
+}
+
+func waitForClientDone(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("telegram client shutdown: %w", ctx.Err())
 	}
 }
 
