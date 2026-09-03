@@ -114,3 +114,120 @@ func TestOpeningAChatNumbersItImmediately(t *testing.T) {
 		t.Fatalf("the header kept the previous chat's number:\n%s", got)
 	}
 }
+
+// TestTheBufferCountSaysWhatItIsACountOf.
+//
+// The count has always followed the filter — chatlist.Count is the rendered
+// list — so filtering already dropped it. What it did not do was say why,
+// and a number falling from twelve to three on its own reads as chats going
+// missing rather than as a list being narrowed.
+func TestTheBufferCountSaysWhatItIsACountOf(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+
+	if got := m.bufferCount(); got != "3 buffers" {
+		t.Fatalf("unfiltered: %q, want %q", got, "3 buffers")
+	}
+
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	if n := m.chatList.Count(); n != 2 {
+		t.Fatalf("precondition: the filter shows %d of 3", n)
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("filtered: %q, want %q", got, "2 of 3 buffers")
+	}
+	if !strings.Contains(m.hintBarCounters(), "2 of 3 buffers") {
+		t.Errorf("the hint bar does not carry it: %q", m.hintBarCounters())
+	}
+}
+
+// TestTheQualifierSurvivesClosingTheFilterInput.
+//
+// enter closes the input and leaves the filter applied. That is the state
+// where a bare count misleads most — the header has no cursor in it any
+// more, so nothing else on screen is obviously mid-filter — which is why
+// this reads the applied query rather than FilterActive.
+func TestTheQualifierSurvivesClosingTheFilterInput(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	m.chatList, _ = m.chatList.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.chatList.FilterActive() {
+		t.Fatal("precondition: enter did not close the input")
+	}
+	if m.chatList.FilterQuery() == "" {
+		t.Fatal("precondition: enter dropped the filter as well as the input")
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("with the input closed: %q, want the count still qualified", got)
+	}
+}
+
+// TestAFilterThatExcludesNothingIsNotAnnounced. Six cells to say a list is
+// the same size as itself is six cells the unread count could have had.
+func TestAFilterThatExcludesNothingIsNotAnnounced(t *testing.T) {
+	m := filterModel(t, "Alpha", "Alpine", "Alto")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	if n := m.chatList.Count(); n != 3 {
+		t.Fatalf("precondition: the filter excluded something (%d of 3)", n)
+	}
+	if got := m.bufferCount(); got != "3 buffers" {
+		t.Errorf("a filter matching everything says %q", got)
+	}
+}
+
+// TestTheTwoSurfacesAgreeAboutTheSameList. The chat list's filter header
+// draws its own "shown/total" in that column; the hint bar draws one in the
+// frame. Different packages, one list — nothing else would catch them
+// drifting apart.
+func TestTheTwoSurfacesAgreeAboutTheSameList(t *testing.T) {
+	m := filterModel(t, "Alice", "Bob", "Carol Alpha")
+	m.chatList.OpenFilter()
+	m = typeIntoFilter(t, m, "al")
+
+	header := ansi.Strip(m.chatList.View())
+	if !strings.Contains(header, "2/3") {
+		t.Fatalf("the filter header does not draw 2/3:\n%s", firstLine(header))
+	}
+	if got := m.bufferCount(); got != "2 of 3 buffers" {
+		t.Errorf("the hint bar says %q while the header says 2/3", got)
+	}
+}
+
+// filterModel is a main-screen model whose chat list holds the named chats.
+func filterModel(t *testing.T, titles ...string) Model {
+	t.Helper()
+	m := mainModel(t, PanelChatList)
+	for i, title := range titles {
+		m.store.Chats.Set(&telegram.Chat{
+			ID: int64(100 + i), Title: title, Type: telegram.ChatTypePrivate,
+		})
+	}
+	m.chatList.MarkLoadedForTest()
+	m.chatList.SetSize(40, 20)
+	_ = m.chatList.View() // the list only counts what it has drawn
+	if got := m.chatList.Count(); got != len(titles) {
+		t.Fatalf("the list holds %d chats, want %d", got, len(titles))
+	}
+	return m
+}
+
+func typeIntoFilter(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for _, r := range text {
+		m.chatList, _ = m.chatList.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return m
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}

@@ -913,7 +913,7 @@ func TestFilterEscClearsAndCloses(t *testing.T) {
 	m.OpenFilter()
 	m = typeFilter(m, "al")
 
-	m, cmd := m.Update(specialKey(tea.KeyEscape))
+	m, _ = m.Update(specialKey(tea.KeyEscape))
 	if m.FilterActive() {
 		t.Fatal("esc should close the filter input")
 	}
@@ -922,12 +922,6 @@ func TestFilterEscClearsAndCloses(t *testing.T) {
 	}
 	if got := len(m.list.Items); got != 3 {
 		t.Fatalf("after esc the list has %d items, want the full 3", got)
-	}
-	if cmd == nil {
-		t.Fatal("esc should emit a ChatListFilteredMsg command")
-	}
-	if msg, ok := cmd().(ChatListFilteredMsg); !ok || msg.Query != "" {
-		t.Fatalf("esc emitted %#v, want ChatListFilteredMsg{Query: \"\"}", cmd())
 	}
 }
 

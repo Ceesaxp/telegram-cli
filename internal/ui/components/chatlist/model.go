@@ -436,7 +436,7 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.ClearFilter()
-		return m, filteredCmd("")
+		return m, nil
 	case "enter":
 		m.closeFilterInput()
 		return m, nil
@@ -454,14 +454,7 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	m.filter = m.filterInput.Value
 	m.refreshList()
-	return m, filteredCmd(m.filter)
-}
-
-// filteredCmd announces a filter change to the app layer.
-func filteredCmd(query string) tea.Cmd {
-	return func() tea.Msg {
-		return ChatListFilteredMsg{Query: query}
-	}
+	return m, nil
 }
 
 // ActiveChatId returns the currently selected chat ID.
@@ -511,6 +504,17 @@ func (m Model) ActiveFolderIndex() int {
 // bar's buffer counter reports, so it must be what the user can actually
 // see rather than the total held in the store.
 func (m Model) Count() int { return len(m.list.Items) }
+
+// TotalCount is how many chats there are before the filter, which is what
+// makes Count legible: a list that drops from twelve rows to three has not
+// lost nine chats.
+//
+// The SAME denominator the filter header draws (see renderFilterHeader), on
+// purpose. Two surfaces describing one list with different totals is worse
+// than either of them saying nothing, and this is the only way to be sure
+// they agree — the header and the hint bar are in different packages and
+// nothing else would catch them drifting.
+func (m Model) TotalCount() int { return m.storeChatCount() }
 
 // BufferIndex is a chat's 1-based row in the list as it currently stands,
 // or 0 when the chat is not in it — filtered out, in another folder, or not
@@ -713,7 +717,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// first; when it does, '/' then esc still clears.
 				if m.filter != "" {
 					m.ClearFilter()
-					return m, filteredCmd("")
+					return m, nil
 				}
 				return m, nil
 			case "left", "[":
