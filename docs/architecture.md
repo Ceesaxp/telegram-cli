@@ -123,6 +123,15 @@ fact exposes it rather than announcing changes to it.
 stdin and is typed into whatever has focus. Colour depth, image protocol and
 hyperlink support are all resolved from environment variables only.
 
+**The peer cache is a map that a file outlives the process for.** Access
+hashes are read from `state.db` once at open and answered from memory
+afterwards, because gotd consults them on the update path. Writes are
+coalesced: an unchanged hash costs nothing, and changed ones go out together
+a quarter-second after the burst stops. Losing the tail on a crash is
+acceptable — the server hands them out again, which is also why `bindOwner`
+can drop the whole namespace when a session file turns out to belong to a
+different account.
+
 **Only the TUI subscribes to updates.** `telegram-api` and `telegram-mcp` run
 in-memory with no update stream, so they never contend for the exclusive
 bbolt lock on `state.db`.
