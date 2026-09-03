@@ -228,6 +228,21 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 			}
 		}
 
+		// The cache outlives the process. done is in-memory and starts
+		// false in every one, so without this a restart re-downloads every
+		// thumbnail, avatar and document already sitting in files_dir —
+		// which the config calls "the media CACHE" and which held only
+		// within one process lifetime.
+		//
+		// The path is deterministic and the content behind a key never
+		// changes: a document ID, a photo ID and a size identify bytes, not
+		// a version of them.
+		path := c.cachePath(key, snap)
+		if cached, ok := usableCache(path, snap.size); ok {
+			c.files.markDone(key, path)
+			return &File{ID: key, Path: cached, Size: snap.size, Downloaded: true}, nil
+		}
+
 		ctx, cancel := transferCtx()
 		defer cancel()
 
@@ -246,12 +261,7 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 			return nil, fmt.Errorf("file %q has no location", key)
 		}
 
-		name := fmt.Sprintf("%s_%s",
-			sanitizeDownloadFileName(key),
-			sanitizeDownloadFileName(snap.name))
-		path := filepath.Join(c.config.Storage.FilesDir, name)
-
-		if _, err := downloader.NewDownloader().Download(c.api, location).ToPath(ctx, path); err != nil {
+		if err := downloadToPath(ctx, c.api, location, path); err != nil {
 			return nil, fmt.Errorf("download %s: %w", key, err)
 		}
 
@@ -265,6 +275,82 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 	}
 	file, _ := v.(*File)
 	return file, nil
+}
+
+// cachePath is where a key's bytes live on disk. Deterministic, so a later
+// process can find what an earlier one fetched.
+//
+// An avatar's name carries its photo ID. Every other key already names
+// immutable content — a document ID, a photo ID and a size — but
+// "avatar:<chatID>" names a SLOT, and the picture in it changes. Without the
+// generation in the filename, a chat that changed its photo would be served
+// the old one from the cache forever.
+func (c *Client) cachePath(key string, snap fileSnap) string {
+	name := sanitizeDownloadFileName(key)
+	if snap.avatar != nil {
+		name = fmt.Sprintf("%s_%d", name, snap.avatar.photoID)
+	}
+	return filepath.Join(c.config.Storage.FilesDir,
+		fmt.Sprintf("%s_%s", name, sanitizeDownloadFileName(snap.name)))
+}
+
+// usableCache reports whether the file at path can stand in for a download.
+//
+// The size has to agree when it is known. A file of the wrong length is a
+// truncated download from a previous run or a different file that happened
+// to land on the name, and serving either is worse than fetching again — a
+// half a photo draws as a broken photo, which reads as a bug in the client
+// rather than as a cache miss.
+//
+// A size of zero means the registry does not know, which is normal for a
+// stripped thumbnail; then existence has to be enough.
+func usableCache(path string, size int64) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	if info.Size() == 0 {
+		return "", false
+	}
+	if size > 0 && info.Size() != size {
+		return "", false
+	}
+	return path, true
+}
+
+// downloadToPath fetches into a temporary file beside the destination and
+// renames it into place.
+//
+// gotd's ToPath opens the destination with os.Create, so it truncates the
+// good copy BEFORE the transfer — an interrupted download used to leave an
+// empty file exactly where the next run looks for a cached one. Renaming
+// into place means the destination either does not exist or is complete.
+func downloadToPath(ctx context.Context, api *tg.Client, location tg.InputFileLocationClass, path string) error {
+	return fetchIntoPlace(ctx, path, func(ctx context.Context, tmp string) error {
+		_, err := downloader.NewDownloader().Download(api, location).ToPath(ctx, tmp)
+		return err
+	})
+}
+
+// fetchIntoPlace runs fetch against a temporary name beside path and renames
+// the result into place. The transfer is a parameter so the guarantee — that
+// a failure leaves nothing at path — can be tested without a server.
+func fetchIntoPlace(ctx context.Context, path string, fetch func(context.Context, string) error) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".part-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	tmp.Close()
+
+	// Removed on every path that does not rename it away, so a failed
+	// transfer leaves the cache as it found it.
+	defer os.Remove(tmpName)
+
+	if err := fetch(ctx, tmpName); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // sanitizeDownloadFileName makes Telegram-provided names safe on Windows too.

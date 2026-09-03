@@ -33,8 +33,14 @@ Two directories under `[storage]`, and they are not the same thing:
 
 | Setting | Default | What it holds |
 |---|---|---|
-| `files_dir` | `~/.local/share/tele-tui/files` | The media **cache**. Downloads land here named by their Telegram file id, so a photo drawn twice is fetched once. Nothing here is meant to be found by hand. |
+| `files_dir` | `~/.local/share/tele-tui/files` | The media **cache**. Downloads land here named by their Telegram file id, so a photo drawn twice is fetched once — including across restarts, since the name is derived from the id rather than remembered. Nothing here is meant to be found by hand. |
 | `download_dir` | `~/Downloads` | Where `s` **saves**: a copy under the sender's own filename, in the folder you'd look in. |
+
+Deleting the cache is always safe: anything missing is fetched again. A file
+whose size disagrees with what Telegram said is treated as missing, and a
+transfer that dies leaves nothing behind — the download goes to a temporary
+name beside the destination and is renamed into place only once it is
+complete.
 
 `s` downloads into the cache (if it isn't there already) and then copies out
 of it. The copy:
