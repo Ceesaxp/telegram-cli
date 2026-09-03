@@ -415,8 +415,15 @@ func (m *Model) ClickAtXY(x, y int) (chatID int64, ok bool) {
 }
 
 // ScrollBy moves the selection by n items (negative scrolls up).
-func (m *Model) ScrollBy(n int) {
+// ScrollBy moves the cursor by n and returns any work that move implies —
+// today, a request for the next page of dialogs when it lands near the end.
+//
+// It returns a command because the wheel moves the same cursor the keyboard
+// does, and a caller that ignored the result would give mouse users a chat
+// list that stops at the first page.
+func (m *Model) ScrollBy(n int) tea.Cmd {
 	m.list.ScrollBy(n)
+	return m.pageAheadCmd()
 }
 
 // SelectDelta moves the selection cursor by delta within the current
@@ -873,21 +880,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.FolderLoadCmd()
 			}
 
-			// Reaching the bottom is the ask. The dialog list is loaded a
-			// page at a time — an account's whole history at startup would
-			// be a long wait for chats nobody scrolled to — so the cursor
-			// arriving near the end is what requests the next one.
+			selected := m.list.Update(msg)
+
+			// AFTER the move, and never on a path that returns early.
+			// Reaching the bottom is the ask — the dialog list is loaded a
+			// page at a time, since an account's whole history at startup
+			// would be a long wait for chats nobody scrolled to.
+			//
+			// pageAheadCmd both marks a request in flight and returns the
+			// command that clears it, so a caller that drops the command
+			// wedges paging for the session. It used to run before this
+			// Update and the selection branch below returned without it,
+			// which is exactly that: Enter near the bottom charged for a
+			// request that never ran. One place, after the move, and every
+			// path falls through to the single return at the end.
 			cmds = append(cmds, m.pageAheadCmd())
 
-			if selected := m.list.Update(msg); selected {
+			if selected {
 				item := m.list.SelectedItem()
 				if item != nil {
 					var chatID int64
 					fmt.Sscanf(item.ID, "%d", &chatID)
 					m.activeChatId = chatID
-					return m, func() tea.Msg {
+					cmds = append(cmds, func() tea.Msg {
 						return ChatSelectedMsg{ChatId: chatID}
-					}
+					})
 				}
 			}
 		}

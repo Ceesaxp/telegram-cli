@@ -173,13 +173,48 @@ func pageDialogs(fetch dialogPageFetcher, cursor dialogCursor, limit int) (chats
 		// A short page is the end of the list. after.peer is nil when the
 		// page held no usable dialog to continue from, and an unchanged
 		// cursor would loop forever.
-		if raw < pageLimit || after.peer == nil ||
-			(after.date == cursor.date && after.id == cursor.id) {
+		//
+		// The PEER is part of "unchanged". A message id is scoped to its
+		// peer, so two dialogs in different channels can share an id and a
+		// date; comparing only those two would call the cursor stalled when
+		// it had in fact moved, and every older dialog would be dropped for
+		// the rest of the session.
+		if raw < pageLimit || after.peer == nil || sameCursor(after, cursor) {
 			return chats, cursor, true, nil
 		}
 		cursor = after
 	}
 	return chats, cursor, false, nil
+}
+
+// sameCursor reports whether two cursors point at the same dialog.
+//
+// By peer IDENTITY rather than by comparing the InputPeer values: those are
+// interfaces over structs that carry access hashes, which the server is free
+// to reissue, and two values describing one peer would then compare unequal.
+// What matters here is only whether pagination advanced.
+func sameCursor(a, b dialogCursor) bool {
+	return a.date == b.date && a.id == b.id && peerIdentity(a.peer) == peerIdentity(b.peer)
+}
+
+// peerIdentity is a peer's ID, ignoring its access hash. Zero for the
+// self/empty peers and for anything unrecognised, which is safe in the one
+// place this is used: an unrecognised peer compares equal only to another
+// unrecognised one, and the surrounding checks still bound the loop.
+func peerIdentity(p tg.InputPeerClass) int64 {
+	switch v := p.(type) {
+	case *tg.InputPeerUser:
+		return v.UserID
+	case *tg.InputPeerChat:
+		return v.ChatID
+	case *tg.InputPeerChannel:
+		return v.ChannelID
+	case *tg.InputPeerUserFromMessage:
+		return v.UserID
+	case *tg.InputPeerChannelFromMessage:
+		return v.ChannelID
+	}
+	return 0
 }
 
 // listChatsPage fetches one page of dialogs. It returns the converted

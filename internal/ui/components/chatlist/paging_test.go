@@ -203,3 +203,123 @@ func TestTheNewRowsAreDrawn(t *testing.T) {
 		t.Errorf("the list still holds %d rows after a page arrived", len(m.list.Items))
 	}
 }
+
+// TestOpeningAChatNearTheBottomDoesNotWedgePaging.
+//
+// pageAheadCmd does two things at once: it marks a request in flight and
+// returns the command that clears the mark. A caller that drops the command
+// therefore disables paging for the rest of the session — and the selection
+// branch used to do exactly that, returning ChatSelectedMsg on its own.
+//
+// Pressing Enter near the bottom of the list, or G then Enter, was enough.
+func TestOpeningAChatNearTheBottomDoesNotWedgePaging(t *testing.T) {
+	m := listOf(t, 50, 49)
+	fake := &fakeDialogs{more: true, pages: 5, perPage: 50}
+	m.dialogs = fake
+	m.SetFocused(true)
+
+	m, cmd := m.Update(specialKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("enter produced no command at all")
+	}
+	if !m.pagingMore {
+		// Fine in itself — but then the request was never made, and the
+		// test below would not be testing anything.
+		t.Fatal("precondition: enter did not start a page request")
+	}
+
+	// The command that clears the flag has to be among what was returned.
+	drain(t, cmd, &m)
+	if m.pagingMore {
+		t.Fatal("the page request was charged for and its command discarded; " +
+			"paging is now off for the session")
+	}
+
+	// And the list can still page afterwards.
+	if !m.shouldPageAhead() {
+		t.Error("the list refuses to page after a chat was opened near the bottom")
+	}
+}
+
+// TestSelectingAChatStillReportsIt — the behaviour the early return existed
+// for must survive being folded into the batch.
+func TestSelectingAChatStillReportsIt(t *testing.T) {
+	m := listOf(t, 50, 49)
+	m.dialogs = &fakeDialogs{more: true, pages: 1, perPage: 50}
+	m.SetFocused(true)
+
+	m, cmd := m.Update(specialKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("enter produced no command")
+	}
+
+	var selected *ChatSelectedMsg
+	walk(cmd, func(msg tea.Msg) {
+		if sel, ok := msg.(ChatSelectedMsg); ok {
+			selected = &sel
+		}
+	})
+	if selected == nil {
+		t.Fatal("enter no longer reports the selected chat")
+	}
+	if selected.ChatId != 50 {
+		t.Errorf("selected chat %d, want the cursored 50", selected.ChatId)
+	}
+}
+
+// TestTheWheelPagesToo. The mouse moves the same cursor the keyboard does,
+// and a chat list that only grew for keyboard users would be a surprising
+// place to draw that line.
+func TestTheWheelPagesToo(t *testing.T) {
+	m := listOf(t, 50, 40)
+	fake := &fakeDialogs{more: true, pages: 1, perPage: 50}
+	m.dialogs = fake
+
+	// The FIRST scroll into the trigger zone is the one that asks; the rest
+	// correctly return nil while that request is in flight.
+	var asked tea.Cmd
+	for range 9 {
+		if cmd := m.ScrollBy(1); cmd != nil && asked == nil {
+			asked = cmd
+		}
+	}
+	if asked == nil {
+		t.Fatal("scrolling to the bottom asked for nothing")
+	}
+	if !m.pagingMore {
+		t.Error("the wheel reached the end of the list without requesting a page")
+	}
+
+	// And the command it handed back is the one that clears the flag, so a
+	// caller which returns it keeps paging alive.
+	drain(t, asked, &m)
+	if m.pagingMore {
+		t.Error("the wheel's command did not clear the in-flight flag")
+	}
+}
+
+// drain runs cmd, and anything it batches, back into the model.
+func drain(t *testing.T, cmd tea.Cmd, m *Model) {
+	t.Helper()
+	walk(cmd, func(msg tea.Msg) {
+		*m, _ = m.Update(msg)
+	})
+}
+
+// walk runs cmd and hands every message it produces to fn, descending into
+// batches.
+func walk(cmd tea.Cmd, fn func(tea.Msg)) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	switch v := msg.(type) {
+	case nil:
+	case tea.BatchMsg:
+		for _, sub := range v {
+			walk(sub, fn)
+		}
+	default:
+		fn(msg)
+	}
+}

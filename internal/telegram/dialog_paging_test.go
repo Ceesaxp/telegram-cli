@@ -338,3 +338,54 @@ func TestAnExhaustedPagerStopsAskingTheServer(t *testing.T) {
 		t.Errorf("an exhausted pager made %d more requests", len(f.asked)-asked)
 	}
 }
+
+// TestTwoPeersSharingADateAndIDDoNotLookLikeAStall.
+//
+// A message id is scoped to its peer, so two dialogs in different channels
+// can carry the same id with the same date. Comparing only those two fields
+// called the cursor stalled when it had in fact moved — and every older
+// dialog was then dropped for the rest of the session.
+func TestTwoPeersSharingADateAndIDDoNotLookLikeAStall(t *testing.T) {
+	start := dialogCursor{date: 500, id: 42, peer: &tg.InputPeerChannel{ChannelID: 1}}
+	moved := dialogCursor{date: 500, id: 42, peer: &tg.InputPeerChannel{ChannelID: 2}}
+
+	f := &fakePages{pages: []fakePage{
+		{chats: run(1, dialogsPageSize), next: moved, raw: dialogsPageSize},
+		{chats: run(101, 10), next: cursorAt(9, 9), raw: 10},
+	}}
+
+	chats, _, done, err := pageDialogs(f.fetch, start, 5*dialogsPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.asked) != 2 {
+		t.Fatalf("made %d requests; a different peer with the same id read as a stall", len(f.asked))
+	}
+	if len(chats) != dialogsPageSize+10 {
+		t.Errorf("got %d chats, want both pages", len(chats))
+	}
+	if !done {
+		t.Error("the short second page did not end the list")
+	}
+}
+
+// TestTheSamePeerAtTheSamePlaceIsStillAStall — the guard has to keep
+// working, and an access hash the server reissued must not make one dialog
+// look like two.
+func TestTheSamePeerAtTheSamePlaceIsStillAStall(t *testing.T) {
+	start := dialogCursor{date: 500, id: 42, peer: &tg.InputPeerChannel{ChannelID: 7, AccessHash: 111}}
+	same := dialogCursor{date: 500, id: 42, peer: &tg.InputPeerChannel{ChannelID: 7, AccessHash: 222}}
+
+	f := &fakePages{endless: &fakePage{
+		chats: run(1, dialogsPageSize), next: same, raw: dialogsPageSize,
+	}}
+
+	if _, _, done, err := pageDialogs(f.fetch, start, 5*dialogsPageSize); err != nil {
+		t.Fatal(err)
+	} else if !done {
+		t.Error("a cursor that did not move failed to end the list")
+	}
+	if len(f.asked) != 1 {
+		t.Errorf("a stalled cursor took %d requests to notice, want 1", len(f.asked))
+	}
+}
