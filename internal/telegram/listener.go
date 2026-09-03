@@ -24,16 +24,19 @@ func NewListener(client *Client, program *tea.Program) (*Listener, error) {
 		client:  client,
 		program: program,
 	}
-	client.setMsgSink(program.Send)
 	if err := client.registerUpdateHandlers(l.registerHandlers); err != nil {
 		return nil, err
 	}
 	return l, nil
 }
 
-// Start is a no-op kept for API compatibility: handlers are registered
-// eagerly in NewListener and dispatch is driven by client.Run.
-func (l *Listener) Start() {}
+// Start attaches the Bubble Tea sink and starts Telegram. Call it from a
+// goroutine immediately before Program.Run: attaching can replay buffered
+// startup notices, and Program.Send intentionally blocks until Run begins.
+func (l *Listener) Start() error {
+	l.client.setMsgSink(l.program.Send)
+	return l.client.Start()
+}
 
 func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 	c := l.client

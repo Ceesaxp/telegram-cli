@@ -107,7 +107,10 @@ func reusableLocalFile(previous, refreshed *fileEntry) bool {
 	if expectedSize == 0 {
 		expectedSize = previous.size
 	}
-	return expectedSize == 0 || info.Size() == expectedSize
+	if expectedSize == 0 {
+		return info.Size() > 0
+	}
+	return info.Size() == expectedSize
 }
 
 func sameImmutableMedia(previous, refreshed tg.InputFileLocationClass) bool {

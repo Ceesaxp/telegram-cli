@@ -101,11 +101,13 @@ func TestFileRegistryDoesNotPreserveInvalidLocalState(t *testing.T) {
 		oldSize   int64
 		newSize   int64
 		remove    bool
+		empty     bool
 		avatarOld *avatarRef
 		avatarNew *avatarRef
 	}{
 		{name: "missing file", oldSize: 4, newSize: 4, remove: true},
 		{name: "changed size", oldSize: 4, newSize: 5},
+		{name: "empty file with unknown size", empty: true},
 		{name: "mutable avatar", oldSize: 4, newSize: 4,
 			avatarOld: &avatarRef{chatID: 1, photoID: 10},
 			avatarNew: &avatarRef{chatID: 1, photoID: 11}},
@@ -113,11 +115,23 @@ func TestFileRegistryDoesNotPreserveInvalidLocalState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newFileRegistry()
 			path := filepath.Join(t.TempDir(), "cached.bin")
-			if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+			contents := []byte("data")
+			if tc.empty {
+				contents = nil
+			}
+			if err := os.WriteFile(path, contents, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			old := &fileEntry{size: tc.oldSize, avatar: tc.avatarOld}
-			fresh := &fileEntry{size: tc.newSize, avatar: tc.avatarNew}
+			old := &fileEntry{
+				location: &tg.InputDocumentFileLocation{ID: 7},
+				size:     tc.oldSize,
+				avatar:   tc.avatarOld,
+			}
+			fresh := &fileEntry{
+				location: &tg.InputDocumentFileLocation{ID: 7},
+				size:     tc.newSize,
+				avatar:   tc.avatarNew,
+			}
 			r.put("key", old)
 			r.markDone("key", path)
 			if tc.remove {

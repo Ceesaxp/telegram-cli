@@ -35,16 +35,17 @@ var ErrLoginRequired = errors.New("login required: run 'telegram-mcp login' firs
 type TUIAuthorizer struct {
 	callbackMu sync.Mutex
 
-	phoneCh    chan string
-	codeCh     chan string
-	passwordCh chan string
-	phone      string
-	onState    AuthStateCallback
-	onError    func(error)
-	lastState  AuthState
-	lastHint   string
-	hasState   bool
-	pendingErr []error
+	phoneCh      chan string
+	codeCh       chan string
+	passwordCh   chan string
+	phone        string
+	onState      AuthStateCallback
+	onError      func(error)
+	lastState    AuthState
+	lastHint     string
+	hasState     bool
+	stateVersion uint64
+	pendingErr   []error
 
 	// NonInteractive makes Phone/Code/Password fail immediately with
 	// ErrLoginRequired instead of waiting for user input (headless mode).
@@ -67,12 +68,22 @@ func NewTUIAuthorizer(cfg *config.Config) *TUIAuthorizer {
 // SetStateCallback sets the callback for auth state changes.
 func (a *TUIAuthorizer) SetStateCallback(cb AuthStateCallback) {
 	a.callbackMu.Lock()
-	a.onState = cb
-	state, hint, replay := a.lastState, a.lastHint, a.hasState && cb != nil
-	a.callbackMu.Unlock()
-	if replay {
-		cb(state, hint)
+	a.onState = nil
+	if cb == nil {
+		a.callbackMu.Unlock()
+		return
 	}
+	for a.hasState {
+		state, hint, version := a.lastState, a.lastHint, a.stateVersion
+		a.callbackMu.Unlock()
+		cb(state, hint)
+		a.callbackMu.Lock()
+		if a.stateVersion == version {
+			break
+		}
+	}
+	a.onState = cb
+	a.callbackMu.Unlock()
 }
 
 // SetErrorCallback sets the callback for fatal auth errors (shown in the TUI).
@@ -93,6 +104,7 @@ func (a *TUIAuthorizer) SetErrorCallback(cb func(error)) {
 func (a *TUIAuthorizer) notifyState(state AuthState, hint string) {
 	a.callbackMu.Lock()
 	a.lastState, a.lastHint, a.hasState = state, hint, true
+	a.stateVersion++
 	cb := a.onState
 	a.callbackMu.Unlock()
 	if cb != nil {

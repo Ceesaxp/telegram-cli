@@ -100,14 +100,19 @@ func main() {
 	authorizer.SetErrorCallback(func(err error) {
 		p.Send(app.AuthErrorMsg{Err: err})
 	})
-	if _, err := telegram.NewListener(tgClient, p); err != nil {
+	listener, err := telegram.NewListener(tgClient, p)
+	if err != nil {
 		_ = tgClient.Close()
 		fatalf("Failed to register Telegram updates: %v", err)
 	}
-	if err := tgClient.Start(); err != nil {
-		_ = tgClient.Close()
-		fatalf("Failed to start Telegram client: %v", err)
-	}
+	// Program.Send blocks until p.Run starts. Start from a goroutine so any
+	// construction-time notices can wait for the event loop without keeping
+	// the main goroutine from reaching it.
+	go func() {
+		if err := listener.Start(); err != nil {
+			p.Send(app.AuthErrorMsg{Err: fmt.Errorf("start Telegram client: %w", err)})
+		}
+	}()
 
 	// Once client is ready, load the authenticated account identity.
 	go func() {
@@ -146,7 +151,10 @@ func main() {
 	}
 
 	if err := tgClient.Close(); err != nil {
-		fatalf("Error shutting down Telegram client: %v", err)
+		// The TUI session itself completed successfully and Bubble Tea has
+		// already restored the terminal. A bounded backend unwind timing out is
+		// diagnostic, not a reason to turn that clean session into exit code 1.
+		log.Printf("Telegram client shutdown did not complete cleanly: %v", err)
 	}
 }
 

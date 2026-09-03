@@ -22,6 +22,47 @@ func TestAuthorizerReplaysLatestStateToLateCallback(t *testing.T) {
 	}
 }
 
+func TestAuthorizerOrdersStateChangesDuringLateCallbackReplay(t *testing.T) {
+	a := &TUIAuthorizer{}
+	a.notifyState(AuthStateWaitPhone, "")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var mu sync.Mutex
+	var states []AuthState
+	go func() {
+		a.SetStateCallback(func(state AuthState, _ string) {
+			if state == AuthStateWaitPhone {
+				close(started)
+				<-release
+			}
+			mu.Lock()
+			states = append(states, state)
+			mu.Unlock()
+		})
+		close(done)
+	}()
+
+	<-started
+	a.notifyState(AuthStateWaitCode, "")
+	close(release)
+	<-done
+	a.notifyState(AuthStateWaitPassword, "hint")
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []AuthState{AuthStateWaitPhone, AuthStateWaitCode, AuthStateWaitPassword}
+	if len(states) != len(want) {
+		t.Fatalf("states = %v, want %v", states, want)
+	}
+	for i := range want {
+		if states[i] != want[i] {
+			t.Fatalf("states = %v, want %v", states, want)
+		}
+	}
+}
+
 func TestAuthorizerReplaysPendingErrorsOnce(t *testing.T) {
 	a := &TUIAuthorizer{}
 	want := errors.New("login failed")

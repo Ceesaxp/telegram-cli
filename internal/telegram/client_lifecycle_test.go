@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/gotd/td/tg"
 )
 
@@ -41,6 +42,36 @@ func TestClientHandlersMustBeRegisteredBeforeStart(t *testing.T) {
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestNewListenerDoesNotSendBeforeProgramRun(t *testing.T) {
+	c := lifecycleTestClient(func(context.Context) {})
+	c.notify(ClientWarningMsg{Text: "construction warning"})
+	p := tea.NewProgram(nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewListener(c, p)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("NewListener: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("NewListener blocked sending to a program that has not started")
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.sendMsg != nil {
+		t.Fatal("NewListener attached the message sink before Start")
+	}
+	if len(c.pendingNotices) != 1 {
+		t.Fatalf("pending notices = %d, want 1", len(c.pendingNotices))
 	}
 }
 
