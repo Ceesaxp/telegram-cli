@@ -15,11 +15,11 @@ import (
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 )
 
-// TestReadmeKeymapMatchesHelpSections is the drift test standing in for
-// generating README.md's key tables from helpSections(). The keymap has
+// TestKeymapDocMatchesHelpSections is the drift test standing in for
+// generating docs/keys.md's tables from helpSections(). The keymap has
 // four descriptions — keymap.go's prose table, helpSections(), the status
-// bar strip, and the README — and the first three are built from the same
-// resolvedKeys, so the README is the only one that can silently fall
+// bar strip, and docs/keys.md — and the first three are built from the same
+// resolvedKeys, so the document is the only one that can silently fall
 // behind. It did, twice: it documented quick-type for a release after
 // quick-type was removed, and it listed "h/l: folders" after h/l became
 // panel movement.
@@ -27,13 +27,13 @@ import (
 // # What it pins
 //
 // The KEY SET, in both directions. A binding added to helpSections() and
-// not written down fails; a README row naming a key that no longer appears
+// not written down fails; a row naming a key that no longer appears
 // anywhere in helpSections() fails.
 //
 // # What it does not pin
 //
 //   - Descriptions. The two can word the same key differently, and should
-//     — the README has room to explain, the card does not.
+//     — the document has room to explain, the card does not.
 //   - Which panel a key ACTS on, only which table it is listed under.
 //     Section placement is checked (see below), so a key documented in
 //     the wrong table fails — but swapping two keys' Actions inside one
@@ -61,7 +61,7 @@ import (
 // necessary fails as well, so the allow-list cannot quietly absorb real
 // drift.
 //
-// # How it reads the README
+// # How it reads the document
 //
 // Only the first column of tables whose header cell is exactly "Key",
 // inside the "## Keybindings" section, and within those only text in
@@ -70,19 +70,19 @@ import (
 // the Action column, the terminal-settings table and the [keys] "Wired?"
 // table are all invisible to it. Rewriting the surrounding prose cannot
 // break this test; only changing a documented key can.
-func TestReadmeKeymapMatchesHelpSections(t *testing.T) {
-	documentedIn, tables := readmeKeymapTokens(t)
+func TestKeymapDocMatchesHelpSections(t *testing.T) {
+	documentedIn, tables := docsKeymapTokens(t)
 	advertisedIn := helpSectionTokens(t)
 	documented, advertised := flatten(documentedIn), flatten(advertisedIn)
 
 	// A rename of the heading, or a table losing its "Key" header, would
 	// otherwise make this test pass by comparing nothing at all.
 	if tables < 6 {
-		t.Fatalf("parsed only %d key tables from README.md — has the "+
-			"\"## Keybindings\" section moved or been reformatted?", tables)
+		t.Fatalf("parsed only %d key tables from docs/keys.md — has it "+
+			"moved or been reformatted?", tables)
 	}
 	if len(documented) < 50 {
-		t.Fatalf("parsed only %d keys from README.md; expected the whole "+
+		t.Fatalf("parsed only %d keys from docs/keys.md; expected the whole "+
 			"keymap, so the parse is probably broken rather than the docs", len(documented))
 	}
 
@@ -94,7 +94,7 @@ func TestReadmeKeymapMatchesHelpSections(t *testing.T) {
 			continue
 		}
 		t.Errorf("%q is advertised by helpSections() but is NOT documented "+
-			"in README.md's keybinding tables — add a row for it (or, if it "+
+			"in docs/keys.md's tables — add a row for it (or, if it "+
 			"is deliberately undocumented, an entry in onlyInHelpSections)", key)
 	}
 
@@ -102,13 +102,13 @@ func TestReadmeKeymapMatchesHelpSections(t *testing.T) {
 		if advertised[key] {
 			continue
 		}
-		if _, ok := onlyInReadme[key]; ok {
+		if _, ok := onlyInDocs[key]; ok {
 			continue
 		}
-		t.Errorf("%q is documented in README.md's keybinding tables but is "+
+		t.Errorf("%q is documented in docs/keys.md's tables but is "+
 			"NOT advertised by helpSections() — the binding is gone, so "+
-			"delete the README row (or, if the key is real but component-"+
-			"owned, add an entry to onlyInReadme)", key)
+			"delete the row (or, if the key is real but component-"+
+			"owned, add an entry to onlyInDocs)", key)
 	}
 
 	// Section placement, for the keys both sides agree exist.
@@ -127,7 +127,7 @@ func TestReadmeKeymapMatchesHelpSections(t *testing.T) {
 		if _, allowed := sectionPlacementAllowed[key]; allowed {
 			continue
 		}
-		t.Errorf("%q is documented under README section(s) %v but the help "+
+		t.Errorf("%q is documented under keys.md section(s) %v but the help "+
 			"card puts it under %v — one of the two has it in the wrong "+
 			"table (or add an entry to sectionPlacementAllowed with the "+
 			"reason the difference is deliberate)",
@@ -140,24 +140,24 @@ func TestReadmeKeymapMatchesHelpSections(t *testing.T) {
 	for key, reason := range onlyInHelpSections {
 		if documented[key] {
 			t.Errorf("onlyInHelpSections[%q] (%s) is stale — the key is "+
-				"documented in the README now; delete the exemption", key, reason)
+				"documented in keys.md now; delete the exemption", key, reason)
 		}
 	}
-	for key, reason := range onlyInReadme {
+	for key, reason := range onlyInDocs {
 		if advertised[key] {
-			t.Errorf("onlyInReadme[%q] (%s) is stale — the key is advertised "+
+			t.Errorf("onlyInDocs[%q] (%s) is stale — the key is advertised "+
 				"by helpSections() now; delete the exemption", key, reason)
 		}
 	}
 }
 
-// sectionPlacementAllowed lists keys the README files under a different
+// sectionPlacementAllowed lists keys the document files under a different
 // heading than the help card groups them under, on purpose.
 var sectionPlacementAllowed = map[string]string{
-	"q": "the README lists it once under Global with a scope note (\"chat " +
+	"q": "keys.md lists it once under Global with a scope note (\"chat " +
 		"list / chat view only\") as well as in both browsing tables; the " +
 		"card has no room for the note and repeats the row instead",
-	"esc": "the README spells out what Esc does in the chat view (drop the " +
+	"esc": "keys.md spells out what Esc does in the chat view (drop the " +
 		"find results first) where the card leaves it to the global row",
 	"up": "arrow synonym for k in the browsing panels and the overlays, " +
 		"where the card names only the vi spelling — but NOT in the " +
@@ -198,15 +198,15 @@ func sectionList(s map[string]bool) []string {
 	return out
 }
 
-// onlyInHelpSections lists keys the help card names that the README writes
+// onlyInHelpSections lists keys the help card names that the document writes
 // as prose rather than as a `code span`, so the parser cannot see them.
 var onlyInHelpSections = map[string]string{
-	"click": "the README writes it as \"click a chat\" / \"click a folder tab\"",
+	"click": "keys.md writes it as \"click a chat\" / \"click a folder tab\"",
 }
 
-// onlyInReadme lists keys the README documents that the help card
+// onlyInDocs lists keys the document names that the help card
 // deliberately does not name.
-var onlyInReadme = map[string]string{}
+var onlyInDocs = map[string]string{}
 
 // helpSectionTokens indexes every key the help overlay names by the
 // canonical section it appears in. Built once per composer editing mode,
@@ -248,11 +248,11 @@ func helpSectionTokens(t *testing.T) map[string]map[string]bool {
 	return out
 }
 
-// canonicalSection maps a help-overlay section title, and a README "###"
-// heading, onto the one name both are compared under. Returning "" from
-// the README side means "not a keymap section" (the macOS notes, the
-// [keys] table, the clipboard section); from the help side it is a
-// programming error, since every help section is a keymap section.
+// canonicalSection maps a help-overlay section title, and a docs/keys.md
+// "##" heading, onto the one name both are compared under. Returning "" from
+// the document side means "not a keymap section" (the macOS notes, the
+// [keys] configuration section); from the help side it is a programming
+// error, since every help section is a keymap section.
 func canonicalSection(title string) string {
 	switch {
 	case strings.HasPrefix(title, "Global"):
@@ -265,7 +265,7 @@ func canonicalSection(title string) string {
 		// "Composer", "Composer editing modes", "Composer (emacs
 		// editing)" and "Composer (vi editing)" are all one section
 		// here: the split is by editing mode, not by panel, and the
-		// README documents both modes under the same heading.
+		// the document covers both modes under one heading.
 		return "composer"
 	case strings.HasPrefix(title, "Overlays"):
 		return "overlays"
@@ -287,14 +287,14 @@ var codeSpan = regexp.MustCompile("`([^`]+)`")
 // documented key can look undocumented.
 var doubleCodeSpan = regexp.MustCompile("``\\s*(.+?)\\s*``")
 
-// digitRange collapses the README's "`1`–`9`" idiom (any dash) into the
+// digitRange collapses the document's "`1`–`9`" idiom (any dash) into the
 // single "1-9" token the help card uses for the folder jump.
 var digitRange = regexp.MustCompile("`1`\\s*[-–—]\\s*`9`")
 
-// readmeKeymapTokens returns every key documented in README.md's keybinding
-// tables, plus the number of tables it parsed. See the test's doc comment
-// for the parsing rules and why they are the ones that survive editing.
-func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
+// docsKeymapTokens returns every key documented in docs/keys.md's tables,
+// plus the number of tables it parsed. See the test's doc comment for the
+// parsing rules and why they are the ones that survive editing.
+func docsKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 	t.Helper()
 
 	// Located relative to this source file: `go test` runs with the
@@ -304,7 +304,7 @@ func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 	if !ok {
 		t.Fatal("cannot locate this test's own source file")
 	}
-	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "README.md")
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "docs", "keys.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -312,7 +312,6 @@ func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 
 	out := map[string]map[string]bool{}
 	tables := 0
-	inSection := false
 	skipping := false
 	inTable := false
 	section := ""
@@ -320,19 +319,15 @@ func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 
+		// The whole file is the keymap, so its "##" headings are the
+		// sections. This was one "## Keybindings" section inside the README
+		// with "###" subsections until the docs were split; the levels moved
+		// up with the file.
+		//
+		// The one out-of-scope section: help.Model owns those keys and they
+		// never pass through helpSections.
 		if strings.HasPrefix(trimmed, "## ") {
-			inSection = trimmed == "## Keybindings"
-			skipping = false
-			inTable = false
-			continue
-		}
-		if !inSection {
-			continue
-		}
-		// The one out-of-scope subsection: help.Model owns those keys and
-		// they never pass through helpSections.
-		if strings.HasPrefix(trimmed, "### ") {
-			heading := strings.TrimPrefix(trimmed, "### ")
+			heading := strings.TrimPrefix(trimmed, "## ")
 			skipping = strings.HasPrefix(heading, "Help overlay")
 			section = canonicalSection(heading)
 			inTable = false
@@ -376,7 +371,7 @@ func readmeKeymapTokens(t *testing.T) (map[string]map[string]bool, int) {
 		})
 		spans = append(spans, codeSpan.FindAllStringSubmatch(cell, -1)...)
 
-		// One code span is one key: the README always backticks each key
+		// One code span is one key: the document always backticks each key
 		// separately, including in runs like "`h`/`l`/`j`/`k`".
 		for _, span := range spans {
 			k := normalizeKeyToken(span[1])
@@ -428,7 +423,7 @@ func normalizeKeyToken(key string) string {
 	return key
 }
 
-// keyTokenAliases maps the spellings the README uses to the ones
+// keyTokenAliases maps the spellings the document uses to the ones
 // Key.Keystroke() — and therefore helpSections — produces.
 var keyTokenAliases = map[string]string{
 	"↓": "down", "↑": "up", "←": "left", "→": "right",

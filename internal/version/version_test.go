@@ -160,6 +160,33 @@ func TestTheArchiveCarriesTheConfigReference(t *testing.T) {
 			t.Errorf("the archive does not carry %s", want)
 		}
 	}
+
+	// DIST_DIRS is the same guarantee for whole directories, added when the
+	// README was split: the keymap, the settings reference and the
+	// troubleshooting notes live in docs/ now, so an archive carrying only
+	// the files above would be a smaller manual than the previous release
+	// shipped.
+	d := regexp.MustCompile(`(?m)^DIST_DIRS\s*=\s*(.*)$`).FindStringSubmatch(string(raw))
+	if d == nil {
+		t.Fatal("the Makefile no longer says which directories ship")
+	}
+	dirs := strings.Fields(d[1])
+	if len(dirs) == 0 {
+		t.Fatal("DIST_DIRS is empty")
+	}
+	for _, dir := range dirs {
+		info, err := os.Stat(filepath.Join(root, dir))
+		if err != nil {
+			t.Errorf("DIST_DIRS names %s, which is not there: %v", dir, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("DIST_DIRS names %s, which is not a directory", dir)
+		}
+	}
+	if !strings.Contains(d[1], "docs") {
+		t.Error("the archive does not carry docs/")
+	}
 }
 
 // TestTheReleaseWorkflowPackagesThroughTheMakefile, so the archive people
