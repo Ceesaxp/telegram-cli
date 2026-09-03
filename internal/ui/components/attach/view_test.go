@@ -106,6 +106,43 @@ func TestTheListingIsCappedAndSaysHowMuchItHid(t *testing.T) {
 	}
 }
 
+// TestTheMarkerFollowsTheCursorIntoTheScrolledWindow.
+//
+// The window's own offset is what turns a cursor index into a drawn row.
+// Ignore it and the marker stays on the top row while the cursor is
+// somewhere else entirely — the surface pointing at one file and Enter
+// attaching another.
+func TestTheMarkerFollowsTheCursorIntoTheScrolledWindow(t *testing.T) {
+	files := make([]string, 0, 10)
+	for _, n := range "abcdefghij" {
+		files = append(files, string(n)+".txt")
+	}
+	m := open(t, tree(t, files...))
+	for range 9 {
+		m, _ = press(t, m, keyDown)
+	}
+
+	selected, _ := m.Selected()
+	if selected.Name != "j.txt" {
+		t.Fatalf("precondition: the cursor is on %s", selected.Name)
+	}
+
+	var marked []string
+	for _, line := range strings.Split(plain(m.View()), "\n") {
+		if strings.Contains(line, "▌") {
+			marked = append(marked, strings.TrimSpace(line))
+		}
+	}
+	if len(marked) != 1 {
+		t.Fatalf("%d rows carry the selection bar, want exactly one: %v", len(marked), marked)
+	}
+	// The frame's own border sits outside the row, so the bar is what comes
+	// first inside it rather than first on the line.
+	if !strings.Contains(marked[0], "▌▤ "+selected.Name) {
+		t.Errorf("the bar is on %q, want it on %s", marked[0], selected.Name)
+	}
+}
+
 // TestTheCursorSitsWhereTypingHappens.
 //
 // Before the ghost suggestion, not after it. A cursor states where the next
@@ -301,9 +338,10 @@ func TestTheSizeAndTimeColumnsSayWhatTheyKnow(t *testing.T) {
 		{"bytes", Entry{Size: 900}, "900 B"},
 		{"one decimal below ten units", Entry{Size: 2150}, "2.1 KB"},
 		{"none above", Entry{Size: 184 * 1024}, "184 KB"},
-		{"an unreadable directory says nothing", Entry{Dir: true, Items: -1}, ""},
-		{"one item is singular", Entry{Dir: true, Items: 1}, "1 item"},
-		{"more are plural", Entry{Dir: true, Items: 12}, "12 items"},
+		{"a directory nobody has counted says nothing", Entry{Dir: true}, ""},
+		{"an unreadable directory says nothing", Entry{Dir: true, counted: true, Items: -1}, ""},
+		{"one item is singular", Entry{Dir: true, counted: true, Items: 1}, "1 item"},
+		{"more are plural", Entry{Dir: true, counted: true, Items: 12}, "12 items"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := formatSize(tc.entry); got != tc.want {

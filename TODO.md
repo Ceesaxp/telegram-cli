@@ -189,10 +189,22 @@ immediately undoes.
       `ctrl+p`/`ctrl+n` for the palette since the day those chords were
       deliberately removed.
 
-      71 mutants, no survivors. Two of them could not be killed at first,
-      which was the code doing something twice: `Close` reset four things
-      `Open` resets again, and `^t` re-checked what `AsPhoto` already knows.
-      Both are one line now.
+      Review found nine things, five of them the same three problems seen
+      by both reviewers — recorded as
+      [divergence 49a](docs/tui-2.0.md#49a-what-review-found-in-the-picker).
+      Two were real substitutions rather than roughness: an exactly typed
+      path lost to the case-insensitive cursor, so typing `foo.txt` beside
+      a `Foo.txt` staged the other file; and Windows could not open its own
+      configured directory, because the package mixed native and slash
+      separators. Paths are one spelling inside the package now, with the
+      separator behind a test seam — the platform's CI job only
+      cross-compiles, so nothing else would ever exercise those rules.
+
+      87 mutants, no survivors. Four lines turned out to be doing nothing,
+      found the same way each time: `Close` reset four things `Open` resets
+      again, `^t` re-checked what `AsPhoto` already knows, `reload` reset a
+      window `refilter` resets immediately after, and `parentOf` special-
+      cased a volume that `withSlash` already handled.
 
 
 ### Raised in priority by TUI 2.0

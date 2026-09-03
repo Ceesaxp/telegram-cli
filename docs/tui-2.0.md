@@ -1931,6 +1931,88 @@ palette. `palette.TestTheEmacsChordsDoNotNavigate` removed them deliberately
 — one spelling per action — and the card and the README went on listing them
 for four phases. A key you can only discover is inert by pressing it.
 
+### 49a. What review found in the picker
+
+Nine findings across two reviewers on the first version, five of them the
+same three problems seen twice. All confirmed against the code, seven of
+them by a test written to fail first.
+
+**The exact path lost to the cursor.** `enter` proved that what was typed
+named a real file and then returned an action, and the app read the path
+back off the cursor — which the case-insensitive filter had left somewhere
+else. On a case-sensitive filesystem holding both `Foo.txt` and `foo.txt`,
+typing `foo.txt` matched both, `Foo.txt` sorted first, and `Foo.txt` was
+staged: a file picker substituting one file for another, which is the one
+thing it must never do.
+
+The fix is not a second rule inside `Chosen` but a first rule in
+`refilter`: an exactly typed name takes the cursor. One mechanism, and the
+row on screen is the row that acts — the state row, the hint row, the send
+mode and the attachment can no longer describe different files. It shows up
+without a case collision too, because directories sort first: typing
+`notes.txt` beside a folder called `notes.txt.d` used to leave the folder
+highlighted.
+
+**Windows could not open its own default directory.** Config expands
+`download_dir` to `C:\Users\me\Downloads`; `collapseHome` turned that into
+`~\Downloads`, `Open` appended a `/`, `splitPath` only knew about `/` and
+`expandHome` only about `~/`, so the first `Ctrl+T` targeted a literal
+relative path called `~\Downloads/` and the picker opened saying no such
+directory. Raw `C:\...` drops were rejected as well, and `unescape` ate
+their separators — nothing on Windows escapes with a backslash, it quotes.
+
+Paths inside the package are slash-separated now, converted at two edges
+(`native` out, `display` in). The separator is a `var`, not the constant,
+so a test can pin the other one: Windows is a published target whose CI job
+only cross-COMPILES, and a rule that runs on one platform is a rule only
+that platform's users get to discover.
+
+**Opening a directory read every child.** One `os.ReadDir` for the listing
+plus another, whole, for every subdirectory — just to print `12 items` —
+all of it synchronous on Bubble Tea's update path. A home directory with
+thirty folders paid thirty extra reads before drawing, and a network mount
+froze the client. Counts are gathered for the six rows about to be drawn
+and memoised, so scrolling costs at most six and re-passing costs none.
+
+**The cursor could walk off the drawn window.** `move` clamped to the match
+count and the view drew the first six, so Down seven times put the cursor
+on an invisible row with the marker gone from the surface — and Enter still
+attached it. The listing scrolls now.
+
+**A symlink to a directory was a file.** `os.DirEntry` describes the link,
+so `IsDir` is false; an arrowed-to symlinked folder was drawn as a file and
+Enter staged the link, which the uploader rejects. Typing the same name in
+full worked, because `enter` uses `os.Stat` — two answers to one question.
+Only symlinks are stat'd, so an ordinary listing still costs one syscall
+per entry. A broken link stays a file: nothing can be entered.
+
+**TIFF was offered as a photo.** Telegram's `InputMediaUploadedPhoto`
+rejects TIFF, which is why the clipboard path has excluded it since it was
+written. This package had grown its own list of image extensions and got it
+wrong. It asks `clipboard.IsImagePath` now rather than keeping a second
+list — the same reasoning as `theme.SenderColour`: two implementations that
+agree today are two implementations that can stop agreeing, and this pair
+would have disagreed only at send time.
+
+**A drop landed behind a modal.** The paste branch ran before the
+`blockedByDialog` guard, so pasting a path while a confirm dialog was up
+staged an attachment nobody could see and moved focus under a modal still
+on screen. `keyboardOwnedByOverlay` is the guard, and it is deliberately a
+different list from `overlayOpen`: that one is about DRAWING, and the
+reaction row and the media overlay are not "placed" but do own the keyboard.
+
+**A `~/` drop staged the tilde.** `LooksLikePath` expanded the home to check
+the file was there, `UnquotePath` did not, and the app used the first one's
+verdict with the second one's output — so the composer held `~/shot.png`,
+which no `os.Stat` will find. They are one function now, `ResolvePath`: a
+question and its answer computed by different code is a pair that can
+disagree.
+
+Two more lines turned out to be doing nothing, found the same way as the
+last round's: the window reset in `reload`, which `refilter` does again
+immediately after, and a volume special case in `parentOf` that `withSlash`
+already handled.
+
 ### 50. The cursor goes before the suggestion, not after it
 
 The supplied design puts the ghost completion after the typed tail and the

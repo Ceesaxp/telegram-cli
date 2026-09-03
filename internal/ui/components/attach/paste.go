@@ -75,11 +75,15 @@ func fromFileURL(text string) string {
 // unescape removes backslash escaping, which is how both macOS terminals
 // deliver a dropped path.
 //
+// Not where the backslash IS the separator: nothing on Windows escapes with
+// it, and undoing escapes there would turn a dropped C:\Users\me\x.png into
+// C:Usersmex.png — every drop on the platform, silently.
+//
 // A trailing lone backslash is kept rather than dropped: it is a legal
 // character in a filename, and a path ending in one is more likely to be a
 // real name than a truncated escape.
 func unescape(text string) string {
-	if !strings.ContainsRune(text, '\\') {
+	if sep != '/' || !strings.ContainsRune(text, '\\') {
 		return text
 	}
 	var out strings.Builder
@@ -95,30 +99,52 @@ func unescape(text string) string {
 	return out.String()
 }
 
-// LooksLikePath reports whether pasted text is a path rather than prose.
+// ResolvePath is the whole answer to "is this paste a file, and which one":
+// the path a dropped or pasted string names, ready to hand to the composer,
+// and whether it unambiguously names one at all.
 //
-// The rule for a drop onto the composer with no picker open, where the same
-// paste could reasonably be either. It is deliberately strict — a paste
-// that merely resembles a path must not silently become an attachment
-// instead of the message somebody meant to send, so the test is
-// "unambiguously a path" rather than "possibly a path": one line, rooted or
-// home-relative or a URL, and actually there on disk.
-func LooksLikePath(text string) bool {
+// One function rather than a predicate beside a converter. The two were
+// separate for one round and the app used the predicate's answer with the
+// converter's output — so a "~/shot.png" drop passed the check, which
+// expands the tilde, and staged the literal string, which does not exist.
+// A question and its answer computed by different code is a pair that can
+// disagree.
+//
+// The test is "unambiguously a path" rather than "possibly a path", because
+// a paste that merely resembles one must not silently become an attachment
+// instead of the message somebody meant to send: one line, rooted or
+// home-relative or a URL, naming a file that is actually there.
+func ResolvePath(text string) (string, bool) {
 	trimmed := strings.Trim(text, " \t\r\n")
 	if trimmed == "" || strings.ContainsAny(trimmed, "\n\r") {
-		return false
+		return "", false
 	}
-	if !strings.HasPrefix(trimmed, "/") &&
+	if !rooted(trimmed) &&
 		!strings.HasPrefix(trimmed, "~/") &&
 		!strings.HasPrefix(trimmed, "file://") &&
 		!strings.HasPrefix(trimmed, "'") &&
 		!strings.HasPrefix(trimmed, "\"") {
-		return false
+		return "", false
 	}
-	path := UnquotePath(trimmed)
-	if path == "" {
-		return false
+
+	unquoted := UnquotePath(trimmed)
+	if unquoted == "" {
+		return "", false
 	}
-	info, err := os.Stat(expandHome(path))
-	return err == nil && !info.IsDir()
+	resolved := native(toSlash(unquoted))
+	info, err := os.Stat(resolved)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	return resolved, true
+}
+
+// rooted reports whether a path names a place rather than a relative step:
+// a leading separator, or a drive or share root on Windows.
+func rooted(p string) bool {
+	if strings.HasPrefix(p, "/") {
+		return true
+	}
+	return sep != '/' &&
+		(strings.HasPrefix(p, string(sep)) || volume(toSlash(p)) != "")
 }

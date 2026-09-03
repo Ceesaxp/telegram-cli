@@ -1054,17 +1054,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// With no picker open the same paste is ambiguous — it could be
-		// the message somebody meant to send. attach.LooksLikePath is
+		// the message somebody meant to send. attach.ResolvePath is
 		// deliberately strict about that, and everything it refuses falls
 		// through to the composer as ordinary text.
+		//
+		// Nothing may be over the frame. An overlay owns input while it is
+		// up, and a paste that staged an attachment behind a confirm dialog
+		// would change state the reader cannot see and move focus under a
+		// modal that is still on screen.
+		//
 		// The composer's own chat rather than the list's selection: it is
 		// the composer the file is staged on and the composer that sends
 		// it, so it is the composer that has to have somewhere to send.
-		if m.screen == ScreenMain && m.composer.ChatId() != 0 &&
-			!m.composer.IsEditing() && attach.LooksLikePath(msg.Content) {
-			path := attach.UnquotePath(msg.Content)
-			m.notify("attached " + filepath.Base(path))
-			return m.stageAttachment(path, attach.IsImage(path))
+		if m.screen == ScreenMain && !m.keyboardOwnedByOverlay() &&
+			m.composer.ChatId() != 0 && !m.composer.IsEditing() {
+			if path, ok := attach.ResolvePath(msg.Content); ok {
+				m.notify("attached " + filepath.Base(path))
+				return m.stageAttachment(path, attach.IsImage(path))
+			}
 		}
 
 	case composer.AttachRequestedMsg:
@@ -2046,8 +2053,24 @@ func (m Model) deviceCountCmd() tea.Cmd {
 	}
 }
 
+// keyboardOwnedByOverlay reports whether something other than the panels is
+// taking input.
+//
+// [overlayOpen] is about DRAWING; this is about whose a keystroke or a paste
+// is, and the two lists differ. The reaction row draws into the hint bar's
+// own row and the media overlay draws the whole screen, so neither is
+// "placed" — but both own the keyboard while they are up, and a paste that
+// reached the composer behind either of them would act on state the reader
+// cannot see.
+func (m Model) keyboardOwnedByOverlay() bool {
+	return m.overlayOpen() ||
+		m.contacts.IsVisible() ||
+		(m.reactions.IsVisible() && m.screen == ScreenMain) ||
+		(m.mediaView.IsVisible() && m.screen == ScreenMain)
+}
+
 // overlayOpen reports whether something is drawn over the frame rather than
-// inside it. The four are the ones View places with lipgloss.Place.
+// inside it. The five are the ones View places with lipgloss.Place.
 func (m Model) overlayOpen() bool {
 	return (m.dialog != nil && m.dialog.IsVisible()) ||
 		m.search.IsVisible() ||

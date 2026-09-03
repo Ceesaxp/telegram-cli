@@ -137,11 +137,12 @@ func TestOnlyAnUnambiguousPathBecomesAnAttachment(t *testing.T) {
 	root := tree(t, "shot.png", "sub/")
 	real := filepath.Join(strings.TrimSuffix(root, "/"), "shot.png")
 
-	if !LooksLikePath(real) {
+	resolved, ok := ResolvePath(real)
+	if !ok {
 		t.Errorf("a real absolute path to a file was refused: %q", real)
 	}
-	if !LooksLikePath(strings.ReplaceAll(real, "shot", "shot")) {
-		t.Error("the same path failed on a second reading")
+	if resolved != real {
+		t.Errorf("ResolvePath(%q) = %q, want the path itself", real, resolved)
 	}
 
 	for _, tc := range []struct {
@@ -159,8 +160,8 @@ func TestOnlyAnUnambiguousPathBecomesAnAttachment(t *testing.T) {
 		{"nothing at all", "   "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if LooksLikePath(tc.text) {
-				t.Errorf("LooksLikePath(%q) = true — it would be attached "+
+			if _, ok := ResolvePath(tc.text); ok {
+				t.Errorf("ResolvePath(%q) resolved — it would be attached "+
 					"instead of sent", tc.text)
 			}
 		})
@@ -184,8 +185,8 @@ func TestAPasteWithANewlineIsRefusedEvenWhenItNamesARealFile(t *testing.T) {
 		t.Skipf("the file is not there to test against: %v", err)
 	}
 
-	if LooksLikePath(odd) {
-		t.Errorf("LooksLikePath(%q) = true — a paste with a newline in it "+
+	if _, ok := ResolvePath(odd); ok {
+		t.Errorf("ResolvePath(%q) resolved — a paste with a newline in it "+
 			"would be attached rather than sent", odd)
 	}
 }
@@ -204,8 +205,19 @@ func TestAHomeRelativeDropIsRecognised(t *testing.T) {
 	t.Cleanup(func() { os.Remove(file.Name()) })
 	file.Close()
 
+	// The tilde must be expanded in the ANSWER, not merely while checking.
+	// The two used to be separate calls and the app took the predicate's
+	// verdict with the converter's output, so this drop passed the check and
+	// staged the literal "~/..." — a path the send step then could not stat.
 	tilde := "~/" + filepath.Base(file.Name())
-	if !LooksLikePath(tilde) {
-		t.Errorf("LooksLikePath(%q) = false — ~ was not expanded", tilde)
+	resolved, ok := ResolvePath(tilde)
+	if !ok {
+		t.Fatalf("ResolvePath(%q) refused — ~ was not expanded", tilde)
+	}
+	if strings.HasPrefix(resolved, "~") {
+		t.Errorf("ResolvePath(%q) = %q, which no stat call will find", tilde, resolved)
+	}
+	if resolved != file.Name() {
+		t.Errorf("ResolvePath(%q) = %q, want %q", tilde, resolved, file.Name())
 	}
 }

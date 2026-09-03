@@ -52,13 +52,11 @@ func (m Model) View() string {
 
 	lines := []string{m.promptLine()}
 
-	for row, idx := range m.filtered {
-		if row >= maxRows {
-			break
-		}
-		lines = append(lines, m.entryLine(m.entries[idx], row == m.cursor))
+	rows, top := m.Window()
+	for i, entry := range rows {
+		lines = append(lines, m.entryLine(entry, top+i == m.cursor))
 	}
-	if n := len(m.filtered) - maxRows; n > 0 {
+	if n := m.Below(); n > 0 {
 		lines = append(lines, cell.Fit(
 			theme.OverlayMuted(m.roles).Render(" +"+strconv.Itoa(n)+" more"), Width))
 	}

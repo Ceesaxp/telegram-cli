@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/attach"
 	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
+	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 )
 
 // pickerModel is a model with a chat open and the attach picker up, pointed
@@ -317,8 +318,87 @@ func TestTheDropRuleIsTheComponentsOwn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(source), "attach.LooksLikePath") {
+	if !strings.Contains(string(source), "attach.ResolvePath") {
 		t.Error("the paste branch no longer asks the picker whether it is a path")
 	}
-	_ = attach.LooksLikePath("")
+	if _, ok := attach.ResolvePath(""); ok {
+		t.Error("ResolvePath resolved the empty string")
+	}
+}
+
+// TestADropBehindAModalIsNotStaged.
+//
+// A dialog owns input while it is up. A paste that reached this branch
+// anyway staged an attachment the reader could not see, and moved focus to
+// a composer hidden behind a modal that was still on screen — two pieces of
+// state changed by a keystroke aimed at something else.
+func TestADropBehindAModalIsNotStaged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dropped.png")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, open := range map[string]func(m *Model){
+		"a confirm dialog": func(m *Model) {
+			d := dialog.NewConfirm(m.roles, "delete", "Delete", "Sure?")
+			m.dialog = &d
+		},
+		"the search overlay": func(m *Model) { m.search.SetVisible(true) },
+		"the help card":      func(m *Model) { m.help.SetVisible(true) },
+		"the palette":        func(m *Model) { m.palette.Open() },
+		"the reaction row":   func(m *Model) { m.reactions.Open(testChatID, 1, "") },
+		// Neither of these is "placed" over the frame — the contacts
+		// overlay is a focus panel and the media view draws the whole
+		// screen — so a guard written from the drawing list alone would
+		// let a drop through behind both.
+		"the contacts overlay": func(m *Model) {
+			m.contacts.SetVisible(true)
+			m.setFocus(PanelContacts)
+		},
+		"the media overlay": func(m *Model) { m.mediaView.Open("photo", "loading…") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := openChatModel(t, PanelComposer)
+			open(&m)
+
+			next, _ := m.Update(tea.PasteMsg{Content: path})
+			m = next.(Model)
+
+			if got := m.composer.Attachment(); got != "" {
+				t.Errorf("a drop behind %s staged %q", name, got)
+			}
+		})
+	}
+}
+
+// TestADroppedHomeRelativePathIsStagedExpanded.
+//
+// The check and the conversion used to be two calls, and the app took the
+// check's verdict with the conversion's output: "~/shot.png" passed, because
+// checking expands the tilde, and the literal string was staged — a path the
+// send step could not stat. One function answers both now.
+func TestADroppedHomeRelativePathIsStagedExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no usable home directory")
+	}
+	file, err := os.CreateTemp(home, "teletui-drop-*.png")
+	if err != nil {
+		t.Skipf("cannot write to the home directory: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(file.Name()) })
+	file.Close()
+
+	m := openChatModel(t, PanelComposer)
+	next, _ := m.Update(tea.PasteMsg{Content: "~/" + filepath.Base(file.Name())})
+	m = next.(Model)
+
+	staged := m.composer.Attachment()
+	if strings.HasPrefix(staged, "~") {
+		t.Fatalf("the composer holds %q, which no stat call will find", staged)
+	}
+	if staged != file.Name() {
+		t.Errorf("the composer holds %q, want %q", staged, file.Name())
+	}
 }

@@ -66,6 +66,7 @@ type Model struct {
 
 	filtered []int // indices into entries, in display order
 	cursor   int   // index into filtered
+	top      int   // first filtered index drawn; the window's own scroll
 
 	// flipped inverts the send mode derived from the cursored entry. It is
 	// cleared whenever the cursor moves, so the toggle applies to the file
@@ -95,7 +96,7 @@ func (m *Model) Open(fallback string) {
 		if fallback == "" {
 			fallback = "~/"
 		}
-		m.dir = withSlash(collapseHome(fallback))
+		m.dir = withSlash(display(fallback))
 	}
 	m.typed = m.dir
 	m.reload()
@@ -121,6 +122,25 @@ func (m Model) Selected() (Entry, bool) {
 		return Entry{}, false
 	}
 	return m.entries[m.filtered[m.cursor]], true
+}
+
+// Window is the slice of the match list currently drawn, and where in the
+// match list it starts.
+//
+// The listing scrolls rather than being capped: a cursor that can walk past
+// the last drawn row is a cursor the reader cannot see, on a file Enter
+// would still attach.
+func (m Model) Window() (rows []Entry, top int) {
+	end := min(m.top+maxRows, len(m.filtered))
+	for _, i := range m.filtered[min(m.top, end):end] {
+		rows = append(rows, m.entries[i])
+	}
+	return rows, m.top
+}
+
+// Below is how many matches sit under the drawn window.
+func (m Model) Below() int {
+	return max(len(m.filtered)-m.top-maxRows, 0)
 }
 
 // Matches returns the filtered listing, for tests.
@@ -156,7 +176,7 @@ func (m Model) Chosen() (path string, asPhoto bool, ok bool) {
 		return "", false, false
 	}
 	dir, _ := splitPath(m.typed)
-	return filepath.Join(expandHome(listable(dir)), entry.Name), m.AsPhoto(), true
+	return filepath.Join(native(listable(dir)), entry.Name), m.AsPhoto(), true
 }
 
 // Update handles a keypress while the picker owns input.
@@ -185,6 +205,14 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 
 	case "down":
 		m.move(1)
+		return m, ActionNone
+
+	case "pgup":
+		m.move(-maxRows)
+		return m, ActionNone
+
+	case "pgdown":
+		m.move(maxRows)
 		return m, ActionNone
 
 	case "tab":
@@ -247,7 +275,7 @@ func (m Model) Paste(text string) Model {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = withSlash(path)
 	}
-	m.typed = collapseHome(path)
+	m.typed = display(path)
 	m.reload()
 	return m
 }
@@ -266,7 +294,7 @@ func (m Model) Paste(text string) Model {
 // reachable at all.
 func (m Model) enter() (Model, Action) {
 	if _, tail := splitPath(m.typed); tail != "" {
-		if info, err := os.Stat(expandHome(m.typed)); err == nil {
+		if info, err := os.Stat(native(m.typed)); err == nil {
 			if info.IsDir() {
 				m.typed = withSlash(m.typed)
 				m.reload()
@@ -343,18 +371,39 @@ func (m *Model) up() {
 
 func (m *Model) move(delta int) {
 	if len(m.filtered) == 0 {
-		m.cursor = 0
+		m.cursor, m.top = 0, 0
 		return
 	}
-	m.cursor += delta
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.filtered) {
-		m.cursor = len(m.filtered) - 1
-	}
+	m.cursor = min(max(m.cursor+delta, 0), len(m.filtered)-1)
+	m.scroll()
 	// The send mode belongs to the file it was set on.
 	m.flipped = false
+}
+
+// scroll brings the window to the cursor, and counts what the move brought
+// into view.
+func (m *Model) scroll() {
+	switch {
+	case m.cursor < m.top:
+		m.top = m.cursor
+	case m.cursor >= m.top+maxRows:
+		m.top = m.cursor - maxRows + 1
+	}
+	m.top = max(m.top, 0)
+	m.count()
+}
+
+// count fills in the item counts for the rows about to be drawn, and only
+// those. See countInto: a count is a whole extra directory read, and doing
+// them all up front made opening a home directory cost one read per child
+// on Bubble Tea's update path.
+func (m *Model) count() {
+	dir, _ := splitPath(m.typed)
+	end := min(m.top+maxRows, len(m.filtered))
+	if m.top >= end {
+		return
+	}
+	countInto(m.entries, listable(dir), m.filtered[m.top:end])
 }
 
 // reload re-lists the directory if the path now names a different one, then
@@ -383,12 +432,26 @@ func (m *Model) reload() {
 func (m *Model) refilter() {
 	_, tail := splitPath(m.typed)
 	m.filtered = m.filtered[:0]
+	m.cursor, m.top = 0, 0
+
 	for i, entry := range m.entries {
-		if matches(entry.Name, tail) {
-			m.filtered = append(m.filtered, i)
+		if !matches(entry.Name, tail) {
+			continue
 		}
+		// An EXACTLY typed name takes the cursor. The filter is
+		// case-insensitive on purpose, so on a case-sensitive filesystem
+		// holding both Foo and foo, typing "foo" matches both and Foo
+		// sorts first — and everything downstream reads the cursor, so
+		// the picker would show, describe and attach a different file
+		// from the one that was typed. One mechanism rather than a second
+		// rule inside Chosen: the row on screen is the row that acts.
+		if entry.Name == tail {
+			m.cursor = len(m.filtered)
+		}
+		m.filtered = append(m.filtered, i)
 	}
-	m.cursor = 0
+
+	m.scroll()
 	m.flipped = false
 }
 

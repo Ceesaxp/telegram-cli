@@ -609,3 +609,277 @@ func names(entries []Entry) []string {
 	}
 	return out
 }
+
+// TestAnExactlyTypedNameTakesTheCursor even when something else sorts above
+// it.
+//
+// Directories sort first, so typing "notes.txt" in a directory that also
+// holds a folder called "notes.txt.d" leaves the FOLDER highlighted: it
+// matches the prefix filter and it sorts above the file. Everything
+// downstream reads the cursor, so the state row would describe the folder
+// and Enter would descend into it — a reader who typed a filename in full
+// getting a directory instead.
+func TestAnExactlyTypedNameTakesTheCursor(t *testing.T) {
+	m := typeText(t, open(t, tree(t, "notes.txt", "notes.txt.d/")), "notes.txt")
+
+	if got := len(m.Matches()); got != 2 {
+		t.Fatalf("precondition: %d matches, want the file and the folder", got)
+	}
+	if first := m.Matches()[0]; !first.Dir {
+		t.Fatalf("precondition: %q sorts first, so the cursor is not being moved", first.Name)
+	}
+
+	selected, ok := m.Selected()
+	if !ok || selected.Name != "notes.txt" || selected.Dir {
+		t.Fatalf("the cursor is on %q (dir=%v), want the file that was typed",
+			selected.Name, selected.Dir)
+	}
+
+	_, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Errorf("enter gave %v — a fully typed filename descended into a folder", action)
+	}
+}
+
+// TestAnExactlyTypedNameOutranksTheCaseInsensitiveFilter.
+//
+// The filter is case-insensitive on purpose, but that leniency and an
+// exactly typed path can name different files: on a case-sensitive
+// filesystem holding both Foo.txt and foo.txt, typing "foo.txt" matches
+// both and Foo.txt sorts first. Everything downstream reads the cursor, so
+// the picker would show, describe and attach a file the reader did not
+// type — the one substitution a file picker must never make.
+func TestAnExactlyTypedNameOutranksTheCaseInsensitiveFilter(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"Foo.txt", "foo.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 2 {
+		t.Skip("this filesystem is case-insensitive, so the two cannot collide")
+	}
+
+	m := typeText(t, open(t, dir+"/"), "foo.txt")
+
+	if got := len(m.Matches()); got != 2 {
+		t.Fatalf("precondition: %d matches, want both spellings", got)
+	}
+	selected, ok := m.Selected()
+	if !ok || selected.Name != "foo.txt" {
+		t.Errorf("the cursor is on %q, want the name that was typed", selected.Name)
+	}
+
+	_, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter gave %v", action)
+	}
+	path, _, _ := m.Chosen()
+	if filepath.Base(path) != "foo.txt" {
+		t.Errorf("typed foo.txt and staged %s — a different file from the one "+
+			"the reader named", filepath.Base(path))
+	}
+}
+
+// TestASymlinkedDirectoryIsSomewhereToGo.
+//
+// os.DirEntry describes the LINK, so IsDir is false for a symlink to a
+// directory. Left at that, an arrowed-to symlinked folder is drawn as a
+// file and Enter stages the link as an attachment, which the uploader then
+// rejects — while typing the same name in full worked, because enter uses
+// os.Stat. Two answers to one question is the bug.
+func TestASymlinkedDirectoryIsSomewhereToGo(t *testing.T) {
+	root := tree(t, "real/inner.txt", "loose.txt")
+	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "link")); err != nil {
+		t.Skipf("this filesystem will not take a symlink: %v", err)
+	}
+
+	m := typeText(t, open(t, root), "link")
+	entry, ok := m.Selected()
+	if !ok {
+		t.Fatal("the symlink is not in the listing")
+	}
+	if !entry.Dir {
+		t.Fatal("a symlink to a directory is drawn as a file, so enter would attach it")
+	}
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionNone {
+		t.Errorf("enter on a symlinked directory gave %v, want it to descend", action)
+	}
+	if got := names(m.Matches()); len(got) != 1 || got[0] != "inner.txt" {
+		t.Errorf("after descending the listing is %v, want the target's contents", got)
+	}
+}
+
+// TestABrokenSymlinkIsNotADirectory. Nothing can be entered, so calling it
+// one would offer a way in that goes nowhere.
+func TestABrokenSymlinkIsNotADirectory(t *testing.T) {
+	root := tree(t, "a.txt")
+	if err := os.Symlink(filepath.Join(root, "gone"), filepath.Join(root, "dangling")); err != nil {
+		t.Skipf("this filesystem will not take a symlink: %v", err)
+	}
+
+	m := typeText(t, open(t, root), "dangling")
+	entry, ok := m.Selected()
+	if !ok {
+		t.Fatal("the broken link is not in the listing")
+	}
+	if entry.Dir {
+		t.Error("a broken symlink is offered as a directory to enter")
+	}
+}
+
+// TestTIFFIsNotOfferedAsAPhoto.
+//
+// Telegram's InputMediaUploadedPhoto rejects TIFF, which is why the
+// clipboard path has always excluded it. This package asks that path
+// rather than keeping a second list: two lists of image extensions are two
+// things to keep in step, and the one that drifts is the one whose failure
+// only shows up at send time.
+func TestTIFFIsNotOfferedAsAPhoto(t *testing.T) {
+	m := open(t, tree(t, "scan.tiff", "shot.png"))
+
+	for _, entry := range m.Matches() {
+		switch entry.Name {
+		case "scan.tiff":
+			if entry.Image {
+				t.Error("a TIFF is offered as a photo; the send would fail")
+			}
+			// It is still a picture to whoever is looking for one.
+			if got := kindOf(entry); got != "image" {
+				t.Errorf("a TIFF is drawn as %q, want it to look like a picture", got)
+			}
+		case "shot.png":
+			if !entry.Image {
+				t.Error("a PNG is not offered as a photo")
+			}
+		}
+	}
+
+	if IsImage("x.tiff") || IsImage("x.tif") {
+		t.Error("IsImage accepts TIFF, disagreeing with the send path")
+	}
+	if !IsImage("x.png") {
+		t.Error("IsImage rejects PNG")
+	}
+}
+
+// TestTheCursorStaysInsideTheDrawnWindow.
+//
+// The listing draws six rows. A cursor that could walk past them was a
+// cursor on a file the reader could not see, with the selection marker
+// gone from the surface entirely — and enter would still attach it.
+func TestTheCursorStaysInsideTheDrawnWindow(t *testing.T) {
+	files := make([]string, 0, 10)
+	for _, n := range "abcdefghij" {
+		files = append(files, string(n)+".txt")
+	}
+	m := open(t, tree(t, files...))
+
+	for range 9 {
+		m, _ = press(t, m, keyDown)
+	}
+	selected, ok := m.Selected()
+	if !ok {
+		t.Fatal("nothing is selected at the bottom of the listing")
+	}
+	if selected.Name != "j.txt" {
+		t.Fatalf("the cursor stopped on %s, want the last entry", selected.Name)
+	}
+
+	rows, _ := m.Window()
+	found := false
+	for _, row := range rows {
+		if row.Name == selected.Name {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the cursored %s is not among the %d drawn rows", selected.Name, len(rows))
+	}
+	if !strings.Contains(plain(m.View()), "j.txt") {
+		t.Error("the cursored entry is not on screen")
+	}
+
+	// And back up, so the window follows in both directions.
+	for range 9 {
+		m, _ = press(t, m, keyUp)
+	}
+	if _, top := m.Window(); top != 0 {
+		t.Errorf("the window stayed at %d after returning to the top", top)
+	}
+}
+
+// TestOpeningADirectoryCostsOneReadPlusWhatIsDrawn.
+//
+// Counting every subdirectory up front made opening a home directory cost
+// one whole extra directory read per child, all of it synchronous on Bubble
+// Tea's update path — a network mount or a directory of large children
+// froze the client. Counts are gathered for the six rows on screen and
+// nothing else.
+func TestOpeningADirectoryCostsOneReadPlusWhatIsDrawn(t *testing.T) {
+	names := make([]string, 0, 12)
+	for _, n := range "abcdefghijkl" {
+		names = append(names, string(n)+"/")
+	}
+	m := open(t, tree(t, names...))
+
+	counted := 0
+	for _, entry := range m.Matches() {
+		if entry.counted {
+			counted++
+		}
+	}
+	if counted > maxRows {
+		t.Errorf("%d of %d directories were counted on open; only the %d drawn "+
+			"rows should be", counted, len(m.Matches()), maxRows)
+	}
+	if counted == 0 {
+		t.Error("no directory was counted, so the size column is empty on open")
+	}
+
+	// Scrolling brings the rest into view, and counts them then.
+	for range 11 {
+		m, _ = press(t, m, keyDown)
+	}
+	last, _ := m.Selected()
+	if !last.counted {
+		t.Error("a directory scrolled into view was never counted")
+	}
+}
+
+// TestACountIsTakenOnceAndKept.
+//
+// The count is the expensive half — a whole extra directory read — and the
+// window is recomputed on every keystroke and every move. Without the memo
+// the same six directories are re-read each time the cursor passes them,
+// which is the cost this was supposed to have removed.
+//
+// Observable only as staleness: the count is a snapshot from when the row
+// was first drawn, and that is the guarantee being pinned.
+func TestACountIsTakenOnceAndKept(t *testing.T) {
+	root := tree(t, "sub/one.txt")
+	m := open(t, root)
+
+	first, ok := m.Selected()
+	if !ok || !first.Dir || !first.counted {
+		t.Fatalf("precondition: selected %+v", first)
+	}
+	if first.Items != 1 {
+		t.Fatalf("precondition: counted %d items, want 1", first.Items)
+	}
+
+	// Change what is in it, then walk the cursor over the row again.
+	if err := os.WriteFile(filepath.Join(strings.TrimSuffix(root, "/"), "sub", "two.txt"),
+		[]byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = press(t, m, keyDown, keyUp)
+
+	again, _ := m.Selected()
+	if again.Items != 1 {
+		t.Errorf("the directory was counted again (now %d items); the memo is "+
+			"not holding and every move re-reads the disk", again.Items)
+	}
+}
