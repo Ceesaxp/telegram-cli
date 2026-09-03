@@ -77,8 +77,59 @@ func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
 func (r *fileRegistry) put(key string, e *fileEntry) *File {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if previous, ok := r.entries[key]; ok && reusableLocalFile(previous, e) {
+		e.path = previous.path
+		e.done = true
+	}
 	r.entries[key] = e
-	return &File{ID: key, Size: e.size}
+	return fileFromEntry(key, e)
+}
+
+// reusableLocalFile reports whether a completed immutable media download can
+// survive a metadata refresh. Avatar keys are intentionally excluded: their
+// stable chat-based key can point at a different photo generation (#34).
+func reusableLocalFile(previous, refreshed *fileEntry) bool {
+	if previous == nil || refreshed == nil || previous.avatar != nil || refreshed.avatar != nil ||
+		!previous.done || previous.path == "" {
+		return false
+	}
+	if !sameImmutableMedia(previous.location, refreshed.location) {
+		return false
+	}
+	if previous.size > 0 && refreshed.size > 0 && previous.size != refreshed.size {
+		return false
+	}
+	info, err := os.Stat(previous.path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	expectedSize := refreshed.size
+	if expectedSize == 0 {
+		expectedSize = previous.size
+	}
+	return expectedSize == 0 || info.Size() == expectedSize
+}
+
+func sameImmutableMedia(previous, refreshed tg.InputFileLocationClass) bool {
+	switch old := previous.(type) {
+	case *tg.InputDocumentFileLocation:
+		current, ok := refreshed.(*tg.InputDocumentFileLocation)
+		return ok && old.ID == current.ID && old.ThumbSize == current.ThumbSize
+	case *tg.InputPhotoFileLocation:
+		current, ok := refreshed.(*tg.InputPhotoFileLocation)
+		return ok && old.ID == current.ID && old.ThumbSize == current.ThumbSize
+	default:
+		return false
+	}
+}
+
+func fileFromEntry(key string, e *fileEntry) *File {
+	file := &File{ID: key, Size: e.size}
+	if e.done && e.path != "" {
+		file.Path = e.path
+		file.Downloaded = true
+	}
+	return file
 }
 
 func (r *fileRegistry) markDone(key, path string) {

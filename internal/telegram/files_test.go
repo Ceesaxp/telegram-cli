@@ -2,10 +2,14 @@ package telegram
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gotd/td/tg"
 )
 
 func TestSanitizeDownloadFileName(t *testing.T) {
@@ -56,6 +60,81 @@ func TestFileRegistryDoCoalesces(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("fn ran %d times, want 1", got)
+	}
+}
+
+func TestFileRegistryReregistrationPreservesCompletedImmutableFile(t *testing.T) {
+	r := newFileRegistry()
+	path := filepath.Join(t.TempDir(), "document.bin")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r.put("doc:7", &fileEntry{
+		location: &tg.InputDocumentFileLocation{ID: 7, AccessHash: 1},
+		size:     4,
+		name:     "old.bin",
+	})
+	r.markDone("doc:7", path)
+	file := r.put("doc:7", &fileEntry{
+		location: &tg.InputDocumentFileLocation{ID: 7, AccessHash: 2},
+		size:     4,
+		name:     "refreshed.bin",
+	})
+
+	if !file.Downloaded || file.Path != path {
+		t.Fatalf("refreshed File = %+v, want completed path %q", file, path)
+	}
+	snap, ok := r.snapshot("doc:7")
+	if !ok || !snap.done || snap.path != path || snap.name != "refreshed.bin" {
+		t.Fatalf("refreshed snapshot = %+v, ok=%v", snap, ok)
+	}
+	location, ok := snap.location.(*tg.InputDocumentFileLocation)
+	if !ok || location.AccessHash != 2 {
+		t.Fatalf("location = %#v, want refreshed access hash 2", snap.location)
+	}
+}
+
+func TestFileRegistryDoesNotPreserveInvalidLocalState(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		oldSize   int64
+		newSize   int64
+		remove    bool
+		avatarOld *avatarRef
+		avatarNew *avatarRef
+	}{
+		{name: "missing file", oldSize: 4, newSize: 4, remove: true},
+		{name: "changed size", oldSize: 4, newSize: 5},
+		{name: "mutable avatar", oldSize: 4, newSize: 4,
+			avatarOld: &avatarRef{chatID: 1, photoID: 10},
+			avatarNew: &avatarRef{chatID: 1, photoID: 11}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFileRegistry()
+			path := filepath.Join(t.TempDir(), "cached.bin")
+			if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			old := &fileEntry{size: tc.oldSize, avatar: tc.avatarOld}
+			fresh := &fileEntry{size: tc.newSize, avatar: tc.avatarNew}
+			r.put("key", old)
+			r.markDone("key", path)
+			if tc.remove {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			file := r.put("key", fresh)
+			if file.Downloaded || file.Path != "" {
+				t.Fatalf("refreshed File retained invalid state: %+v", file)
+			}
+			snap, _ := r.snapshot("key")
+			if snap.done || snap.path != "" {
+				t.Fatalf("refreshed snapshot retained invalid state: %+v", snap)
+			}
+		})
 	}
 }
 
