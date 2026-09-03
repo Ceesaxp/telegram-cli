@@ -5,15 +5,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/mediaview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/topbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/mediaview"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // truecolourSeq finds every 24-bit foreground or background in a rendered

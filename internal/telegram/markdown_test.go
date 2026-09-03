@@ -7,7 +7,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 // spanOf returns the substring an outgoing (UTF-16) entity selects, which

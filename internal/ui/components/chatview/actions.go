@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/clipboard"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/clipboard"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // errNoClient is what an action reports when there is no Telegram client —

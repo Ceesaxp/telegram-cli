@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
 // goldenHints is the chat-view NORMAL set as the fixtures render it, in the

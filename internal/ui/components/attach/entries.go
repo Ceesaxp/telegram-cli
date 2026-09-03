@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imtaqin/telegram-cli/internal/clipboard"
+	"github.com/Ceesaxp/telegram-cli/internal/clipboard"
 )
 
 // Paths inside this package are always SLASH-separated, whatever the

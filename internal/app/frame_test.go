@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/golden"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/layout"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/golden"
-	"github.com/imtaqin/telegram-cli/internal/ui/layout"
 )
 
 // goldenSizes are the reference terminal sizes decision 11 names. They are

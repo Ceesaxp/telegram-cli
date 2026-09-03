@@ -24,11 +24,11 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/mcpserver"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
-	"github.com/imtaqin/telegram-cli/internal/version"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/mcpserver"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
+	"github.com/Ceesaxp/telegram-cli/internal/version"
 )
 
 const loginHint = "session not authorized, run 'telegram-mcp login' first"

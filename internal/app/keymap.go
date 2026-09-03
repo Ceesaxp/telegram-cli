@@ -5,9 +5,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/imtaqin/telegram-cli/internal/keys"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
+	"github.com/Ceesaxp/telegram-cli/internal/keys"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
 )
 
 // # Keymap

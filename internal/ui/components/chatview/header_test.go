@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // headerModel is a thread panel with a chat open and nothing else.

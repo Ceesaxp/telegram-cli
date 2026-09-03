@@ -14,7 +14,7 @@ BINARY_NAME = tele-tui
 BUILD_DIR   = bin
 DIST_DIR    = dist
 
-MODULE  = github.com/imtaqin/telegram-cli
+MODULE  = github.com/Ceesaxp/telegram-cli
 LDFLAGS = -s -w \
 	-X $(MODULE)/internal/version.Version=$(VERSION) \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT)

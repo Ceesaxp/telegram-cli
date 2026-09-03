@@ -90,6 +90,16 @@ tele-tui v0.4.2 (a1b2c3d, go1.25, darwin/arm64)
 
 Releases are fully automatic: every push to `main` bumps the patch version, tags, builds, and publishes (use `#minor` / `#major` in a commit message to bump those instead).
 
+### With the Go toolchain
+
+```bash
+go install github.com/Ceesaxp/telegram-cli/cmd/teletui@latest
+```
+
+The binary lands in `$GOPATH/bin` as `teletui` rather than `tele-tui` — `go
+install` names it after its directory. The release archives and `make build`
+both call it `tele-tui`.
+
 ### Build from source
 
 ```bash

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 // cursorOnMessage is a chat with one message from the given sender under

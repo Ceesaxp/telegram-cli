@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/attach"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/attach"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
 )
 
 // pickerModel is a model with a chat open and the attach picker up, pointed

@@ -13,7 +13,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/imtaqin/telegram-cli/internal/keys"
+	"github.com/Ceesaxp/telegram-cli/internal/keys"
 )
 
 // MigrationChange records one field the migration rewrote.

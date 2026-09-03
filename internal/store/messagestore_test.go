@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 func storedMessage(chatID, id int64) *telegram.Message {

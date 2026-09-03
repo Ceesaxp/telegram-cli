@@ -3,7 +3,7 @@ package rail
 import (
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // TestAPictureSharedAsAFileIsStillAPicture, and gets the mark the media

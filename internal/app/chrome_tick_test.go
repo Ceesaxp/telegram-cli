@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/golden"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/golden"
 )
 
 func hintBarRow(t *testing.T, m Model) string {

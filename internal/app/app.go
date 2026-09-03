@@ -8,32 +8,32 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/clipboard"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/keys"
+	"github.com/Ceesaxp/telegram-cli/internal/notification"
+	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/attach"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/auth"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/contacts"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/mediaview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/palette"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/rail"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/reactionpicker"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/search"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/topbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/layout"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/clipboard"
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/keys"
-	"github.com/imtaqin/telegram-cli/internal/notification"
-	"github.com/imtaqin/telegram-cli/internal/render"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/attach"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/auth"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/contacts"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/mediaview"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/rail"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/reactionpicker"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/search"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/layout"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // paletteTopMargin is how far down the command palette sits, per
@@ -1870,7 +1870,7 @@ func (m Model) View() tea.View {
 
 		title := blue.Render("  T E L E G R A M   C L I")
 		sub := dim.Render("  Terminal Client for Telegram")
-		author := dim.Render("  github.com/imtaqin/telegram-cli")
+		author := dim.Render("  github.com/Ceesaxp/telegram-cli")
 
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).

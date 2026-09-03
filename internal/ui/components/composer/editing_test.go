@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // These tests drive the *real* terminal input decoder rather than hand-built

@@ -18,7 +18,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 // Client wraps a gotd telegram client with the app-facing API.

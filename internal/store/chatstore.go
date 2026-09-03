@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // ChatEntry holds chat metadata and its position in the main list.

@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
 )
 
 // TestComposerModeIsExhaustive walks every InteractionMode through the

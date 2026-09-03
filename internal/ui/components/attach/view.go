@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/render"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // The row's column budget, in cells, summing to [Width].

@@ -14,7 +14,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 // Sub-buckets of a peer namespace (see peerNamespace). contrib's

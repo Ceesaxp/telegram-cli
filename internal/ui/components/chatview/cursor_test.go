@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // cursorTestModel is twenty short messages in a window a few messages tall,

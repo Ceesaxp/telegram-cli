@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/golden"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/golden"
 )
 
 func topBarRow(t *testing.T, m Model) string {

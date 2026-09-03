@@ -18,8 +18,8 @@ import (
 
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/tgjson"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/tgjson"
 )
 
 // Server is the REST API handler set bound to a Telegram client.

@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imtaqin/telegram-cli/internal/render"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/hintbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/topbar"
-	"github.com/imtaqin/telegram-cli/internal/ui/frame"
+	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/topbar"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/frame"
 )
 
 // renderMainScreen draws the TUI 2.0 frame: a one-row top bar, a borderless

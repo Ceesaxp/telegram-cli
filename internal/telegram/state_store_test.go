@@ -9,7 +9,7 @@ import (
 
 	"github.com/gotd/td/telegram/peers"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 func cfgWith(session, state string) *config.Config {

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/imtaqin/telegram-cli/internal/render"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/muesli/termenv"
 
 	"github.com/charmbracelet/lipgloss"
