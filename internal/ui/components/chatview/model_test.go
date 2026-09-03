@@ -31,6 +31,46 @@ func newTestModel() Model {
 	return m
 }
 
+func TestHistoryPagingPastStoreCapAndStopsOnNoProgress(t *testing.T) {
+	m := newTestModel()
+	m.store.Messages.Activate(testChatID)
+	for id := int64(101); id <= 300; id++ {
+		m.store.Messages.Append(testChatID, textMessage(id, 100, "loaded"))
+	}
+
+	// Telegram history arrives newest first.
+	page := make([]*telegram.Message, 0, 50)
+	for id := int64(100); id >= 51; id-- {
+		page = append(page, textMessage(id, 100, "older"))
+	}
+	m.gen = 9
+	m.loading = true
+	next, _ := m.Update(historyLoadedMsg{
+		gen: m.gen, chatID: testChatID, fromID: 101, messages: page,
+	})
+	if got := next.store.Messages.Count(testChatID); got != 250 {
+		t.Fatalf("message count after older page = %d, want 250", got)
+	}
+	if got := next.store.Messages.OldestMessageId(testChatID); got != 51 {
+		t.Fatalf("oldest after older page = %d, want 51", got)
+	}
+
+	// Receiving the same page again inserts nothing and marks the cursor
+	// exhausted, so another scroll cannot issue the same request yet again.
+	next.loading = true
+	next, _ = next.Update(historyLoadedMsg{
+		gen: next.gen, chatID: testChatID, fromID: 51, messages: page,
+	})
+	if !next.historyEnd || next.loading {
+		t.Fatalf("duplicate page left historyEnd=%v loading=%v", next.historyEnd, next.loading)
+	}
+	next.tg = &telegram.Client{}
+	next.scrollOffset = next.maxScrollOffset() + 1
+	if cmd := next.clampScrollUp(); cmd != nil {
+		t.Fatal("scroll at exhausted history scheduled another request")
+	}
+}
+
 // renderOne renders a single message the way the view does, returning the
 // joined lines and the line count. Tests older than the grid were written
 // against the bubble renderer's (string, int) shape; this keeps them

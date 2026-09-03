@@ -236,6 +236,7 @@ type Model struct {
 	// than as a line in a status bar.
 	typing      []int64
 	loading     bool
+	historyEnd  bool
 	loadStatus  string // honest stage label, e.g. "Loading messages..."
 	notice      string // transient notice shown in the header
 	myUserId    int64
@@ -883,6 +884,7 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 // loaded message and a notice is shown in the header.
 func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cmd {
 	m.gen++
+	m.store.Messages.Activate(chatID)
 	m.chatID = chatID
 	m.chatTitle = title
 	m.scrollOffset = 0
@@ -891,6 +893,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.pendingCount = 0
 	m.revealedID = 0
 	m.loading = true
+	m.historyEnd = false
 	m.loadStatus = "Loading messages..."
 	m.mediaStatus = ""
 	m.notice = ""
@@ -969,6 +972,7 @@ func (m *Model) memberCountCmd(chatID int64) tea.Cmd {
 type historyLoadedMsg struct {
 	gen      int
 	chatID   int64
+	fromID   int64
 	messages []*telegram.Message
 	err      error
 }
@@ -1009,14 +1013,28 @@ type messageFetchedMsg struct {
 	message *telegram.Message
 }
 
+// finishHistory records that Telegram returned no older information for the
+// current cursor. The flag prevents every further scroll keypress from issuing
+// the same request again.
+func (m *Model) finishHistory() {
+	m.loading = false
+	m.historyEnd = true
+	m.loadStatus = ""
+	if m.targetMsgID != 0 {
+		m.targetMsgID = 0
+		m.notice = "message not in loaded history"
+		m.scrollOffset = m.maxScrollOffset()
+	}
+}
+
 func (m *Model) loadHistoryCmd(gen int, chatID int64, fromMsgId int64) tea.Cmd {
 	tg := m.tg
 	return func() tea.Msg {
 		msgs, err := tg.GetChatHistory(chatID, fromMsgId, 0, 50)
 		if err != nil {
-			return historyLoadedMsg{gen: gen, chatID: chatID, err: err}
+			return historyLoadedMsg{gen: gen, chatID: chatID, fromID: fromMsgId, err: err}
 		}
-		return historyLoadedMsg{gen: gen, chatID: chatID, messages: msgs}
+		return historyLoadedMsg{gen: gen, chatID: chatID, fromID: fromMsgId, messages: msgs}
 	}
 }
 
@@ -1485,13 +1503,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(msg.messages) == 0 {
-			m.loading = false
-			m.loadStatus = ""
-			if m.targetMsgID != 0 {
-				m.targetMsgID = 0
-				m.notice = "message not in loaded history"
-				m.scrollOffset = m.maxScrollOffset()
-			}
+			m.finishHistory()
 			return m, nil
 		}
 
@@ -1499,8 +1511,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		for i, v := range msg.messages {
 			reversed[len(msg.messages)-1-i] = v
 		}
-		m.store.Messages.Prepend(m.chatID, reversed)
-		m.pendingMeta = append(m.pendingMeta, reversed...)
+		inserted := m.store.Messages.Prepend(m.chatID, reversed)
+		if len(inserted) == 0 && msg.fromID != 0 {
+			m.finishHistory()
+			return m, nil
+		}
+		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
 
 		if m.targetMsgID != 0 {
@@ -1918,7 +1934,7 @@ func (m *Model) clampScrollUp() tea.Cmd {
 	m.scrollOffset = maxOffset
 	m.syncCursor()
 	oldest := m.store.Messages.OldestMessageId(m.chatID)
-	if oldest != 0 && !m.loading && m.tg != nil {
+	if oldest != 0 && !m.loading && !m.historyEnd && m.tg != nil {
 		m.loading = true
 		m.loadStatus = "Loading older messages..."
 		return m.loadHistoryCmd(m.gen, m.chatID, oldest)

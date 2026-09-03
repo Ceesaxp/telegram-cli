@@ -10,9 +10,10 @@ const defaultMessageBufferSize = 200
 
 // MessageStore caches messages per chat.
 type MessageStore struct {
-	mu       sync.RWMutex
-	messages map[int64][]*telegram.Message // chatID -> messages (newest last)
-	maxSize  int
+	mu           sync.RWMutex
+	messages     map[int64][]*telegram.Message // chatID -> messages (newest last)
+	maxSize      int
+	activeChatID int64
 }
 
 func NewMessageStore() *MessageStore {
@@ -20,6 +21,22 @@ func NewMessageStore() *MessageStore {
 		messages: make(map[int64][]*telegram.Message),
 		maxSize:  defaultMessageBufferSize,
 	}
+}
+
+// Activate makes chatID the one pageable chat. Its history may grow while the
+// reader explicitly walks backwards; when the reader leaves, the previous
+// chat is reduced to the same newest-message bound as every background chat.
+func (s *MessageStore) Activate(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeChatID == chatID {
+		return
+	}
+	if s.activeChatID != 0 {
+		previous := s.activeChatID
+		s.messages[previous] = trimNewest(s.messages[previous], s.maxSize)
+	}
+	s.activeChatID = chatID
 }
 
 // Append adds a new message to the end of the chat's message list.
@@ -33,22 +50,18 @@ func (s *MessageStore) Append(chatID int64, msg *telegram.Message) {
 	for i, m := range msgs {
 		if m.ID == msg.ID {
 			msgs[i] = msg
+			s.storeLocked(chatID, msgs)
 			return
 		}
 	}
 
 	msgs = append(msgs, msg)
-
-	// Trim if exceeding max size.
-	if len(msgs) > s.maxSize {
-		msgs = msgs[len(msgs)-s.maxSize:]
-	}
-
-	s.messages[chatID] = msgs
+	s.storeLocked(chatID, msgs)
 }
 
-// Prepend adds older messages to the beginning of the chat's message list.
-func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) {
+// Prepend adds older messages to the beginning of the chat's message list and
+// returns the newly inserted messages that survived the cache policy.
+func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegram.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -64,6 +77,7 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) {
 	for _, m := range msgs {
 		if _, exists := idSet[m.ID]; !exists {
 			toAdd = append(toAdd, m)
+			idSet[m.ID] = struct{}{}
 		}
 	}
 
@@ -71,11 +85,17 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) {
 	combined = append(combined, toAdd...)
 	combined = append(combined, existing...)
 
-	if len(combined) > s.maxSize {
-		combined = combined[len(combined)-s.maxSize:]
+	dropped := 0
+	if chatID != s.activeChatID && len(combined) > s.maxSize {
+		dropped = len(combined) - s.maxSize
+		combined = combined[dropped:]
 	}
 
 	s.messages[chatID] = combined
+	if dropped >= len(toAdd) {
+		return nil
+	}
+	return append([]*telegram.Message(nil), toAdd[dropped:]...)
 }
 
 // Get returns all cached messages for a chat.
@@ -98,9 +118,11 @@ func (s *MessageStore) UpdateMessage(chatID int64, messageID int64, newMsg *tele
 	for i, m := range msgs {
 		if m.ID == messageID {
 			msgs[i] = newMsg
+			s.storeLocked(chatID, msgs)
 			return
 		}
 	}
+	s.storeLocked(chatID, msgs)
 }
 
 // Delete removes messages from the store.
@@ -133,7 +155,7 @@ func (s *MessageStore) deleteLocked(chatID int64, messageIDs []int64) {
 			filtered = append(filtered, m)
 		}
 	}
-	s.messages[chatID] = filtered
+	s.storeLocked(chatID, filtered)
 }
 
 // Clear removes all cached messages for a chat.
@@ -141,6 +163,9 @@ func (s *MessageStore) Clear(chatID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.messages, chatID)
+	if s.activeChatID == chatID {
+		s.activeChatID = 0
+	}
 }
 
 // ReplaceMessageId replaces a temporary message ID with the real one (after send).
@@ -152,6 +177,7 @@ func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *teleg
 	for i, m := range msgs {
 		if m.ID == oldID {
 			msgs[i] = newMsg
+			s.storeLocked(chatID, msgs)
 			return
 		}
 	}
@@ -159,10 +185,27 @@ func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *teleg
 	// (it may have arrived via the update dispatcher first).
 	for _, m := range msgs {
 		if m.ID == newMsg.ID {
+			s.storeLocked(chatID, msgs)
 			return
 		}
 	}
-	s.messages[chatID] = append(msgs, newMsg)
+	s.storeLocked(chatID, append(msgs, newMsg))
+}
+
+func (s *MessageStore) storeLocked(chatID int64, msgs []*telegram.Message) {
+	if chatID != s.activeChatID {
+		msgs = trimNewest(msgs, s.maxSize)
+	}
+	s.messages[chatID] = msgs
+}
+
+func trimNewest(msgs []*telegram.Message, maxSize int) []*telegram.Message {
+	if maxSize >= 0 && len(msgs) > maxSize {
+		trimmed := make([]*telegram.Message, maxSize)
+		copy(trimmed, msgs[len(msgs)-maxSize:])
+		return trimmed
+	}
+	return msgs
 }
 
 // OldestMessageId returns the oldest cached message ID for a chat.
