@@ -6,7 +6,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"path/filepath"
+	"sync"
 	"time"
 
 	contribbolt "github.com/gotd/contrib/bbolt"
@@ -173,7 +175,16 @@ func (s *stateStores) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	// The peer cache holds writes back to coalesce them, so it has to be
+	// caught up before the file it writes to goes away.
+	var flushErr error
+	if s.peers != nil {
+		flushErr = s.peers.Close()
+	}
+	if err := s.db.Close(); err != nil {
+		return err
+	}
+	return flushErr
 }
 
 // boltPeerStorage is a peers.Storage backed by bbolt, so access hashes
@@ -183,10 +194,69 @@ func (s *stateStores) Close() error {
 //
 // All data lives under the ns bucket, which isolates one account from
 // another (see peerNamespace).
+// boltPeerStorage is the peer access-hash cache: a map that a bbolt file
+// outlives the process for.
+//
+// The map is authoritative. Everything is loaded at open, every write goes
+// through it, and reads never touch the disk — so Find and FindPhone cost
+// nothing, which matters because gotd consults them on the update path.
+//
+// Writes are COALESCED rather than immediate. gotd's peers.Manager.Apply
+// calls Save once per user and once per chat in every response it is handed,
+// synchronously, on the goroutine doing the fetching: a hundred-dialog page
+// used to pay a hundred fsync'd transactions before the chat list could
+// paint. Now an unchanged hash — overwhelmingly the common case — costs
+// nothing at all, and changed ones accumulate until the burst stops and go
+// out together.
+//
+// Losing the tail of that on a crash is acceptable and always was: these are
+// hashes the server will hand out again, which is why bindOwner can drop the
+// whole namespace without ceremony and why the in-memory mode gotd falls
+// back to keeps none of them.
 type boltPeerStorage struct {
 	db *bolt.DB
 	ns []byte
+
+	mu     sync.Mutex
+	hashes map[string]int64  // encoded peer key -> access hash
+	phones map[string]string // phone -> encoded peer key
+
+	// pending are the entries the map has and the file does not.
+	pending       map[string]int64
+	pendingPhones map[string]string
+
+	flush  *time.Timer
+	closed bool
+
+	// flushMu serialises flushes and is what Close waits on.
+	//
+	// Flush detaches the pending set under mu and then commits WITHOUT it,
+	// because a bbolt commit fsyncs and holding mu across one would stall
+	// every Find on the update path. That leaves a window where a batch is
+	// in flight and belongs to nobody: Close could see an empty pending
+	// set, report success, and let the database be closed under a write
+	// that had already started. Holding this for the whole of a flush —
+	// including the commit — is what makes a successful Close mean every
+	// detached batch has landed.
+	flushMu sync.Mutex
+
+	// sealed is set by Close under flushMu. A flush that finds it does
+	// nothing: the database is about to be closed, or already is.
+	sealed bool
+
+	// beforeCommit is a test seam, called after the pending set has been
+	// detached and before it is written. It exists because the window this
+	// mutex closes is otherwise only reachable by luck.
+	beforeCommit func()
 }
+
+// peerFlushDelay is how long a changed hash waits for company.
+//
+// Long enough that one Apply of a dialog page, a member list or a contact
+// list becomes one transaction; short enough that a crash loses nothing a
+// reader would notice. Both ends of that are forgiving — the cost of being
+// wrong is a cache miss.
+const peerFlushDelay = 250 * time.Millisecond
 
 var _ peers.Storage = (*boltPeerStorage)(nil)
 
@@ -211,7 +281,158 @@ func newBoltPeerStorage(db *bolt.DB, ns []byte) (*boltPeerStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &boltPeerStorage{db: db, ns: ns}, nil
+
+	store := &boltPeerStorage{
+		db:            db,
+		ns:            ns,
+		hashes:        map[string]int64{},
+		phones:        map[string]string{},
+		pending:       map[string]int64{},
+		pendingPhones: map[string]string{},
+	}
+	if err := store.load(); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// load reads the namespace into memory, once, so the read path never has to
+// go back for it. A peer entry is a key and eight bytes; an account with
+// thousands of them is a map measured in tens of kilobytes.
+func (s *boltPeerStorage) load() error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		if b := s.read(tx, peerBucket); b != nil {
+			if err := b.ForEach(func(k, v []byte) error {
+				if hash, ok := decodeInt64(v); ok {
+					s.hashes[string(k)] = hash
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		if b := s.read(tx, peerPhoneBucket); b != nil {
+			return b.ForEach(func(k, v []byte) error {
+				s.phones[string(k)] = string(v)
+				return nil
+			})
+		}
+		return nil
+	})
+}
+
+// scheduleLocked arms the flush timer. Called with mu held.
+func (s *boltPeerStorage) scheduleLocked() {
+	if s.closed || s.flush != nil {
+		return
+	}
+	s.flush = time.AfterFunc(peerFlushDelay, func() {
+		s.mu.Lock()
+		s.flush = nil
+		s.mu.Unlock()
+		if err := s.Flush(); err != nil {
+			log.Printf("state db: peer cache flush: %s", err)
+		}
+	})
+}
+
+// Flush writes everything the map has and the file does not, in one
+// transaction.
+//
+// The pending set is taken under the lock and written outside it: a bbolt
+// commit fsyncs, and holding the mutex across it would stall every Find on
+// the update path — which is the cost this whole change exists to remove.
+func (s *boltPeerStorage) Flush() error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	if s.sealed {
+		return nil
+	}
+	return s.writePending()
+}
+
+// writePending is the body of a flush. Callers hold flushMu.
+func (s *boltPeerStorage) writePending() error {
+	s.mu.Lock()
+	hashes, phones := s.pending, s.pendingPhones
+	if len(hashes) == 0 && len(phones) == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	s.pending, s.pendingPhones = map[string]int64{}, map[string]string{}
+	before := s.beforeCommit
+	s.mu.Unlock()
+
+	if before != nil {
+		before()
+	}
+
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		if len(hashes) > 0 {
+			b, err := s.write(tx, peerBucket)
+			if err != nil {
+				return err
+			}
+			for key, hash := range hashes {
+				if err := b.Put([]byte(key), encodeInt64(hash)); err != nil {
+					return err
+				}
+			}
+		}
+		if len(phones) > 0 {
+			b, err := s.write(tx, peerPhoneBucket)
+			if err != nil {
+				return err
+			}
+			for phone, key := range phones {
+				if err := b.Put([]byte(phone), []byte(key)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		// Put them back so the next flush retries, but never over a newer
+		// value: what is in pending now was written after these were taken.
+		s.mu.Lock()
+		for key, hash := range hashes {
+			if _, newer := s.pending[key]; !newer {
+				s.pending[key] = hash
+			}
+		}
+		for phone, key := range phones {
+			if _, newer := s.pendingPhones[phone]; !newer {
+				s.pendingPhones[phone] = key
+			}
+		}
+		s.scheduleLocked()
+		s.mu.Unlock()
+	}
+	return err
+}
+
+// Close stops the timer and writes what is left. After it, the map still
+// answers reads — the caller is about to close the database, and a Find
+// racing that must not reach it.
+func (s *boltPeerStorage) Close() error {
+	s.mu.Lock()
+	s.closed = true
+	if s.flush != nil {
+		s.flush.Stop()
+		s.flush = nil
+	}
+	s.mu.Unlock()
+
+	// Taking flushMu is the wait: a flush already in flight holds it across
+	// its commit, so this blocks until that batch has landed rather than
+	// finding an empty pending set and declaring success over the top of it.
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	err := s.writePending()
+	s.sealed = true
+	return err
 }
 
 // read returns a sub-bucket of this storage's namespace, or nil.
@@ -256,6 +477,18 @@ func (s *boltPeerStorage) bindOwner(_ context.Context, userID int64) (dropped bo
 		}
 
 		if ok {
+			// The MAP is dropped with the buckets. It is the authoritative
+			// copy now, so leaving it would serve account A's hashes to
+			// account B out of memory — which is the exact thing this
+			// check exists to prevent, one layer up from where it used to
+			// be able to happen.
+			s.mu.Lock()
+			s.hashes = map[string]int64{}
+			s.phones = map[string]string{}
+			s.pending = map[string]int64{}
+			s.pendingPhones = map[string]string{}
+			s.mu.Unlock()
+
 			root := tx.Bucket(s.ns)
 			for _, name := range peerSubBuckets {
 				if root.Bucket(name) == nil {
@@ -314,86 +547,74 @@ func decodeInt64(b []byte) (int64, bool) {
 }
 
 // Save implements peers.Storage.
+//
+// An unchanged hash is the overwhelmingly common case — every dialog page,
+// history page and update re-applies entities the cache already has — and it
+// costs nothing here. Only a new or changed one is recorded, and even then
+// the disk waits for the rest of the burst.
 func (s *boltPeerStorage) Save(_ context.Context, key peers.Key, value peers.Value) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b, err := s.write(tx, peerBucket)
-		if err != nil {
-			return err
-		}
-		return b.Put(encodePeerKey(key), encodeInt64(value.AccessHash))
-	})
+	encoded := string(encodePeerKey(key))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if have, ok := s.hashes[encoded]; ok && have == value.AccessHash {
+		return nil
+	}
+	s.hashes[encoded] = value.AccessHash
+	s.pending[encoded] = value.AccessHash
+	s.scheduleLocked()
+	return nil
 }
 
-// Find implements peers.Storage.
-func (s *boltPeerStorage) Find(_ context.Context, key peers.Key) (value peers.Value, found bool, _ error) {
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := s.read(tx, peerBucket)
-		if b == nil {
-			return nil
-		}
-		raw := b.Get(encodePeerKey(key))
-		if raw == nil {
-			return nil
-		}
-		hash, ok := decodeInt64(raw)
-		if !ok {
-			return nil
-		}
-		value, found = peers.Value{AccessHash: hash}, true
-		return nil
-	})
-	if err != nil {
-		return peers.Value{}, false, err
+// Find implements peers.Storage. From the map: gotd consults it on the
+// update path, and a read that opened a transaction there would put the
+// disk between an incoming message and the screen.
+func (s *boltPeerStorage) Find(_ context.Context, key peers.Key) (peers.Value, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hash, ok := s.hashes[string(encodePeerKey(key))]
+	if !ok {
+		return peers.Value{}, false, nil
 	}
-	return value, found, nil
+	return peers.Value{AccessHash: hash}, true, nil
 }
 
 // SavePhone implements peers.Storage.
 func (s *boltPeerStorage) SavePhone(_ context.Context, phone string, key peers.Key) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b, err := s.write(tx, peerPhoneBucket)
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(phone), encodePeerKey(key))
-	})
+	encoded := string(encodePeerKey(key))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if have, ok := s.phones[phone]; ok && have == encoded {
+		return nil
+	}
+	s.phones[phone] = encoded
+	s.pendingPhones[phone] = encoded
+	s.scheduleLocked()
+	return nil
 }
 
 // FindPhone implements peers.Storage.
-func (s *boltPeerStorage) FindPhone(ctx context.Context, phone string) (key peers.Key, value peers.Value, found bool, err error) {
-	err = s.db.View(func(tx *bolt.Tx) error {
-		phones := s.read(tx, peerPhoneBucket)
-		if phones == nil {
-			return nil
-		}
-		raw := phones.Get([]byte(phone))
-		if raw == nil {
-			return nil
-		}
-		k, ok := decodePeerKey(raw)
-		if !ok {
-			return nil
-		}
-		// Mirror peers.InmemoryStorage: the resolved key is reported even
-		// when the value lookup misses, so found refers to the value.
-		key = k
+//
+// Mirrors peers.InmemoryStorage: the resolved key is reported even when the
+// value lookup misses, so found refers to the VALUE rather than the phone.
+func (s *boltPeerStorage) FindPhone(_ context.Context, phone string) (peers.Key, peers.Value, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-		values := s.read(tx, peerBucket)
-		if values == nil {
-			return nil
-		}
-		hash, ok := decodeInt64(values.Get(raw))
-		if !ok {
-			return nil
-		}
-
-		value, found = peers.Value{AccessHash: hash}, true
-		return nil
-	})
-	if err != nil {
-		return peers.Key{}, peers.Value{}, false, err
+	encoded, ok := s.phones[phone]
+	if !ok {
+		return peers.Key{}, peers.Value{}, false, nil
 	}
-	return key, value, found, nil
+	decoded, ok := decodePeerKey([]byte(encoded))
+	if !ok {
+		return peers.Key{}, peers.Value{}, false, nil
+	}
+	hash, ok := s.hashes[encoded]
+	if !ok {
+		return decoded, peers.Value{}, false, nil
+	}
+	return decoded, peers.Value{AccessHash: hash}, true, nil
 }
 
 // GetContactsHash implements peers.Storage. A missing hash is reported as
