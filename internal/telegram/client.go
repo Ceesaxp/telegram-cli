@@ -33,6 +33,12 @@ type Client struct {
 	cancel     context.CancelFunc
 	files      *fileRegistry
 
+	// dialogs is how far down the dialog list has been read. See
+	// LoadMoreChats: the chat list asks for the next page when the reader
+	// reaches the bottom, and the cursor stays here rather than travelling
+	// to the UI as a gotd InputPeer.
+	dialogs dialogPager
+
 	lifecycleMu sync.Mutex
 	started     bool
 	closed      bool

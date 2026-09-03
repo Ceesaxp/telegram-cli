@@ -2,6 +2,7 @@ package chatlist
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -77,6 +78,19 @@ type Model struct {
 	// time anything asked for it.
 	inFolder *int
 
+	// pagingMore is set while a page request is in flight, so holding j at
+	// the bottom of the list asks once rather than once per keystroke.
+	pagingMore bool
+
+	// dialogs is the client, narrowed to the two calls that grow the list.
+	//
+	// An interface rather than the *telegram.Client this component already
+	// holds, because paging is the one behaviour here whose rules are worth
+	// testing against a fake: whether a keystroke asks, whether it asks
+	// twice, and what happens when the answer fails. The same shape as
+	// notifySettingsGetter in internal/telegram, and for the same reason.
+	dialogs dialogSource
+
 	// resolving is the set of chats a fetch has already been issued for,
 	// so a nameless row asks once rather than on every refresh. Shared by
 	// pointer for the same reason as list and dirty: refreshList runs on a
@@ -116,6 +130,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		roles:       r,
 		store:       s,
 		tg:          tg,
+		dialogs:     dialogSourceOf(tg),
 		loading:     true,
 		spinner:     sp,
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
@@ -129,6 +144,25 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	// tests construct this model directly.
 	m.list.RenderRow = m.renderRow
 	return m
+}
+
+// dialogSourceOf narrows a client to the paging seam, keeping a nil client
+// nil: a typed nil inside an interface is not nil, and every guard here
+// tests the interface rather than the client.
+func dialogSourceOf(tg *telegram.Client) dialogSource {
+	if tg == nil {
+		return nil
+	}
+	return tg
+}
+
+// dialogSource is how the chat list asks for more of the dialog list.
+type dialogSource interface {
+	// LoadMoreChats fetches the next page, pushing each chat to the UI, and
+	// reports how many arrived.
+	LoadMoreChats(limit int) (int, error)
+	// MoreChatsToLoad reports whether asking again could produce anything.
+	MoreChatsToLoad() bool
 }
 
 // defaultAllFolder synthesizes the implicit "All chats" folder so the tab
@@ -145,6 +179,62 @@ func (m Model) Init() tea.Cmd {
 		m.loadFoldersCmd(),
 		m.spinner.Tick(),
 	)
+}
+
+// pageAheadTrigger is how close to the end of the loaded list the cursor
+// has to be before the next page is requested.
+//
+// Ahead of the bottom rather than at it, so the rows arrive before the
+// reader runs out of them. Small, because the pages are: asking early costs
+// one request that was going to happen anyway.
+const pageAheadTrigger = 10
+
+// chatsPageSize is how many dialogs a page request asks for. The same size
+// as the first load, so the second screenful costs what the first did.
+const chatsPageSize = 50
+
+// pageAheadCmd requests the next page of dialogs when the cursor is near the
+// end of the loaded list and there is more to load.
+//
+// Returns nil in every case that would make the request pointless: no
+// client, nothing loaded yet, a request already out, the list exhausted, or
+// a cursor nowhere near the end. Nil is a no-op to tea.Batch, so the caller
+// can add it unconditionally.
+func (m *Model) pageAheadCmd() tea.Cmd {
+	if m.dialogs == nil || !m.shouldPageAhead() || !m.dialogs.MoreChatsToLoad() {
+		return nil
+	}
+
+	m.pagingMore = true
+	source := m.dialogs
+	return func() tea.Msg {
+		n, err := source.LoadMoreChats(chatsPageSize)
+		return moreChatsLoadedMsg{count: n, err: err}
+	}
+}
+
+// shouldPageAhead reports whether the cursor is near enough the end of the
+// loaded list to be worth another page.
+//
+// Everything except "does the server have more", which only the client can
+// answer. Split out so the rules are testable without one.
+func (m Model) shouldPageAhead() bool {
+	if m.loading || m.pagingMore {
+		return false
+	}
+	// A FILTERED list is not a reason to page. Filtering narrows what is
+	// already loaded, so reaching the end of three matches says nothing
+	// about how much dialog list is left.
+	if m.filter != "" {
+		return false
+	}
+	return len(m.list.Items)-m.list.Cursor <= pageAheadTrigger
+}
+
+// moreChatsLoadedMsg reports the outcome of a page request.
+type moreChatsLoadedMsg struct {
+	count int
+	err   error
 }
 
 func (m Model) loadChatsCmd() tea.Cmd {
@@ -659,6 +749,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.spinner.Active = false
 		m.refreshList()
 
+	case moreChatsLoadedMsg:
+		// Cleared whatever happened: a failed page must not wedge the list
+		// into never asking again, and the next keystroke at the bottom is
+		// a perfectly good retry.
+		m.pagingMore = false
+		if msg.err != nil {
+			log.Printf("chatlist: loading more dialogs: %s", msg.err)
+			break
+		}
+		if msg.count > 0 {
+			m.refreshList()
+		}
+
 	case telegram.ChatFoldersMsg:
 		// Also arrives live from the update listener on folder edits.
 		m.setFolders(msg.Folders)
@@ -769,6 +872,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.jumpToFolder(n)
 				return m, m.FolderLoadCmd()
 			}
+
+			// Reaching the bottom is the ask. The dialog list is loaded a
+			// page at a time — an account's whole history at startup would
+			// be a long wait for chats nobody scrolled to — so the cursor
+			// arriving near the end is what requests the next one.
+			cmds = append(cmds, m.pageAheadCmd())
 
 			if selected := m.list.Update(msg); selected {
 				item := m.list.SelectedItem()
