@@ -26,7 +26,18 @@ LDFLAGS = -s -w \
 # after the binary itself. An archive carrying the program but not the
 # document describing how to configure it sends the reader off to find the
 # repository, which is what downloading a release was meant to avoid.
+#
+# docs/ for the same reason, since the README was split: the keymap, the
+# settings and the troubleshooting notes moved out of it, and an archive
+# carrying only the front door would be a smaller manual than the one the
+# previous release shipped.
+#
+# The WHOLE directory, design record and fixtures included, rather than the
+# six user-facing files. Those files link to the design record and the
+# goldens, so a subset would ship with dead links — and all of it is 340K
+# against a 19M binary, which is not a trade worth making.
 DIST_DOCS = README.md LICENSE config.example.toml
+DIST_DIRS = docs
 
 GO_BUILD = CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)"
 
@@ -80,6 +91,7 @@ dist:
 		GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o "$$stage/$$out$$ext" ./cmd/$$cmd; \
 	done; \
 	cp $(DIST_DOCS) "$$stage/"; \
+	for d in $(DIST_DIRS); do cp -R "$$d" "$$stage/"; done; \
 	mkdir -p $(DIST_DIR); \
 	if [ "$$archive" = "zip" ]; then \
 		( cd $(DIST_DIR)/stage && zip -qr "../$$pkg.zip" "$$pkg" ); \
