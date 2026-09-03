@@ -3,11 +3,11 @@ package chatlist
 import (
 	"strings"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/sigil"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/sigil"
-	"github.com/imtaqin/telegram-cli/internal/ui/widgets"
 )
 
 // The TUI 2.0 chat row is two lines on a fixed grid (docs/tui-2.0.md, "Top

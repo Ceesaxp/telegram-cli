@@ -4,7 +4,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // A notification about a chat this client cannot yet describe is held until

@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // dialogChat is what a chat looks like when it came off the dialog list:

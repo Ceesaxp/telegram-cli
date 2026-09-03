@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
 // Width is the overlay's fixed width in cells, the palette's exactly. Fixed

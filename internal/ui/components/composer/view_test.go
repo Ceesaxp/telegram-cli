@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 	"github.com/muesli/termenv"
 )
 

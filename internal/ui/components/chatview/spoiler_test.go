@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // spoilerModel is n messages, each ending in a spoiler, with the cursor on

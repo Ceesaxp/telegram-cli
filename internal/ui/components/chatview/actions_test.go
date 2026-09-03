@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // actionModel is a thread with the cursor on a message the test chooses,

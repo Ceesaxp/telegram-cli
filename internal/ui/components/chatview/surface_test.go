@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 )
 
 func esc(s string) string { return strings.ReplaceAll(s, "\x1b", "ESC") }

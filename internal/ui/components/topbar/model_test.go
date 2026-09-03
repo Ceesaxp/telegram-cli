@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
 func newBar(width int) Model {

@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // ListItem represents a single item in a scrollable list.

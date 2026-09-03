@@ -14,7 +14,7 @@ import (
 
 // Version is stamped at build time:
 //
-//	-ldflags "-X github.com/imtaqin/telegram-cli/internal/version.Version=v0.4.2"
+//	-ldflags "-X github.com/Ceesaxp/telegram-cli/internal/version.Version=v0.4.2"
 //
 // "dev" when nobody stamped it, which is the honest answer for a `go build`
 // or a `go run` — see String for where it goes to look next.

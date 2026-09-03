@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/palette"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/palette"
 )
 
 // ArgSpec describes what a command does with the text after its name.

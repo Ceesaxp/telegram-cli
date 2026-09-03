@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/golden"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/golden"
 )
 
 // updateGoldens regenerates the fixtures from the renderer instead of

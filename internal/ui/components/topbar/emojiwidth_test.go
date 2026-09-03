@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // drawnWidth is the row's width as a terminal in the given mode draws it,

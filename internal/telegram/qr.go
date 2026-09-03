@@ -15,7 +15,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 )
 
 // ErrQRPasswordPromptRequired is returned when QR login reaches 2FA but no

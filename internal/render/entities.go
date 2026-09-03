@@ -3,10 +3,10 @@ package render
 import (
 	"strings"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // inlineStyle is the set of attributes active over one run of runes.

@@ -11,8 +11,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
 // TestMain pins a colour profile: under `go test` lipgloss resolves to Ascii

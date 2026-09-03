@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // newThemedList builds a List wired to the real shipped theme, mirroring

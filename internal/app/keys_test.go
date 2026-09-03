@@ -8,15 +8,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/keys"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/keys"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatview"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/help"
 )
 
 // These tests drive the *real* terminal input decoder rather than hand-built

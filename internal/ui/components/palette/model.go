@@ -12,9 +12,9 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // Width is the overlay's fixed width in cells (docs/tui-2.0.md, "Composer,

@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/render"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // Row caps. The rail is a glance, not a browser: past a handful of rows it

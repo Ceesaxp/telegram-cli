@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // newTestModel builds an app.Model with no live Telegram client, suitable

@@ -18,10 +18,10 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/keys"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/keys"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 // Reactions is the set offered, in Telegram's own order of popularity.

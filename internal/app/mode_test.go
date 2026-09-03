@@ -3,8 +3,8 @@ package app
 import (
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/components/composer"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/dialog"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
 )
 
 // --- The rules, as a pure function ---------------------------------------

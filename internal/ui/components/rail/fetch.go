@@ -2,7 +2,7 @@ package rail
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // searchResultMsg carries one filtered search back.

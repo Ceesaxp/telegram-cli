@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 // viDraft is a composer in vi mode with a draft already typed, ready for

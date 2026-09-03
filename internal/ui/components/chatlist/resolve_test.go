@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // A message from a chat outside the loaded dialog page produced a row with

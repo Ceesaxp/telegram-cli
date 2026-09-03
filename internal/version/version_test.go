@@ -189,6 +189,59 @@ func TestTheArchiveCarriesTheConfigReference(t *testing.T) {
 	}
 }
 
+// TestTheMakefileStampsTheModuleThisIsActuallyIn.
+//
+// -ldflags -X takes a PACKAGE path, which comes from go.mod, and the linker
+// discards an -X for a symbol it cannot find — silently, with no warning and
+// no non-zero exit. So a MODULE that does not match go.mod does not break
+// the build: it produces binaries that report "dev" forever, and the only
+// symptom is `tele-tui -version` quietly lying.
+//
+// That is not hypothetical. This repository ran with go.mod declaring the
+// upstream path it was forked from, so the Makefile had to name upstream
+// too, and "correcting" it to the fork would have been the exact failure
+// above. Renaming the module and forgetting the Makefile is the same
+// failure from the other direction. This is the check that turns either one
+// into a red test.
+func TestTheMakefileStampsTheModuleThisIsActuallyIn(t *testing.T) {
+	root := repoRoot(t)
+
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^module\s+(\S+)`).FindStringSubmatch(string(mod))
+	if m == nil {
+		t.Fatal("go.mod declares no module")
+	}
+	module := m[1]
+
+	raw, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := regexp.MustCompile(`(?m)^MODULE\s*=\s*(\S+)`).FindStringSubmatch(string(raw))
+	if k == nil {
+		t.Fatal("the Makefile no longer says which module it stamps")
+	}
+	if k[1] != module {
+		t.Errorf("the Makefile stamps %q but go.mod declares %q — every -X "+
+			"would address a symbol that does not exist, and every binary "+
+			"would report %q with no error anywhere", k[1], module, Version)
+	}
+
+	// And the flags have to stamp THIS package through that variable —
+	// a MODULE that agrees with go.mod is no use if nothing interpolates it.
+	for _, want := range []string{
+		"-X $(MODULE)/internal/version.Version=",
+		"-X $(MODULE)/internal/version.Commit=",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the Makefile does not stamp %q", want)
+		}
+	}
+}
+
 // TestTheReleaseWorkflowPackagesThroughTheMakefile, so the archive people
 // download is the one a person can build and open locally. Two packaging
 // paths are two things to keep in step, and the one nobody runs by hand is

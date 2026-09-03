@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/components/chatlist"
 )
 
 // TestTheHintBarCountsOnlyWhatItHas. A client with nothing unread should

@@ -37,7 +37,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 )
 
 // ruleRune is the box-drawing rune used for the delimiter lines that fence

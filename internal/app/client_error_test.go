@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imtaqin/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // The Telegram client can die without anything on screen changing: the run

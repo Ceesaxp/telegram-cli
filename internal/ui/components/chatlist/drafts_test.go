@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
 )
 
 // TestDraftPreviewOutranksTheLastMessage (decision 13).

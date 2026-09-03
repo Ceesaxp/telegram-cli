@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/imtaqin/telegram-cli/internal/ui/cell"
 )
 
 func plain(s string) string { return ansi.Strip(s) }

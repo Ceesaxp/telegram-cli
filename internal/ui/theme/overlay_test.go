@@ -76,7 +76,7 @@ var s = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 
 import (
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
 func f(r theme.Roles) lipgloss.Style {

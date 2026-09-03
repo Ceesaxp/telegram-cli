@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/imtaqin/telegram-cli/internal/config"
-	"github.com/imtaqin/telegram-cli/internal/store"
-	"github.com/imtaqin/telegram-cli/internal/telegram"
-	"github.com/imtaqin/telegram-cli/internal/ui/theme"
 )
 
 const testChatID = int64(1)
