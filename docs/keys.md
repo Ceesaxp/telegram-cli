@@ -161,10 +161,8 @@ list: `Ctrl+Q` (quit, or whatever `keys.quit` is set to),
 the panel-focus keys (`Alt+1/2/3`, `F1`-`F3`), `Alt+J`/`K`/`H`/`L`
 (chat/folder navigation), and `Alt+C`/`F4` (contacts) — every one of the
 *hardcoded* spellings there is a modifier or function key no line-editing
-keymap binds. `keys.quit` is the one field on that list a rebind can turn
-into a problem: it is matched before every other check in `Update`,
-focus included, so `quit = "x"` means pressing `x` while writing a
-message quits the app instead of typing an `x` — see the Warning under
+keymap binds. `keys.quit` is matched before every other check in `Update`,
+focus included, which is why a bare printable is refused there — see
 "Configuring keys" below. No other `Ctrl+<letter>` is claimed at app
 level, so `Ctrl+A/B/D/E/F/J/K/O/T/U/W` all reach the composer.
 
@@ -325,7 +323,11 @@ than an absent one. See [TODO.md](../TODO.md).
 | `Enter` | Accept the selection — in a **dialog**, this means whichever button is currently highlighted, not "confirm" |
 | `j` / `k` (or `↓` / `↑`) | Move — a dialog's buttons also move with `Tab`/`Left`/`Right`, and (outside the attach-file prompt, where `j`/`k` are typed as path text instead) with `j`/`k` too |
 
-A **confirm dialog** (deleting a message, quitting with an unsent draft) starts with **Cancel** highlighted, not Confirm, precisely because `Enter` fires whichever button is lit: these dialogs guard destructive or lossy actions, so a reflex `Enter` must not be the thing that performs one. The highlighted button is marked two ways — reversed color, and literal `[ Brackets ]` around its label — so it reads correctly without color, and the dialog also renders its own one-line hint (`←/→ or tab: choose · enter: accept`, or just `enter: dismiss` for a single-button alert) so the behavior is visible in the moment, not only here.
+A **confirm dialog** (deleting a message, quitting with an unsent draft) starts with **Cancel** highlighted, not Confirm, precisely because `Enter` fires whichever button is lit: these dialogs guard destructive or lossy actions, so a reflex `Enter` must not be the thing that performs one. The highlighted button is marked two ways — reversed color, and literal `[ Brackets ]` around its label — so it reads correctly without color.
+
+Every button also carries an **accelerator letter**, drawn in its own label (`[ Ca(n)cel ]`, `[ For (m)e ]`) and answering outright when pressed. A two-button confirm therefore answers to `y` and `n` directly — they are safe here for the reason `j`/`k` are not: nobody is holding `y` when a confirm appears mid-scroll. The dialog renders its own one-line hint, built from the buttons it actually has (`n/y: answer · ←/→: choose · enter: accept · esc: cancel`, or just `enter or esc: dismiss` for a single-button alert), so the keymap is visible in the moment and cannot describe a button set the dialog no longer offers.
+
+**Deleting a message** asks *Delete this message?* and offers Telegram's real choice: `Cancel` · `For me` · `For everyone`, answering to `n` / `m` / `e`. It used to ask "Are you sure?" and always delete for everyone — the reach of a delete is a decision, and that dialog was making it silently. A server refusal of "for everyone" (the message is too old, or the chat does not permit it) is reported in the notice row.
 
 ## Help overlay (`?`)
 
@@ -433,23 +435,22 @@ action as `(unbound)` instead of a blank or a wrong key: seeing that on
 the card means some other binding already holds the letter you wanted, so
 free it up (or pick a different key) to restore the action.
 
-**Warning:** wired bindings are matched before the focused panel sees the
-key, so a binding here shadows that key in the chat list and chat view.
-Most of them do *not* reach the composer — typing there is only ever
-entered deliberately (see "Composer" above), and app-level dispatch
-claims almost nothing while it has focus. `keys.quit` is the exception:
-it is matched before every other check, focus included, so `quit = "x"`
-means pressing `x` while writing a message quits the app instead of
-typing an `x`. `keys.quit_browsing` and `keys.help` are correctly
-composer-safe — a bare letter there really is inert while composing.
-`keys.contacts`/`keys.contacts_alt` also reach the composer (gated only
-on no dialog or search overlay being open, not on which panel has focus),
-but their defaults (`alt+c`, `f4`) are a modifier and a function key, so
-this only bites if you rebind one onto something typable. Nothing rejects
-a `quit` rebind onto a printable character — the collision check above
-only compares `[keys]` fields against each other and against what the app
-already claims, never against "is this a character someone types."
-Prefer a chord or a function key for `quit` especially.
+Wired bindings are matched before the focused panel sees the key, so a
+binding here shadows that key in the chat list and chat view. Most of them
+do *not* reach the composer — typing there is only ever entered
+deliberately (see "Composer" above), and app-level dispatch claims almost
+nothing while it has focus. `keys.quit_browsing` and `keys.help` are
+composer-safe: a bare letter there really is inert while composing.
+`keys.contacts`/`keys.contacts_alt` also reach the composer (gated only on
+no dialog or search overlay being open, not on which panel has focus), so
+rebinding one onto something typable is worth thinking about.
+
+`keys.quit` is the one field where a bare printable is not a judgement
+call: it is matched before every other check, focus included, so
+`quit = "x"` would mean pressing `x` while writing a message quit the app
+instead of typing an `x`. **That configuration is now refused**: the
+binding falls back to `Ctrl+Q`, and the client says so on stderr at
+startup rather than only under `-migrate-config`.
 
 > [`config.example.toml`](../config.example.toml)'s `[keys]` block lists every
 > field in the table above at its built-in default; a test

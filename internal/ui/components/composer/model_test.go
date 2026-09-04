@@ -423,3 +423,202 @@ func TestHasDraft(t *testing.T) {
 		t.Error("a pending attachment alone reports a draft")
 	}
 }
+
+// --- decision I-3: Escape steps back and never discards ------------------
+
+// typeInto puts text into the composer the way a user would, one key at a
+// time, so the textarea's own cursor bookkeeping is exercised rather than
+// bypassed by assigning to Value.
+func typeInto(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for _, r := range text {
+		m, _ = press(t, m, string(r))
+	}
+	return m
+}
+
+// TestEscCancellingAReplyKeepsTheText is the highest-impact half of I-3: the
+// cancel rung called Reset, which wiped the textarea. In emacs mode that was
+// the first Esc; in vi mode the second, which is the reflex every vi user
+// types. A half-written reply went without a confirm, while q asks before
+// dropping the same text.
+func TestEscCancellingAReplyKeepsTheText(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "half a thought")
+	m.EnterReplyMode(7, "someone: hello")
+
+	m, _ = press(t, m, "esc")
+
+	if got := m.Draft(); got != "half a thought" {
+		t.Errorf("Draft = %q, want the text to survive the cancel", got)
+	}
+	if m.IsComposing() {
+		t.Error("still composing after Esc, want the reply target cleared")
+	}
+}
+
+// TestEscUnstagingAnAttachmentKeepsTheText: unstaging stays on Esc (the chip
+// says so and re-attaching is one chord), but the caption typed for it is
+// not part of the bargain.
+func TestEscUnstagingAnAttachmentKeepsTheText(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "look at this")
+	m.SetAttachment("/tmp/paste-1.png", true)
+
+	m, msg := press(t, m, "esc")
+
+	if _, ok := msg.(AttachmentDiscardedMsg); !ok {
+		t.Fatalf("got %T, want AttachmentDiscardedMsg", msg)
+	}
+	if m.Attachment() != "" {
+		t.Errorf("Attachment = %q, want it unstaged", m.Attachment())
+	}
+	if got := m.Draft(); got != "look at this" {
+		t.Errorf("Draft = %q, want the caption to survive", got)
+	}
+}
+
+// TestViEscLadderKeepsTheText walks the vi ladder end to end: the first Esc
+// leaves insert, the second cancels the reply. Neither takes the words.
+func TestViEscLadderKeepsTheText(t *testing.T) {
+	m := newFocused()
+	m.SetEditingMode(ModeVi)
+	m = typeInto(t, m, "half a thought")
+	m.EnterReplyMode(7, "someone: hello")
+
+	m, _ = press(t, m, "esc")
+	if !m.IsViNormalMode() {
+		t.Fatal("first Esc did not leave insert mode")
+	}
+	if got := m.Draft(); got != "half a thought" {
+		t.Fatalf("Draft = %q after the first Esc, want it intact", got)
+	}
+
+	m, _ = press(t, m, "esc")
+	if got := m.Draft(); got != "half a thought" {
+		t.Errorf("Draft = %q after the cancel, want it intact", got)
+	}
+	if m.IsComposing() {
+		t.Error("still composing after the second Esc")
+	}
+	if !m.IsViNormalMode() {
+		t.Error("cancelling put vi back into insert mode")
+	}
+}
+
+// TestEnterEditModeParksTheDraft: pressing e while a draft exists used to
+// overwrite the textarea with the message being edited. The draft is parked
+// and comes back when the edit is cancelled.
+func TestEnterEditModeParksTheDraft(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "unsent")
+
+	m.EnterEditMode(99, "the old message")
+	if got := m.Draft(); got != "the old message" {
+		t.Fatalf("Draft = %q, want the message being edited", got)
+	}
+
+	m, _ = press(t, m, "esc")
+	if got := m.Draft(); got != "unsent" {
+		t.Errorf("Draft = %q, want the parked draft back", got)
+	}
+	if m.IsEditing() {
+		t.Error("still editing after Esc")
+	}
+}
+
+// TestCancellingAnEditRestoresItsReplyTarget: the parked draft is all of the
+// work, not only the words. A draft that came back without its reply target
+// would send to the right chat and the wrong message.
+func TestCancellingAnEditRestoresItsReplyTarget(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "answering you")
+	m.EnterReplyMode(7, "someone: hello")
+
+	m.EnterEditMode(99, "the old message")
+	m, _ = press(t, m, "esc")
+
+	_, msg := press(t, m, "enter")
+	submitted, ok := msg.(MessageSubmittedMsg)
+	if !ok {
+		t.Fatalf("got %T, want MessageSubmittedMsg", msg)
+	}
+	if submitted.Text != "answering you" {
+		t.Errorf("Text = %q, want the parked draft", submitted.Text)
+	}
+	if submitted.ReplyToId != 7 {
+		t.Errorf("ReplyToId = %d, want 7", submitted.ReplyToId)
+	}
+	if submitted.EditMessageId != 0 {
+		t.Errorf("EditMessageId = %d, want the cancelled edit gone", submitted.EditMessageId)
+	}
+}
+
+// TestCancellingAnEditWithNoDraftClearsTheComposer is the other side of
+// parking unconditionally: with nothing displaced, the message text the edit
+// loaded must not be left behind looking like something the user wrote.
+func TestCancellingAnEditWithNoDraftClearsTheComposer(t *testing.T) {
+	m := newFocused()
+
+	m.EnterEditMode(99, "the old message")
+	m, _ = press(t, m, "esc")
+
+	if got := m.Draft(); got != "" {
+		t.Errorf("Draft = %q, want an empty composer", got)
+	}
+}
+
+// TestSendingAnEditRestoresTheParkedDraft: an edit is an interruption of the
+// message someone was writing, not a replacement for it, so finishing it
+// puts the draft back the same way cancelling does.
+func TestSendingAnEditRestoresTheParkedDraft(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "unsent")
+	m.EnterEditMode(99, "the old message")
+
+	m, msg := press(t, m, "enter")
+	submitted, ok := msg.(MessageSubmittedMsg)
+	if !ok {
+		t.Fatalf("got %T, want MessageSubmittedMsg", msg)
+	}
+	if submitted.EditMessageId != 99 {
+		t.Errorf("EditMessageId = %d, want 99", submitted.EditMessageId)
+	}
+	if got := m.Draft(); got != "unsent" {
+		t.Errorf("Draft = %q, want the parked draft back after the edit was sent", got)
+	}
+}
+
+// TestASecondEditDoesNotParkTheFirst: e pressed while already editing would
+// otherwise park the first edit's message text as if it were a draft.
+func TestASecondEditDoesNotParkTheFirst(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "unsent")
+
+	m.EnterEditMode(99, "first message")
+	m.EnterEditMode(100, "second message")
+	m, _ = press(t, m, "esc")
+
+	if got := m.Draft(); got != "unsent" {
+		t.Errorf("Draft = %q, want the original draft back", got)
+	}
+}
+
+// TestTheParkedDraftFollowsTheChat: switching away mid-edit parks the edit
+// itself, so what it displaced has to travel with it.
+func TestTheParkedDraftFollowsTheChat(t *testing.T) {
+	m := newFocused()
+	m = typeInto(t, m, "unsent")
+	m.EnterEditMode(99, "the old message")
+
+	m.SetChatId(43)
+	m.SetChatId(42)
+	if got := m.Draft(); got != "the old message" {
+		t.Fatalf("Draft = %q, want the edit restored with the chat", got)
+	}
+
+	m, _ = press(t, m, "esc")
+	if got := m.Draft(); got != "unsent" {
+		t.Errorf("Draft = %q, want the parked draft back in its own chat", got)
+	}
+}

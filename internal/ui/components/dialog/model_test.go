@@ -153,20 +153,22 @@ func TestEscCancels(t *testing.T) {
 func TestViewMarksTheHighlightedButtonWithoutColor(t *testing.T) {
 	m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Are you sure?")
 
+	// The labels carry their accelerator: "Cancel" answers to n, and n is
+	// inside the word, so it is parenthesised there.
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "[ Cancel ]") {
+	if !strings.Contains(plain, "[ Ca(n)cel ]") {
 		t.Fatalf("View() does not mark Cancel as highlighted:\n%s", plain)
 	}
-	if strings.Contains(plain, "[ Confirm ]") {
+	if strings.Contains(plain, "[ Confirm (y) ]") {
 		t.Fatalf("View() marks Confirm as highlighted while buttonIdx is 0:\n%s", plain)
 	}
 
 	m, _ = press(m, specialKey(tea.KeyRight))
 	plain = ansi.Strip(m.View())
-	if !strings.Contains(plain, "[ Confirm ]") {
+	if !strings.Contains(plain, "[ Confirm (y) ]") {
 		t.Fatalf("after right, View() does not mark Confirm as highlighted:\n%s", plain)
 	}
-	if strings.Contains(plain, "[ Cancel ]") {
+	if strings.Contains(plain, "[ Ca(n)cel ]") {
 		t.Fatalf("after right, View() still marks Cancel as highlighted:\n%s", plain)
 	}
 }
@@ -246,5 +248,116 @@ func TestHiddenDialogIgnoresKeys(t *testing.T) {
 	}
 	if m2.View() != "" {
 		t.Fatalf("a closed dialog rendered %q", m2.View())
+	}
+}
+
+// --- decision I-7: a confirm says what it confirms, and answers to y/n ----
+
+// TestYAndNAnswerAConfirm: y and n are safe here for the reason j/k are not.
+// They are not keys anybody is holding when the dialog appears, so they
+// cannot be pressed by reflex — and typing y at a yes/no question is what a
+// person does.
+func TestYAndNAnswerAConfirm(t *testing.T) {
+	t.Run("y confirms", func(t *testing.T) {
+		m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Delete this message?")
+		m, cmd := press(m, key('y'))
+		if !result(t, cmd).Confirmed {
+			t.Error("y did not confirm")
+		}
+		if m.IsVisible() {
+			t.Error("y left the dialog visible")
+		}
+	})
+
+	t.Run("n cancels", func(t *testing.T) {
+		m := NewConfirm(theme.DarkRoles(false), "delete", "Delete Message", "Delete this message?")
+		m, cmd := press(m, key('n'))
+		if result(t, cmd).Confirmed {
+			t.Error("n confirmed")
+		}
+		if m.IsVisible() {
+			t.Error("n left the dialog visible")
+		}
+	})
+}
+
+// TestChoiceCarriesTheAnswer: a dialog with more than two answers cannot be
+// read off Confirmed alone, which is why the result carries the value.
+func TestChoiceCarriesTheAnswer(t *testing.T) {
+	choice := func() Model {
+		return NewChoice(theme.DarkRoles(false), "delete", "Delete Message",
+			"Delete this message?", []Button{
+				{Label: "Cancel", Accel: "n", Value: "cancel"},
+				{Label: "For me", Accel: "m", Value: "me", Affirmative: true},
+				{Label: "For everyone", Accel: "e", Value: "everyone", Affirmative: true},
+			})
+	}
+
+	cases := []struct {
+		key           rune
+		wantValue     string
+		wantConfirmed bool
+	}{
+		{'n', "cancel", false},
+		{'m', "me", true},
+		{'e', "everyone", true},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.key), func(t *testing.T) {
+			_, cmd := press(choice(), key(tc.key))
+			got := result(t, cmd)
+			if got.Value != tc.wantValue {
+				t.Errorf("Value = %q, want %q", got.Value, tc.wantValue)
+			}
+			if got.Confirmed != tc.wantConfirmed {
+				t.Errorf("Confirmed = %v, want %v", got.Confirmed, tc.wantConfirmed)
+			}
+		})
+	}
+
+	// Enter still accepts the highlighted button, and a choice still opens
+	// on the one that backs out.
+	_, cmd := press(choice(), specialKey(tea.KeyEnter))
+	if got := result(t, cmd); got.Confirmed || got.Value != "cancel" {
+		t.Errorf("enter on a fresh choice gave %+v, want the cancel answer", got)
+	}
+}
+
+// TestEveryAcceleratorIsDrawnInItsLabel: an accelerator nobody can see is a
+// key that has to be discovered by guessing.
+func TestEveryAcceleratorIsDrawnInItsLabel(t *testing.T) {
+	m := NewChoice(theme.DarkRoles(false), "delete", "Delete Message",
+		"Delete this message?", []Button{
+			{Label: "Cancel", Accel: "n", Value: "cancel"},
+			{Label: "For me", Accel: "m", Value: "me", Affirmative: true},
+			{Label: "For everyone", Accel: "e", Value: "everyone", Affirmative: true},
+		})
+
+	plain := ansi.Strip(m.View())
+	for _, want := range []string{"Ca(n)cel", "For (m)e", "For (e)veryone"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("View() is missing %q:\n%s", want, plain)
+		}
+	}
+}
+
+// TestTheHintIsBuiltFromTheButtons: the hint line named a fixed set of keys
+// beside a button row it did not read, which is exactly how a surface comes
+// to describe a keymap it does not have.
+func TestTheHintIsBuiltFromTheButtons(t *testing.T) {
+	m := NewChoice(theme.DarkRoles(false), "delete", "Delete Message",
+		"Delete this message?", []Button{
+			{Label: "Cancel", Accel: "n", Value: "cancel"},
+			{Label: "For me", Accel: "m", Value: "me", Affirmative: true},
+			{Label: "For everyone", Accel: "e", Value: "everyone", Affirmative: true},
+		})
+
+	if plain := ansi.Strip(m.renderHint()); !strings.Contains(plain, "n/m/e: answer") {
+		t.Errorf("hint = %q, want it to name all three answers", plain)
+	}
+
+	c := NewConfirm(theme.DarkRoles(false), "quit", "Quit", "Discard the draft?")
+	if plain := ansi.Strip(c.renderHint()); !strings.Contains(plain, "n/y: answer") {
+		t.Errorf("confirm hint = %q, want it to name y and n", plain)
 	}
 }

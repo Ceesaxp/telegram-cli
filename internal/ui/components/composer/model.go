@@ -71,6 +71,18 @@ type Model struct {
 	// map so the value copies bubbletea makes of this model all share one,
 	// the same reason chatview holds its render cache by pointer.
 	drafts map[int64]draft
+
+	// editParked holds the draft that entering edit mode displaced, per
+	// chat (decision I-3). A map for the same two reasons drafts is one:
+	// the value copies bubbletea makes all share it, and switching chats
+	// mid-edit parks the edit itself into drafts, so what it displaced has
+	// to travel with it rather than be dropped.
+	//
+	// Presence is what matters, not emptiness. An entry recording "there
+	// was nothing here" is how cancelling an edit clears the message text
+	// the edit loaded, instead of leaving it in the composer as a draft
+	// nobody wrote.
+	editParked map[int64]draft
 }
 
 // New creates a new composer model.
@@ -93,9 +105,10 @@ func New(r theme.Roles) Model {
 		// component draws is cut to its width, and cutting to zero would
 		// make a composer that has not been laid out yet render nothing at
 		// all — including the draft somebody has already pasted into it.
-		width:  40,
-		roles:  r,
-		drafts: make(map[int64]draft),
+		width:      40,
+		roles:      r,
+		drafts:     make(map[int64]draft),
+		editParked: make(map[int64]draft),
 	}
 }
 
@@ -153,7 +166,18 @@ func (m *Model) EnterReplyMode(messageID int64, previewText string) {
 // EnterEditMode starts editing a message. An edit cannot carry media, so any
 // pending attachment is discarded and its path returned for the caller to
 // delete.
+//
+// The draft on screen is PARKED first (decision I-3): loading the message
+// text over it used to destroy whatever was half-written, without a confirm
+// and without a way back. Cancelling the edit or sending it puts the draft
+// back — see unparkEdit.
 func (m *Model) EnterEditMode(messageID int64, currentText string) string {
+	// Only the first e parks. A second one, pressed while already editing,
+	// would otherwise park the message text of the first edit as if it
+	// were the user's own draft.
+	if m.mode != ModeEdit {
+		m.parkEdit()
+	}
 	discarded := m.attachment
 	m.attachment = ""
 	m.asPhoto = false
@@ -167,9 +191,62 @@ func (m *Model) EnterEditMode(messageID int64, currentText string) string {
 	return discarded
 }
 
-// Reset clears the composer state.
-func (m *Model) Reset() {
+// parkEdit stores what an edit is about to displace: the text, where the
+// cursor was in it, and the reply target it was going to answer.
+//
+// Unconditionally, even when there is nothing to store, because presence is
+// what unparkEdit reads. The attachment is deliberately not carried: an edit
+// discards it and hands the spool path back to be deleted, so there is
+// nothing left to restore.
+func (m *Model) parkEdit() {
+	if m.chatID == 0 {
+		return
+	}
+	m.editParked[m.chatID] = draft{
+		text:      m.textarea.Value,
+		cursor:    m.textarea.Cursor,
+		mode:      m.mode,
+		replyToID: m.replyToID,
+		replyText: m.replyText,
+	}
+}
+
+// unparkEdit puts back the draft an edit displaced, and reports whether it
+// found one. The entry is consumed: the draft is live in the composer again.
+//
+// A parked draft that was empty still restores — as an empty composer. That
+// is the point: without it, cancelling an edit would leave the message's own
+// text sitting there looking like something the user typed.
+func (m *Model) unparkEdit() bool {
+	d, ok := m.editParked[m.chatID]
+	if !ok {
+		return false
+	}
+	delete(m.editParked, m.chatID)
+
 	m.textarea.Reset()
+	m.textarea.Value = d.text
+	m.textarea.Cursor = min(max(d.cursor, 0), len([]rune(d.text)))
+	m.mode = d.mode
+	m.replyToID = d.replyToID
+	m.editMsgID = 0
+	m.replyText = d.replyText
+	m.attachment = ""
+	m.asPhoto = false
+	m.notice = ""
+	return true
+}
+
+// clearContext drops everything ABOUT the message being written — the mode,
+// the reply and edit targets, the pending attachment, the notice — and keeps
+// the text itself.
+//
+// It is the Escape rung's primitive (decision I-3). Escape steps back one
+// rung per press and never discards: cancelling a reply keeps the words that
+// were going to be the reply, because they are just as usable as a message
+// of their own. Reset is this plus the text, and belongs to submit, where
+// the text has been sent and is gone on purpose.
+func (m *Model) clearContext() {
 	m.mode = ModeNormal
 	m.replyToID = 0
 	m.editMsgID = 0
@@ -177,6 +254,12 @@ func (m *Model) Reset() {
 	m.attachment = ""
 	m.asPhoto = false
 	m.notice = ""
+}
+
+// Reset clears the composer state, text included.
+func (m *Model) Reset() {
+	m.textarea.Reset()
+	m.clearContext()
 	// A cleared composer is ready to be typed into; vi's normal mode is
 	// restored explicitly by the Escape-cancel path, which is the only
 	// place where staying in normal mode is the right answer.
@@ -271,6 +354,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // is deleted; with nothing to clear it falls through and app.go moves focus
 // out of the panel.
 //
+// What it never does is take the text (decision I-3). One press steps back
+// one rung, and the words survive every rung — work is only lost through a
+// key that says so.
+//
 // In vi mode the first Escape only leaves insert mode. The cancel path above
 // is then reached by pressing Escape *again* from normal mode, so every
 // invariant built around cancel — attachment discard included — survives, it
@@ -290,11 +377,17 @@ func (m Model) handleEsc() (Model, tea.Cmd) {
 
 	if m.mode != ModeNormal || m.attachment != "" {
 		discarded := m.attachment
-		wasVi := m.editing == ModeVi
-		m.Reset()
-		if wasVi {
-			// Cancelling does not put the user back in insert mode.
-			m.vi = viNormal
+		// The text is kept, whatever was cancelled (decision I-3). Reset
+		// used to be the only cancel primitive, so a reply target and a
+		// half-written reply went together; they are two things, and only
+		// one of them was asked about.
+		//
+		// An edit is the exception in shape but not in rule: what is on
+		// screen is the message being edited, not something the user
+		// typed, so cancelling puts back the draft the edit displaced —
+		// with its own reply target, if it had one.
+		if m.mode != ModeEdit || !m.unparkEdit() {
+			m.clearContext()
 		}
 		if discarded != "" {
 			// The app owns the spool file — tell it the
@@ -325,6 +418,7 @@ func (m Model) submit() (Model, tea.Cmd) {
 		Attachment: m.attachment,
 		AsPhoto:    m.asPhoto,
 	}
+	wasEdit := m.mode == ModeEdit
 	switch m.mode {
 	case ModeReply:
 		submitted.ReplyToId = m.replyToID
@@ -333,6 +427,13 @@ func (m Model) submit() (Model, tea.Cmd) {
 	}
 
 	m.Reset()
+	// Sending the edit finishes it, so the draft it displaced comes back
+	// (decision I-3) — the same restoration cancelling would have done. An
+	// edit is an interruption of the message someone was writing, not a
+	// replacement for it.
+	if wasEdit {
+		m.unparkEdit()
+	}
 	return m, func() tea.Msg { return submitted }
 }
 
