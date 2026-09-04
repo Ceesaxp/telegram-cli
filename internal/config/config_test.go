@@ -9,17 +9,18 @@ import (
 
 func TestIsBarePrintableKey(t *testing.T) {
 	cases := map[string]bool{
-		"x":       true,
-		"?":       true,
-		"+":       true,
-		"q":       true,
-		"ctrl+q":  false,
-		"alt+x":   false,
-		"esc":     false,
-		"f1":      false,
-		"pgup":    false,
-		"enter":   false,
-		"space":   false,
+		"x":      true,
+		"?":      true,
+		"+":      true,
+		"q":      true,
+		"ctrl+q": false,
+		"alt+x":  false,
+		"esc":    false,
+		"f1":     false,
+		"pgup":   false,
+		"enter":  false,
+		// space TYPES a character, whatever its name is longer than.
+		"space":   true,
 		"":        false,
 		"ctrl+f5": false,
 	}
@@ -48,6 +49,19 @@ func TestResolveQuitKeyRefusesABarePrintable(t *testing.T) {
 		{"x", DefaultQuitKey, true},
 		{"?", DefaultQuitKey, true},
 		{"Q", DefaultQuitKey, true},
+		// The named spelling of a printable key. quit is matched ahead of
+		// every focus gate, so quit = "space" would mean the spacebar
+		// exited the client instead of putting a space in a message —
+		// which is exactly the class of loss this refusal exists for, and
+		// the rune check alone did not catch it.
+		{"space", DefaultQuitKey, true},
+		{"spacebar", DefaultQuitKey, true},
+		{"SPACE", DefaultQuitKey, true},
+		// A literal space is trimmed to nothing on the way in, so it reads
+		// as "unset" rather than as a refusal. Same safe key either way,
+		// and worth pinning so a change to the trimming cannot make it a
+		// live binding without anybody noticing.
+		{" ", DefaultQuitKey, false},
 	}
 	for _, tc := range cases {
 		key, refused := ResolveQuitKey(tc.configured)

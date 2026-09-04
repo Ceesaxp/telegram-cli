@@ -450,7 +450,9 @@ call: it is matched before every other check, focus included, so
 `quit = "x"` would mean pressing `x` while writing a message quit the app
 instead of typing an `x`. **That configuration is now refused**: the
 binding falls back to `Ctrl+Q`, and the client says so on stderr at
-startup rather than only under `-migrate-config`.
+startup rather than only under `-migrate-config`. `space` is refused for
+the same reason, its longer name notwithstanding — it types a character
+too.
 
 > [`config.example.toml`](../config.example.toml)'s `[keys]` block lists every
 > field in the table above at its built-in default; a test

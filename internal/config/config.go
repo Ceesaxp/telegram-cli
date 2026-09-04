@@ -516,13 +516,29 @@ func NormalizeKey(s string) string {
 // a letter that cannot be typed anywhere in the client.
 const DefaultQuitKey = "ctrl+q"
 
-// IsBarePrintableKey reports whether a NORMALIZED binding is a single
-// unmodified printable character — "x", "?", "+" — as opposed to a chord
-// ("ctrl+x"), a named key ("esc", "f1", "pgup") or nothing at all.
+// namedPrintableKeys are keys whose NAME is longer than the character they
+// produce. There is one: pressing space types a space, and a composer that
+// cannot take a space is not a composer.
+//
+// A set rather than a special case, because the question it answers —
+// "would binding this shadow a character somebody types?" — is the same one
+// [IsBarePrintableKey] asks of the single-rune spellings, and the answer for
+// space is the same yes. [NormalizeKey] folds "spacebar" onto this name, so
+// both spellings are covered by the one entry; a literal " " is trimmed to
+// the empty string there and falls back to the default anyway.
+var namedPrintableKeys = map[string]bool{"space": true}
+
+// IsBarePrintableKey reports whether a NORMALIZED binding types a character
+// when it is pressed: a single unmodified printable ("x", "?", "+"), or
+// "space". A chord ("ctrl+x"), a named key that produces no text ("esc",
+// "f1", "pgup") and the empty string are all false.
 //
 // It answers one question: would binding this shadow a character somebody
 // types? Only the bindings matched ahead of the composer have to ask it.
 func IsBarePrintableKey(key string) bool {
+	if namedPrintableKeys[key] {
+		return true
+	}
 	if utf8.RuneCountInString(key) != 1 {
 		return false
 	}
