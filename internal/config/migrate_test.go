@@ -278,7 +278,7 @@ search = "?"
 		"keys.next_folder", "keys.prev_folder", "keys.compose",
 		"keys.next_unread", "keys.mark_read",
 		"keys.global_search", "keys.help", "ui.compose_editing",
-		"storage.state_file",
+		"storage.state_file", "storage.send_dirs",
 	} {
 		c, ok := reported[field]
 		if !ok {
@@ -1087,5 +1087,71 @@ func TestSaveFallsBackToTheDefaultPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "tele-tui", "config.toml")); err != nil {
 		t.Errorf("Save did not write to the default location: %v", err)
+	}
+}
+
+// TestMigrateFillsSendDirs: an existing config gains the send_dirs key and
+// is told about it. The narrowing it describes — the process's working
+// directory used to be an implicit send root (issue #48) — is one an
+// operator running telegram-mcp out of $HOME needs to read, or their next
+// send_file failure is a mystery.
+func TestMigrateFillsSendDirs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[storage]\nsession_file = \"/data/session.json\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TELETUI_CONFIG", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := LoadRawFile(path)
+	if err != nil {
+		t.Fatalf("LoadRawFile: %v", err)
+	}
+
+	reported := changeMap(t, Migrate(cfg, raw))
+	c, ok := reported["storage.send_dirs"]
+	if !ok {
+		t.Fatal("storage.send_dirs was written but not reported as a change")
+	}
+	if c.New != DefaultOutboxDir {
+		t.Errorf("storage.send_dirs = %q, want the portable literal %q", c.New, DefaultOutboxDir)
+	}
+	if !c.Absent {
+		t.Errorf("storage.send_dirs reported as a value change, want absent")
+	}
+	// The written value stays portable, like every other path here.
+	if got := cfg.Storage.SendDirs; len(got) != 1 || got[0] != DefaultOutboxDir {
+		t.Errorf("cfg.Storage.SendDirs = %q, want %q", got, []string{DefaultOutboxDir})
+	}
+}
+
+// A config that already lists send_dirs keeps exactly what it says: the
+// migration must never widen an allowlist somebody narrowed on purpose.
+func TestMigrateKeepsConfiguredSendDirs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "[storage]\nsession_file = \"/data/session.json\"\nsend_dirs = [\"/srv/outgoing\"]\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TELETUI_CONFIG", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := LoadRawFile(path)
+	if err != nil {
+		t.Fatalf("LoadRawFile: %v", err)
+	}
+	if _, ok := changeMap(t, Migrate(cfg, raw))["storage.send_dirs"]; ok {
+		t.Error("a configured send_dirs was rewritten")
+	}
+	if got := cfg.Storage.SendDirs; len(got) != 1 || got[0] != "/srv/outgoing" {
+		t.Errorf("cfg.Storage.SendDirs = %q, want the operator's list", got)
 	}
 }

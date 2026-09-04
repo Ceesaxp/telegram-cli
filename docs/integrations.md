@@ -55,10 +55,23 @@ Register the server in your MCP client, e.g.:
 | `search_messages` | Global message search |
 | `get_contacts` | Contact list |
 | `send_message` | Send a text message (optional reply) |
-| `send_file` | Upload a local file as a document (optional caption) |
+| `send_file` | Upload a local file as a document (optional caption). Only paths inside the [send roots](configuration.md#send-roots-send_dirs) are accepted |
+| `forward_messages` | Forward messages between chats using Telegram's own forwarding, keeping attribution and captions |
 | `edit_message` | Edit a message text |
 | `mark_read` | Mark messages as read |
 | `download_media` | Download message media, returns local path |
+
+### Which files can be sent
+
+Both servers accept a `path` only if it resolves inside one of their **send
+roots**: the media cache (`files_dir`) plus `[storage] send_dirs`, which
+defaults to `~/.local/share/tele-tui/outbox`. The effective set is logged at
+startup, and anything else is rejected with an error naming the roots.
+
+This is deliberately narrow for MCP: the caller there is a model reading
+messages from strangers, and a message asking it to send a private key should
+fail rather than depend on where you started the server. See
+[Send roots](configuration.md#send-roots-send_dirs).
 
 ### Sessions
 
@@ -160,7 +173,8 @@ are ignored, so `application/json; charset=utf-8` is fine) or gets `415`.
 | GET | `/api/search/messages?q=&limit=` | Global message search |
 | GET | `/api/contacts` | Contact list |
 | POST | `/api/send` | Send text `{chat_id, text, reply_to_message_id?}` |
-| POST | `/api/send-file` | Send file `{chat_id, path, caption?, reply_to_message_id?}` |
+| POST | `/api/send-file` | Send file `{chat_id, path, caption?, reply_to_message_id?}`. `path` must be inside the [send roots](configuration.md#send-roots-send_dirs) |
+| POST | `/api/forward` | Forward messages `{from_chat_id, to_chat_id, message_ids[]}` — both chats named explicitly; there is no "current chat" |
 | POST | `/api/edit` | Edit message `{chat_id, message_id, text}` |
 | POST | `/api/mark-read` | Mark read `{chat_id, message_ids[]}` |
 | GET | `/api/media?chat_id=&message_id=` | Download message media, returns local path |

@@ -10,6 +10,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/x/ansi"
+	"time"
 )
 
 // gridModel is a small thread with two other people in it, a message of
@@ -62,7 +63,7 @@ func gridModel(t *testing.T, width int) Model {
 // otherwise pass only where it was written.
 func TestThreadGridRendersTheDocumentedLayout(t *testing.T) {
 	m := gridModel(t, 67)
-	m.typing = []int64{200}
+	m.typing = typists(200)
 
 	clock := render.FormatClock(fixedDate)
 	day := render.FormatDayLabel(fixedDate)
@@ -165,7 +166,7 @@ func TestEveryGridLineIsExactlyThePaneWidth(t *testing.T) {
 		for i, text := range texts {
 			m.store.Messages.Append(testChatID, textMessage(int64(i+1), int64(200+i%3), text))
 		}
-		m.typing = []int64{200}
+		m.typing = typists(200)
 
 		for _, line := range strings.Split(ansi.Strip(m.View()), "\n") {
 			if got := ansi.StringWidth(line); got != width {
@@ -448,7 +449,7 @@ func TestTypingRowAlignsWithTheGrid(t *testing.T) {
 		t.Fatalf("expected no typing row when nobody is typing, got %q", got)
 	}
 
-	m.typing = []int64{200}
+	m.typing = typists(200)
 	row := ansi.Strip(m.gridTypingRow())
 	if idx := strings.Index(row, "···"); idx+3 != g.BodyCol-gridFieldGap {
 		t.Fatalf("typing marker ends at column %d, sender column ends at %d",
@@ -461,7 +462,7 @@ func TestTypingRowAlignsWithTheGrid(t *testing.T) {
 		t.Fatalf("typing row is %d cells, want 67", got)
 	}
 
-	m.typing = []int64{200, 201}
+	m.typing = typists(200, 201)
 	if row := ansi.Strip(m.gridTypingRow()); !strings.Contains(row, "are typing") {
 		t.Fatalf("expected a plural verb for two typists: %q", row)
 	}
@@ -487,7 +488,7 @@ func TestChatActionsTrackWhoIsTyping(t *testing.T) {
 	}
 
 	m, _ = m.Update(stopped(200))
-	if len(m.typing) != 1 || m.typing[0] != 201 {
+	if len(m.typing) != 1 || m.typing[0].id != 201 {
 		t.Fatalf("expected only 201 still typing, got %v", m.typing)
 	}
 
@@ -553,4 +554,14 @@ func TestHeaderPositionCountsLines(t *testing.T) {
 	if got, want := m.headerPosition(), fmt.Sprintf("ln %d/%d", total-4, total); got != want {
 		t.Fatalf("after scrolling four lines: %q, want %q", got, want)
 	}
+}
+
+// typists builds a live typing set for the render tests, which care about
+// the row and not about when an action lapses.
+func typists(ids ...int64) []typingUser {
+	out := make([]typingUser, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, typingUser{id: id, until: time.Now().Add(typingTTL)})
+	}
+	return out
 }

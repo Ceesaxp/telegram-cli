@@ -424,14 +424,20 @@ func TestJumpTargetGivesUpGracefully(t *testing.T) {
 func TestReadReceiptsGatedOnTerminalFocus(t *testing.T) {
 	m := newTestModel()
 
-	// Default (no focus events ever received) is focused: a read receipt
-	// command is issued for incoming messages.
+	// Default (no focus events ever received) is focused: the arrival is
+	// acknowledged. Since issue #46 the acknowledgement is coalesced
+	// rather than immediate — the ID is held and a flush is scheduled —
+	// so what is asserted here is that a receipt is on its way, not that
+	// it has already left.
 	m2, cmd := m.Update(telegram.NewMessageMsg{Message: textMessage(1, 100, "hi")})
 	if cmd == nil {
-		t.Fatalf("expected a read-receipt command while focused")
+		t.Fatalf("expected a read-receipt flush to be scheduled while focused")
 	}
-	if m2.pendingReadID != 0 {
-		t.Fatalf("expected no deferred read while focused")
+	if m2.pendingReadID != 1 {
+		t.Fatalf("expected the arrival to be held for the flush, got %d", m2.pendingReadID)
+	}
+	if !m2.readFlushPending {
+		t.Fatalf("expected a flush to be pending")
 	}
 
 	// Blurred: no receipt, remember the newest message instead.
@@ -1909,7 +1915,7 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 	// Unconfigured: the built-in mnemonics.
 	unconfigured := keysTestModel()
 	got := unconfigured.ActiveKeys()
-	want := Keys{Reply: "r", Edit: "e", Delete: "d", MarkRead: "m"}
+	want := Keys{Reply: "r", Edit: "e", Delete: "d", Forward: "f", MarkRead: "m"}
 	if got != want {
 		t.Fatalf("unconfigured ActiveKeys = %+v, want %+v", got, want)
 	}
@@ -1922,10 +1928,11 @@ func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
 		Reply:    "ctrl+r",
 		Edit:     "v",
 		Delete:   "b",
+		Forward:  "ctrl+shift+f",
 		MarkRead: "ctrl+alt+m",
 	})
 	got = accepted.ActiveKeys()
-	want = Keys{Reply: "ctrl+r", Edit: "v", Delete: "b", MarkRead: "ctrl+alt+m"}
+	want = Keys{Reply: "ctrl+r", Edit: "v", Delete: "b", Forward: "ctrl+shift+f", MarkRead: "ctrl+alt+m"}
 	if got != want {
 		t.Fatalf("accepted ActiveKeys = %+v, want %+v", got, want)
 	}

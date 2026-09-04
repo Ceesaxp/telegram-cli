@@ -36,6 +36,7 @@ const (
 	// The overlays, in the order Update consults them.
 	SurfaceReactions
 	SurfaceAttach
+	SurfaceForward
 	SurfacePalette
 	SurfaceMedia
 	SurfaceHelp
@@ -61,6 +62,8 @@ func (s Surface) String() string {
 		return "reactions"
 	case SurfaceAttach:
 		return "attach picker"
+	case SurfaceForward:
+		return "forward picker"
 	case SurfacePalette:
 		return "palette"
 	case SurfaceMedia:
@@ -95,7 +98,7 @@ func (s Surface) Mode() InteractionMode {
 		return ModeCommand
 	case SurfaceComposerVi:
 		return ModeVi
-	case SurfaceComposerInsert, SurfaceSearch, SurfaceAttach, SurfaceAuth:
+	case SurfaceComposerInsert, SurfaceSearch, SurfaceAttach, SurfaceForward, SurfaceAuth:
 		return ModeInsert
 	default:
 		return ModeNormal
@@ -119,6 +122,7 @@ type surfaceInputs struct {
 	// value, as did the help card, contacts and a confirm dialog.
 	reactionsOpen bool
 	attachOpen    bool
+	forwardOpen   bool
 	paletteOpen   bool
 	mediaOpen     bool
 	helpOpen      bool
@@ -153,6 +157,8 @@ func resolveSurface(in surfaceInputs) Surface {
 		return SurfaceReactions
 	case in.attachOpen:
 		return SurfaceAttach
+	case in.forwardOpen:
+		return SurfaceForward
 	case in.paletteOpen:
 		return SurfacePalette
 	case in.mediaOpen:
@@ -194,6 +200,7 @@ func (m Model) surfaceInputs() surfaceInputs {
 
 		reactionsOpen: m.reactions.IsVisible(),
 		attachOpen:    m.attach.IsVisible(),
+		forwardOpen:   m.forward.IsVisible(),
 		paletteOpen:   m.palette.IsVisible(),
 		mediaOpen:     m.mediaView.IsVisible(),
 		helpOpen:      m.help.IsVisible(),
@@ -298,6 +305,17 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 		return join(
 			hint("enter", "attach"),
 			hint("tab", "complete"),
+			hint("esc", "cancel"),
+		)
+
+	case SurfaceForward:
+		// The confirmation is a second screen of the same surface, and
+		// esc means a different thing on each — back on one, out on the
+		// other. The row says what the current screen answers rather than
+		// naming both, which is what the picker's own footer does too.
+		return join(
+			hint("enter", "choose"),
+			hint("↑↓", "move"),
 			hint("esc", "cancel"),
 		)
 

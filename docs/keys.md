@@ -136,6 +136,7 @@ the shipped defaults.
 | `y` | Copy the selected message's text to the system clipboard |
 | `+` | React to the selected message — a one-row picker; `enter` on the one you already left takes it off |
 | `p` | Pin the selected message, or unpin it when it is already pinned. Silent: no "X pinned a message" line goes into the chat |
+| `f` | Forward the selected message to another chat (`keys.forward`). Opens a searchable destination picker — type to filter the chats you already have, and anything the server matches by title or `@username` is appended below them — then a confirmation naming the destination and previewing the message. `Esc` steps back from the confirmation to the list, and out of the list entirely. Telegram's own forwarding is used, so the original sender's attribution and any caption are kept |
 | `t` | Open the discussion under a channel post — jumps to the linked group at the post's own copy, where the comments hang off it |
 | `m` | Mark this chat read without moving the scroll or the unread divider (`keys.mark_read`) |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
@@ -447,14 +448,16 @@ nothing.
 | `next_unread` | `u` |
 | `next_folder` / `prev_folder` | `]` / `[` |
 | `reply` / `edit_message` / `delete_message` | `r` / `e` / `d` |
+| `forward` | `f` |
 | `mark_read` | `m` |
 
 **Removed**, and reported by `-migrate-config` as removed the way
 `ui.chat_list_width` was: `focus_chat_list`, `focus_chat_view`,
-`focus_composer`, `contacts_alt`, `forward`, `scroll_up`, `scroll_down`,
-`page_up`, `page_down`. The first four went with the Alt and function keys;
-`forward` was never dispatched; the motions are vi's and are not
-configurable. **Old config files still load** — the decoder ignores fields
+`focus_composer`, `contacts_alt`, `scroll_up`, `scroll_down`, `page_up`,
+`page_down`. The first four went with the Alt and function keys; the
+motions are vi's and are not configurable. `forward` was on this list too —
+it was removed for being accepted, saved and never dispatched — and is
+back above, because it now does something. **Old config files still load** — the decoder ignores fields
 the schema no longer has — so nothing breaks on upgrade, and the migration
 report says what was dropped.
 

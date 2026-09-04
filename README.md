@@ -69,7 +69,7 @@ cell**, so the picture cannot drift from the program.
 | [Features](docs/features.md) | what it does — folders, reactions, media, drafts, markdown, notifications |
 | [Keybindings](docs/keys.md) | every key, both editing modes, and how to rebind them |
 | [Interaction model](docs/interaction-model.md) | the rules the keyboard follows, and the decisions behind them — read this before changing a binding |
-| [Configuration](docs/configuration.md) | `config.toml`, where files go, migration |
+| [Configuration](docs/configuration.md) | `config.toml`, where files go, send roots, running two accounts, migration |
 | [MCP & REST](docs/integrations.md) | driving the account from another program |
 | [Troubleshooting](docs/troubleshooting.md) | when something does not work |
 | [Architecture](docs/architecture.md) | how the code is laid out, and the rules it follows |
@@ -88,6 +88,23 @@ Ask a binary what it is with `tele-tui -version` (or `version`, or `--version` �
 ```
 tele-tui v0.4.2 (a1b2c3d, go1.25, darwin/arm64)
 ```
+
+#### macOS: allow the downloaded binaries to run
+
+The macOS release is not yet signed or notarized. A browser, Mail or AirDrop
+normally marks downloaded programs with Apple's quarantine attribute, so
+Gatekeeper may refuse to run these binaries even though they came from this
+project. First verify the archive against the release's `checksums.txt`, then
+make the three programs executable and remove quarantine from those files only:
+
+```bash
+chmod +x tele-tui telegram-mcp telegram-api
+xattr -d com.apple.quarantine tele-tui telegram-mcp telegram-api
+./tele-tui
+```
+
+Do not remove quarantine from a binary obtained anywhere other than this
+project's Releases page, or before its checksum matches.
 
 Releases are fully automatic: every push to `main` bumps the patch version, tags, builds, and publishes (use `#minor` / `#major` in a commit message to bump those instead).
 

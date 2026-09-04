@@ -2098,6 +2098,99 @@ whether the input is OPEN, and `enter` closes the input while leaving the
 filter on. Filtered-with-no-cursor-in-the-header is exactly the state where a
 bare count misleads, so it is the one the qualifier has to cover.
 
+### 52. The one animation the non-goals did not anticipate
+
+[Product intent](#product-intent) lists as an explicit non-goal "animation
+other than a network spinner". The typing indicator is now the second
+exception, and it is worth saying why the rule bends here and nowhere else.
+
+A spinner is exempt because it answers "is this still working?" — a
+question a static frame cannot answer, since the still frame of a working
+client and the still frame of a wedged one are the same picture. The typing
+row is the same question about somebody else: `···` that never moves cannot
+be told apart from `···` left over from an action whose cancel was lost.
+Everything else the frame draws is a fact that holds until something
+changes it, which is why nothing else animates.
+
+**The resting frame is the one the fixtures already had.** Issue #51
+proposed `...`/`..•`/`.•.`/`•..`, and the first of those is the marker
+drawn today. Keeping it as frame 0 means the six golden frames in
+[docs/fixtures/](fixtures/) are unchanged, which matters because they are
+the acceptance artifact for column alignment
+([decision 11](#decisions)) — a fixture pinned to an arbitrary
+mid-animation frame would describe a moment rather than a layout. The dots
+stay U+00B7 and the pulse is U+2022; both measure one cell, so all four
+frames are three cells and the sender column cannot shear.
+
+**It also had to be given an ending.** `applyChatAction` emptied the set
+only on an explicit cancel, so a cancel lost to a connection blip left a
+typist on screen for the rest of the session. Static, that was a wrong
+label nobody looks at; animated, it is a 400ms redraw running forever and
+the most eye-catching thing on an idle screen. Each action now carries a
+six-second deadline — Telegram's own rule, which is why a client that means
+it re-sends every few seconds — and the tick chain stops when the set
+empties. The animation is what made the missing expiry expensive enough to
+find.
+
+**One chain, guarded by a generation.** The chain is armed by the first
+action and stopped when the set empties or the chat changes; a tick
+carrying a stale generation is dropped. Without that check, a chat switch
+followed by a new action leaves the stopped chain's last tick to re-arm
+alongside the new one, and two chains halve the frame time — the same class
+of bug as [divergence 39](#39-a-partial-update-is-not-a-small-complete-one),
+where state was trusted to be told rather than derived.
+
+### 53. Forwarding picks a chat, which is not the same as picking a person
+
+Issue #39 asked for `f` to forward, and the obvious reading is that it
+needs the mention autocomplete of #41 first — both look like "find a user
+by typing". They are different problems, and only one of them is expensive.
+
+#41 completes a user **into message text**: an entity with UTF-16 offsets,
+merged with the markdown entities the send path already builds, carried
+through per-chat drafts and the external editor, invalidated when the text
+under it is edited. #39 picks a **destination**, which is a value the
+picker hands back and nothing else ever sees. `Client.SearchChats` already
+wraps `contacts.search`, which returns your own peers matched on display
+name alongside global ones matched on username — so typing `nad` finds
+Nadia without anybody knowing her handle, and a handle still works for a
+stranger. The picker is the palette's twin, like the attach picker before
+it, and it opens on the chats already loaded so the common case is a filter
+over memory rather than a round trip.
+
+**The source is captured, not re-read.** The picker is modal but the world
+is not: updates keep arriving and a mouse-driven scroll still moves the
+cursor. Re-reading the cursored message at confirmation time would forward
+whatever it had drifted to — to a destination the reader chose
+deliberately, which is the worst failure this surface has. `forward.Source`
+is taken when the picker opens and is the value the command closes over.
+
+**The search is generation-tagged for the same reason the mention picker
+would be.** A reply to a query the reader has typed past still arrives.
+The generation is incremented on every edit, and an answer carrying an old
+one is dropped rather than merged — otherwise the list repopulates under
+the cursor between the reader aiming and pressing enter. A failed search is
+not an empty one: the loaded chats stay listed with a note, because taking
+the destinations away is the feature failing at the moment it can least
+explain itself.
+
+**`keys.forward` comes back one PR after being removed.**
+[Decision I-13](interaction-model.md) cut it in the keymap wave, as the one
+field that was accepted, saved and never dispatched. It is restored here
+because it now dispatches. Anyone who migrates twice is told the key was
+removed and then that it was added; both messages were true when they were
+printed, and a migration that quietly skipped the second would leave a
+config with no `forward` line and a client that has one.
+
+**Attribution is kept, and not optional.** `DropAuthor` and
+`DropMediaCaptions` stay unset, so a forward carries who wrote it. Telegram
+makes an unattributed copy a separate deliberate choice in its own clients,
+and it should be one here too rather than a flag nobody sees. Copying the
+text instead of forwarding — which is what a client without the RPC ends up
+doing — loses the attribution, the entities, the media semantics and the
+server-side restriction on chats that forbid forwarding out, while looking
+close enough that nobody notices until it matters.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

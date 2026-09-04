@@ -336,6 +336,8 @@ func runServe(cfg *config.Config, addr string, token string, allowedHosts []stri
 		os.Exit(1)
 	}
 
+	logSendRoots(cfg)
+
 	api := restapi.New(client, token)
 	api.SetListenHost(addr)
 	for _, h := range allowedHosts {
@@ -369,5 +371,25 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      10 * time.Minute, // media download can match telegram.transferTimeout
 		IdleTimeout:       120 * time.Second,
+	}
+}
+
+// logSendRoots reports the directories send_file will accept a path from,
+// creating the default outbox if it is one of them. The set used to be
+// files_dir plus whatever directory the process happened to start in,
+// which nobody chose and nothing printed; logging it is half of making it
+// a decision (see issue #48).
+//
+// This function is deliberately identical in cmd/telegram-mcp: the two
+// frontends must describe the same policy in the same words, and they
+// share no package to put it in.
+func logSendRoots(cfg *config.Config) {
+	roots, missing, err := cfg.PrepareSendRoots()
+	if err != nil {
+		log.Printf("WARNING: %v", err)
+	}
+	log.Printf("send_file roots: %s", strings.Join(roots, ", "))
+	for _, dir := range missing {
+		log.Printf("WARNING: send_file root %s does not exist; files under it cannot be sent", dir)
 	}
 }

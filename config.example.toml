@@ -21,6 +21,18 @@ files_dir = "~/.local/share/tele-tui/files"
 download_dir = "~/Downloads"
 # state_file = "~/.local/share/tele-tui/state.db"  # update/peer state DB (default: state.db next to session_file)
 
+# Which directories a REMOTE caller may send files from: the `send_file` MCP
+# tool and POST /api/send-file. It does not constrain the TUI, where the
+# person picking the file is the person running the program.
+#
+# files_dir is always allowed on top of this list (download_media hands out
+# paths inside it), and telegram-mcp/telegram-api log the effective set at
+# startup. Note what is NOT here: ~/Downloads, and the directory the server
+# happened to be started from. For MCP the caller is a language model reading
+# incoming messages from strangers, so this list is the answer to "which
+# files can a message talk it into sending".
+send_dirs = ["~/.local/share/tele-tui/outbox"]
+
 # UI preferences
 [ui]
 theme = "dark"               # "dark" or "light"
@@ -186,4 +198,5 @@ prev_folder = "["
 reply = "r"                   # acts on the cursored message in the chat view
 edit_message = "e"
 delete_message = "d"
+forward = "f"                 # forward the cursored message to another chat
 mark_read = "m"               # mark the open chat read without moving

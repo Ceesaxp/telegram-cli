@@ -175,7 +175,7 @@ page_down = "pgdown"
 
 	removed := raw.Removed()
 	for _, field := range []string{
-		"keys.focus_chat_list", "keys.contacts_alt", "keys.forward",
+		"keys.focus_chat_list", "keys.contacts_alt",
 		"keys.scroll_up", "keys.page_down",
 	} {
 		if _, ok := removed[field]; !ok {

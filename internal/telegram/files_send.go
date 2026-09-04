@@ -48,7 +48,26 @@ func ResolveAllowedSendPath(path string, roots ...string) (string, error) {
 		}
 		return resolved, nil
 	}
-	return "", fmt.Errorf("send file: path %q is outside the allowed directories", path)
+	// Name the roots. The caller here is an authenticated operator or the
+	// agent they configured, the set is already logged at startup and
+	// documented, and "outside the allowed directories" with no list is a
+	// dead end — the reader cannot tell a typo from a policy.
+	return "", fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
+		path, strings.Join(nonEmpty(roots), ", "))
+}
+
+// nonEmpty drops the blank roots ResolveAllowedSendPath skips, so the
+// error names the set that was actually searched. A caller that passes no
+// usable root gets "()" and rejects everything, which is the correct
+// fail-closed reading of an empty allowlist.
+func nonEmpty(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // SendFileMessage uploads a local file and sends it as a document,

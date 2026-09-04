@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -231,11 +232,16 @@ type Model struct {
 	// which is the one thing a spoiler exists to prevent.
 	revealedID int64
 
-	// typing is the set of user IDs currently composing in the open chat.
-	// The thread owns this because TUI 2.0 draws the indicator as the
-	// bottom row of the scroller, aligned with the message grid, rather
-	// than as a line in a status bar.
-	typing      []int64
+	// typing is who is currently composing in the open chat, each with the
+	// moment their action lapses. The thread owns this because TUI 2.0
+	// draws the indicator as the bottom row of the scroller, aligned with
+	// the message grid, rather than as a line in a status bar.
+	typing []typingUser
+	// typingFrame indexes typingFrames; typingGen identifies the live tick
+	// chain (0 means none is running). See typing.go.
+	typingFrame int
+	typingGen   int
+
 	loading     bool
 	historyEnd  bool
 	loadStatus  string // honest stage label, e.g. "Loading messages..."
@@ -272,8 +278,16 @@ type Model struct {
 	// blurred tracks terminal focus (tea.FocusMsg/tea.BlurMsg). The zero
 	// value means focused, so behaviour is unchanged when the program
 	// never enables focus reporting.
-	blurred       bool
-	pendingReadID int64 // newest message that arrived while blurred
+	blurred bool
+	// pendingReadID is the newest message seen but not yet acknowledged —
+	// while blurred, and now also inside the focused path's coalescing
+	// window. pendingRefetch is the set of messages an edit, reaction or
+	// poll tally has invalidated. Both are flushed on a tick; see
+	// coalesce.go.
+	pendingReadID       int64
+	pendingRefetch      map[int64]struct{}
+	readFlushPending    bool
+	refetchFlushPending bool
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -461,6 +475,7 @@ func (m *Model) SetReservedKeys(reserved []string) {
 // configurability was worth.
 type Keys struct {
 	Reply, Edit, Delete string
+	Forward             string
 	MarkRead            string
 }
 
@@ -472,6 +487,7 @@ type Keys struct {
 // claimed and the action is unreachable.
 type resolvedKeys struct {
 	reply, edit, delete string
+	forward             string
 	markRead            string
 }
 
@@ -564,6 +580,7 @@ func (m *Model) SetKeys(k Keys) {
 	add(k.Reply, "r", &resolved.reply)
 	add(k.Edit, "e", &resolved.edit)
 	add(k.Delete, "d", &resolved.delete)
+	add(k.Forward, "f", &resolved.forward)
 	add(k.MarkRead, "m", &resolved.markRead)
 
 	// Pass 2: accept every EXPLICITLY configured mnemonic, field order,
@@ -618,6 +635,7 @@ func (m Model) ActiveKeys() Keys {
 		Reply:    m.keys.reply,
 		Edit:     m.keys.edit,
 		Delete:   m.keys.delete,
+		Forward:  m.keys.forward,
 		MarkRead: m.keys.markRead,
 	}
 }
@@ -857,6 +875,8 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.pendingReadID = 0
 	m.metaBusy = false
 	m.typing = nil
+	m.stopTypingAnim()
+	m.clearCoalescing()
 	m.clearSearch()
 	m.cache.clear()
 
@@ -1562,12 +1582,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			chatID, msgID := m.chatID, msg.Message.ID
-			tg := m.tg
-			return m, func() tea.Msg {
-				tg.ViewMessages(chatID, []int64{msgID})
-				return nil
-			}
+			// Focused: accumulate too, and flush on a tick. A receipt is
+			// cumulative, so a burst of arrivals costs one call carrying
+			// the highest ID rather than one call each (issue #46).
+			return m, m.noteRead(msg.Message.ID)
 		}
 
 	case telegram.ChatActionMsg:
@@ -1576,8 +1594,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// are dropped rather than accumulated: nothing shows them, and a
 		// map keyed by chat would grow for the life of the session.
 		if msg.ChatId == m.chatID && msg.UserId != 0 {
-			m.typing = applyChatAction(m.typing, msg)
+			m.typing = applyChatAction(m.typing, msg, time.Now())
+			if len(m.typing) == 0 {
+				m.stopTypingAnim()
+			} else if cmd := m.startTypingAnim(); cmd != nil {
+				return m, cmd
+			}
 		}
+
+	case typingTickMsg:
+		// A tick from a chain that has been stopped or replaced carries a
+		// stale generation and must not re-arm.
+		if msg.gen != m.typingGen {
+			return m, nil
+		}
+		if m.typing = pruneTyping(m.typing, msg.at); len(m.typing) == 0 {
+			m.stopTypingAnim()
+			return m, nil
+		}
+		m.typingFrame = (m.typingFrame + 1) % len(typingFrames)
+		return m, typingTick(m.typingGen)
 
 	case tea.FocusMsg:
 		m.blurred = false
@@ -1598,15 +1634,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.store.Chats.SetMemberCount(msg.chatID, msg.count)
 
 	case telegram.MessageEditedMsg:
+		// Reactions and poll tallies arrive as this too (see
+		// telegram.Listener), which is why a single post collecting
+		// reactions used to be a round trip per reaction.
 		if msg.ChatId == m.chatID {
-			tg := m.tg
-			return m, func() tea.Msg {
-				fetched, _ := tg.GetMessage(msg.ChatId, msg.MessageId)
-				if fetched != nil {
-					return messageFetchedMsg{chatID: msg.ChatId, message: fetched}
-				}
-				return nil
+			return m, m.noteRefetch(msg.MessageId)
+		}
+
+	case readFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		return m, m.flushRead()
+
+	case refetchFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		return m, m.flushRefetch()
+
+	case refetchedMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		for _, fetched := range msg.messages {
+			if fetched == nil {
+				continue
 			}
+			m.store.Messages.UpdateMessage(m.chatID, fetched.ID, fetched)
+			m.cache.invalidate(fetched.ID)
 		}
 
 	case telegram.MessageDeletedMsg:
@@ -1794,6 +1850,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, m.messageAction("edit")
 	case kp.Matches(m.keys.delete):
 		return m, m.messageAction("delete")
+	case kp.Matches(m.keys.forward):
+		return m, m.messageAction("forward")
 
 	// '+' opens the reaction row over the cursored message, and 'p'
 	// toggles its pin. Both are things you do TO a message, so both take

@@ -132,6 +132,28 @@ acceptable — the server hands them out again, which is also why `bindOwner`
 can drop the whole namespace when a session file turns out to belong to a
 different account.
 
+**The open chat batches what updates ask it to do.** An arrival, an edit, a
+reaction and a poll tally each used to cost their own RPC — one
+`readHistory` per message, one `getMessages` per change — which in a busy
+group is one request per update and the pattern Telegram answers with
+`FLOOD_WAIT`. Both are accumulated over a 300ms window now
+(`internal/ui/components/chatview/coalesce.go`): a read receipt is
+cumulative, so a burst becomes one call carrying the highest ID, and the
+refetches become one `getMessages` with the deduplicated list, minus any ID
+the store no longer holds. The tick carries the chat it was scheduled for,
+so one that outlives a chat switch is dropped rather than fired against the
+new chat. This is the same coalescing the peer cache does above, for the
+same reason.
+
+Note what is NOT here: a `FLOOD_WAIT` back-off. Errors from these
+background calls are discarded rather than shown, which is right — a
+receipt the reader never asked for should not interrupt them — but nothing
+retries. gotd's floodwait middleware is not installed on the client either,
+so a rate limit is currently an error every caller swallows differently.
+That belongs in one middleware covering every RPC rather than at these two
+call sites, and it is a behaviour change (waits in place of errors) that
+deserves its own decision.
+
 **Only the TUI subscribes to updates.** `telegram-api` and `telegram-mcp` run
 in-memory with no update stream, so they never contend for the exclusive
 bbolt lock on `state.db`.
