@@ -309,120 +309,100 @@ type NotificationConfig struct {
 	Method string `toml:"method"`
 }
 
-// KeyConfig lists user-configurable key bindings. Not every field is
-// currently consulted:
+// KeyConfig lists the user-configurable key bindings. Every field follows
+// one rule (decision I-13):
 //
-//   - Wired, dispatched by internal/app itself (which normalizes the value
-//     via [NormalizeKey] and falls back to its built-in default when
-//     empty): Quit, QuitBrowsing, FocusChatList, FocusChatView,
-//     FocusComposer, Search, GlobalSearch, Contacts, ContactsAlt, Help,
-//     NextFolder, PrevFolder, NextChat, PrevChat. Note
-//     FocusChatList/View/Composer are wired *in addition to* their
-//     hardcoded alt+1/2/3 shortcuts, which always work regardless of
-//     configuration.
-//   - Wired, resolved by internal/app and handed to the chat view, which
-//     implements them: Reply, EditMessage, DeleteMessage, ScrollUp,
-//     ScrollDown, PageUp, PageDown. Same normalization and defaulting; the
-//     difference is only which layer matches the key. Two rules apply
-//     there and nowhere else. Reply/EditMessage/DeleteMessage are
-//     mnemonics: a value REPLACES the built-in r/e/d. ScrollUp/ScrollDown/
-//     PageUp/PageDown are motions: a value is ADDED to the built-in j/k,
-//     the arrows and pgup/pgdown, which always keep working. And a value
-//     that collides with a key the chat view already claims is dropped
-//     rather than allowed to shadow it. The chat view's remaining keys
-//     (g/G, ctrl+u/ctrl+d, n/N, ctrl+f, enter/o/s) are hardcoded there, as
-//     are the chat list's arrows and digits and the composer's line
-//     editing — see the keymap table in internal/app/keymap.go.
-//   - Unwired (parsed and preserved on save, but not consulted anywhere —
-//     kept so existing config.toml files round-trip cleanly; a value here
-//     is silently inert): Forward. There is no forward-a-message feature
-//     to bind it to; the field exists only so config files that set it
-//     still load.
+//	A value REPLACES the default. A value that collides with anything
+//	already bound — another field, or a key a panel owns outright — is
+//	REFUSED, the default is kept, and the refusal is reported at startup.
 //
-// A component-dispatched field set to a key internal/app claims first is
-// not merely shadowed — it is dead, because app-level dispatch runs before
-// the focused panel sees the event. reply = "q" used to be accepted,
-// advertised on the help card as Reply, and quit the application when
-// pressed. Two things now prevent that: the chat view is told what the app
-// has claimed (keys.AppReserved) and refuses such a binding, keeping its
-// built-in letter; and [DetectKeyCollisions] reports it, so the refusal is
-// explained rather than silent.
+// There used to be three rules. Some fields replaced their default, some
+// were an extra spelling ADDED alongside it, and one was accepted, saved
+// and never consulted at all. The three needed a page of documentation to
+// tell apart, and the third let `forward` sit in the shipped example file
+// bound to nothing.
 //
-// Wired bindings are matched before the focused panel sees the key, so a
-// binding here shadows that key in the chat list and chat view. It does not
-// shadow it in the composer: typing is only ever entered deliberately (i, c,
-// Tab, the focus keys, or a click), and once the composer has focus almost
-// nothing is claimed at app level — see the exception list in the keymap
-// table in internal/app/keymap.go. A bare printable is therefore a
-// reasonable binding here, though a modifier still reads more clearly.
+// Which layer matches a binding still differs, and still does not change
+// the rule. internal/app dispatches Quit, QuitBrowsing, Search,
+// GlobalSearch, Contacts, Compose, Help, NextChat, PrevChat, NextUnread,
+// NextFolder and PrevFolder itself; it resolves Reply, EditMessage,
+// DeleteMessage and MarkRead and hands them to the chat view, which
+// implements them (see chatview.Keys).
 //
-// # macOS: Alt bindings and the Option key
+// The motions are not configurable, and are not meant to be: j/k, the
+// arrows, g/G, ctrl+e/ctrl+y, ctrl+d/ctrl+u and the page keys are vi's, the
+// chat list's digits and the composer's line editing belong to their
+// components, and a client that let them move would be a client whose
+// documentation could not describe it. See the keymap in
+// docs/interaction-model.md.
 //
-// The default alt+… bindings only reach the app if the terminal reports
-// Option as a modifier. Terminals differ:
+// A field set to a key internal/app claims first is not merely shadowed —
+// it is dead, because app-level dispatch runs before the focused panel sees
+// the event. reply = "q" used to be accepted, advertised on the help card
+// as Reply, and quit the application when pressed. Two things prevent it
+// now: the chat view is told what the app has claimed (keys.AppReserved)
+// and refuses such a binding, keeping its built-in letter; and
+// [StartupWarnings] reports it, so the refusal is explained rather than
+// silent. The help card shows an action left with no key as "(unbound)".
 //
-//   - Ghostty: macos-option-as-alt = true (default "false" on macOS —
-//     confirmed in field testing to be why alt bindings work in kitty but
-//     not in a stock Ghostty).
-//   - Terminal.app: Settings → Profiles → Keyboard → "Use Option as Meta
-//     key" (off by default).
-//   - iTerm2: Settings → Profiles → Keys → Left/Right Option key → "Esc+".
-//   - kitty/WezTerm/Alacritty report Option as Alt by default.
+// A binding here shadows that key in the chat list and the chat view. It
+// does not shadow it in the composer: typing is only ever entered
+// deliberately (i, Tab, an action that needs text, or a click), and once
+// the composer has focus almost nothing is claimed at app level. Quit is
+// the exception, and the one field where a bare printable is refused
+// outright — see [ResolveQuitKey].
 //
-// While Option is not reported as a modifier, macOS composes the character
-// itself and the terminal sends only that: Option+1 arrives as a bare "¡"
-// with no modifier bit, indistinguishable from the user typing "¡". This is
-// not something the Kitty keyboard protocol fixes — the composition happens
-// before the terminal builds the key event — and no amount of key matching
-// can recover the binding.
-//
-// So every alt binding has an alt-free alternative: f1/f2/f3 for panel
-// focus, f4 for contacts (ContactsAlt), ctrl+g for global search
-// (GlobalSearch), and "[" / "]", the left/right arrows or the 1-9 jump for
-// the folder tabs while the chat list is focused. (Bare h/l used to be that
-// fallback for the folder tabs; they now move between panels, which is what
-// left/right means in a two-column layout — see internal/app/keymap.go.)
-// Rebinding here works too — prefer ctrl+… or a function key.
+// Values are read through [NormalizeKey]: modifiers and key names are
+// case-insensitive and aliased, but a lone printable letter keeps its case,
+// because on an unmodified key the case is the binding. NextChat is "J" and
+// the chat list's own motion is "j"; they are not the same key.
 type KeyConfig struct {
+	// Quit quits from anywhere, without asking. A bare printable is
+	// refused here: it is matched before every focus gate, so it would be
+	// untypable in a message. See [ResolveQuitKey]. Default ctrl+q.
 	Quit string `toml:"quit"`
 	// QuitBrowsing quits from the chat list and the chat view only, where
 	// a bare letter cannot be mistaken for typing — the composer owns
-	// printables and never sees it. Quit (and the hardcoded
-	// ctrl+q) work from everywhere including the composer. Default "q".
-	//
-	// An unsent draft or a pending attachment turns it into a confirm
-	// rather than an immediate exit, so a single keystroke cannot discard
-	// a message being written.
-	QuitBrowsing  string `toml:"quit_browsing"`
-	FocusChatList string `toml:"focus_chat_list"`
-	FocusChatView string `toml:"focus_chat_view"`
-	FocusComposer string `toml:"focus_composer"`
-	Search        string `toml:"search"`
-	Contacts      string `toml:"contacts"`
-	// ContactsAlt is a second, alt-free binding for the contacts overlay,
-	// so the overlay stays reachable on terminals that cannot report Alt
-	// (see the macOS notes below). Default f4.
-	ContactsAlt string `toml:"contacts_alt"`
+	// printables and never sees it. An unsent draft or a pending
+	// attachment turns it into a confirm rather than an immediate exit, so
+	// a single keystroke cannot discard a message being written.
+	// Default "q".
+	QuitBrowsing string `toml:"quit_browsing"`
+	// Search searches the buffer in front of you: in-chat find from the
+	// chat view, a live filter over the chat list. Default "/".
+	Search string `toml:"search"`
+	// GlobalSearch searches every chat, from any panel — the
+	// panel-independent binding Search cannot be, since vi convention
+	// gives "/" to the buffer you are looking at. Default ctrl+g.
+	GlobalSearch string `toml:"global_search"`
+	// Contacts toggles the contacts overlay. Default "c".
+	Contacts string `toml:"contacts"`
+	// Compose moves focus to the composer, opening the cursored chat
+	// first when it is not already the open one. Default "i".
+	Compose string `toml:"compose"`
 	// Help opens the keybinding overlay. Default "?".
 	Help string `toml:"help"`
-	// GlobalSearch searches every chat. Search ("/") does the same from
-	// every panel except the chat view, where vi convention makes "/" mean
-	// "find in this buffer"; GlobalSearch is the panel-independent binding.
-	// Default ctrl+g.
-	GlobalSearch  string `toml:"global_search"`
-	NextChat      string `toml:"next_chat"`
-	PrevChat      string `toml:"prev_chat"`
+	// NextChat/PrevChat open the next and previous chat outright, unlike
+	// the chat list's own j/k which only move the cursor. Defaults "J"
+	// and "K".
+	NextChat string `toml:"next_chat"`
+	PrevChat string `toml:"prev_chat"`
+	// NextUnread opens the next chat with unread messages, searching down
+	// from the cursor within the active folder and wrapping once.
+	// Default "u".
+	NextUnread string `toml:"next_unread"`
+	// NextFolder/PrevFolder cycle the folder tabs from either browsing
+	// panel. Defaults "]" and "[".
+	NextFolder string `toml:"next_folder"`
+	PrevFolder string `toml:"prev_folder"`
+	// Reply/EditMessage/DeleteMessage act on the cursored message in the
+	// chat view. Defaults "r", "e", "d".
 	Reply         string `toml:"reply"`
 	EditMessage   string `toml:"edit_message"`
 	DeleteMessage string `toml:"delete_message"`
-	Forward       string `toml:"forward"`
-	ScrollUp      string `toml:"scroll_up"`
-	ScrollDown    string `toml:"scroll_down"`
-	PageUp        string `toml:"page_up"`
-	PageDown      string `toml:"page_down"`
-	// NextFolder/PrevFolder cycle the chat list's folder tabs.
-	NextFolder string `toml:"next_folder"`
-	PrevFolder string `toml:"prev_folder"`
+	// MarkRead marks the open chat read without moving the scroll or the
+	// unread divider. Default "m".
+	MarkRead string `toml:"mark_read"`
 }
 
 // keyModAliases maps the modifier spellings a user might write in
@@ -467,22 +447,47 @@ var keyNameAliases = map[string]string{
 }
 
 // NormalizeKey canonicalizes a user-configured key string to the form
-// produced by bubbletea's Key.Keystroke(): lowercased, with modifier and key
-// aliases resolved and modifiers emitted in Keystroke's fixed order
+// produced by bubbletea's Key.Keystroke(): modifier and key aliases
+// resolved, modifiers lowercased and emitted in Keystroke's fixed order
 // (ctrl, alt, shift, meta, hyper, super). An empty input returns empty, so
 // callers can detect "not configured" and fall back to a built-in default.
 //
 // Examples: "ALT+L" -> "alt+l", "Option+1" -> "alt+1", "shift+ctrl+a" ->
 // "ctrl+shift+a", "Escape" -> "esc", "ctrl++" -> "ctrl++".
 //
+// # A lone printable keeps its case
+//
+// "J" stays "J". Case is not decoration on an unmodified letter, it is the
+// binding: a shift+j press reports Keystroke() "shift+j" and String() "J",
+// and keys.Press matches an unmodified key on either spelling — so "J"
+// matches it and "j" does not, while a plain j press matches "j" and not
+// "J". next_chat = "J" and the chat list's own j are two different keys,
+// and lowercasing the first turns the second into chat navigation.
+//
+// That is a real regression rather than a hypothetical one: the shipped
+// defaults set next_chat/prev_chat to J/K, Load fills them into every
+// config, and with them folded to j/k the app-level handler — which runs
+// before the focused panel — took the chat list's cursor motion.
+//
+// Only the lone-printable case is preserved. Anything with a modifier goes
+// on being lowercased, because there Keystroke() is the only spelling that
+// can match and it is lowercase: "ALT+L" is alt+l, not alt+L. A user who
+// means the shifted letter with a modifier writes the modifier out
+// ("alt+shift+l"), which is what the terminal reports.
+//
 // Anything that is not a recognized modifier terminates the modifier prefix
 // and is taken (together with the rest of the string) as the key name, so a
 // literal "+" binding survives intact.
 func NormalizeKey(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
+	// A lone printable is the binding, case included. See the doc comment.
+	if utf8.RuneCountInString(s) == 1 {
+		return s
+	}
+	s = strings.ToLower(s)
 
 	parts := strings.Split(s, "+")
 	seen := map[string]bool{}
@@ -654,26 +659,20 @@ func defaultConfig() *Config {
 		Keys: KeyConfig{
 			Quit:          "ctrl+q",
 			QuitBrowsing:  "q",
-			FocusChatList: "f1",
-			FocusChatView: "f2",
-			FocusComposer: "f3",
 			Search:        "/",
-			Contacts:      "alt+c",
-			ContactsAlt:   "f4",
 			GlobalSearch:  "ctrl+g",
+			Contacts:      "c",
+			Compose:       "i",
 			Help:          "?",
-			NextChat:      "alt+j",
-			PrevChat:      "alt+k",
+			NextChat:      "J",
+			PrevChat:      "K",
+			NextUnread:    "u",
+			NextFolder:    "]",
+			PrevFolder:    "[",
 			Reply:         "r",
 			EditMessage:   "e",
 			DeleteMessage: "d",
-			Forward:       "f",
-			ScrollUp:      "k",
-			ScrollDown:    "j",
-			PageUp:        "pgup",
-			PageDown:      "pgdown",
-			NextFolder:    "alt+l",
-			PrevFolder:    "alt+h",
+			MarkRead:      "m",
 		},
 	}
 }

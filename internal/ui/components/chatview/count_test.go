@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// 9{ moves nine messages back. The whole point of the count prefix.
+// 9k moves nine messages back. The whole point of the count prefix.
 func TestACountRepeatsTheMessageMotion(t *testing.T) {
 	m := motionModel(t)
 	start := cursorIndex(t, m)
@@ -15,10 +15,10 @@ func TestACountRepeatsTheMessageMotion(t *testing.T) {
 	for _, r := range "9" {
 		m, _ = m.handleKey(motionKey(r))
 	}
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 
 	if got := cursorIndex(t, m); got != start-9 {
-		t.Errorf("9{ moved to %d, want %d", got, start-9)
+		t.Errorf("9k moved to %d, want %d", got, start-9)
 	}
 }
 
@@ -30,15 +30,15 @@ func TestCountsAccumulate(t *testing.T) {
 	for _, r := range "12" {
 		m, _ = m.handleKey(motionKey(r))
 	}
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 
 	if got := cursorIndex(t, m); got != start-12 {
-		t.Errorf("12{ moved to %d, want %d", got, start-12)
+		t.Errorf("12k moved to %d, want %d", got, start-12)
 	}
 }
 
 // A count is spent by the motion it precedes and does not survive into the
-// next one: "9{" then "{" moves nine and then one, not nine and nine.
+// next one: "9k" then "k" moves nine and then one, not nine and nine.
 func TestACountIsSpentOnce(t *testing.T) {
 	m := motionModel(t)
 	start := cursorIndex(t, m)
@@ -46,32 +46,28 @@ func TestACountIsSpentOnce(t *testing.T) {
 	for _, r := range "9" {
 		m, _ = m.handleKey(motionKey(r))
 	}
-	m, _ = m.handleKey(motionKey('{'))
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
+	m, _ = m.handleKey(motionKey('k'))
 
 	if got := cursorIndex(t, m); got != start-10 {
-		t.Errorf("9{ then { moved to %d, want %d", got, start-10)
+		t.Errorf("9k then k moved to %d, want %d", got, start-10)
 	}
 }
 
-// It repeats the line motions too, so a vi reader's 5j does what they mean
-// rather than silently discarding the 5.
+// It repeats the buffer motion too, so a vi reader's 4ctrl+y does what they
+// mean rather than silently discarding the 4. One line per count, since a
+// line is a line (decision I-4).
 func TestACountRepeatsTheLineMotion(t *testing.T) {
 	m := motionModel(t)
 	m.scrollOffset = 0
 
-	one := motionModel(t)
-	one.scrollOffset = 0
-	one, _ = one.handleKey(motionKey('k'))
-	step := one.scrollOffset
-
 	for _, r := range "4" {
 		m, _ = m.handleKey(motionKey(r))
 	}
-	m, _ = m.handleKey(motionKey('k'))
+	m, _ = m.handleKey(ctrlKey('y'))
 
-	if m.scrollOffset != step*4 {
-		t.Errorf("4k scrolled %d lines, want %d", m.scrollOffset, step*4)
+	if m.scrollOffset != 4 {
+		t.Errorf("4ctrl+y scrolled %d lines, want 4", m.scrollOffset)
 	}
 }
 
@@ -89,7 +85,7 @@ func TestANonMotionKeyClearsTheCount(t *testing.T) {
 		t.Fatalf("a non-motion key left %d pending", m.pendingCount)
 	}
 
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if got := cursorIndex(t, m); got != start-1 {
 		t.Errorf("the abandoned count reattached: moved to %d, want %d",
 			got, start-1)
@@ -137,7 +133,7 @@ func TestACountIsBounded(t *testing.T) {
 	}
 
 	// And it still moves, to the far end rather than past it.
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if got := cursorIndex(t, m); got != 0 {
 		t.Errorf("a huge count landed on %d, want the oldest message", got)
 	}
@@ -160,7 +156,7 @@ func TestThePendingCountIsShown(t *testing.T) {
 		t.Errorf("the pending count is not on the header: %q", got)
 	}
 
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if got := ansi.Strip(m.renderHeader()); strings.Contains(got, "12  ln") {
 		t.Errorf("the spent count is still on the header: %q", got)
 	}

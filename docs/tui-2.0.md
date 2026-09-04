@@ -996,6 +996,11 @@ answered "where do my keystrokes go". The thread now follows the same rule.
 
 ### 23. `}` and `{` move between messages
 
+> **Superseded by I-4** ([interaction-model.md](interaction-model.md)).
+> `j`/`k` are the message-wise motion now and `ctrl+e`/`ctrl+y` scroll the
+> buffer, which is vi's own split; `}` and `{` are retired rather than kept
+> as a second spelling of one thing. The tail rule below still stands.
+
 The design record gives `j`/`k` to line scrolling and says nothing about
 moving the cursor, because it had none to move: the cursor was derived from
 the scroll position and anchored back into the visible window. In use that

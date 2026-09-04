@@ -78,12 +78,12 @@ func TestTerminalClientErrorIsUnmissable(t *testing.T) {
 	// mutate state the user cannot see.
 	after := send(t, m, telegram.ClientErrorMsg{}) // no-op message
 	before := after.focus
-	after = update(t, after, "\x1b2") // alt+2, normally focuses the chat view
+	after = update(t, after, "l") // normally moves into the chat view
 	if after.focus != before {
-		t.Errorf("alt+2 changed focus to %v while the client was dead", after.focus)
+		t.Errorf("l changed focus to %v while the client was dead", after.focus)
 	}
-	if after = update(t, after, "\x1bc"); after.contacts.IsVisible() {
-		t.Error("alt+c opened the contacts overlay while the client was dead")
+	if after = update(t, after, "c"); after.contacts.IsVisible() {
+		t.Error("c opened the contacts overlay while the client was dead")
 	}
 }
 
@@ -98,8 +98,8 @@ func TestNonTerminalClientErrorIsANotice(t *testing.T) {
 		t.Error("the recoverable error was not surfaced as a notice")
 	}
 	// The UI keeps working.
-	if got := update(t, m, "\x1b2"); got.focus != PanelChatView {
-		t.Errorf("focus = %v after alt+2, want PanelChatView", got.focus)
+	if got := update(t, m, "l"); got.focus != PanelChatView {
+		t.Errorf("focus = %v after l, want PanelChatView", got.focus)
 	}
 }
 

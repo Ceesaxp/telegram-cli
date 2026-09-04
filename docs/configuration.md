@@ -129,15 +129,17 @@ What one run does:
 
 - **Retires stale key defaults.** A `[keys]` field holding a value that used
   to ship as the default — not something you chose — is replaced with the
-  current one: `focus_chat_list`/`focus_chat_view`/`focus_composer` from
-  `ctrl+1`/`ctrl+2`/`ctrl+3` to `f1`/`f2`/`f3`; `contacts` from `ctrl+k`
-  (now the composer's kill-to-end-of-line) to `alt+c`; `next_chat`/
-  `prev_chat` from `ctrl+j`/`ctrl+k` (now the newline chord and
-  kill-to-start-of-line) to `alt+j`/`alt+k`. A binding you actually chose
-  is left exactly alone, even if it now collides with something — see the
-  collision report below.
+  current one: `contacts` from `ctrl+k` (now the composer's
+  kill-to-end-of-line) or `alt+c` to `c`; `next_chat`/`prev_chat` from
+  `ctrl+j`/`ctrl+k` (the newline chord and kill-to-start-of-line) or
+  `alt+j`/`alt+k` to `J`/`K`; `next_folder`/`prev_folder` from
+  `alt+l`/`alt+h` to `]`/`[`. The `alt+…` spellings are retired outright —
+  they only reached the app on a terminal reporting Option as a modifier,
+  and failed silently everywhere else. A binding you actually chose is left
+  exactly alone, even if it now collides with something — see the collision
+  report below.
 - **Fills in fields your file never had**, at their current default: any
-  newer `[keys]` field (`help`, `global_search`, `contacts_alt`, …),
+  newer `[keys]` field (`compose`, `next_unread`, `mark_read`, …),
   `ui.compose_editing` (`"auto"`), `storage.download_dir` (`~/Downloads`,
   where `s` saves — see [Where files go](configuration.md#where-files-go)), and
   `notifications.method` (`"auto"`, see [Notifications](features.md#notifications)),

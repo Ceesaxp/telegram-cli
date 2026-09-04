@@ -22,20 +22,21 @@ Typing is always entered on purpose — `i`, `Tab`, a focus key, or a
 click on the composer — nothing is forwarded to the composer implicitly, so
 no binding below costs you the ability to type that character.
 
-Every `Alt+…` binding below has an alt-free alternative *except* `Alt+J`/
-`Alt+K` (next/prev chat — use the chat list's own `j`/`k` while it's
-focused) and folder cycling from any panel other than the chat list (the
-alt-free `[`/`]`, arrows and digits only work while the chat list has
-focus). Bare `h`/`l` do **not** cycle folders any more — that role belongs
-entirely to `[`/`]`, the arrows, the digits and `Alt+H`/`Alt+L`, since bare
-`h`/`l` now move between panels (above). See "macOS: Alt bindings and the
-Option key" below if `Alt+…` bindings don't seem to work at all.
+There are no `Alt+…` and no function-key bindings (decision I-1). They only
+ever reached the app on a terminal configured to report Option as a
+modifier, which on macOS is the minority; the failure was silent and
+undetectable, since the composed character arrives with no modifier bit at
+all; and none of them was a vi idiom. Every one has a plain spelling now:
+`c` for contacts, `J`/`K` for next and previous chat, `[`/`]` for the
+folders, and `h`/`l`/`i`/`Esc`/`Tab` between them for panel focus. Bare
+`h`/`l` do **not** cycle folders — that role is `[`/`]`, the arrows and the
+digits.
 
 `q` quits from the chat list and chat view — lazygit's "q is the way out"
 everywhere it can't be mistaken for typing. It asks first if the composer
 holds an unsent draft or a pending attachment; `Ctrl+Q` still quits
-unconditionally from anywhere, including the composer, and `q` still closes
-the help overlay as before.
+unconditionally from anywhere, including the composer. `q` closes no
+overlay: overlays close with `Esc` (and the help card with `?` as well).
 
 `/` is contextual in both browsing panels now: from the chat list it opens
 a live filter over the visible chats (`Esc` clears it, `Enter` keeps it
@@ -71,13 +72,11 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `q` | Quit — chat list / chat view only (`keys.quit_browsing`); confirms first if the composer holds a draft or attachment |
 | `?` | Toggle the help overlay |
 | `Tab` / `Shift+Tab` | Cycle panel focus (works from the composer too) |
-| `F1` / `Alt+1` | Focus chat list |
-| `F2` / `Alt+2` | Focus chat view |
-| `F3` / `Alt+3` | Focus composer |
 | `Esc` | Close overlay, else step back |
-| `Alt+J` / `Alt+K` | Next / previous chat |
-| `Alt+L` / `Alt+H` | Next / previous folder |
-| `Alt+C` / `F4` | Toggle contacts overlay |
+| `J` / `K` | Open the next / previous chat outright — unlike the chat list's own `j`/`k`, which move the cursor and open nothing |
+| `u` | Open the next chat with unread messages: down from the cursor within the active folder, wrapping once. Says so rather than moving when nothing is unread |
+| `]` / `[` | Next / previous folder — from **both** browsing panels |
+| `c` | Toggle the contacts overlay |
 | `Ctrl+G` | Search all chats (not while composing) |
 | `:` | Command palette (not while composing) |
 | `` ` `` | Toggle the context rail — pinned messages, members, shared files (not while composing; needs 118 columns) |
@@ -87,16 +86,15 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` (or `↓` / `↑`) | Next / previous chat |
-| `l` | Focus the chat view (`h` here is a no-op) |
-| `←` / `→` | Previous / next folder tab |
-| `[` / `]` | Previous / next folder tab (lazygit spelling) |
+| `j` / `k` (or `↓` / `↑`) | Move the cursor — opens nothing, so holding one down costs no history fetches |
+| `l` | Open the cursored chat and focus the chat view (`h` here is a no-op) |
+| `←` / `→` | Previous / next folder tab (`[` / `]` do the same, from either browsing panel) |
 | `1`–`9` | Jump to folder N (1 = All, always present) |
 | click a folder tab | Switch to it |
 | `g` / `Home` | First chat |
 | `G` / `End` | Last chat |
-| `Enter` | Open the selected chat |
-| `i` | Compose a message |
+| `Enter` | Open the cursored chat — the same thing `l` does |
+| `i` | Open the cursored chat and focus the composer |
 | `/` | Filter this list live (`Esc` clears, `Enter` keeps it applied) |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
 | click a chat | Select it |
@@ -106,16 +104,16 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` (or `↓` / `↑`) | Scroll down / up (plus `keys.scroll_down` / `keys.scroll_up`, if configured to something new) |
+| `j` / `k` (or `↓` / `↑`) | Move the cursor to the next / previous **message** — the unit every action key acts on |
+| `Ctrl+E` / `Ctrl+Y` | Scroll the buffer one line down / up, as in vi. The cursor follows the viewport |
 | `g` / `Home` | Top |
 | `G` / `End` | Bottom |
 | `Ctrl+D` / `Ctrl+U` | Page down / up |
-| `PgDn` / `PgUp` | Page down / up, keeping a line of context (plus `keys.page_down` / `keys.page_up`, if configured to something new) |
+| `PgDn` / `PgUp` | Page down / up, keeping a line of context |
 | `h` | Focus the chat list (`l` here is a no-op) |
 | `/` or `Ctrl+F` | Find in this chat |
 | `n` / `N` | Next / previous match |
-| `}` / `{` | Move the cursor to the next / previous message. `j`/`k` scroll the buffer by lines, vi-style; these move between messages, and `G` hands the cursor back so it follows new arrivals again |
-| `1`–`9` | Count prefix for the motions, as in vi: `9{` moves nine messages back, `4k` scrolls four times. The pending count shows in the thread header, and any non-motion key discards it |
+| `1`–`9` | Count prefix for the motions, as in vi: `9k` moves nine messages back, `4`&nbsp;`Ctrl+Y` scrolls four lines. The pending count shows in the thread header, and any non-motion key discards it |
 | `Esc` | Close the find input while it's open; otherwise step back to the chat list (surviving find results are not cleared first) |
 | `r` / `e` / `d` | Reply / edit / delete message (`keys.reply` / `keys.edit_message` / `keys.delete_message` replace these, rather than adding to them). Telegram only lets you edit your own messages; `e` on somebody else's says so rather than doing nothing |
 | `Enter` | Open attachment — a photo opens full-pane in the terminal, everything else goes to the system viewer |
@@ -126,10 +124,16 @@ read `keymap.go`'s prose table, `config.go`'s doc comment, or
 | `+` | React to the selected message — a one-row picker; `enter` on the one you already left takes it off |
 | `p` | Pin the selected message, or unpin it when it is already pinned. Silent: no "X pinned a message" line goes into the chat |
 | `t` | Open the discussion under a channel post — jumps to the linked group at the post's own copy, where the comments hang off it |
-| `M` | Mark this chat read without moving the scroll or the unread divider |
+| `m` | Mark this chat read without moving the scroll or the unread divider (`keys.mark_read`) |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` | Compose a message |
+| click | Focus the panel **and** move the cursor to the clicked message — a click on a day divider or the header moves nothing |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
+
+An explicit `j`/`k` **pins** the cursor: it stays on the message you put it
+on, even as new messages arrive, until `G` hands it back to the tail. Scrolling
+the pinned message off the screen releases it too — that is the reader letting
+go of it.
 
 `/` is contextual in both browsing panels — vi convention, "search the
 buffer in front of you": from the chat view it opens in-chat find, and
@@ -154,16 +158,16 @@ messages, not one — so `Esc` is how you leave it.
 | `Ctrl+O` | Edit the draft in `$VISUAL`/`$EDITOR` |
 | `Ctrl+P` | Expand the composer to the split source/preview form, and back |
 
-Almost nothing else is claimed at app level while the composer has focus,
-so neither line-editing keymap below loses a chord. The complete exception
-list: `Ctrl+Q` (quit, or whatever `keys.quit` is set to),
-`Ctrl+V`, `Esc` (only when there's nothing to cancel), `Tab`/`Shift+Tab`,
-the panel-focus keys (`Alt+1/2/3`, `F1`-`F3`), `Alt+J`/`K`/`H`/`L`
-(chat/folder navigation), and `Alt+C`/`F4` (contacts) — every one of the
-*hardcoded* spellings there is a modifier or function key no line-editing
-keymap binds. `keys.quit` is matched before every other check in `Update`,
-focus included, which is why a bare printable is refused there — see
-"Configuring keys" below. No other `Ctrl+<letter>` is claimed at app
+Almost nothing is claimed at app level while the composer has focus, so
+neither line-editing keymap below loses a chord. The complete exception
+list is now four keys: `Ctrl+Q` (quit, or whatever `keys.quit` is set to),
+`Ctrl+V`, `Esc` (only when there's nothing to cancel) and
+`Tab`/`Shift+Tab`. It used to be longer — the panel-focus keys, the
+chat/folder navigation and contacts were all on it, because `Alt+…` and the
+function keys are not characters. They are plain letters now, so they are
+text here and nothing else. `keys.quit` is matched before every other check
+in `Update`, focus included, which is why a bare printable is refused there
+— see "Configuring keys" below. No other `Ctrl+<letter>` is claimed at app
 level, so `Ctrl+A/B/D/E/F/J/K/O/T/U/W` all reach the composer.
 
 ## Composer editing modes
@@ -217,10 +221,11 @@ instead) and dropped from the hint line accordingly. `Shift+Enter` and
 `Ctrl+Enter` only arrive from a terminal speaking the Kitty keyboard
 protocol or xterm's `modifyOtherKeys` — the legacy encoding has no way to
 put a modifier on Enter at all, which is why `Ctrl+J` is the primary
-newline chord: every terminal can send it. `Alt+Enter` is also accepted,
-but deliberately not primary: its legacy encoding (`Esc` then `CR`) is
-byte-for-byte what "press Esc, then press Enter" produces — exactly what a
-vi user types constantly to leave insert mode and send.
+newline chord: every terminal can send it. `Alt+Enter` was accepted as a
+third spelling and is not any more (decision I-1) — beyond Alt being gone,
+its legacy encoding (`Esc` then `CR`) is byte-for-byte what "press Esc,
+then press Enter" produces, which is exactly what a vi user types to leave
+insert mode and send.
 
 `Ctrl+O` writes the draft to a temp file and suspends the program to run
 `$VISUAL` (falling back to `$EDITOR`) on it. The variable is treated as a
@@ -358,82 +363,68 @@ If the Telegram client dies for good (see "Troubleshooting &
 Diagnostics" below), the UI is replaced by an error panel and every
 binding above except quit becomes inert.
 
-## macOS: Alt bindings and the Option key
-
-The default `Alt+…` bindings only reach the app when the terminal reports
-Option as a modifier. Several don't, by default:
-
-| Terminal | Fix |
-|---|---|
-| Ghostty | `macos-option-as-alt = true` (default `false` on macOS) |
-| Terminal.app | Settings → Profiles → Keyboard → "Use Option as Meta key" (off by default) |
-| iTerm2 | Settings → Profiles → Keys → Left/Right Option key → "Esc+" |
-| kitty / WezTerm / Alacritty | Report Option as Alt by default — nothing to change |
-
-Without that setting, macOS composes the character itself and the
-terminal sends only that — Option+1 arrives as a bare "¡" with no modifier
-bit, indistinguishable from someone typing "¡" outright. No amount of key
-matching recovers the binding from that: it never reaches the app as
-`alt+1` at all, on any terminal, because the substitution happens before
-the terminal builds the key event. That's why every `Alt+…` binding except
-next/prev chat and cross-panel folder cycling has a fallback that doesn't
-depend on Option being reported — see the Global table above — and why
-rebinding to `ctrl+…` or a function key in `[keys]` is the fix for those
-two if Option can't be made to work.
-
 ## Configuring keys
 
-`[keys]` in `config.toml` overrides a subset of bindings; case-insensitive,
-with `"escape"` accepted as an alias for `"esc"`, `"option"`/`"opt"` for
-`"alt"`, and a handful of other common spellings normalized the same way.
-Only some fields are actually consulted:
+`[keys]` in `config.toml` overrides bindings. Modifiers and key *names* are
+case-insensitive and aliased — `"Escape"`, `"ESC"` and `"escape"` are the
+same key, as are `"Option+1"` and `"alt+1"` — but a **lone printable letter
+is case-sensitive**, because on an unmodified key the case *is* the binding.
+`next_chat = "J"` and the chat list's own `j` are two different keys: a
+`J` press reports itself as `shift+j`, and matching it as `j` would turn
+every plain `j` into chat navigation. Write the modifier out
+(`"alt+shift+l"`) if you want a shifted letter with one.
 
-| Field | Default | Wired? |
-|-------|---------|--------|
-| `quit` | `ctrl+q` | yes |
-| `quit_browsing` | `q` | yes — chat list / chat view only; confirms first if the composer holds a draft or attachment |
-| `focus_chat_list` | `f1` | yes — *in addition to* the hardcoded `Alt+1` |
-| `focus_chat_view` | `f2` | yes — *in addition to* the hardcoded `Alt+2` |
-| `focus_composer` | `f3` | yes — *in addition to* the hardcoded `Alt+3` |
-| `search` | `/` | yes |
-| `global_search` | `ctrl+g` | yes |
-| `contacts` | `alt+c` | yes |
-| `contacts_alt` | `f4` | yes — the alt-free fallback for `contacts` |
-| `help` | `?` | yes |
-| `next_folder` | `alt+l` | yes |
-| `prev_folder` | `alt+h` | yes |
-| `next_chat` | `alt+j` | yes |
-| `prev_chat` | `alt+k` | yes |
-| `reply` | `r` | yes — a configured value *replaces* the built-in `r` in the chat view (mnemonic, not a motion) |
-| `edit_message` | `e` | yes — replaces the built-in `e` |
-| `delete_message` | `d` | yes — replaces the built-in `d` |
-| `scroll_up` | `k` | yes — an *extra* spelling for scroll-up in the chat view, alongside the always-live `k`/`↑` |
-| `scroll_down` | `j` | yes — an extra spelling for scroll-down, alongside `j`/`↓` |
-| `page_up` | `pgup` | yes — an extra spelling for page-up, alongside `PgUp` |
-| `page_down` | `pgdown` | yes — an extra spelling for page-down, alongside `PgDn` |
-| `forward` | `f` | no — parsed and saved so old config files round-trip, but not consulted anywhere; there is no forward-a-message feature to bind it to |
+Every field follows **one rule** (decision I-13): a value *replaces* the
+default, and a value that collides with anything already bound — another
+field, or a key a panel owns outright — is *refused*, the default is kept,
+and the refusal is printed on stderr at startup. There used to be three
+rules (replace, add-alongside, and accepted-but-inert), which needed a page
+to tell apart and let `forward` sit in the shipped example file bound to
+nothing.
 
-A configured `reply`/`edit_message`/`delete_message`/`scroll_up`/
-`scroll_down`/`page_up`/`page_down` that collides with a key already
-claimed elsewhere is **refused**, not silently double-bound: the built-in
-letter keeps working and the configured value is simply never reached.
-"Already claimed" covers keys the chat view hardcodes for itself (`g`/`G`,
-`Ctrl+U`/`Ctrl+D`, `n`/`N`, `Ctrl+F`, `Enter`/`o`/`s`) as well as the whole
-app-level surface these seven fields cannot see on their own — `h`, `l`,
-`i`, `Tab`, `Ctrl+V`, `Ctrl+Q`, `Esc`, and whatever
-`quit`/`quit_browsing`/`help`/`search`/`global_search`/`contacts`/
-`contacts_alt`/the focus and next/prev chat/folder fields resolve to. That
-is what stops e.g. `reply = "h"` from quietly stealing panel movement.
-See the `Keys` and `SetReservedKeys` doc comments on
-`internal/ui/components/chatview.Model` for the exact resolution order.
+| Field | Default |
+|-------|---------|
+| `quit` | `ctrl+q` — a bare printable is refused |
+| `quit_browsing` | `q` |
+| `search` | `/` |
+| `global_search` | `ctrl+g` |
+| `contacts` | `c` |
+| `compose` | `i` |
+| `help` | `?` |
+| `next_chat` / `prev_chat` | `J` / `K` |
+| `next_unread` | `u` |
+| `next_folder` / `prev_folder` | `]` / `[` |
+| `reply` / `edit_message` / `delete_message` | `r` / `e` / `d` |
+| `mark_read` | `m` |
 
-A refusal is not left invisible. `-migrate-config` (below) reports the
-clash as a warning when it runs, comparing every `[keys]` field against
-what the others (and the app) claim — though it only runs on demand, not
-on every plain startup. And the `?` help card shows the now-unreachable
-action as `(unbound)` instead of a blank or a wrong key: seeing that on
-the card means some other binding already holds the letter you wanted, so
-free it up (or pick a different key) to restore the action.
+**Removed**, and reported by `-migrate-config` as removed the way
+`ui.chat_list_width` was: `focus_chat_list`, `focus_chat_view`,
+`focus_composer`, `contacts_alt`, `forward`, `scroll_up`, `scroll_down`,
+`page_up`, `page_down`. The first four went with the Alt and function keys;
+`forward` was never dispatched; the motions are vi's and are not
+configurable. **Old config files still load** — the decoder ignores fields
+the schema no longer has — so nothing breaks on upgrade, and the migration
+report says what was dropped.
+
+"Already claimed" covers keys the chat view hardcodes for itself (`j`/`k`,
+`g`/`G`, `Ctrl+E`/`Ctrl+Y`, `Ctrl+U`/`Ctrl+D`, `n`/`N`, `Ctrl+F`,
+`Enter`/`o`/`s`) as well as the app-level surface the chat-view fields
+cannot see on their own — `h`, `l`, `Tab`, `Ctrl+V`, `Ctrl+Q`, `Esc`, `:`,
+`` ` ``, and whatever the app-dispatched fields above resolve to. That is
+what stops e.g. `reply = "h"` from quietly stealing panel movement.
+
+Resolution runs in two passes per tier, so an explicit setting always
+outranks a default regardless of field order, and the app's tier is
+resolved before the chat view's — because app-level dispatch runs before
+the focused panel sees the key, so a chat-view binding pointed at an
+app-level one is not ambiguous, it is dead. See the `Keys` and
+`SetReservedKeys` doc comments on `internal/ui/components/chatview.Model`.
+
+A refusal is not left invisible. It is printed on stderr at startup, and
+the `?` help card shows an action left with no key at all as `(unbound)`
+instead of a blank or a wrong key: seeing that on the card means some other
+binding already holds the letter you wanted, so free it up (or pick a
+different key) to restore the action.
 
 Wired bindings are matched before the focused panel sees the key, so a
 binding here shadows that key in the chat list and chat view. Most of them
@@ -441,9 +432,8 @@ do *not* reach the composer — typing there is only ever entered
 deliberately (see "Composer" above), and app-level dispatch claims almost
 nothing while it has focus. `keys.quit_browsing` and `keys.help` are
 composer-safe: a bare letter there really is inert while composing.
-`keys.contacts`/`keys.contacts_alt` also reach the composer (gated only on
-no dialog or search overlay being open, not on which panel has focus), so
-rebinding one onto something typable is worth thinking about.
+Every app-dispatched field above is now a bare key or a chord that the
+browsing panels own, and none of them reaches a focused composer.
 
 `keys.quit` is the one field where a bare printable is not a judgement
 call: it is matched before every other check, focus included, so

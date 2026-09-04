@@ -60,11 +60,11 @@ func TestNormalizeKey(t *testing.T) {
 
 func TestDefaultConfigFolderKeys(t *testing.T) {
 	cfg := defaultConfig()
-	if cfg.Keys.NextFolder != "alt+l" {
-		t.Errorf("default NextFolder = %q, want alt+l", cfg.Keys.NextFolder)
+	if cfg.Keys.NextFolder != "]" {
+		t.Errorf("default NextFolder = %q, want ]", cfg.Keys.NextFolder)
 	}
-	if cfg.Keys.PrevFolder != "alt+h" {
-		t.Errorf("default PrevFolder = %q, want alt+h", cfg.Keys.PrevFolder)
+	if cfg.Keys.PrevFolder != "[" {
+		t.Errorf("default PrevFolder = %q, want [", cfg.Keys.PrevFolder)
 	}
 }
 

@@ -94,7 +94,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	kp := keys.NewPress(press)
 
 	switch {
-	case kp.Matches("esc", "ctrl+c", "q"):
+	// Esc, and ctrl+c because a row that owns the keyboard must not be
+	// able to trap someone. NOT q (decision I-8): q is quit, and an
+	// overlay that answered to it made cancelling and quitting one
+	// keystroke apart. The row is a picker over the message under the
+	// cursor — every printable it does not claim is swallowed, so q here
+	// is simply inert.
+	case kp.Matches("esc", "ctrl+c"):
 		m.visible = false
 		return m, func() tea.Msg { return CancelledMsg{} }
 

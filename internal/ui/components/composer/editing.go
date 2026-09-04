@@ -80,31 +80,28 @@ func (m Model) IsViNormalMode() bool { return m.editing == ModeVi && m.vi == viN
 //	byte 0x0A                -> "ctrl+j"       distinct from enter, every terminal
 //	CSI 13;2u / CSI 27;2;13~ -> "shift+enter"  Kitty / modifyOtherKeys only
 //	CSI 13;5u                -> "ctrl+enter"   Kitty only
-//	CSI 13;3u, ESC CR        -> "alt+enter"    see the caveat below
 //
 // ctrl+j is the primary chord because it is the only one every terminal can
 // send: the legacy encoding has no way to express a modifier on Enter, so
 // shift+enter and ctrl+enter simply never arrive outside a terminal speaking
 // the Kitty keyboard protocol or xterm's modifyOtherKeys.
 //
-// alt+enter is not primary for the reason documented on config.KeyConfig: a
-// terminal that does not report Option/Alt as a modifier (Ghostty's default
-// on macOS, Terminal.app, iTerm2's default) makes every alt binding both
-// unreachable and undetectable. It is accepted anyway where it costs nothing.
+// alt+enter was accepted here and is not any more (decision I-1). Alt is
+// gone from the client, and this one carried a hazard of its own: its legacy
+// encoding is ESC CR, byte-for-byte what "press Escape, then press Enter"
+// produces — which is exactly what a vi user types to leave insert mode and
+// send.
 //
 // None of them insert in vi's normal mode. Normal mode is not a place where
 // text gets inserted — that is what o/O are for, and the hint line stops
 // advertising ctrl+j there, so honouring it anyway would be a mode leak the
-// user was told not to expect. It also disposes of a real hazard: the legacy
-// encoding of alt+enter is ESC CR, byte-for-byte what "Escape, then Enter"
-// produces, and that is the sequence a vi user types constantly to leave
-// insert mode and send.
+// user was told not to expect.
 func (m Model) isNewlineChord(stroke string) bool {
 	if m.IsViNormalMode() {
 		return false
 	}
 	switch stroke {
-	case "ctrl+j", "shift+enter", "ctrl+enter", "alt+enter":
+	case "ctrl+j", "shift+enter", "ctrl+enter":
 		return true
 	}
 	return false

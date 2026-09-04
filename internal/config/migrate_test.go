@@ -29,24 +29,23 @@ func changeMap(t *testing.T, changes []MigrationChange) map[string]MigrationChan
 // swapped for the current ones.
 func TestMigrateReplacesStaleDefaults(t *testing.T) {
 	cfg := &Config{Keys: KeyConfig{
-		FocusChatList: "ctrl+1",
-		FocusChatView: "ctrl+2",
-		FocusComposer: "ctrl+3",
-		Contacts:      "ctrl+k",
-		NextChat:      "ctrl+j",
-		PrevChat:      "ctrl+k",
-		PageUp:        "ctrl+u",
-		PageDown:      "ctrl+d",
+		Contacts:   "alt+c",
+		NextChat:   "alt+j",
+		PrevChat:   "alt+k",
+		NextFolder: "alt+l",
+		PrevFolder: "alt+h",
 	}}
 	got := changeMap(t, Migrate(cfg, nil))
 
+	// The alt spellings retired by decision I-1. They only ever reached
+	// the app on a terminal reporting Option as a modifier, so a config
+	// still holding one is holding a binding that mostly did not work.
 	want := map[string]string{
-		"keys.focus_chat_list": "f1",
-		"keys.focus_chat_view": "f2",
-		"keys.focus_composer":  "f3",
-		"keys.contacts":        "alt+c",
-		"keys.next_chat":       "alt+j",
-		"keys.prev_chat":       "alt+k",
+		"keys.contacts":    "c",
+		"keys.next_chat":   "J",
+		"keys.prev_chat":   "K",
+		"keys.next_folder": "]",
+		"keys.prev_folder": "[",
 	}
 	for field, v := range want {
 		c, ok := got[field]
@@ -63,22 +62,9 @@ func TestMigrateReplacesStaleDefaults(t *testing.T) {
 	}
 
 	// And the struct itself was updated, not just the report.
-	if cfg.Keys.Contacts != "alt+c" || cfg.Keys.NextChat != "alt+j" {
+	if cfg.Keys.Contacts != "c" || cfg.Keys.NextChat != "J" {
 		t.Errorf("cfg not mutated: contacts=%q next_chat=%q",
 			cfg.Keys.Contacts, cfg.Keys.NextChat)
-	}
-
-	// page_up/page_down carry retired defaults too, but nothing dispatches
-	// them (chatview hardcodes pgup/pgdown), so rewriting them would be
-	// churn the user cannot observe. Left exactly as found.
-	if cfg.Keys.PageUp != "ctrl+u" || cfg.Keys.PageDown != "ctrl+d" {
-		t.Errorf("inert paging fields were rewritten: page_up=%q page_down=%q",
-			cfg.Keys.PageUp, cfg.Keys.PageDown)
-	}
-	for _, field := range []string{"keys.page_up", "keys.page_down"} {
-		if c, reported := got[field]; reported {
-			t.Errorf("%s was reported as a change: %+v", field, c)
-		}
 	}
 }
 
@@ -87,8 +73,8 @@ func TestMigrateReplacesStaleDefaults(t *testing.T) {
 func TestMigrateStaleMatchIsNormalized(t *testing.T) {
 	cfg := &Config{Keys: KeyConfig{Contacts: "  CTRL+K  "}}
 	Migrate(cfg, nil)
-	if cfg.Keys.Contacts != "alt+c" {
-		t.Errorf("contacts = %q, want alt+c", cfg.Keys.Contacts)
+	if cfg.Keys.Contacts != "c" {
+		t.Errorf("contacts = %q, want c", cfg.Keys.Contacts)
 	}
 }
 
@@ -96,17 +82,16 @@ func TestMigrateStaleMatchIsNormalized(t *testing.T) {
 // a retired default is a choice, and survives untouched.
 func TestMigrateLeavesCustomizations(t *testing.T) {
 	cfg := &Config{Keys: KeyConfig{
-		Quit:          "ctrl+x",
-		FocusChatList: "f9",
-		Contacts:      "alt+p",
-		NextChat:      "ctrl+n",
-		PageUp:        "b",
+		Quit:     "ctrl+x",
+		Contacts: "f9",
+		NextChat: "ctrl+n",
+		MarkRead: "b",
 	}}
 	Migrate(cfg, nil)
 
 	for field, want := range map[string]string{
-		"quit": "ctrl+x", "focus_chat_list": "f9", "contacts": "alt+p",
-		"next_chat": "ctrl+n", "page_up": "b",
+		"quit": "ctrl+x", "contacts": "f9",
+		"next_chat": "ctrl+n", "mark_read": "b",
 	} {
 		var got string
 		for _, f := range keyFields {
@@ -123,14 +108,16 @@ func TestMigrateLeavesCustomizations(t *testing.T) {
 // TestMigrateFillsNewFields covers a config written before these fields
 // existed — the reason someone upgrading has no folder or help bindings.
 func TestMigrateFillsNewFields(t *testing.T) {
-	cfg := &Config{Keys: KeyConfig{Quit: "ctrl+q", Contacts: "alt+c"}}
+	cfg := &Config{Keys: KeyConfig{Quit: "ctrl+q", Contacts: "c"}}
 	cfg.Storage.SessionFile = "/data/tele/session.json"
 	got := changeMap(t, Migrate(cfg, nil))
 
 	for field, want := range map[string]string{
-		"keys.next_folder":   "alt+l",
-		"keys.prev_folder":   "alt+h",
-		"keys.contacts_alt":  "f4",
+		"keys.next_folder":   "]",
+		"keys.prev_folder":   "[",
+		"keys.compose":       "i",
+		"keys.next_unread":   "u",
+		"keys.mark_read":     "m",
 		"keys.global_search": "ctrl+g",
 		"keys.help":          "?",
 		"ui.compose_editing": ComposeEditingAuto,
@@ -201,8 +188,8 @@ func TestMigratePerFieldStaleLists(t *testing.T) {
 	if cfg.Keys.Quit != "ctrl+j" {
 		t.Errorf("quit = %q, want the user's ctrl+j", cfg.Keys.Quit)
 	}
-	if cfg.Keys.NextChat != "alt+j" {
-		t.Errorf("next_chat = %q, want alt+j", cfg.Keys.NextChat)
+	if cfg.Keys.NextChat != "J" {
+		t.Errorf("next_chat = %q, want J", cfg.Keys.NextChat)
 	}
 }
 
@@ -219,8 +206,8 @@ func TestMigrationChangeString(t *testing.T) {
 	if want := "(absent)"; !strings.Contains(got, want) || !strings.Contains(got, "keys.help") || !strings.Contains(got, "?") {
 		t.Errorf("String() = %q, want it to mention %q", got, want)
 	}
-	got = MigrationChange{Field: "keys.contacts", Old: "ctrl+k", New: "alt+c"}.String()
-	if !strings.Contains(got, "ctrl+k") || !strings.Contains(got, "alt+c") {
+	got = MigrationChange{Field: "keys.contacts", Old: "ctrl+k", New: "c"}.String()
+	if !strings.Contains(got, "ctrl+k") || !strings.Contains(got, "c") {
 		t.Errorf("String() = %q, want both values", got)
 	}
 }
@@ -246,14 +233,14 @@ session_file = "/data/tele/session.json"
 
 [keys]
 quit = "ctrl+c"
-focus_chat_list = "ctrl+1"   # the old default
+focus_chat_list = "ctrl+1"   # removed by decision I-13
 focus_chat_view = "ctrl+2"
 focus_composer = "ctrl+3"
 contacts = "ctrl+k"
 next_chat = "ctrl+j"
 prev_chat = "ctrl+k"
+scroll_up = "k"
 page_up = "ctrl+u"
-page_down = "ctrl+d"
 search = "?"
 `
 	// Deliberately world-readable, the mode a hand-created config often has.
@@ -288,7 +275,8 @@ search = "?"
 	// whose value changed — otherwise it under-reports what was written.
 	reported := changeMap(t, changes)
 	for _, field := range []string{
-		"keys.next_folder", "keys.prev_folder", "keys.contacts_alt",
+		"keys.next_folder", "keys.prev_folder", "keys.compose",
+		"keys.next_unread", "keys.mark_read",
 		"keys.global_search", "keys.help", "ui.compose_editing",
 		"storage.state_file",
 	} {
@@ -302,8 +290,8 @@ search = "?"
 		}
 	}
 	// And the retired defaults are reported with what they replaced.
-	if c, ok := reported["keys.contacts"]; !ok || c.Old != "ctrl+k" || c.New != "alt+c" {
-		t.Errorf("keys.contacts reported as %+v, want ctrl+k -> alt+c", c)
+	if c, ok := reported["keys.contacts"]; !ok || c.Old != "ctrl+k" || c.New != "c" {
+		t.Errorf("keys.contacts reported as %+v, want ctrl+k -> c", c)
 	}
 	// A key the user chose is absent from the summary entirely.
 	if c, ok := reported["keys.search"]; ok {
@@ -357,19 +345,15 @@ search = "?"
 	}
 
 	for field, want := range map[string]string{
-		"focus_chat_list": "f1",
-		"focus_chat_view": "f2",
-		"focus_composer":  "f3",
-		"contacts":        "alt+c",
-		"next_chat":       "alt+j",
-		"prev_chat":       "alt+k",
-		// Inert, so left exactly as the file had them.
-		"page_up":   "ctrl+u",
-		"page_down": "ctrl+d",
+		"contacts":  "c",
+		"next_chat": "J",
+		"prev_chat": "K",
 		// Fields introduced after this config was written.
-		"next_folder":   "alt+l",
-		"prev_folder":   "alt+h",
-		"contacts_alt":  "f4",
+		"next_folder":   "]",
+		"prev_folder":   "[",
+		"compose":       "i",
+		"next_unread":   "u",
+		"mark_read":     "m",
 		"global_search": "ctrl+g",
 		"help":          "?",
 		// ctrl+c was the shipped default for quit until it was retired, so
@@ -448,22 +432,27 @@ func TestDetectKeyCollisions(t *testing.T) {
 
 	t.Run("comparison is normalized", func(t *testing.T) {
 		cfg := defaultConfig()
-		cfg.Keys.Contacts = "ALT+C"
-		cfg.Keys.NextFolder = "Alt+C"
+		cfg.Keys.Contacts = "CTRL+P"
+		cfg.Keys.NextFolder = "Ctrl+P"
 		got := DetectKeyCollisions(cfg)
-		if len(got) != 1 || !strings.Contains(got[0], "alt+c") {
-			t.Errorf("got %v, want one normalized alt+c collision", got)
+		if len(got) != 1 || !strings.Contains(got[0], "ctrl+p") {
+			t.Errorf("got %v, want one normalized ctrl+p collision", got)
 		}
 	})
 
-	t.Run("inert fields are ignored", func(t *testing.T) {
-		// reply/forward are not dispatched from app.go, so sharing a value
-		// with each other is meaningless and must not be reported.
+	// Every field is live now (decision I-13): the inert one and the
+	// additive motions were removed, so there is no field left whose value
+	// can be shared harmlessly.
+	t.Run("an app field pointed at a key the app hardcodes", func(t *testing.T) {
 		cfg := defaultConfig()
-		cfg.Keys.Reply = "x"
-		cfg.Keys.Forward = "x"
-		if got := DetectKeyCollisions(cfg); len(got) != 0 {
-			t.Errorf("unwired fields were reported as colliding: %v", got)
+		cfg.Keys.Contacts = "h"
+		got := DetectKeyCollisions(cfg)
+		if len(got) != 1 {
+			t.Fatalf("got %d collisions, want 1: %v", len(got), got)
+		}
+		if !strings.Contains(got[0], "already owns it") ||
+			!strings.Contains(got[0], "contacts") {
+			t.Errorf("unhelpful message %q", got[0])
 		}
 	})
 
@@ -488,7 +477,7 @@ func TestDetectKeyCollisions(t *testing.T) {
 	// The other half, and the one nothing could see before: a key the app
 	// hardcodes, so there is no config field for it to clash with.
 	t.Run("component field colliding with a hardcoded app key", func(t *testing.T) {
-		for _, key := range []string{"h", "l", "i", "tab", "esc", "ctrl+v", "alt+1"} {
+		for _, key := range []string{"h", "l", "tab", "esc", "ctrl+v", ":"} {
 			cfg := defaultConfig()
 			cfg.Keys.Reply = key
 			got := DetectKeyCollisions(cfg)
@@ -526,13 +515,13 @@ func TestDetectKeyCollisions(t *testing.T) {
 		}
 	})
 
-	// Motions are component-dispatched too, and collide the same way.
-	t.Run("a motion field collides as well", func(t *testing.T) {
+	// mark_read is component-dispatched too, and collides the same way.
+	t.Run("mark_read collides as well", func(t *testing.T) {
 		cfg := defaultConfig()
-		cfg.Keys.ScrollUp = "l"
+		cfg.Keys.MarkRead = "l"
 		got := DetectKeyCollisions(cfg)
-		if len(got) != 1 || !strings.Contains(got[0], "scroll_up") {
-			t.Errorf("got %v, want scroll_up reported against the app's \"l\"", got)
+		if len(got) != 1 || !strings.Contains(got[0], "mark_read") {
+			t.Errorf("got %v, want mark_read reported against the app's \"l\"", got)
 		}
 	})
 
@@ -891,31 +880,22 @@ func TestMigratePresentButEmptyIsNotAbsent(t *testing.T) {
 	}
 }
 
-// TestDetectKeyCollisionsIgnoresAliasPairs: contacts/contacts_alt and
-// search/global_search are matched at one dispatch site, so pointing both at
-// one key is redundant, not ambiguous.
+// TestDetectKeyCollisionsIgnoresAliasPairs: search/global_search are matched
+// at one dispatch site, so pointing both at one key is redundant, not
+// ambiguous. contacts/contacts_alt was the other such pair, and went with
+// the alt bindings it existed to work around (decision I-1).
 func TestDetectKeyCollisionsIgnoresAliasPairs(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		set  func(*Config)
-	}{
-		{"contacts pair", func(c *Config) { c.Keys.ContactsAlt = c.Keys.Contacts }},
-		{"search pair", func(c *Config) { c.Keys.GlobalSearch = c.Keys.Search }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			tc.set(cfg)
-			if got := DetectKeyCollisions(cfg); len(got) != 0 {
-				t.Errorf("an alias pair was reported as a collision: %v", got)
-			}
-		})
+	cfg := defaultConfig()
+	cfg.Keys.GlobalSearch = cfg.Keys.Search
+	if got := DetectKeyCollisions(cfg); len(got) != 0 {
+		t.Errorf("an alias pair was reported as a collision: %v", got)
 	}
 
 	// A genuine three-way clash is still reported, even when two of the
 	// three are an alias pair.
-	cfg := defaultConfig()
-	cfg.Keys.Contacts = "f7"
-	cfg.Keys.ContactsAlt = "f7"
+	cfg = defaultConfig()
+	cfg.Keys.Search = "f7"
+	cfg.Keys.GlobalSearch = "f7"
 	cfg.Keys.Help = "f7"
 	got := DetectKeyCollisions(cfg)
 	if len(got) != 1 || !strings.Contains(got[0], "help") {
@@ -986,7 +966,7 @@ func TestMigrateThroughASymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(written), "alt+c") {
+	if !strings.Contains(string(written), `contacts = 'c'`) {
 		t.Errorf("the target did not receive the migration:\n%s", written)
 	}
 	if strings.Contains(string(written), "ctrl+k") {
@@ -1034,8 +1014,8 @@ func TestMigrateThroughASymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.Keys.Contacts != "alt+c" {
-		t.Errorf("reloaded contacts = %q, want alt+c", reloaded.Keys.Contacts)
+	if reloaded.Keys.Contacts != "c" {
+		t.Errorf("reloaded contacts = %q, want c", reloaded.Keys.Contacts)
 	}
 }
 

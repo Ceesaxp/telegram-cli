@@ -187,3 +187,31 @@ func TestAHiddenPickerDrawsNothing(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+// TestQIsInertOnTheRow is decision I-8's negative test here. q cancelled the
+// row, one keystroke away from quitting the client; it closes no overlay
+// now. Esc is the way out, and the row's own hint says so.
+func TestQIsInertOnTheRow(t *testing.T) {
+	m := New(theme.DarkRoles(false))
+	m.Open(1, 2, "")
+
+	next, cmd := m.Update(press(t, "q"))
+	if !next.IsVisible() {
+		t.Error("q cancelled the reaction row; only esc does")
+	}
+	if cmd != nil {
+		t.Errorf("q produced %T", cmd())
+	}
+
+	// And esc still does.
+	out, cmd := next.Update(press(t, "\x1b"))
+	if out.IsVisible() {
+		t.Error("esc did not cancel the row")
+	}
+	if cmd == nil {
+		t.Fatal("esc produced no message")
+	}
+	if _, ok := cmd().(CancelledMsg); !ok {
+		t.Errorf("esc produced %T, want CancelledMsg", cmd())
+	}
+}

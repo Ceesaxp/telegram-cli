@@ -578,9 +578,89 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// ActiveChatId returns the currently selected chat ID.
+// ActiveChatId returns the OPEN chat's ID — the one whose history the chat
+// view is showing. Distinct from the cursor, which moves without opening
+// anything; see [Model.CursorChatId].
 func (m *Model) ActiveChatId() int64 {
 	return m.activeChatId
+}
+
+// CursorChatId is the chat under the highlight, 0 when the list is empty or
+// still loading.
+//
+// The two are deliberately separate — j and k move the cursor without
+// loading a history, which is why holding j down is cheap. What they are
+// not is interchangeable: every key that leaves the list rightward (l,
+// Enter, i) acts on the CURSOR, and reading the open chat there is what
+// made jjjl land in the wrong conversation (decision I-2).
+func (m Model) CursorChatId() int64 {
+	item := m.list.SelectedItem()
+	if item == nil {
+		return 0
+	}
+	var chatID int64
+	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
+		return 0
+	}
+	return chatID
+}
+
+// OpenCursor marks the cursored chat as the open one and returns it,
+// reporting false when there is nothing under the cursor.
+//
+// The bookkeeping is here rather than at the call site because every other
+// way of opening a chat from this panel — Enter, a click, SelectDelta —
+// already does it here, and an open chat the list does not know about is
+// one the unread counts and the notification suppression get wrong.
+func (m *Model) OpenCursor() (int64, bool) {
+	chatID := m.CursorChatId()
+	if chatID == 0 {
+		return 0, false
+	}
+	m.activeChatId = chatID
+	return chatID, true
+}
+
+// SelectNextUnread moves the cursor to the next chat with unread messages
+// and returns it, searching DOWN from the cursor within the active folder
+// and wrapping once past the end.
+//
+// Down-then-wrap rather than "the first unread in the list": the list is
+// ordered by recency, so starting from the top would mean pressing u twice
+// in a row went back to the same conversation. Wrapping once, and only
+// once, is what makes a run of u presses walk every unread chat and then
+// stop.
+//
+// It reports false when nothing in the folder is unread, so the caller can
+// say so instead of leaving a key that looks broken.
+func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
+	n := len(m.list.Items)
+	if n == 0 {
+		return 0, false
+	}
+	start := m.list.Cursor
+	for step := 1; step <= n; step++ {
+		i := (start + step) % n
+		id := itemChatId(m.list.Items[i])
+		entry, found := m.store.Chats.Get(id)
+		if !found || entry.Chat == nil || entry.Chat.UnreadCount <= 0 {
+			continue
+		}
+		m.list.SelectIndex(i)
+		m.activeChatId = id
+		return id, true
+	}
+	return 0, false
+}
+
+// itemChatId reads a list row's chat ID. The list widget carries IDs as
+// strings because it knows nothing about chats.
+func itemChatId(item widgets.ListItem) int64 {
+	var chatID int64
+	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
+		return 0
+	}
+	return chatID
 }
 
 // ActiveFolderID returns the ID of the currently active folder tab —
@@ -830,18 +910,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		if m.focused {
-			// Terminal-independent folder switching: left/right arrows
-			// and the lazygit-style '['/']' cycle folders, digits 1-9
-			// jump straight to folder N (1 = All, always at index 0).
-			// chatlist is the sole owner of the '['/']' aliases — the
-			// app-level copy was removed in an earlier wave. Alt+h/alt+l
-			// remain app-level (internal/app/app.go), for hands that
-			// reach for vi directions; BARE h/l are NOT folder keys any
-			// more — this wave rebinds them to lazygit-style panel
-			// movement in app.go — so '['/']', the arrows and the digits
-			// here are the alt-free, terminal-independent fallback for
-			// terminals (e.g. Ghostty's default "option acts as input")
-			// that can't report alt as a distinguishable modifier at all.
+			// This panel's own folder keys: the left/right arrows, and
+			// the digits 1-9 that jump straight to folder N (1 = All,
+			// always at index 0). '[' and ']' are NOT here — they are
+			// app-level, so they cycle folders from the chat view too
+			// (decision I-1), and a copy in both places would be one
+			// behaviour with two implementations of which only the
+			// app-level one could ever run. Bare h/l are not folder keys
+			// either; they move between panels.
 			//
 			// None of these collide with the list widget's own vi
 			// motions (up/down/j/k/g/G/enter, handled below). Quick-type
@@ -868,10 +944,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, nil
-			case "left", "[":
+			// The arrows only. [ and ] moved to app level, where they
+			// work from the chat view too (decision I-1): one behaviour
+			// with one implementation, rather than an app-level pair of
+			// alt chords and a panel-local pair of brackets.
+			case "left":
 				m.CycleFolder(-1)
 				return m, m.FolderLoadCmd()
-			case "right", "]":
+			case "right":
 				m.CycleFolder(1)
 				return m, m.FolderLoadCmd()
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
