@@ -365,9 +365,14 @@ binding above except quit becomes inert.
 
 ## Configuring keys
 
-`[keys]` in `config.toml` overrides bindings; case-insensitive, with
-`"escape"` accepted as an alias for `"esc"` and a handful of other common
-spellings normalized the same way.
+`[keys]` in `config.toml` overrides bindings. Modifiers and key *names* are
+case-insensitive and aliased — `"Escape"`, `"ESC"` and `"escape"` are the
+same key, as are `"Option+1"` and `"alt+1"` — but a **lone printable letter
+is case-sensitive**, because on an unmodified key the case *is* the binding.
+`next_chat = "J"` and the chat list's own `j` are two different keys: a
+`J` press reports itself as `shift+j`, and matching it as `j` would turn
+every plain `j` into chat navigation. Write the modifier out
+(`"alt+shift+l"`) if you want a shifted letter with one.
 
 Every field follows **one rule** (decision I-13): a value *replaces* the
 default, and a value that collides with anything already bound — another

@@ -165,6 +165,11 @@ method = "auto"
 # The motions are not configurable and are not meant to be: j/k, the
 # arrows, g/G, ctrl+e/ctrl+y, ctrl+d/ctrl+u and the page keys are vi's.
 # See docs/interaction-model.md for the whole keymap.
+#
+# Modifiers and key names are case-insensitive ("Escape" == "esc"), but a
+# lone printable letter is NOT: "J" and "j" are different keys, which is
+# why next_chat below is uppercase and the chat list's own j still moves
+# the cursor.
 [keys]
 quit = "ctrl+q"               # from anywhere, without asking; a bare printable is refused
 quit_browsing = "q"           # chat list / chat view only; confirms first if the composer holds a draft

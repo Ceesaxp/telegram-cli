@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Ceesaxp/telegram-cli/internal/config"
@@ -621,13 +622,22 @@ func (m Model) ActiveKeys() Keys {
 	}
 }
 
-// normalizeChatViewKey trims and lowercases a configured key the same way
+// normalizeChatViewKey folds a configured key the same way
 // config.NormalizeKey does, so a caller that (against SetKeys's doc
 // comment) forgets to run it through config.NormalizeKey first still gets
-// case-insensitive matching rather than a binding that silently never
-// fires.
+// the same answer rather than a binding that silently never fires.
+//
+// The same way includes the exception: a LONE printable keeps its case,
+// because on an unmodified key the case is the binding. This panel already
+// claims "G" and "N" as fixed keys distinct from "g" and "n", so folding a
+// configured "G" to "g" would both miss the collision and bind the wrong
+// key.
 func normalizeChatViewKey(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) == 1 {
+		return s
+	}
+	return strings.ToLower(s)
 }
 
 // statusLineVisible reports whether View() draws the one-line strip under

@@ -189,3 +189,61 @@ page_down = "pgdown"
 		}
 	}
 }
+
+// TestNormalizeKeyKeepsTheCaseOfALonePrintable is the regression behind the
+// shipped J/K bindings.
+//
+// Case is not decoration on an unmodified letter, it is the binding: a
+// shift+j press reports Keystroke() "shift+j" and String() "J", and
+// keys.Press matches an unmodified key on either spelling — so "J" matches
+// it and "j" does not. next_chat = "J" and the chat list's own j are two
+// different keys, and folding the first to lowercase turned every plain j
+// into chat navigation, because the app-level handler runs before the
+// focused panel sees the key.
+func TestNormalizeKeyKeepsTheCaseOfALonePrintable(t *testing.T) {
+	for in, want := range map[string]string{
+		"J": "J",
+		"K": "K",
+		"M": "M",
+		"j": "j",
+		"?": "?",
+		"[": "[",
+		// A modifier means Keystroke() is the only spelling that can
+		// match, and Keystroke() is lowercase. Unchanged.
+		"ALT+L":        "alt+l",
+		"Ctrl+J":       "ctrl+j",
+		"shift+ctrl+A": "ctrl+shift+a",
+		// Named keys are names, not characters.
+		"Escape": "esc",
+		"PageUp": "pgup",
+		"F9":     "f9",
+	} {
+		if got := NormalizeKey(in); got != want {
+			t.Errorf("NormalizeKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestTheShippedDefaultsResolveToThemselves walks every [keys] field of the
+// config the app actually runs on — defaults filled in, which is what Load
+// hands New — and asserts each survives normalization unchanged.
+//
+// The zero KeyConfig the other tests use exercises only the fallback path,
+// where the default is taken verbatim and never normalized. That is why a
+// production-only regression stayed green: with a config file present, and
+// every real config has one, the values go through NormalizeKey instead.
+func TestTheShippedDefaultsResolveToThemselves(t *testing.T) {
+	def := defaultConfig()
+	for _, f := range keyFields {
+		value := f.get(&def.Keys)
+		if value == "" {
+			t.Errorf("keys.%s has no default", f.name)
+			continue
+		}
+		if got := NormalizeKey(value); got != value {
+			t.Errorf("keys.%s defaults to %q but normalizes to %q — the "+
+				"binding the app dispatches on is not the one it ships",
+				f.name, value, got)
+		}
+	}
+}

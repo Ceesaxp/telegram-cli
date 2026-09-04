@@ -2831,3 +2831,69 @@ func TestAClickOnTheHeaderMovesNothing(t *testing.T) {
 			before.MessageId, after.MessageId)
 	}
 }
+
+// TestTheShippedConfigResolvesToTheShippedKeymap drives resolveKeys with the
+// config the app actually runs on — every field filled in, which is what
+// config.Load hands New — rather than the zero struct the tests above use.
+//
+// That difference hid a regression: a zero KeyConfig takes every default
+// through the fallback path, verbatim and unnormalized, so nothing exercised
+// what happens to a value that IS set. With a config file present — and
+// every real config has one — next_chat = "J" went through NormalizeKey and
+// came back "j", and since app-level dispatch runs before the focused panel,
+// plain j switched chats instead of moving the chat list's cursor.
+func TestTheShippedConfigResolvesToTheShippedKeymap(t *testing.T) {
+	shipped := config.KeyConfig{
+		Quit: "ctrl+q", QuitBrowsing: "q",
+		Search: "/", GlobalSearch: "ctrl+g",
+		Contacts: "c", Compose: "i", Help: "?",
+		NextChat: "J", PrevChat: "K", NextUnread: "u",
+		NextFolder: "]", PrevFolder: "[",
+		Reply: "r", EditMessage: "e", DeleteMessage: "d", MarkRead: "m",
+	}
+	k := resolveKeys(shipped)
+
+	for name, pair := range map[string][2]string{
+		"quit":          {k.quit, "ctrl+q"},
+		"quitBrowsing":  {k.quitBrowsing, "q"},
+		"search":        {k.search, "/"},
+		"globalSearch":  {k.globalSearch, "ctrl+g"},
+		"contacts":      {k.contacts, "c"},
+		"compose":       {k.compose, "i"},
+		"help":          {k.help, "?"},
+		"nextChat":      {k.nextChat, "J"},
+		"prevChat":      {k.prevChat, "K"},
+		"nextUnread":    {k.nextUnread, "u"},
+		"nextFolder":    {k.nextFolder, "]"},
+		"prevFolder":    {k.prevFolder, "["},
+		"reply":         {k.reply, "r"},
+		"editMessage":   {k.editMessage, "e"},
+		"deleteMessage": {k.deleteMessage, "d"},
+		"markRead":      {k.markRead, "m"},
+	} {
+		if got, want := pair[0], pair[1]; got != want {
+			t.Errorf("%s resolved to %q, want the shipped %q", name, got, want)
+		}
+	}
+
+	// And the two that matter most, end to end: J opens a chat, j does not.
+	m := seededChatList(t, PanelChatList)
+	m.keys = k
+	first := m.chatList.CursorChatId()
+
+	moved, cmd := updateCmd(t, m, "J")
+	if _, opened := selectedChat(cmd); !opened {
+		t.Error("J did not open a chat")
+	}
+	if moved.chatList.CursorChatId() == first {
+		t.Error("J did not move the cursor")
+	}
+
+	cursorOnly, cmd := updateCmd(t, m, "j")
+	if _, opened := selectedChat(cmd); opened {
+		t.Error("plain j opened a chat — it must only move the cursor")
+	}
+	if cursorOnly.chatList.CursorChatId() == first {
+		t.Error("j did not move the chat list's cursor")
+	}
+}

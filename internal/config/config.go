@@ -351,6 +351,11 @@ type NotificationConfig struct {
 // the composer has focus almost nothing is claimed at app level. Quit is
 // the exception, and the one field where a bare printable is refused
 // outright — see [ResolveQuitKey].
+//
+// Values are read through [NormalizeKey]: modifiers and key names are
+// case-insensitive and aliased, but a lone printable letter keeps its case,
+// because on an unmodified key the case is the binding. NextChat is "J" and
+// the chat list's own motion is "j"; they are not the same key.
 type KeyConfig struct {
 	// Quit quits from anywhere, without asking. A bare printable is
 	// refused here: it is matched before every focus gate, so it would be
@@ -442,22 +447,47 @@ var keyNameAliases = map[string]string{
 }
 
 // NormalizeKey canonicalizes a user-configured key string to the form
-// produced by bubbletea's Key.Keystroke(): lowercased, with modifier and key
-// aliases resolved and modifiers emitted in Keystroke's fixed order
+// produced by bubbletea's Key.Keystroke(): modifier and key aliases
+// resolved, modifiers lowercased and emitted in Keystroke's fixed order
 // (ctrl, alt, shift, meta, hyper, super). An empty input returns empty, so
 // callers can detect "not configured" and fall back to a built-in default.
 //
 // Examples: "ALT+L" -> "alt+l", "Option+1" -> "alt+1", "shift+ctrl+a" ->
 // "ctrl+shift+a", "Escape" -> "esc", "ctrl++" -> "ctrl++".
 //
+// # A lone printable keeps its case
+//
+// "J" stays "J". Case is not decoration on an unmodified letter, it is the
+// binding: a shift+j press reports Keystroke() "shift+j" and String() "J",
+// and keys.Press matches an unmodified key on either spelling — so "J"
+// matches it and "j" does not, while a plain j press matches "j" and not
+// "J". next_chat = "J" and the chat list's own j are two different keys,
+// and lowercasing the first turns the second into chat navigation.
+//
+// That is a real regression rather than a hypothetical one: the shipped
+// defaults set next_chat/prev_chat to J/K, Load fills them into every
+// config, and with them folded to j/k the app-level handler — which runs
+// before the focused panel — took the chat list's cursor motion.
+//
+// Only the lone-printable case is preserved. Anything with a modifier goes
+// on being lowercased, because there Keystroke() is the only spelling that
+// can match and it is lowercase: "ALT+L" is alt+l, not alt+L. A user who
+// means the shifted letter with a modifier writes the modifier out
+// ("alt+shift+l"), which is what the terminal reports.
+//
 // Anything that is not a recognized modifier terminates the modifier prefix
 // and is taken (together with the rest of the string) as the key name, so a
 // literal "+" binding survives intact.
 func NormalizeKey(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
+	// A lone printable is the binding, case included. See the doc comment.
+	if utf8.RuneCountInString(s) == 1 {
+		return s
+	}
+	s = strings.ToLower(s)
 
 	parts := strings.Split(s, "+")
 	seen := map[string]bool{}
