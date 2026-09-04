@@ -557,8 +557,13 @@ func TestNoHintLiteralsInComponents(t *testing.T) {
 	// The files that draw a hint row, and the token that would mean a
 	// literal crept back in.
 	files := map[string][]string{
+		// The chat list draws no hint row at all now — the frame's bar is
+		// keyed by the live surface, so a second row inside this column
+		// repeated it or described the wrong keymap. A renderer coming
+		// back is the regression, not just a literal inside one.
 		"chatlist/rows.go": {
 			`"j/k", "move"`, `"u", "unread"`, `"g/G", "ends"`,
+			"renderListFooter",
 		},
 		"mediaview/model.go": {
 			`Render("esc")`, `Render("s")`, `Render("o")`,

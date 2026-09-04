@@ -61,9 +61,9 @@ a keymap it did not have.
    and `i` act on the cursored chat (decision I-2).
 
 5. **Every hint surface reads from one table.** The help card, the hint
-   bar, the chat list footer, a dialog's own hint line and the palette's key
-   column are all built from the same resolved bindings, per surface, and a
-   test walks every surface (decision I-6). A hint that names an inert key
+   bar, a dialog's own hint line and the palette's key column are all built
+   from the same resolved bindings, per surface, and a test walks every
+   surface (decision I-6). A hint that names an inert key
    is a defect, not a nit — it is how `u unread` sat in the chat list footer
    with nothing bound to `u`.
 
@@ -218,10 +218,19 @@ on a narrow terminal. The sets:
 | Dialog | `y/n answer · ←/→ choose · enter accept · esc cancel` |
 | Help | `esc close · j/k scroll` |
 
-The chat list's own footer draws its first three or four hints from the
-same row of this table. The reaction row and the media overlay draw their
-own hints because they own their row or the whole screen; those strings are
-still read from the registry.
+There is **one** hint row on screen: the bar. The chat list used to draw a
+second one along the foot of its own column; it is gone (see the amendment
+to I-6 below). The chat list's row leads with the way out of a filter while
+one is applied — `esc clear · enter keep` while the input is open, `esc
+clear filter` once it is applied and closed — because that is state the
+panel owns and a narrowed list with nothing saying how to widen it reads as
+chats going missing.
+
+The reaction row and the media overlay draw their own strip because they own
+their row or the whole screen; those strings are still read from the
+registry. A dialog's own line is built from its button set, which is the
+nearer authority on which letters answer — and the bar reads the same
+buttons, so the two cannot name different letters.
 
 ## Configuration
 
@@ -298,7 +307,23 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   contacts, under a confirm dialog and in a vi composer — four places
   where it named inert keys. A per-focus generator (`helpLine`) existed,
   was tested and was never rendered. One registry, every surface, one
-  drift test that covers the chat list footer too.
+  drift test.
+
+  *Amendment, recorded on implementation:* **the chat list's footer row is
+  removed rather than derived.** This decision originally had it draw its
+  first three or four hints from the same row of the table, and that is
+  what shipped — at which point the frame showed two hint rows stacked, and
+  the second one was wrong as often as it was redundant. With the bar keyed
+  by the live surface there is no state in which a panel-local hint row is
+  right: while the chat list has focus the bar already shows that set, so
+  the footer repeated its first three hints verbatim; while any other panel
+  has focus the footer went on advertising `l open` and `/ filter`, which
+  from the chat view mean a no-op and in-chat find. A hint naming keys that
+  are not live on the surface holding the keyboard is precisely what this
+  decision exists to remove, so deriving the row correctly was not enough —
+  it had to go. Its one irreplaceable string, the way out of a filter, moved
+  into the chat list's own set in the registry. The row went back to the
+  list.
 
 - **I-7 — A confirm says what it confirms, and answers to `y`/`n`.** The
   delete dialog said "Are you sure?" and deleted for everyone. It now names

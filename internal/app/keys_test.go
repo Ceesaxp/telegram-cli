@@ -1785,33 +1785,75 @@ func TestTheHintBarFollowsTheSurface(t *testing.T) {
 	})
 }
 
-// TestTheChatListFooterIsDerived: the footer is where I-6 was found. It
-// advertised "u unread" for a release with nothing bound to u, because a
-// literal cannot be wrong in a way anything can detect.
-func TestTheChatListFooterIsDerived(t *testing.T) {
-	m := sizedMainModel(t, PanelChatList)
-	m.chatList.MarkLoadedForTest() // the spinner owns the column until then
-	m.refreshChrome()
-	footer := ansi.Strip(m.chatList.View())
+// TestThereIsOneHintRow. The chat list drew a second one inside its own
+// column, and with the bar keyed by the live surface that row could only be
+// redundant or wrong: it repeated the bar's first three hints whenever the
+// list had focus, and described the CHAT LIST's keys — "l open", "/ filter"
+// — while the chat view had the keyboard and those keys meant something
+// else. It is gone; the bar is the hint row.
+func TestThereIsOneHintRow(t *testing.T) {
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		t.Run(fmt.Sprint(panel), func(t *testing.T) {
+			m := sizedMainModel(t, panel)
+			m.chatList.MarkLoadedForTest()
+			m.refreshChrome()
 
-	for _, want := range []string{"j/k", "move"} {
-		if !strings.Contains(footer, want) {
-			t.Errorf("the footer omits %q:\n%s", want, footer)
+			rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+			var hintRows int
+			for _, row := range rows {
+				// A hint row is the one that pairs keys with labels. The
+				// bar is the only row that should.
+				if strings.Contains(row, "j/k ") {
+					hintRows++
+				}
+			}
+			if hintRows != 1 {
+				t.Errorf("%d rows carry hints, want exactly one:\n%s",
+					hintRows, strings.Join(rows[len(rows)-3:], "\n"))
+			}
+		})
+	}
+}
+
+// TestTheHintBarSaysHowToClearAFilter: the way out of a filter was the one
+// thing the chat list's footer said that the bar could not, because it is
+// this panel's own state rather than a binding. It is in the registry now —
+// a reader who cannot see how to widen a narrowed list is left wondering
+// where their chats went.
+func TestTheHintBarSaysHowToClearAFilter(t *testing.T) {
+	m := sizedMainModel(t, PanelChatList)
+	m.chatList.MarkLoadedForTest()
+
+	// Unfiltered, the set leads with the motions.
+	m.refreshChrome()
+	if got := ansi.Strip(m.hintBar.View()); strings.Contains(got, "clear") {
+		t.Errorf("an unfiltered list advertises a way out of a filter: %q", got)
+	}
+
+	// Typing one: esc clears, enter keeps.
+	m = update(t, m, "/")
+	if !m.chatList.FilterActive() {
+		t.Fatal("precondition: the filter input did not open")
+	}
+	m.refreshChrome()
+	bar := ansi.Strip(m.hintBar.View())
+	for _, want := range []string{"esc", "clear", "enter", "keep"} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("the bar omits %q while the filter input is open: %q", want, bar)
 		}
 	}
 
-	// Rebinding a key the footer names changes the footer.
-	cfg := &config.Config{}
-	cfg.Keys.Search = "f8"
-	rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
-	rebound.screen = ScreenMain
-	rebound.width, rebound.height = 100, 40
-	rebound.updateLayout()
-	rebound.setFocus(PanelChatList)
-	rebound.chatList.MarkLoadedForTest()
-	rebound.refreshChrome()
-	if got := ansi.Strip(rebound.chatList.View()); !strings.Contains(got, "f8") {
-		t.Errorf("the footer did not follow a rebound filter key:\n%s", got)
+	// Applied but closed — the state with no cursor blinking to explain
+	// why the list is short.
+	m = typeIntoComposer(t, m, "al")
+	m = update(t, m, "\r")
+	if m.chatList.FilterActive() || m.chatList.FilterQuery() == "" {
+		t.Fatalf("precondition: filter active=%v query=%q",
+			m.chatList.FilterActive(), m.chatList.FilterQuery())
+	}
+	m.refreshChrome()
+	if got := ansi.Strip(m.hintBar.View()); !strings.Contains(got, "clear filter") {
+		t.Errorf("the bar omits the way out of an applied filter: %q", got)
 	}
 }
 

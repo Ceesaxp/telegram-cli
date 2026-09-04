@@ -65,14 +65,9 @@ func TestAnUnselectedRowLeavesTheSurfaceToTheFrame(t *testing.T) {
 		}
 	}
 	chrome := newTestModel()
-	for name, line := range map[string]string{
-		"filter header": chrome.renderFilterHeader(38),
-		"list footer":   chrome.renderListFooter(38),
-	} {
-		if p := cell.PaintedWidth(line); p != 0 {
-			t.Errorf("the %s painted %d cells:\n%s",
-				name, p, strings.ReplaceAll(line, "\x1b", "ESC"))
-		}
+	if line := chrome.renderFilterHeader(38); cell.PaintedWidth(line) != 0 {
+		t.Errorf("the filter header painted %d cells:\n%s",
+			cell.PaintedWidth(line), strings.ReplaceAll(line, "\x1b", "ESC"))
 	}
 }
 

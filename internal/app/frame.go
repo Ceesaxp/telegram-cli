@@ -146,16 +146,16 @@ func (m *Model) refreshChrome() {
 
 	m.reactions.SetWidth(m.width)
 
-	// One resolution, one registry, every surface that draws a hint fed
-	// from it on the same tick (decision I-6). The chat list footer, the
-	// media overlay's row and the reaction row used to hold literals; a
-	// literal cannot be wrong in a way anything can detect, which is how
-	// "u unread" sat in the footer with nothing bound to u.
+	// One resolution, one registry, one hint row. The bar is keyed by the
+	// live surface, so a second row of hints inside a column would either
+	// repeat it (when that column has focus) or describe a keymap that is
+	// not live (when it does not) — which is what the chat list's own
+	// footer did. The overlays that own the whole screen still draw their
+	// own strip, and are fed from here.
 	surface := m.surface()
 	m.hintBar.SetWidth(m.width)
 	m.hintBar.SetHints(m.hintsFor(surface))
 	m.hintBar.SetRight(m.hintBarCounters())
-	m.chatList.SetFooterHints(m.footerHints())
 	m.mediaView.SetHints(m.hintsFor(SurfaceMedia))
 	m.reactions.SetHints(m.hintsFor(SurfaceReactions))
 
