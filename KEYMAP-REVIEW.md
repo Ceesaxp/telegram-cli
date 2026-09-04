@@ -1,5 +1,10 @@
 # Keymap review — work order
 
+> Superseded for new work by [`INTERACTION-REVIEW.md`](INTERACTION-REVIEW.md)
+> (2026-09-04), whose decisions live in
+> [docs/interaction-model.md](docs/interaction-model.md). Kept as the
+> record of the previous round.
+
 > **Status: closed. All seven items shipped.** Archived for the reasoning, not
 > as outstanding work — the original text below is unedited and still written
 > in the imperative, so read it as a record of what was decided and why, never

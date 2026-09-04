@@ -85,6 +85,16 @@ remains.
 - [x] **Bounded `image.Decode`** — 20 MiB / 20e6 pixels via
       `DecodeConfig` before Decode
 
+## Interaction review — open
+
+A review of the interaction model, keymaps and interactive surfaces
+(2026-09-04) produced fifteen tasks in four waves, sequenced in
+[INTERACTION-REVIEW.md](INTERACTION-REVIEW.md); the decisions they
+implement are in [docs/interaction-model.md](docs/interaction-model.md).
+Headlines: `Esc` never discards text, Alt and function keys are dropped,
+`j`/`k` step messages, one hint table for every surface. The
+"Status bar hints are hardcoded" item below is absorbed by its task 12.
+
 ## Remaining — product / cleanup
 
 Reviewed against the TUI 2.0 design (docs/tui-2.0.md) — some of this is
