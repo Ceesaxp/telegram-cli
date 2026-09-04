@@ -431,6 +431,15 @@ func (c *Client) FilesDir() string {
 	return c.config.Storage.FilesDir
 }
 
+// SendRoots is the set of directories a remote caller may send a file
+// from — see [config.Config.SendRoots]. Pass it to
+// [ResolveAllowedSendPath] in the MCP and REST send handlers; the TUI does
+// not use it, because there the person choosing the file is the person
+// running the process.
+func (c *Client) SendRoots() []string {
+	return c.config.SendRoots()
+}
+
 // opTimeout bounds a single RPC round-trip. Without it a hung network
 // call wedges its caller (and the UI command that waits on it) forever.
 const opTimeout = 30 * time.Second

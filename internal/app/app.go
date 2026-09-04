@@ -23,6 +23,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/contacts"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/forward"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/mediaview"
@@ -51,11 +52,19 @@ type Model struct {
 	help      help.Model
 	palette   palette.Model
 	reactions reactionpicker.Model
-	attach    attach.Model
-	topBar    topbar.Model
-	hintBar   hintbar.Model
-	rail      rail.Model
-	mediaView mediaview.Model
+	// forward is the destination picker for the forward action. Its
+	// Source is captured when it opens, so nothing that moves the cursor
+	// afterwards can redirect what gets sent.
+	forward forward.Model
+	// forwardGen tags each destination search so a slow answer to an old
+	// query cannot repopulate the list under a reader who has typed past
+	// it.
+	forwardGen int
+	attach     attach.Model
+	topBar     topbar.Model
+	hintBar    hintbar.Model
+	rail       rail.Model
+	mediaView  mediaview.Model
 
 	// mediaTeardown is what the terminal must be told to forget once the
 	// media overlay closes. Held rather than written: this Model has no
@@ -159,6 +168,7 @@ type resolvedKeys struct {
 	reply         string
 	editMessage   string
 	deleteMessage string
+	forward       string
 	markRead      string
 }
 
@@ -230,6 +240,7 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 		{kc.Reply, "r", &out.reply},
 		{kc.EditMessage, "e", &out.editMessage},
 		{kc.DeleteMessage, "d", &out.deleteMessage},
+		{kc.Forward, "f", &out.forward},
 		{kc.MarkRead, "m", &out.markRead},
 	}
 
@@ -289,6 +300,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		palette:    palette.New(roles),
 		attach:     attach.New(roles),
 		reactions:  reactionpicker.New(roles),
+		forward:    forward.New(roles),
 		topBar:     topbar.New(roles),
 		hintBar:    hintbar.New(roles),
 		rail:       rail.New(roles),
@@ -328,6 +340,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		Reply:    m.keys.reply,
 		Edit:     m.keys.editMessage,
 		Delete:   m.keys.deleteMessage,
+		Forward:  m.keys.forward,
 		MarkRead: m.keys.markRead,
 	})
 	// Built once from the resolved bindings and the resolved editing mode:
@@ -482,6 +495,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
+			}
+
+			// The destination picker owns the keyboard on the attach
+			// picker's terms and for its reason: printables build a
+			// query, and a chat titled "delete" has to be typeable.
+			if m.forward.IsVisible() {
+				return m.updateForwardPicker(msg)
 			}
 
 			if m.palette.IsVisible() {
@@ -1235,6 +1255,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatview.MessageActionMsg:
 		return m.handleMessageAction(msg)
 
+	case forwardSearchMsg:
+		return m.handleForwardSearch(msg)
+
+	case forwardResultsMsg:
+		return m.handleForwardResults(msg)
+
+	case forwardDoneMsg:
+		return m.handleForwardDone(msg)
+
 	case dialog.DialogResultMsg:
 		m.dialog = nil
 		// Cleared unconditionally, regardless of which dialog this result
@@ -1780,6 +1809,13 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 	case "pin":
 		return m, m.togglePin(msg.ChatId, msg.MessageId)
 
+	case "forward":
+		m.forward.Open(forward.Source{
+			ChatID:    msg.ChatId,
+			MessageID: msg.MessageId,
+			Preview:   m.messagePreview(msg.ChatId, msg.MessageId),
+		}, m.forwardCandidates())
+
 	case "thread":
 		return m, m.openDiscussion(msg.ChatId, msg.MessageId)
 	}
@@ -2085,6 +2121,15 @@ func (m Model) View() tea.View {
 			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.attach.View()))
 	}
 
+	// The destination picker sits where the palette and the attach picker
+	// sit, for their reason: the message being forwarded stays visible
+	// underneath the card that asks where it is going.
+	if m.forward.IsVisible() && m.screen == ScreenMain {
+		content = lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Top,
+			lipgloss.NewStyle().MarginTop(paletteTopMargin).Render(m.forward.View()))
+	}
+
 	// The reaction row goes in the hint bar's row rather than over the
 	// frame. It is one row and it is transient, which is what that row is
 	// for — and the message it is asking about has to stay on screen, which
@@ -2214,5 +2259,6 @@ func (m Model) overlayOpen() bool {
 		m.search.IsVisible() ||
 		(m.help.IsVisible() && m.screen == ScreenMain) ||
 		(m.palette.IsVisible() && m.screen == ScreenMain) ||
-		(m.attach.IsVisible() && m.screen == ScreenMain)
+		(m.attach.IsVisible() && m.screen == ScreenMain) ||
+		(m.forward.IsVisible() && m.screen == ScreenMain)
 }

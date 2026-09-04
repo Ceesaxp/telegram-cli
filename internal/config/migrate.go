@@ -91,8 +91,10 @@ var staleKeyDefaults = map[string][]string{
 // migratableKeyFields lists the [keys] fields the migration will rewrite.
 //
 // It is now every field, because every field reaches a dispatcher: the
-// inert one (forward) and the additive motions were removed by decision
-// I-13, and with them the reason this set was ever narrower than keyFields.
+// additive motions were removed by decision I-13, and forward — the one
+// field that was removed for being inert — came back with a dispatcher
+// behind it (issue #39). With them went the reason this set was ever
+// narrower than keyFields.
 // It stays as a set rather than being folded away because the same question
 // — "is this binding live?" — is what DetectKeyCollisions asks, and a field
 // that were ever added without a dispatcher would have to answer no.
@@ -103,7 +105,7 @@ var migratableKeyFields = map[string]bool{
 	"next_chat": true, "prev_chat": true, "next_unread": true,
 	"next_folder": true, "prev_folder": true,
 	"reply": true, "edit_message": true, "delete_message": true,
-	"mark_read": true,
+	"forward": true, "mark_read": true,
 }
 
 // keyFields maps each TOML key name to accessors on a KeyConfig, so the
@@ -129,6 +131,7 @@ var keyFields = []struct {
 	{"reply", func(k *KeyConfig) string { return k.Reply }, func(k *KeyConfig, v string) { k.Reply = v }},
 	{"edit_message", func(k *KeyConfig) string { return k.EditMessage }, func(k *KeyConfig, v string) { k.EditMessage = v }},
 	{"delete_message", func(k *KeyConfig) string { return k.DeleteMessage }, func(k *KeyConfig, v string) { k.DeleteMessage = v }},
+	{"forward", func(k *KeyConfig) string { return k.Forward }, func(k *KeyConfig, v string) { k.Forward = v }},
 	{"mark_read", func(k *KeyConfig) string { return k.MarkRead }, func(k *KeyConfig, v string) { k.MarkRead = v }},
 }
 
@@ -284,6 +287,19 @@ func Migrate(cfg *Config, raw *RawFile) []MigrationChange {
 			Field: "storage.download_dir", Absent: true, New: DefaultDownloadDir,
 		})
 	}
+	// send_dirs narrows what a REMOTE caller can read (issue #48), so an
+	// upgraded config gets the key written out and the change reported.
+	// The migration summary is the only place an operator who has been
+	// running telegram-mcp out of $HOME finds out that stopped being
+	// allowed — a silent narrowing would read as a broken send_file.
+	if !hasField(raw, "storage", "send_dirs", len(cfg.Storage.SendDirs) > 0) {
+		// The tilde literal, for the same portability reason as
+		// download_dir above.
+		cfg.Storage.SendDirs = []string{DefaultOutboxDir}
+		changes = append(changes, MigrationChange{
+			Field: "storage.send_dirs", Absent: true, New: DefaultOutboxDir,
+		})
+	}
 	if !hasField(raw, "ui", "hyperlinks", cfg.UI.Hyperlinks != "") {
 		cfg.UI.Hyperlinks = def.UI.Hyperlinks
 		changes = append(changes, MigrationChange{
@@ -372,7 +388,7 @@ type RawFile struct {
 // keymap cut removed. focus_chat_list/view/composer went with the Alt and
 // function keys (I-1) — h, l, i, Esc and Tab cover panel focus — and
 // contacts_alt was the alt-free fallback for a binding that is now a plain
-// letter. forward was never dispatched at all. scroll_up/scroll_down/
+// letter. scroll_up/scroll_down/
 // page_up/page_down were the additive motions: motions are vi's now, and
 // not configurable.
 var removedFields = map[string]map[string]bool{
@@ -380,7 +396,6 @@ var removedFields = map[string]map[string]bool{
 	"keys": {
 		"focus_chat_list": true, "focus_chat_view": true,
 		"focus_composer": true, "contacts_alt": true,
-		"forward":   true,
 		"scroll_up": true, "scroll_down": true,
 		"page_up": true, "page_down": true,
 	},
@@ -528,7 +543,7 @@ var aliasPairs = [][2]string{
 // all.
 var componentDispatchedFields = map[string]bool{
 	"reply": true, "edit_message": true, "delete_message": true,
-	"mark_read": true,
+	"forward": true, "mark_read": true,
 }
 
 // appDispatchedValue returns the binding internal/app will actually match

@@ -411,37 +411,14 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 	return out
 }
 
-// applyChatAction folds one chat action into the set of users typing.
-func applyChatAction(typing []int64, msg telegram.ChatActionMsg) []int64 {
-	switch msg.Action.(type) {
-	case *telegram.ChatActionTyping:
-		for _, id := range typing {
-			if id == msg.UserId {
-				return typing
-			}
-		}
-		return append(typing, msg.UserId)
-	default:
-		// Anything that is not typing — cancel, or one of the upload and
-		// recording actions this client does not render — ends it.
-		out := typing[:0]
-		for _, id := range typing {
-			if id != msg.UserId {
-				out = append(out, id)
-			}
-		}
-		return out
-	}
-}
-
 // typingNames resolves the typing user IDs to display names.
 func (m Model) typingNames() []string {
 	if len(m.typing) == 0 {
 		return nil
 	}
 	names := make([]string, 0, len(m.typing))
-	for _, id := range m.typing {
-		names = append(names, m.store.Users.DisplayName(id))
+	for _, u := range m.typing {
+		names = append(names, m.store.Users.DisplayName(u.id))
 	}
 	return names
 }
@@ -466,7 +443,7 @@ func (m Model) gridTypingRow() string {
 	}
 	text := strings.Join(names, ", ") + verb
 
-	marker := lipgloss.NewStyle().Foreground(r.Ghost).Render(cell.PadLeft("···", g.SenderW))
+	marker := lipgloss.NewStyle().Foreground(r.Ghost).Render(cell.PadLeft(typingFrames[m.typingFrame], g.SenderW))
 	body := lipgloss.NewStyle().Foreground(r.Dim).Render(cell.Truncate(text, g.BodyW))
 	return g.row(" ", "", marker, body, r)
 }

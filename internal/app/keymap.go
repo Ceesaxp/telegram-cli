@@ -293,6 +293,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "y", Desc: "Copy the selected message's text"},
 			{Keys: "+", Desc: "React — pick one, or press it again to take it off"},
 			{Keys: "p", Desc: "Pin or unpin the selected message"},
+			{Keys: bound(cv.Forward), Desc: "Forward the message to another chat"},
 			{Keys: "t", Desc: "Open the discussion under a channel post"},
 			{Keys: bound(cv.MarkRead), Desc: "Mark this chat read without moving"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},

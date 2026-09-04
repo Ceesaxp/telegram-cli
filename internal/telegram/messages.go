@@ -159,43 +159,74 @@ func int64sToInts(ids []int64) []int {
 
 // GetMessage fetches a single message.
 func (c *Client) GetMessage(chatID, messageID int64) (*Message, error) {
+	msgs, err := c.GetMessages(chatID, []int64{messageID})
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range msgs {
+		if m.ID == messageID {
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf("message %d not found in chat %d", messageID, chatID)
+}
+
+// GetMessages fetches several messages of one chat in a single request.
+//
+// Both messages.getMessages and channels.getMessages take a list, and the
+// callers that refetch after an edit, a reaction or a poll vote have a list
+// — one request per update is the shape Telegram answers with FLOOD_WAIT.
+// [GetMessage] is this with a list of one.
+//
+// Messages the server did not return are simply absent from the result: a
+// message deleted between the update and the fetch is a normal race, not an
+// error the caller can do anything about.
+func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+
 	ctx, cancel := opCtx()
 	defer cancel()
+
+	ids := make([]tg.InputMessageClass, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		ids = append(ids, &tg.InputMessageID{ID: int(id)})
+	}
 
 	var messages []tg.MessageClass
 	if constant.TDLibPeerID(chatID).IsChannel() {
 		peer, err := c.inputPeer(ctx, chatID)
 		if err != nil {
-			return nil, fmt.Errorf("get message: %w", err)
+			return nil, fmt.Errorf("get messages: %w", err)
 		}
 		inputChannel, ok := peerAsInputChannel(peer)
 		if !ok {
-			return nil, fmt.Errorf("get message: peer %d is not a channel", chatID)
+			return nil, fmt.Errorf("get messages: peer %d is not a channel", chatID)
 		}
 		res, err := c.api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
 			Channel: inputChannel,
-			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: int(messageID)}},
+			ID:      ids,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("get message: %w", err)
+			return nil, fmt.Errorf("get messages: %w", err)
 		}
 		messages = messagesFromMessagesClass(res)
 	} else {
-		res, err := c.api.MessagesGetMessages(ctx, []tg.InputMessageClass{
-			&tg.InputMessageID{ID: int(messageID)},
-		})
+		res, err := c.api.MessagesGetMessages(ctx, ids)
 		if err != nil {
-			return nil, fmt.Errorf("get message: %w", err)
+			return nil, fmt.Errorf("get messages: %w", err)
 		}
 		messages = messagesFromMessagesClass(res)
 	}
 
+	out := make([]*Message, 0, len(messages))
 	for _, mc := range messages {
-		if m := c.messageClassFromTG(mc); m != nil && m.ID == messageID {
-			return m, nil
+		if m := c.messageClassFromTG(mc); m != nil {
+			out = append(out, m)
 		}
 	}
-	return nil, fmt.Errorf("message %d not found in chat %d", messageID, chatID)
+	return out, nil
 }
 
 // messagesFromMessagesClass extracts the message list from a

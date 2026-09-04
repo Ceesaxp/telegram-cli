@@ -47,7 +47,7 @@ func TestResolveAllowedSendPath(t *testing.T) {
 		}
 	})
 
-	t.Run("file under cwd root", func(t *testing.T) {
+	t.Run("file under a second configured root", func(t *testing.T) {
 		got, err := ResolveAllowedSendPath(underCwd, filesDir, cwdRoot)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -107,6 +107,31 @@ func TestResolveAllowedSendPath(t *testing.T) {
 		_, err := ResolveAllowedSendPath(underFiles, "", filesDir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// An allowlist with nothing usable in it must reject everything. The
+	// opposite reading — no roots means no restriction — is the failure
+	// mode issue #48 is about, and it would arrive silently.
+	t.Run("no usable root rejects every path", func(t *testing.T) {
+		for _, roots := range [][]string{nil, {""}, {"", ""}} {
+			if _, err := ResolveAllowedSendPath(underFiles, roots...); err == nil {
+				t.Fatalf("roots %q: expected rejection with no usable root", roots)
+			}
+		}
+	})
+
+	// The caller is an operator or the agent they configured, and a bare
+	// "outside the allowed directories" cannot be told apart from a typo.
+	t.Run("rejection names the roots it searched", func(t *testing.T) {
+		_, err := ResolveAllowedSendPath(secret, filesDir, "", cwdRoot)
+		if err == nil {
+			t.Fatal("expected error for path outside roots")
+		}
+		for _, want := range []string{filesDir, cwdRoot} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name root %q", err, want)
+			}
 		}
 	})
 }

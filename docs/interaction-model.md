@@ -132,6 +132,7 @@ newline chord.
 | `y` | Copy the cursored message's text | |
 | `+` | React | |
 | `p` | Pin / unpin | |
+| `f` | Forward the cursored message to another chat | *new*, see I-13 — the one removed field that came back |
 | `t` | Open the discussion under a channel post | |
 | `m` | Mark this chat read without moving | *moved* from `M`, see I-10 |
 | `x` | Reveal / hide spoilers | |
@@ -368,6 +369,15 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   needed a page to explain and let `forward` sit in the example file bound
   to nothing. `quit` additionally refuses a bare printable, closing the
   documented foot-gun where `quit = "x"` quit from the composer.
+
+  `forward` is back, under this same rule and with a dispatcher behind it
+  (issue #39). That is not a reversal: what I-13 removed was an *inert*
+  field, and the objection was that it was accepted, saved and never
+  consulted. A config that still carried `forward = "f"` from before the
+  cut was told the key had been removed; on the next migration it is told
+  it has been added, which is more churn than either message alone
+  deserves — and the honest sequence, because both were true when they
+  were said.
 
 - **I-14 — Accepted as they are.** Digits jump folders in the chat list and
   count motions in the chat view: adjacent panels, different meanings,

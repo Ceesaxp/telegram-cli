@@ -1,5 +1,105 @@
 # TODO
 
+## Current wave — issue triage of 2026-09-04
+
+Picked from the open issues in this order: the two small, well-specified
+ones first, then the two that carry real work. #41 (mention autocomplete),
+#35 (context propagation), #38 (frontend parity), #33, #36 and #58 levels
+2–3 stay open and are argued in the issues themselves.
+
+- [x] **#48 — send roots.** `send_file` and `POST /api/send-file` resolved
+      paths against `files_dir` **and the process's working directory**,
+      which nobody chose, nothing logged, and no table mentioned. For an
+      MCP host started from a login shell that is `$HOME`, and the caller
+      is a model reading messages from strangers.
+
+      `[storage] send_dirs` replaces it: `files_dir` (always, because
+      `download_media` hands out paths inside it) plus a configurable list
+      defaulting to `~/.local/share/tele-tui/outbox`, created on first
+      start. Both servers log the effective set and warn about a listed
+      directory that is missing — `ResolveAllowedSendPath` skips a root it
+      cannot resolve, silently, so a typo would otherwise look like a
+      broken `send_file`. The rejection now names the roots it searched.
+      `-migrate-config` writes and *reports* the key, because for anyone
+      running the server out of `$HOME` this is a narrowing they need to
+      read about rather than discover.
+
+- [x] **#51 — animate the typing indicator.** A pulse travels the three
+      dots (`···`, `•··`, `·•·`, `··•`) on a 400ms tick that runs only
+      while somebody is composing. Frame 0 is the resting marker, so the
+      six golden frames in `docs/fixtures/` are byte-unchanged.
+
+      Two things fell out of it. The set was emptied only by an explicit
+      cancel, so a cancel lost to a connection blip left a typist on screen
+      for the session — survivable while static, a forever-running redraw
+      once animated; each action now carries Telegram's own six-second
+      deadline. And the tick chain is guarded by a running flag PLUS a
+      generation: a chat switch followed by a new action would otherwise
+      leave the stopped chain's last tick to re-arm beside the new one,
+      halving the frame time per overlap.
+
+      Review caught the first version reading both answers off the
+      generation alone — which only counts up, so after the first
+      `OpenChatAt` the guard said "already running" forever and neither the
+      animation nor the expiry ever ran. The stuck "is typing" was still
+      there behind a fix that looked landed. Recorded as divergence 52 —
+      animation is a TUI 2.0 non-goal, and this is the second sanctioned
+      exception after the spinner.
+- [x] **#58 level 1 — document multi-profile.** Docs only. `TELETUI_CONFIG`
+      is honoured for both read and write, so a profile is a config file
+      and what it points at; only `session_file` and `files_dir` have to
+      differ, because `state.db` and `api-token` are derived from the
+      session path. The section says why two at once is safe (per-PID
+      clipboard spool, the bbolt lock that fails loudly, the owner-bound
+      peer cache) and names the one thing that is wrong — notifications
+      carry no profile identity, which is exactly the personal-plus-work
+      case. Levels 2 (`-profile`) and 3 (in-process switcher) stay
+      deferred.
+- [x] **#39 — native forwarding on `f`.** Independent of #41, and the
+      issue's premise was stale: `keys.forward` had been *removed* by the
+      keymap cut (#65, the same day) for being inert, so it was re-added
+      rather than wired. `Client.ForwardMessages` wraps
+      `messages.forwardMessages` with attribution and captions kept;
+      `internal/ui/components/forward` is the palette's twin, filtering the
+      loaded chats and appending what `contacts.search` matches by title or
+      `@username`; a confirmation names both sides before anything is sent.
+
+      The source is captured when the picker opens rather than re-read at
+      confirmation — the picker is modal but updates and mouse scrolls are
+      not — and the search is generation-tagged so a slow answer cannot
+      repopulate the list under the cursor. A failed search keeps the
+      loaded chats with a note rather than emptying itself. MCP
+      (`forward_messages`) and REST (`POST /api/forward`) expose the same
+      operation with both chats named explicitly. Recorded as divergence
+      53, with the I-13 amendment for the returning key.
+
+      Review found four more of the same shape — a value read late that
+      should have been captured, or kept past the question it answered: the
+      destination was not frozen at the confirmation (only the source was),
+      server matches outlived the query they answered, the cursor could
+      select a row the viewport was not drawing, and the forwarded copy was
+      never published locally so it did not appear until reload. A fifth
+      was underneath: `SearchChats` never called `peers.Apply`, so a
+      "not in your chats" result had no access hash and could not be
+      resolved — not new to forwarding, but forwarding is what reached it.
+- [x] **#46 — coalesce per-update RPCs in the open chat.** The focused
+      path answered every arrival with its own `readHistory` and every
+      edit, reaction or poll tally with its own `getMessages`. Both
+      accumulate over a 300ms window now: a receipt is cumulative, so a
+      burst is one call carrying the highest ID, and the refetches are one
+      `getMessages` with the deduplicated list minus anything the store no
+      longer holds. `Client.GetMessages` is the batch adapter — both
+      `messages.getMessages` and `channels.getMessages` always took a list.
+      Flush ticks carry their chat, so one that outlives a switch is
+      dropped rather than fired against the new chat.
+
+      **Not done, deliberately:** the `FLOOD_WAIT` back-off the issue
+      suggests. gotd's floodwait middleware is not installed on the client
+      at all, so the right fix is one middleware over every RPC rather than
+      two hand-rolled back-offs here — and turning errors into waits is a
+      behaviour change that wants its own decision. Noted in
+      architecture.md; worth its own issue.
+
 ## Shipped
 
 **Ctrl+V clipboard image paste** — spool clipboard image/file data to a

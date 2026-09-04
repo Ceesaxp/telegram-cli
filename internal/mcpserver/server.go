@@ -4,7 +4,6 @@ package mcpserver
 import (
 	"context"
 	"errors"
-	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -73,9 +72,15 @@ type messageOut struct {
 
 type sendFileIn struct {
 	ChatID           int64  `json:"chat_id" jsonschema:"canonical chat ID from list_chats"`
-	Path             string `json:"path" jsonschema:"local filesystem path of the file to send (already-existing file, e.g. a downloaded/generated document)"`
+	Path             string `json:"path" jsonschema:"local filesystem path of the file to send; must already exist and be inside one of the server's configured send roots (the media cache plus storage.send_dirs, logged at startup) — paths elsewhere on the filesystem are rejected"`
 	Caption          string `json:"caption,omitempty" jsonschema:"optional caption text sent with the file"`
 	ReplyToMessageID int64  `json:"reply_to_message_id,omitempty" jsonschema:"reply to this message ID"`
+}
+
+type forwardMessagesIn struct {
+	FromChatID int64   `json:"from_chat_id" jsonschema:"canonical chat ID the messages are in now"`
+	ToChatID   int64   `json:"to_chat_id" jsonschema:"canonical chat ID to forward them to"`
+	MessageIDs []int64 `json:"message_ids" jsonschema:"IDs of the messages to forward"`
 }
 
 type editMessageIn struct {
@@ -144,8 +149,13 @@ func New(client *telegram.Client) *Server {
 	}, h.sendMessage)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_file",
-		Description: "Upload a local file and send it as a document to a chat, with an optional caption",
+		Description: "Upload a local file and send it as a document to a chat, with an optional caption. Only files inside the server's configured send roots can be sent",
 	}, h.sendFile)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "forward_messages",
+		Description: "Forward messages from one chat to another using Telegram's own forwarding, " +
+			"which keeps the original sender's attribution and any captions",
+	}, h.forwardMessages)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "edit_message",
 		Description: "Edit the text of a message",
@@ -250,11 +260,7 @@ func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in s
 }
 
 func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in sendFileIn) (*mcp.CallToolResult, messageOut, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, messageOut{}, err
-	}
-	path, err := telegram.ResolveAllowedSendPath(in.Path, h.tg.FilesDir(), cwd)
+	path, err := telegram.ResolveAllowedSendPath(in.Path, h.tg.SendRoots()...)
 	if err != nil {
 		return nil, messageOut{}, err
 	}
@@ -263,6 +269,20 @@ func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in send
 		return nil, messageOut{}, err
 	}
 	return nil, messageOut{Message: tgjson.ToMessageInfo(msg)}, nil
+}
+
+func (h *handlers) forwardMessages(ctx context.Context, _ *mcp.CallToolRequest, in forwardMessagesIn) (*mcp.CallToolResult, messagesOut, error) {
+	if in.FromChatID == 0 || in.ToChatID == 0 {
+		return nil, messagesOut{}, errors.New("from_chat_id and to_chat_id are required")
+	}
+	if len(in.MessageIDs) == 0 {
+		return nil, messagesOut{}, errors.New("message_ids must not be empty")
+	}
+	msgs, err := h.tg.ForwardMessages(in.FromChatID, in.ToChatID, in.MessageIDs)
+	if err != nil {
+		return nil, messagesOut{}, err
+	}
+	return nil, toMessagesOut(msgs), nil
 }
 
 func (h *handlers) editMessage(ctx context.Context, _ *mcp.CallToolRequest, in editMessageIn) (*mcp.CallToolResult, messageOut, error) {

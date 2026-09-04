@@ -44,6 +44,29 @@ type StorageConfig struct {
 	// arrived while the app was offline can be recovered on the next start.
 	// Empty (the default) means "state.db" next to SessionFile.
 	StateFile string `toml:"state_file"`
+
+	// SendDirs is the allowlist of directories a REMOTE caller may send
+	// files from: the `send_file` MCP tool and POST /api/send-file. It does
+	// not constrain the TUI, where the person choosing the file is the
+	// person running the process.
+	//
+	// Empty means [DefaultOutboxDir], which is also what the shipped
+	// default holds. Read it through [Config.SendRoots], never directly:
+	// the media cache is always a root and is not listed here.
+	//
+	// There is deliberately no spelling of "the cache and nothing else" —
+	// `send_dirs = []` reads as unset, because a list that is empty by
+	// accident (a commented-out entry, a cleared value) must not silently
+	// mean something different from a list that was never written. An
+	// operator who wants exactly that points send_dirs at files_dir.
+	//
+	// This used to be the process's working directory, which nobody chose
+	// and nothing logged — whatever directory `telegram-mcp serve` happened
+	// to start in became sendable. For an MCP host launched from a login
+	// shell that is $HOME, and the caller on the other end is a language
+	// model reading untrusted incoming messages. The allowlist exists so
+	// the set has a size somebody picked.
+	SendDirs []string `toml:"send_dirs"`
 }
 
 type UIConfig struct {
@@ -115,6 +138,12 @@ const (
 	DefaultSessionFile = "~/.local/share/tele-tui/session.json"
 	DefaultFilesDir    = "~/.local/share/tele-tui/files"
 	DefaultDownloadDir = "~/Downloads"
+	// DefaultOutboxDir is the drop-box a remote caller may send files from
+	// when [StorageConfig.SendDirs] says nothing. It is deliberately its
+	// own directory rather than DefaultDownloadDir: ~/Downloads is where a
+	// browser puts things, so handing it to an MCP agent would restore most
+	// of the exposure the allowlist exists to remove.
+	DefaultOutboxDir = "~/.local/share/tele-tui/outbox"
 )
 
 // Inline-image policies for [UIConfig.InlineImages].
@@ -320,14 +349,18 @@ type NotificationConfig struct {
 // were an extra spelling ADDED alongside it, and one was accepted, saved
 // and never consulted at all. The three needed a page of documentation to
 // tell apart, and the third let `forward` sit in the shipped example file
-// bound to nothing.
+// bound to nothing. It is bound to something now — the removal was of an
+// inert key, not of the idea — and it comes back under the one rule like
+// every other field.
 //
 // Which layer matches a binding still differs, and still does not change
 // the rule. internal/app dispatches Quit, QuitBrowsing, Search,
 // GlobalSearch, Contacts, Compose, Help, NextChat, PrevChat, NextUnread,
 // NextFolder and PrevFolder itself; it resolves Reply, EditMessage,
 // DeleteMessage and MarkRead and hands them to the chat view, which
-// implements them (see chatview.Keys).
+// implements them (see chatview.Keys). Forward is resolved the same way
+// and handed to the chat view, which reports the intent; the app owns the
+// destination picker that follows.
 //
 // The motions are not configurable, and are not meant to be: j/k, the
 // arrows, g/G, ctrl+e/ctrl+y, ctrl+d/ctrl+u and the page keys are vi's, the
@@ -395,11 +428,15 @@ type KeyConfig struct {
 	// panel. Defaults "]" and "[".
 	NextFolder string `toml:"next_folder"`
 	PrevFolder string `toml:"prev_folder"`
-	// Reply/EditMessage/DeleteMessage act on the cursored message in the
-	// chat view. Defaults "r", "e", "d".
+	// Reply/EditMessage/DeleteMessage/Forward act on the cursored message
+	// in the chat view. Defaults "r", "e", "d", "f".
 	Reply         string `toml:"reply"`
 	EditMessage   string `toml:"edit_message"`
 	DeleteMessage string `toml:"delete_message"`
+	// Forward opens the destination picker for the cursored message. It
+	// was the one field the keymap cut removed for being inert (I-13); it
+	// is back because it now does something. See issue #39.
+	Forward string `toml:"forward"`
 	// MarkRead marks the open chat read without moving the scroll or the
 	// unread divider. Default "m".
 	MarkRead string `toml:"mark_read"`
@@ -618,8 +655,81 @@ func Load() (*Config, error) {
 	cfg.Storage.FilesDir = expandPath(cfg.Storage.FilesDir)
 	cfg.Storage.DownloadDir = expandPath(cfg.Storage.DownloadDir)
 	cfg.Storage.StateFile = expandPath(cfg.Storage.StateFile)
+	for i, dir := range cfg.Storage.SendDirs {
+		cfg.Storage.SendDirs[i] = expandPath(dir)
+	}
 
 	return cfg, nil
+}
+
+// SendRoots returns the directories a remote caller may send files from,
+// in the order they are searched: the media cache first, then the
+// configured [StorageConfig.SendDirs] (or [DefaultOutboxDir] when that is
+// empty).
+//
+// The media cache is always a root and is not configurable. The client
+// hands those paths out itself — download_media returns one — so refusing
+// to send back a file it just named would be incoherent. Everything else
+// is the operator's list.
+//
+// Blank entries are dropped rather than ignored downstream: an empty root
+// means "no root" to [telegram.ResolveAllowedSendPath], and a list of
+// nothing but blanks must reject every path rather than accept one.
+func (c *Config) SendRoots() []string {
+	roots := make([]string, 0, len(c.Storage.SendDirs)+2)
+	if c.Storage.FilesDir != "" {
+		roots = append(roots, c.Storage.FilesDir)
+	}
+	configured := false
+	for _, dir := range c.Storage.SendDirs {
+		if dir = strings.TrimSpace(dir); dir != "" {
+			roots = append(roots, expandPath(dir))
+			configured = true
+		}
+	}
+	if !configured {
+		// Nothing usable was listed, so nothing was chosen: fall back to
+		// the outbox. `send_dirs = [""]` lands here too — a blank entry is
+		// a mistake, not an opt-out that should leave the cache as the
+		// only place a file can come from.
+		roots = append(roots, expandPath(DefaultOutboxDir))
+	}
+	return roots
+}
+
+// PrepareSendRoots returns [Config.SendRoots] ready to use, creating the
+// default outbox when it is one of them and does not exist yet. Roots that
+// are still missing are returned in missing so the caller can say so:
+// [telegram.ResolveAllowedSendPath] silently skips a root it cannot
+// resolve, so an operator who typo'd a send_dirs entry would otherwise see
+// only "outside the allowed directories" on every send.
+//
+// The outbox is created because it is the documented default — a drop-box
+// nobody can put a file in is not a default, it is a dead end. An
+// operator's own directory is never created: making a typo real is worse
+// than reporting it.
+//
+// Call this from the service frontends only, after the Telegram client is
+// constructed (which creates files_dir), and treat err as a warning rather
+// than fatal: an unwritable outbox narrows what can be sent, it does not
+// make the server unsafe to run.
+func (c *Config) PrepareSendRoots() (roots, missing []string, err error) {
+	roots = c.SendRoots()
+	outbox := expandPath(DefaultOutboxDir)
+	for _, root := range roots {
+		if _, statErr := os.Stat(root); statErr == nil {
+			continue
+		}
+		if root == outbox {
+			if mkErr := os.MkdirAll(root, 0o700); mkErr == nil {
+				continue
+			} else if err == nil {
+				err = fmt.Errorf("creating send outbox %s: %w", root, mkErr)
+			}
+		}
+		missing = append(missing, root)
+	}
+	return roots, missing, err
 }
 
 func defaultConfig() *Config {
@@ -628,6 +738,7 @@ func defaultConfig() *Config {
 			SessionFile: expandPath(DefaultSessionFile),
 			FilesDir:    expandPath(DefaultFilesDir),
 			DownloadDir: expandPath(DefaultDownloadDir),
+			SendDirs:    []string{expandPath(DefaultOutboxDir)},
 		},
 		UI: UIConfig{
 			ComposeEditing:  ComposeEditingAuto,
@@ -672,6 +783,7 @@ func defaultConfig() *Config {
 			Reply:         "r",
 			EditMessage:   "e",
 			DeleteMessage: "d",
+			Forward:       "f",
 			MarkRead:      "m",
 		},
 	}

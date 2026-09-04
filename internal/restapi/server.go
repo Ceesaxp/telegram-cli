@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,6 +62,7 @@ func New(client *telegram.Client, token string) *Server {
 	mux.HandleFunc("GET /api/contacts", s.contacts)
 	mux.HandleFunc("POST /api/send", s.send)
 	mux.HandleFunc("POST /api/send-file", s.sendFile)
+	mux.HandleFunc("POST /api/forward", s.forward)
 	mux.HandleFunc("POST /api/edit", s.edit)
 	mux.HandleFunc("POST /api/mark-read", s.markRead)
 	mux.HandleFunc("GET /api/media", s.media)
@@ -322,6 +322,16 @@ type editIn struct {
 	Text      string `json:"text"`
 }
 
+// forwardIn names the source chat, the destination and the messages
+// explicitly. There is deliberately no "current chat" here: the TUI has a
+// cursor to mean that and an API caller does not, so an implicit source
+// would be a different message depending on who asked.
+type forwardIn struct {
+	FromChatID int64   `json:"from_chat_id"`
+	ToChatID   int64   `json:"to_chat_id"`
+	MessageIDs []int64 `json:"message_ids"`
+}
+
 type markReadIn struct {
 	ChatID     int64   `json:"chat_id"`
 	MessageIDs []int64 `json:"message_ids"`
@@ -459,12 +469,7 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot determine working directory")
-		return
-	}
-	path, err := telegram.ResolveAllowedSendPath(in.Path, s.tg.FilesDir(), cwd)
+	path, err := telegram.ResolveAllowedSendPath(in.Path, s.tg.SendRoots()...)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -502,6 +507,32 @@ func (s *Server) edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, messageOut{Message: tgjson.ToMessageInfo(msg)})
+}
+
+func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
+	var in forwardIn
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if in.FromChatID == 0 {
+		writeError(w, http.StatusBadRequest, "missing required field: from_chat_id")
+		return
+	}
+	if in.ToChatID == 0 {
+		writeError(w, http.StatusBadRequest, "missing required field: to_chat_id")
+		return
+	}
+	if len(in.MessageIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "missing required field: message_ids")
+		return
+	}
+
+	msgs, err := s.tg.ForwardMessages(in.FromChatID, in.ToChatID, in.MessageIDs)
+	if err != nil {
+		writeTelegramError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toMessagesOut(msgs))
 }
 
 func (s *Server) markRead(w http.ResponseWriter, r *http.Request) {

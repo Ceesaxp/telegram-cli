@@ -508,6 +508,16 @@ func (c *Client) SearchChats(query string, limit int32) ([]*Chat, error) {
 
 	found := res
 
+	// Seed the peers manager, exactly as the dialog loader does for every
+	// page. The entities built below are only for rendering these rows;
+	// they teach the client nothing. Without this, a result the picker
+	// labels "not in your chats" has no cached access hash, so the moment
+	// anything tries to ACT on it — forward to it, open it — the peer
+	// cannot be resolved. The results looked fine and were unusable.
+	if err := c.peers.Apply(ctx, found.Users, found.Chats); err != nil {
+		return nil, fmt.Errorf("search chats: apply peers: %w", err)
+	}
+
 	entities := tg.Entities{
 		Users:    make(map[int64]*tg.User),
 		Chats:    make(map[int64]*tg.Chat),
