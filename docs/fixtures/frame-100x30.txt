@@ -29,6 +29,6 @@
                                       │ ▌                      expensive to reconstruct.            
                                       │                   ···  nadia is typing…                     
                                       │ reply ↳ nadia: Rebased onto main, CI is green … esc to drop 
- j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                   md 
- q quit  i compose  : command  r reply  y yank  e edit          idx 12 msgs · 9 buffers · 37 unread 
+ j/k move  l open  / filter           │ NORMAL › i to compose · : for commands                   md 
+ j/k move  l open  / filter  [/] folder  u unread               idx 12 msgs · 9 buffers · 37 unread 
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

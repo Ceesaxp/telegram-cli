@@ -17,7 +17,7 @@ import (
 // It is a copy of the app's InteractionMode rather than a shared type
 // because the app imports this package and not the other way round. The
 // mapping is one switch in internal/app with a test that walks every value,
-// which is a cheaper coupling than a third package existing to hold three
+// which is a cheaper coupling than a third package existing to hold four
 // constants.
 //
 // The badge REPORTS the mode; it never decides one. Decision 3: a badge that
@@ -26,11 +26,16 @@ import (
 type AppMode int
 
 const (
-	// AppNormal: printable keys navigate. Chat list or chat view focus, or
-	// a vi composer that has returned to its command state.
+	// AppNormal: printable keys navigate. A browsing panel, or an overlay
+	// that navigates rather than collects text.
 	AppNormal AppMode = iota
 	// AppInsert: printable keys type.
 	AppInsert
+	// AppVi: this composer is in vi editing and has returned to its
+	// command state, so the next letter runs a vi command on the draft
+	// (decision I-12). It shared NORMAL with the browsing panels for a
+	// release while sharing none of their keys.
+	AppVi
 	// AppCommand: the palette owns the keyboard.
 	AppCommand
 )
@@ -39,6 +44,10 @@ func (a AppMode) String() string {
 	switch a {
 	case AppInsert:
 		return "INSERT"
+	case AppVi:
+		// Short because the badge column is seven cells, and because the
+		// colour is a second channel rather than the only one.
+		return "VI"
 	case AppCommand:
 		return "COMMAND"
 	default:
@@ -46,10 +55,35 @@ func (a AppMode) String() string {
 	}
 }
 
+// badgeWidth is what the badge column is padded to.
+//
+// Six, not seven: NORMAL and INSERT are six cells and COMMAND is seven, so
+// six is the width the badge already had wherever it can change under the
+// reader's eyes. VI is two, and left unpadded it would pull the prompt two
+// cells left every time a vi user pressed Esc.
+//
+// Padding to seven instead would fix the column at COMMAND's width and shift
+// every existing frame by one cell — a geometry change, which the golden
+// fixtures exist to refuse (TUI 2.0 decision 11). Recorded as an amendment
+// to I-12 in docs/interaction-model.md.
+const badgeWidth = 6
+
+// badgeLabel is String() padded to the badge column, so the prompt after it
+// does not move as the mode changes.
+func (a AppMode) badgeLabel() string {
+	label := a.String()
+	for cell.Width(label) < badgeWidth {
+		label += " "
+	}
+	return label
+}
+
 func (a AppMode) colour(r theme.Roles) lipgloss.Color {
 	switch a {
 	case AppInsert:
 		return r.Green
+	case AppVi:
+		return r.Mauve
 	case AppCommand:
 		return r.Amber
 	default:
@@ -97,7 +131,7 @@ func (m Model) badge() AppMode {
 		return m.appMode
 	}
 	if m.editing == ModeVi && m.vi == viNormal {
-		return AppNormal
+		return AppVi
 	}
 	return AppInsert
 }
@@ -185,7 +219,7 @@ func (m Model) promptRow(width int) string {
 	r := m.roles
 
 	mode := m.badge()
-	badge := mode.String()
+	badge := mode.badgeLabel()
 	badgeStyle := lipgloss.NewStyle().Foreground(mode.colour(r)).Bold(true)
 
 	right := m.rightLabel()

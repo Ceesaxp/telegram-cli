@@ -9,101 +9,137 @@ import (
 
 // --- The rules, as a pure function ---------------------------------------
 
-// TestResolveMode covers the rules directly. The precedence between them is
-// the part worth pinning: an overlay owns the keyboard regardless of what is
-// focused behind it, so "confirm dialog over a focused composer" must be
-// NORMAL, not INSERT.
-func TestResolveMode(t *testing.T) {
+// TestSurfaceModes covers the projection from surface onto mode. The mode is
+// derived FROM the surface now (decision I-6): two derivations of one thing
+// is how the hint bar and the badge came to disagree about which keymap was
+// live.
+func TestSurfaceModes(t *testing.T) {
+	want := map[Surface]InteractionMode{
+		SurfaceChatList:       ModeNormal,
+		SurfaceChatView:       ModeNormal,
+		SurfaceComposerInsert: ModeInsert,
+		SurfaceComposerVi:     ModeVi,
+		SurfaceReactions:      ModeNormal,
+		SurfaceAttach:         ModeInsert,
+		SurfacePalette:        ModeCommand,
+		SurfaceMedia:          ModeNormal,
+		SurfaceHelp:           ModeNormal,
+		SurfaceDialog:         ModeNormal,
+		SurfaceSearch:         ModeInsert,
+		SurfaceContacts:       ModeNormal,
+		SurfaceAuth:           ModeInsert,
+		SurfaceLoading:        ModeNormal,
+	}
+	for _, s := range allSurfaces() {
+		w, ok := want[s]
+		if !ok {
+			t.Errorf("%v has no expected mode — decide one rather than "+
+				"letting it inherit NORMAL", s)
+			continue
+		}
+		if got := s.Mode(); got != w {
+			t.Errorf("%v.Mode() = %v, want %v", s, got, w)
+		}
+	}
+}
+
+// TestResolveSurfacePrecedence pins the rules that were resolveMode's, in
+// the vocabulary that replaced them. The precedence is the part worth
+// pinning: an overlay owns the keyboard regardless of what is focused behind
+// it, so "confirm dialog over a focused composer" is the dialog's surface,
+// not the composer's.
+func TestResolveSurfacePrecedence(t *testing.T) {
 	tests := []struct {
 		name string
-		in   modeInputs
-		want InteractionMode
+		in   surfaceInputs
+		want Surface
 	}{
 		{
 			name: "browsing the chat list",
-			in:   modeInputs{screen: ScreenMain, focus: PanelChatList},
-			want: ModeNormal,
+			in:   surfaceInputs{screen: ScreenMain, focus: PanelChatList},
+			want: SurfaceChatList,
 		},
 		{
 			name: "browsing the chat view",
-			in:   modeInputs{screen: ScreenMain, focus: PanelChatView},
-			want: ModeNormal,
+			in:   surfaceInputs{screen: ScreenMain, focus: PanelChatView},
+			want: SurfaceChatView,
 		},
 		{
 			name: "composer with an emacs editor types",
-			in:   modeInputs{screen: ScreenMain, focus: PanelComposer},
-			want: ModeInsert,
+			in:   surfaceInputs{screen: ScreenMain, focus: PanelComposer},
+			want: SurfaceComposerInsert,
 		},
 		{
 			name: "composer in vi command state does not type",
-			in: modeInputs{screen: ScreenMain, focus: PanelComposer,
+			in: surfaceInputs{screen: ScreenMain, focus: PanelComposer,
 				composerViNormal: true},
-			want: ModeNormal,
-		},
-		{
-			name: "search box collects text",
-			in: modeInputs{screen: ScreenMain, focus: PanelChatList,
-				textOverlayOpen: true},
-			want: ModeInsert,
-		},
-		{
-			name: "help card navigates",
-			in: modeInputs{screen: ScreenMain, focus: PanelChatList,
-				navOverlayOpen: true},
-			want: ModeNormal,
+			want: SurfaceComposerVi,
 		},
 		{
 			name: "the auth form is a text form",
-			in:   modeInputs{screen: ScreenAuth},
-			want: ModeInsert,
+			in:   surfaceInputs{screen: ScreenAuth},
+			want: SurfaceAuth,
 		},
 		{
 			name: "the loading screen accepts nothing",
-			in:   modeInputs{screen: ScreenLoading},
-			want: ModeNormal,
+			in:   surfaceInputs{screen: ScreenLoading},
+			want: SurfaceLoading,
 		},
 
 		// Precedence.
 		{
-			name: "a nav overlay outranks a focused composer",
-			in: modeInputs{screen: ScreenMain, focus: PanelComposer,
-				navOverlayOpen: true},
-			want: ModeNormal,
+			name: "the help card outranks a focused composer",
+			in: surfaceInputs{screen: ScreenMain, focus: PanelComposer,
+				helpOpen: true},
+			want: SurfaceHelp,
 		},
 		{
-			name: "a text overlay outranks a vi composer in command state",
-			in: modeInputs{screen: ScreenMain, focus: PanelComposer,
-				composerViNormal: true, textOverlayOpen: true},
-			want: ModeInsert,
+			name: "the search box outranks a vi composer in command state",
+			in: surfaceInputs{screen: ScreenMain, focus: PanelComposer,
+				composerViNormal: true, searchOpen: true},
+			want: SurfaceSearch,
 		},
 		{
-			name: "a text overlay outranks a nav overlay",
-			in: modeInputs{screen: ScreenMain, focus: PanelChatList,
-				textOverlayOpen: true, navOverlayOpen: true},
-			want: ModeInsert,
+			name: "the attach picker outranks the palette",
+			in: surfaceInputs{screen: ScreenMain, focus: PanelChatList,
+				attachOpen: true, paletteOpen: true},
+			want: SurfaceAttach,
 		},
 		{
-			name: "the palette outranks everything",
-			in: modeInputs{screen: ScreenMain, focus: PanelComposer,
-				paletteOpen: true, textOverlayOpen: true, navOverlayOpen: true},
-			want: ModeCommand,
+			name: "the reaction row outranks everything on the main screen",
+			in: surfaceInputs{screen: ScreenMain, focus: PanelComposer,
+				reactionsOpen: true, attachOpen: true, paletteOpen: true,
+				helpOpen: true, dialogOpen: true},
+			want: SurfaceReactions,
+		},
+		{
+			name: "the auth screen outranks any overlay left standing",
+			in: surfaceInputs{screen: ScreenAuth, focus: PanelComposer,
+				helpOpen: true, paletteOpen: true},
+			want: SurfaceAuth,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveMode(tc.in); got != tc.want {
-				t.Errorf("resolveMode(%+v) = %v, want %v", tc.in, got, tc.want)
+			if got := resolveSurface(tc.in); got != tc.want {
+				t.Errorf("resolveSurface(%+v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestResolveModeIsTotal checks every combination of the boolean inputs
-// against every screen and panel, asserting only that a mode comes back and
-// that it is one of the three. The resolver feeds a badge that is always on
-// screen, so "no answer" is not an option for any state the app can reach.
-func TestResolveModeIsTotal(t *testing.T) {
+// TestResolveSurfaceIsTotal checks every combination of the boolean inputs
+// against every screen and panel, asserting only that a surface comes back
+// and that it is one this build knows. The resolver feeds a badge and a hint
+// bar that are always on screen, so "no answer" is not an option for any
+// state the app can reach.
+func TestResolveSurfaceIsTotal(t *testing.T) {
+	known := map[Surface]bool{}
+	for _, s := range allSurfaces() {
+		known[s] = true
+	}
+
 	screens := []ScreenState{ScreenAuth, ScreenLoading, ScreenMain}
 	panels := []FocusPanel{PanelChatList, PanelChatView, PanelComposer,
 		PanelSearch, PanelContacts}
@@ -111,21 +147,22 @@ func TestResolveModeIsTotal(t *testing.T) {
 
 	for _, screen := range screens {
 		for _, panel := range panels {
-			for _, palette := range bools {
-				for _, text := range bools {
-					for _, nav := range bools {
-						for _, vi := range bools {
-							in := modeInputs{
-								screen: screen, focus: panel,
-								paletteOpen:      palette,
-								textOverlayOpen:  text,
-								navOverlayOpen:   nav,
-								composerViNormal: vi,
-							}
-							switch resolveMode(in) {
-							case ModeNormal, ModeInsert, ModeCommand:
-							default:
-								t.Fatalf("resolveMode(%+v) returned an unknown mode", in)
+			for _, reactions := range bools {
+				for _, attach := range bools {
+					for _, palette := range bools {
+						for _, help := range bools {
+							for _, vi := range bools {
+								in := surfaceInputs{
+									screen: screen, focus: panel,
+									reactionsOpen:    reactions,
+									attachOpen:       attach,
+									paletteOpen:      palette,
+									helpOpen:         help,
+									composerViNormal: vi,
+								}
+								if got := resolveSurface(in); !known[got] {
+									t.Fatalf("resolveSurface(%+v) returned an unknown surface", in)
+								}
 							}
 						}
 					}
@@ -197,8 +234,8 @@ func TestModeTracksTheViSubmode(t *testing.T) {
 	if m.focus != PanelComposer {
 		t.Fatalf("Escape moved focus to %v; it must stay on the composer", m.focus)
 	}
-	if got := m.Mode(); got != ModeNormal {
-		t.Errorf("vi composer in command state: Mode() = %v, want NORMAL", got)
+	if got := m.Mode(); got != ModeVi {
+		t.Errorf("vi composer in command state: Mode() = %v, want VI", got)
 	}
 }
 
@@ -301,8 +338,8 @@ func TestModeDoesNotChangeKeyRouting(t *testing.T) {
 	updated, _ := m.Update(decodeKey(t, "\x1b")) // vi insert -> vi command state
 	m = updated.(Model)
 
-	if got := m.Mode(); got != ModeNormal {
-		t.Fatalf("precondition: Mode() = %v, want NORMAL", got)
+	if got := m.Mode(); got != ModeVi {
+		t.Fatalf("precondition: Mode() = %v, want VI", got)
 	}
 	if m.focus != PanelComposer {
 		t.Fatalf("precondition: focus = %v, want the composer", m.focus)

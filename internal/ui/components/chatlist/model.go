@@ -10,6 +10,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/render"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
@@ -26,6 +27,11 @@ type Model struct {
 	store *store.Store
 	tg    *telegram.Client
 	roles theme.Roles
+
+	// footerHints is the last row's content, handed in by the host from the
+	// one hint registry. Held rather than written here: a literal cannot be
+	// wrong in a way anything can detect (decision I-6).
+	footerHints []hintbar.Hint
 
 	// draftChats is the set of chats with unsent work parked in the
 	// composer, projected in by the host. Read-only here.
@@ -266,6 +272,17 @@ type chatsLoadedMsg struct {
 }
 
 // SetSize sets the component dimensions.
+// SetFooterHints supplies the hints the footer draws. The app owns them:
+// they are the first few of the chat list's own set in the one hint registry
+// (decision I-6), so a rebound key shows correctly here and a key that is
+// not bound at all does not show at all.
+//
+// Held rather than derived because this package cannot see the resolved
+// bindings — it does not import config, and the app is what resolves them.
+func (m *Model) SetFooterHints(hints []hintbar.Hint) {
+	m.footerHints = hints
+}
+
 // SetDraftChats tells the list which chats hold unsent work, so their
 // preview row can say so. The composer owns the drafts; this is a projection
 // of them, refreshed by the host whenever they change.

@@ -21,6 +21,7 @@ func TestComposerModeIsExhaustive(t *testing.T) {
 	want := map[InteractionMode]composer.AppMode{
 		ModeNormal:  composer.AppNormal,
 		ModeInsert:  composer.AppInsert,
+		ModeVi:      composer.AppVi,
 		ModeCommand: composer.AppCommand,
 	}
 	for mode, expect := range want {

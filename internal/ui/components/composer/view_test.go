@@ -152,8 +152,8 @@ func TestBadgeReportsWhatTheNextKeyWillDo(t *testing.T) {
 		t.Errorf("vi insert badge = %v, want INSERT", got)
 	}
 	vi, _ = press(t, vi, "esc")
-	if got := vi.badge(); got != AppNormal {
-		t.Errorf("vi normal badge = %v, want NORMAL", got)
+	if got := vi.badge(); got != AppVi {
+		t.Errorf("vi command-state badge = %v, want VI", got)
 	}
 
 	// The palette outranks everything, including a focused composer: it owns

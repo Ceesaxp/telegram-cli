@@ -59,6 +59,6 @@
                                       │ ▌ 21:03           ivo  Good. I will write the incident note either way — cheap to have, expensive to reconstruct.                │                              
                                       │                   ···  nadia is typing…                                                                                          │                              
                                       │ reply ↳ nadia: Rebased onto main, CI is green now. 4412 ready for the second approval.                               esc to drop │                              
- j/k move  g/G ends  u unread         │ NORMAL › i to compose · : for commands                                                                                        md │                              
- q quit  i compose  : command  r reply  y yank  e edit  ? keymap                                                                                                    idx 12 msgs · 9 buffers · 37 unread 
+ j/k move  l open  / filter           │ NORMAL › i to compose · : for commands                                                                                        md │                              
+ j/k move  l open  / filter  [/] folder  u unread  i compose  q quit  ? keymap                                                                                      idx 12 msgs · 9 buffers · 37 unread 
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

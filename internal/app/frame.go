@@ -8,7 +8,6 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/render"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
-	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/topbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/frame"
 )
@@ -147,28 +146,39 @@ func (m *Model) refreshChrome() {
 
 	m.reactions.SetWidth(m.width)
 
+	// One resolution, one registry, every surface that draws a hint fed
+	// from it on the same tick (decision I-6). The chat list footer, the
+	// media overlay's row and the reaction row used to hold literals; a
+	// literal cannot be wrong in a way anything can detect, which is how
+	// "u unread" sat in the footer with nothing bound to u.
+	surface := m.surface()
 	m.hintBar.SetWidth(m.width)
-	m.hintBar.SetHints(m.hintsForMode())
+	m.hintBar.SetHints(m.hintsFor(surface))
 	m.hintBar.SetRight(m.hintBarCounters())
+	m.chatList.SetFooterHints(m.footerHints())
+	m.mediaView.SetHints(m.hintsFor(SurfaceMedia))
+	m.reactions.SetHints(m.hintsFor(SurfaceReactions))
 
-	// The badge and the hint bar read the same resolver, in the same place,
-	// on the same tick. Decision 3 requires the badge to describe key
-	// routing rather than alter it, and two surfaces describing it from one
-	// call is what makes disagreeing between them impossible.
-	m.composer.SetMode(composerMode(m.Mode()))
+	// The badge reads the same surface, in the same place, on the same
+	// tick. Decision 3 requires the badge to describe key routing rather
+	// than alter it, and one call answering for both is what makes
+	// disagreeing between them impossible.
+	m.composer.SetMode(composerMode(surface.Mode()))
 }
 
 // composerMode projects the app's interaction mode onto the composer's own
 // badge enum.
 //
 // Two enums rather than a shared type: the app imports the composer and not
-// the other way round, and a third package existing to hold three constants
+// the other way round, and a third package existing to hold four constants
 // would cost more than this switch. TestComposerModeIsExhaustive walks every
-// InteractionMode so a fourth one cannot land here as a silent NORMAL.
+// InteractionMode so a fifth one cannot land here as a silent NORMAL.
 func composerMode(mode InteractionMode) composer.AppMode {
 	switch mode {
 	case ModeInsert:
 		return composer.AppInsert
+	case ModeVi:
+		return composer.AppVi
 	case ModeCommand:
 		return composer.AppCommand
 	default:
@@ -188,40 +198,6 @@ func (m Model) topBarFolders() []topbar.Folder {
 		out = append(out, topbar.Folder{Name: n, Active: i == active})
 	}
 	return out
-}
-
-// hintsForMode returns the hint set for the current interaction mode.
-//
-// The set is ORDERED and the bar keeps the longest prefix that fits, so the
-// order here is a priority ranking, not a cosmetic choice: whatever is last
-// is what disappears first on a narrow terminal.
-func (m Model) hintsForMode() []hintbar.Hint {
-	switch m.Mode() {
-	case ModeInsert:
-		return []hintbar.Hint{
-			{Key: "enter", Label: "send"},
-			{Key: "esc", Label: "leave"},
-			{Key: "ctrl+j", Label: "newline"},
-			{Key: "ctrl+t", Label: "attach"},
-			{Key: "ctrl+o", Label: "editor"},
-		}
-	case ModeCommand:
-		return []hintbar.Hint{
-			{Key: "enter", Label: "run"},
-			{Key: "tab", Label: "complete"},
-			{Key: "esc", Label: "cancel"},
-		}
-	default:
-		return []hintbar.Hint{
-			{Key: m.keys.quitBrowsing, Label: "quit"},
-			{Key: "i", Label: "compose"},
-			{Key: ":", Label: "command"},
-			{Key: m.keys.reply, Label: "reply"},
-			{Key: "y", Label: "yank"},
-			{Key: m.keys.editMessage, Label: "edit"},
-			{Key: m.keys.help, Label: "keymap"},
-		}
-	}
 }
 
 // hintBarCounters is the right-hand group: how much there is, rather than

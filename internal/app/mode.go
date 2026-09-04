@@ -14,16 +14,23 @@ type InteractionMode int
 
 const (
 	// ModeNormal means printable keys act rather than type. It covers the
-	// browsing panels, the overlays that navigate rather than collect text,
-	// and — importantly — a vi composer that has returned to its command
-	// state. In that last case the composer still owns its vi commands; the
-	// badge is telling the truth when it says the next letter will not be
-	// inserted.
+	// browsing panels and the overlays that navigate rather than collect
+	// text.
 	ModeNormal InteractionMode = iota
 	// ModeInsert means printable keys are inserted as text: the composer
 	// with an editor that will accept them, a text-collecting overlay, or
 	// the auth form.
 	ModeInsert
+	// ModeVi means the composer is in vi editing and has returned to its
+	// command state: the next letter runs a vi command on the draft
+	// (decision I-12).
+	//
+	// It shared NORMAL with the browsing panels for a release, while
+	// sharing none of their keys: q, r, y, e and ? are all inert there,
+	// and i and h/l mean something else. A badge whose job is "what does
+	// the next key do" cannot honestly say NORMAL for two keymaps that
+	// agree on nothing.
+	ModeVi
 	// ModeCommand means the command palette owns input.
 	ModeCommand
 )
@@ -32,6 +39,8 @@ func (m InteractionMode) String() string {
 	switch m {
 	case ModeInsert:
 		return "INSERT"
+	case ModeVi:
+		return "VI"
 	case ModeCommand:
 		return "COMMAND"
 	default:
@@ -39,107 +48,18 @@ func (m InteractionMode) String() string {
 	}
 }
 
-// modeInputs is the complete set of state [resolveMode] reads. Gathering it
-// into a struct keeps the rules a pure function of explicit inputs, which is
-// what makes every combination testable without standing up a Model — and
-// what makes it obvious, when a new overlay is added, that its effect on the
-// mode has to be decided rather than inherited by accident.
-type modeInputs struct {
-	screen ScreenState
-	focus  FocusPanel
-
-	// paletteOpen is the command palette owning input. It outranks every
-	// other clause: while the palette is up, nothing behind it sees a key.
-	paletteOpen bool
-
-	// textOverlayOpen is an overlay that COLLECTS text — the search box, or
-	// a prompt dialog such as the attach-file path. Printables go into it.
-	textOverlayOpen bool
-
-	// navOverlayOpen is an overlay that owns the keyboard but navigates
-	// rather than collects: the help card, contacts, a confirm or alert
-	// dialog. Printables do not type.
-	navOverlayOpen bool
-
-	// composerViNormal is composer.IsViNormalMode(): vi editing is selected
-	// and the editor has returned to its command state.
-	composerViNormal bool
-}
-
-// resolveMode maps the app's state onto the mode the user is in.
-//
-// The clauses are precedence-ordered, and the order is the interesting part:
-// an overlay owns the keyboard regardless of which panel is focused behind
-// it, so overlays are consulted before focus. Getting that backwards would
-// report INSERT while a confirm dialog is up over the composer.
-func resolveMode(in modeInputs) InteractionMode {
-	switch {
-	case in.paletteOpen:
-		return ModeCommand
-
-	// Overlays outrank focus: whatever is behind them cannot see the key.
-	case in.textOverlayOpen:
-		return ModeInsert
-	case in.navOverlayOpen:
-		return ModeNormal
-
-	// The auth form is a text form; the loading screen accepts nothing.
-	case in.screen == ScreenAuth:
-		return ModeInsert
-	case in.screen != ScreenMain:
-		return ModeNormal
-
-	// Focus, finally. A composer in vi's command state is NORMAL: the next
-	// letter runs a vi command instead of being inserted, which is exactly
-	// what the badge promises to report.
-	case in.focus == PanelComposer:
-		if in.composerViNormal {
-			return ModeNormal
-		}
-		return ModeInsert
-
-	default:
-		return ModeNormal
-	}
-}
-
 // Mode reports the current interaction mode.
 //
-// This is the single source the mode badge, the context-sensitive hint bar,
-// and the palette's `:` routing must consult, so that all three agree with
-// what Update actually does with a keystroke.
+// This is the single source the mode badge, the hint bar and the palette's
+// `:` routing must consult, so that all three agree with what Update
+// actually does with a keystroke. It is derived from the surface (see
+// hints.go) rather than resolved a second time beside it: two derivations of
+// one thing is how the bar and the badge came to disagree about which keymap
+// was live.
 //
-// It is NOT a drop-in replacement for the existing focus checks in Update,
-// and retrofitting it onto them would change behaviour: ModeNormal includes a
-// vi composer in command state, so a guard written as "mode is NORMAL" would
-// let `?` open the help overlay while the composer holds a draft, where
-// today's "focus is not the composer" correctly does not. Decision 3 requires
-// the badge to describe the existing key routing, not alter it.
+// It is NOT a drop-in replacement for the focus checks in Update, and
+// retrofitting it onto them would change behaviour — see the `:` and
+// backtick gates, which consult it deliberately and differently.
 func (m Model) Mode() InteractionMode {
-	return resolveMode(m.modeInputs())
-}
-
-// modeInputs gathers the resolver's inputs from the live model. It is the
-// only place that knows which component answers which question, so a new
-// overlay is wired up here and nowhere else.
-func (m Model) modeInputs() modeInputs {
-	dialogOpen := m.dialog != nil && m.dialog.IsVisible()
-
-	return modeInputs{
-		screen: m.screen,
-		focus:  m.focus,
-
-		paletteOpen: m.palette.IsVisible(),
-
-		// The attach picker is INSERT, not COMMAND: its printables build a
-		// path, which is what this slot has always meant. It took the
-		// prompt dialog's place here when the picker replaced it, and
-		// nothing else about the resolver moved.
-		textOverlayOpen: m.search.IsVisible() || m.attach.IsVisible(),
-		navOverlayOpen: m.help.IsVisible() ||
-			m.contacts.IsVisible() ||
-			dialogOpen,
-
-		composerViNormal: m.composer.IsViNormalMode(),
-	}
+	return m.surface().Mode()
 }

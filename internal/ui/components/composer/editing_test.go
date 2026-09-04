@@ -714,14 +714,16 @@ func TestViHintShowsMode(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "INSERT") {
 		t.Errorf("insert-mode badge missing:\n%s", view)
 	}
+	// Vi's command state has its own badge (decision I-12): it shared
+	// NORMAL with the browsing panels while sharing none of their keys.
 	m, _ = send(t, m, "\x1b")
-	if view := m.View(); !strings.Contains(view, "NORMAL") {
-		t.Errorf("normal-mode badge missing:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "VI") {
+		t.Errorf("vi command-state badge missing:\n%s", view)
 	}
 	// It survives a notice, which takes the rest of the row.
 	m.SetNotice("⚠ something happened")
 	view := m.View()
-	if !strings.Contains(view, "NORMAL") || !strings.Contains(view, "something happened") {
+	if !strings.Contains(view, "VI") || !strings.Contains(view, "something happened") {
 		t.Errorf("notice hid the mode badge:\n%s", view)
 	}
 	// A focused emacs composer inserts, and says so.

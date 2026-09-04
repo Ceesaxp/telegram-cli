@@ -184,12 +184,12 @@ func TestYankOutcomesAreAllReported(t *testing.T) {
 func TestYankIsAdvertisedInTheHintBar(t *testing.T) {
 	m := framedModel(t, 200, 40)
 	var found bool
-	for _, h := range m.hintsForMode() {
+	for _, h := range m.hintsFor(SurfaceChatView) {
 		if h.Key == "y" && h.Label == "yank" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("the NORMAL hint set does not offer y yank")
+		t.Error("the chat view hint set does not offer y yank")
 	}
 }

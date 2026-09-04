@@ -1477,18 +1477,23 @@ func TestQuitFromBrowsingPanels(t *testing.T) {
 // The guarantee was written against the status bar's key strip. The frame
 // replaced that bar, and the hint bar inherited both the job and this test.
 func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
-	labels := func(m Model) map[string]string {
+	labels := func(m Model, s Surface) map[string]string {
 		out := map[string]string{}
-		for _, h := range m.hintsForMode() {
+		for _, h := range m.hintsFor(s) {
 			out[h.Label] = h.Key
 		}
 		return out
 	}
 
 	m := mainModel(t, PanelChatList)
-	for label, want := range map[string]string{"keymap": "?", "quit": "q", "reply": "r", "edit": "e"} {
-		if got := labels(m)[label]; got != want {
-			t.Errorf("default hint for %q is %q, want %q", label, got, want)
+	for label, want := range map[string]string{"keymap": "?", "quit": "q", "compose": "i", "unread": "u"} {
+		if got := labels(m, SurfaceChatList)[label]; got != want {
+			t.Errorf("default chat list hint for %q is %q, want %q", label, got, want)
+		}
+	}
+	for label, want := range map[string]string{"reply": "r", "edit": "e", "find": "/"} {
+		if got := labels(m, SurfaceChatView)[label]; got != want {
+			t.Errorf("default chat view hint for %q is %q, want %q", label, got, want)
 		}
 	}
 
@@ -1496,18 +1501,37 @@ func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
 	cfg.Keys.Help = "f12"
 	cfg.Keys.QuitBrowsing = "ctrl+x"
 	cfg.Keys.Reply = "ctrl+r"
-	rebound := labels(New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg)))
-	for label, want := range map[string]string{"keymap": "f12", "quit": "ctrl+x", "reply": "ctrl+r"} {
-		if got := rebound[label]; got != want {
-			t.Errorf("rebound hint for %q is %q, want %q", label, got, want)
+	cfg.Keys.NextUnread = "f7"
+	rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	for label, want := range map[string]string{"keymap": "f12", "quit": "ctrl+x", "unread": "f7"} {
+		if got := labels(rebound, SurfaceChatList)[label]; got != want {
+			t.Errorf("rebound chat list hint for %q is %q, want %q", label, got, want)
 		}
+	}
+	if got := labels(rebound, SurfaceChatView)["reply"]; got != "ctrl+r" {
+		t.Errorf("rebound reply hint is %q, want ctrl+r", got)
 	}
 
 	// The bar is an abbreviation that points at the help card, not a second
 	// copy of it: it drops hints from the right when they do not fit, so a
 	// long list means the ones that matter go missing on a narrow terminal.
-	if got := len(m.hintsForMode()); got > 8 {
-		t.Errorf("%d hints is too many to survive a narrow terminal", got)
+	for _, s := range allSurfaces() {
+		if got := len(m.hintsFor(s)); got > 9 {
+			t.Errorf("%v has %d hints, too many to survive a narrow terminal", s, got)
+		}
+	}
+}
+
+// allSurfaces is every surface the resolver can return, for the tests that
+// have to walk all of them. A new surface added to the enum and not here
+// fails TestEverySurfaceIsReachable rather than being quietly untested.
+func allSurfaces() []Surface {
+	return []Surface{
+		SurfaceChatList, SurfaceChatView,
+		SurfaceComposerInsert, SurfaceComposerVi,
+		SurfaceReactions, SurfaceAttach, SurfacePalette, SurfaceMedia,
+		SurfaceHelp, SurfaceDialog, SurfaceSearch, SurfaceContacts,
+		SurfaceAuth, SurfaceLoading,
 	}
 }
 
@@ -1632,120 +1656,163 @@ func flattenCmd(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-// TestHelpLineComesFromResolvedKeys covers the fourth copy of the keymap —
-// the bar drawn under the status bar on every frame. It was the last one
-// still hardcoded, and it was advertising "h/l:folder" after h/l stopped
-// touching the folders.
-//
-// It is also per-panel now. One line for all five focus states named keys
-// that did nothing in four of them: n/N outside the chat view, "find" for
-// a "/" that filters, Esc:back from the panel that IS back.
-func TestHelpLineComesFromResolvedKeys(t *testing.T) {
-	line := func(t *testing.T, panel FocusPanel, name string) string {
-		t.Helper()
-		m := mainModel(t, panel)
-		return m.helpLine(name)
+// TestEverySurfaceIsReachable pins the resolver against the enum: a surface
+// nothing can produce is a hint set nobody will ever see, and a surface the
+// resolver returns that allSurfaces does not list is one the drift tests
+// below silently skip.
+func TestEverySurfaceIsReachable(t *testing.T) {
+	reach := map[Surface]surfaceInputs{
+		SurfaceChatList:       {screen: ScreenMain, focus: PanelChatList},
+		SurfaceChatView:       {screen: ScreenMain, focus: PanelChatView},
+		SurfaceComposerInsert: {screen: ScreenMain, focus: PanelComposer},
+		SurfaceComposerVi: {screen: ScreenMain, focus: PanelComposer,
+			composerViNormal: true},
+		SurfaceReactions: {screen: ScreenMain, reactionsOpen: true},
+		SurfaceAttach:    {screen: ScreenMain, attachOpen: true},
+		SurfacePalette:   {screen: ScreenMain, paletteOpen: true},
+		SurfaceMedia:     {screen: ScreenMain, mediaOpen: true},
+		SurfaceHelp:      {screen: ScreenMain, helpOpen: true},
+		SurfaceDialog:    {screen: ScreenMain, dialogOpen: true},
+		SurfaceSearch:    {screen: ScreenMain, searchOpen: true},
+		SurfaceContacts:  {screen: ScreenMain, contactsOpen: true},
+		SurfaceAuth:      {screen: ScreenAuth},
+		SurfaceLoading:   {screen: ScreenLoading},
 	}
 
-	t.Run("chat list", func(t *testing.T) {
-		got := line(t, PanelChatList, "CHATS")
-		for _, want := range []string{"?:help", "l:messages", "/:filter",
-			"q:quit", "CHATS"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("chat list line %q omits %q", got, want)
-			}
+	for _, s := range allSurfaces() {
+		in, ok := reach[s]
+		if !ok {
+			t.Errorf("%v has no state that produces it", s)
+			continue
 		}
-		// The three the single shared line used to lie about here.
-		for _, gone := range []string{"n/N", ":find", "Esc:back", "folder"} {
-			if strings.Contains(got, gone) {
-				t.Errorf("chat list line %q advertises %q, which does "+
-					"nothing from this panel", got, gone)
-			}
+		if got := resolveSurface(in); got != s {
+			t.Errorf("%+v resolved to %v, want %v", in, got, s)
+		}
+	}
+	if len(reach) != len(allSurfaces()) {
+		t.Errorf("%d surfaces listed, %d reachable", len(allSurfaces()), len(reach))
+	}
+}
+
+// TestOverlaysOutrankFocus: an overlay owns the keyboard regardless of which
+// panel is focused behind it. Getting this backwards would draw the
+// composer's hints while a confirm dialog sat over it — which is one of the
+// four places the mode-keyed bar named inert keys (decision I-6).
+func TestOverlaysOutrankFocus(t *testing.T) {
+	base := surfaceInputs{screen: ScreenMain, focus: PanelComposer}
+	cases := map[Surface]func(*surfaceInputs){
+		SurfaceReactions: func(in *surfaceInputs) { in.reactionsOpen = true },
+		SurfaceAttach:    func(in *surfaceInputs) { in.attachOpen = true },
+		SurfacePalette:   func(in *surfaceInputs) { in.paletteOpen = true },
+		SurfaceMedia:     func(in *surfaceInputs) { in.mediaOpen = true },
+		SurfaceHelp:      func(in *surfaceInputs) { in.helpOpen = true },
+		SurfaceDialog:    func(in *surfaceInputs) { in.dialogOpen = true },
+		SurfaceSearch:    func(in *surfaceInputs) { in.searchOpen = true },
+		SurfaceContacts:  func(in *surfaceInputs) { in.contactsOpen = true },
+	}
+	for want, open := range cases {
+		in := base
+		open(&in)
+		if got := resolveSurface(in); got != want {
+			t.Errorf("%v over a focused composer resolved to %v", want, got)
+		}
+	}
+}
+
+// TestTheHintBarFollowsTheSurface is decision I-6 end to end. The bar was
+// keyed by MODE, so the chat-view set showed in the chat list, under
+// contacts, under a confirm dialog and in a vi composer — four surfaces that
+// share ModeNormal and agree on almost no keys.
+func TestTheHintBarFollowsTheSurface(t *testing.T) {
+	hints := func(m Model) string {
+		m.refreshChrome()
+		return ansi.Strip(m.hintBar.View())
+	}
+
+	t.Run("the chat list gets its own set, not the chat view's", func(t *testing.T) {
+		got := hints(sizedMainModel(t, PanelChatList))
+		if !strings.Contains(got, "filter") {
+			t.Errorf("the chat list bar omits its filter hint: %q", got)
+		}
+		if strings.Contains(got, "reply") || strings.Contains(got, "yank") {
+			t.Errorf("the chat list bar advertises chat view keys: %q", got)
 		}
 	})
 
-	t.Run("chat view", func(t *testing.T) {
-		got := line(t, PanelChatView, "MESSAGES")
-		for _, want := range []string{"?:help", "h:chats", "/:find", "n/N:match",
-			"Esc:back", "q:quit", "MESSAGES"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("chat view line %q omits %q", got, want)
-			}
+	t.Run("contacts gets the contacts set", func(t *testing.T) {
+		m := update(t, sizedMainModel(t, PanelChatList), "c")
+		if !m.contacts.IsVisible() {
+			t.Fatal("precondition: contacts did not open")
 		}
-		if strings.Contains(got, ":filter") {
-			t.Errorf("chat view line %q calls \"/\" a filter; it is find here", got)
+		got := hints(m)
+		if !strings.Contains(got, "open") || !strings.Contains(got, "close") {
+			t.Errorf("the contacts bar is not the contacts set: %q", got)
 		}
-	})
-
-	// The composer's line is deliberately different: none of the browsing
-	// keys are live there.
-	t.Run("composer", func(t *testing.T) {
-		got := line(t, PanelComposer, "COMPOSE")
-		if !strings.Contains(got, "Enter:send") || !strings.Contains(got, "COMPOSE") {
-			t.Errorf("composer line %q is not the composer's", got)
-		}
-		for _, gone := range []string{"h:", "l:", "q:quit", "n/N"} {
-			if strings.Contains(got, gone) {
-				t.Errorf("composer line %q advertises the browsing key %q", got, gone)
-			}
+		if strings.Contains(got, "quit") || strings.Contains(got, "reply") {
+			t.Errorf("the contacts bar advertises keys contacts does not have: %q", got)
 		}
 	})
 
-	// The overlays own the keyboard; the panel keys behind them are not
-	// reachable until they close.
-	t.Run("overlays", func(t *testing.T) {
-		for _, tc := range []struct {
-			panel FocusPanel
-			name  string
-			want  string
-		}{
-			{PanelSearch, "SEARCH", "Esc:close"},
-			{PanelContacts, "CONTACTS", "Esc:close"},
-		} {
-			got := line(t, tc.panel, tc.name)
-			if !strings.Contains(got, tc.want) {
-				t.Errorf("%s line %q omits %q", tc.name, got, tc.want)
-			}
-			for _, gone := range []string{"i or c:compose", "n/N", "Tab:switch"} {
-				if strings.Contains(got, gone) {
-					t.Errorf("%s line %q advertises %q, inert while the "+
-						"overlay is up", tc.name, got, gone)
-				}
-			}
+	t.Run("a dialog gets the dialog set", func(t *testing.T) {
+		m := sizedMainModel(t, PanelChatView)
+		d := dialog.NewConfirm(m.roles, "quit", "Quit", "Discard the draft?")
+		m.dialog = &d
+		got := hints(m)
+		if !strings.Contains(got, "answer") || !strings.Contains(got, "accept") {
+			t.Errorf("the dialog bar is not the dialog set: %q", got)
+		}
+		if strings.Contains(got, "reply") {
+			t.Errorf("the dialog bar advertises chat view keys: %q", got)
 		}
 	})
 
-	t.Run("follows a rebind", func(t *testing.T) {
-		cfg := &config.Config{}
-		cfg.Keys.Help = "f12"
-		cfg.Keys.QuitBrowsing = "ctrl+x"
-		rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
-		rebound.setFocus(PanelChatList)
-		got := rebound.helpLine("CHATS")
-		for _, want := range []string{"f12:help", "ctrl+x:quit"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("rebound line %q omits %q", got, want)
-			}
+	t.Run("a vi composer in command state gets the VI set", func(t *testing.T) {
+		m := openChatModel(t, PanelComposer)
+		m.width, m.height = 100, 40
+		m.updateLayout()
+		m.composer.SetEditingMode(composer.ModeVi)
+		m = update(t, m, "\x1b")
+		if !m.composer.IsViNormalMode() {
+			t.Fatal("precondition: esc did not reach vi normal mode")
 		}
-		for _, gone := range []string{"?:help", "q:quit"} {
-			if strings.Contains(got, gone) {
-				t.Errorf("rebound line %q still advertises %q", got, gone)
-			}
+		got := hints(m)
+		if !strings.Contains(got, "insert") || !strings.Contains(got, "command") {
+			t.Errorf("the vi bar is not the VI set: %q", got)
+		}
+		if strings.Contains(got, "newline") {
+			t.Errorf("the vi bar advertises ctrl+j, which inserts nothing there: %q", got)
 		}
 	})
+}
 
-	// A binding containing a percent sign used to be read as a format verb,
-	// because the line was a format string handed to Sprintf.
-	t.Run("a percent binding is not a format verb", func(t *testing.T) {
-		pct := &config.Config{}
-		pct.Keys.Help = "%"
-		p := New(pct, nil, store.NewStore(), telegram.NewTUIAuthorizer(pct))
-		p.setFocus(PanelChatList)
-		if got := p.helpLine("CHATS"); !strings.Contains(got, "%:help") ||
-			strings.Contains(got, "%!") {
-			t.Errorf("help line mangled a %% binding: %q", got)
+// TestTheChatListFooterIsDerived: the footer is where I-6 was found. It
+// advertised "u unread" for a release with nothing bound to u, because a
+// literal cannot be wrong in a way anything can detect.
+func TestTheChatListFooterIsDerived(t *testing.T) {
+	m := sizedMainModel(t, PanelChatList)
+	m.chatList.MarkLoadedForTest() // the spinner owns the column until then
+	m.refreshChrome()
+	footer := ansi.Strip(m.chatList.View())
+
+	for _, want := range []string{"j/k", "move"} {
+		if !strings.Contains(footer, want) {
+			t.Errorf("the footer omits %q:\n%s", want, footer)
 		}
-	})
+	}
+
+	// Rebinding a key the footer names changes the footer.
+	cfg := &config.Config{}
+	cfg.Keys.Search = "f8"
+	rebound := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	rebound.screen = ScreenMain
+	rebound.width, rebound.height = 100, 40
+	rebound.updateLayout()
+	rebound.setFocus(PanelChatList)
+	rebound.chatList.MarkLoadedForTest()
+	rebound.refreshChrome()
+	if got := ansi.Strip(rebound.chatList.View()); !strings.Contains(got, "f8") {
+		t.Errorf("the footer did not follow a rebound filter key:\n%s", got)
+	}
 }
 
 // TestReservedKeysStopChatViewStealingAppBindings is the end-to-end proof
@@ -2895,5 +2962,93 @@ func TestTheShippedConfigResolvesToTheShippedKeymap(t *testing.T) {
 	}
 	if cursorOnly.chatList.CursorChatId() == first {
 		t.Error("j did not move the chat list's cursor")
+	}
+}
+
+// --- decision I-12: the fourth badge -------------------------------------
+
+// TestViComposerShowsItsOwnBadge is I-12 end to end. The composer's command
+// state shared NORMAL with the browsing panels while sharing none of their
+// keys: q, r, y, e and ? are all inert there, and i and h/l mean something
+// else. A badge whose job is "what does the next key do" cannot honestly say
+// NORMAL for two keymaps that agree on nothing.
+func TestViComposerShowsItsOwnBadge(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m.width, m.height = 100, 40
+	m.updateLayout()
+	m.composer.SetEditingMode(composer.ModeVi)
+	m.refreshChrome()
+
+	if got := ansi.Strip(m.composer.View()); !strings.Contains(got, "INSERT") {
+		t.Fatalf("a vi composer does not start in INSERT:\n%s", got)
+	}
+
+	m = update(t, m, "\x1b")
+	m.refreshChrome()
+	if got := m.Mode(); got != ModeVi {
+		t.Fatalf("Mode() = %v after esc, want VI", got)
+	}
+	view := ansi.Strip(m.composer.View())
+	if !strings.Contains(view, "VI") {
+		t.Errorf("the badge does not read VI:\n%s", view)
+	}
+	if strings.Contains(view, "NORMAL") {
+		t.Errorf("the badge still reads NORMAL in vi's command state:\n%s", view)
+	}
+
+	// `:` opens the palette from VI — vim's own muscle memory (I-12).
+	if got := update(t, m, ":"); !got.palette.IsVisible() {
+		t.Error("`:` did not open the palette from a vi composer")
+	}
+	// `?` does not open help there: the composer owns printables, and the
+	// badge describes key routing rather than changing it.
+	if got := update(t, m, "?"); got.help.IsVisible() {
+		t.Error("`?` opened the help card from a vi composer")
+	}
+}
+
+// TestAnEmacsComposerNeverShowsVI: the badge is the composer's own state,
+// not a label the host can put on any composer.
+func TestAnEmacsComposerNeverShowsVI(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m.width, m.height = 100, 40
+	m.updateLayout()
+	m.composer.SetEditingMode(composer.ModeEmacs)
+
+	for _, seq := range []string{"\x1b", "\x1b"} {
+		m = update(t, m, seq)
+		m.refreshChrome()
+		if got := ansi.Strip(m.composer.View()); strings.Contains(got, "VI") {
+			t.Fatalf("an emacs composer reported VI:\n%s", got)
+		}
+	}
+}
+
+// TestTheBadgeColumnDoesNotMove: VI is two cells and INSERT is six, and the
+// two alternate under the reader's eyes every time a vi user presses Esc.
+// An unpadded badge would drag the prompt after it four cells left.
+func TestTheBadgeColumnDoesNotMove(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m.width, m.height = 100, 40
+	m.updateLayout()
+	m.composer.SetEditingMode(composer.ModeVi)
+	m.refreshChrome()
+
+	promptColumn := func(m Model) int {
+		t.Helper()
+		row := ansi.Strip(strings.Split(m.composer.View(), "\n")[0])
+		return strings.Index(row, "›")
+	}
+
+	insert := promptColumn(m)
+	if insert < 0 {
+		t.Fatal("no prompt glyph on the composer row")
+	}
+
+	m = update(t, m, "\x1b")
+	m.refreshChrome()
+	if got := promptColumn(m); got != insert {
+		t.Errorf("the prompt moved from column %d to %d when the badge "+
+			"changed to VI", insert, got)
 	}
 }
