@@ -3364,3 +3364,84 @@ func TestTheContactsColumnDrawsTheChatListsGrid(t *testing.T) {
 		t.Error("the overlay still draws its old bold heading")
 	}
 }
+
+// TestASlashCanBeTheFirstCharacterOfAFilter covers the path the running
+// client actually takes, which no component test could: Update matches
+// keys.search, opens the filter and RETURNS, so the component never sees
+// the key that opened it. A latch inside OpenFilter was therefore still
+// armed when the user's own slash arrived, and ate it.
+//
+// Both filters, because both are opened the same way.
+func TestASlashCanBeTheFirstCharacterOfAFilter(t *testing.T) {
+	t.Run("contacts", func(t *testing.T) {
+		m := contactsOpen(t)
+		m = update(t, m, "/") // opens the filter; the key is consumed
+		m = update(t, m, "/") // the user's own, and a literal
+		if got := m.contacts.FilterQuery(); got != "/" {
+			t.Errorf("query = %q, want the typed slash", got)
+		}
+	})
+
+	t.Run("chat list", func(t *testing.T) {
+		m := sizedMainModel(t, PanelChatList)
+		m.chatList.MarkLoadedForTest()
+		m = update(t, m, "/")
+		if !m.chatList.FilterActive() {
+			t.Fatal("/ did not open the chat list filter")
+		}
+		m = update(t, m, "/")
+		if got := m.chatList.FilterQuery(); got != "/" {
+			t.Errorf("query = %q, want the typed slash", got)
+		}
+	})
+}
+
+// TestAClickOnBlankSpaceSelectsNothing. A list whose height is not a whole
+// number of rows leaves a part-row at the foot, and a list with more items
+// than fit has a REAL item at the index that row maps to — one scrolled
+// below the fold. Clicking the blank strip under the last visible row
+// therefore selected something that was not on screen; in the chat list it
+// opened a conversation the reader could not see.
+func TestAClickOnBlankSpaceSelectsNothing(t *testing.T) {
+	t.Run("contacts", func(t *testing.T) {
+		m := contactsOpen(t)
+		users := make([]*telegram.User, 0, 11)
+		for i := 1; i <= 11; i++ {
+			users = append(users, &telegram.User{
+				ID: int64(i), FirstName: "Person", LastName: string(rune('A' + i - 1)),
+			})
+		}
+		m.contacts.SetContactsForTest(users)
+		// 21 list rows at two lines per contact: ten are drawn, and row 20
+		// is the blank half-row under them.
+		m.contacts.SetSize(38, 22)
+
+		if id, ok := m.contacts.ClickAt(1 + 20); ok {
+			t.Errorf("a click on the blank half-row selected contact %d", id)
+		}
+		// The row above it is a real contact, so the guard is not simply
+		// refusing everything.
+		if _, ok := m.contacts.ClickAt(1 + 19); !ok {
+			t.Error("a click on the last drawn contact selected nothing")
+		}
+	})
+
+	t.Run("chat list", func(t *testing.T) {
+		m := sizedMainModel(t, PanelChatList)
+		for i := range 8 {
+			m.store.Chats.Set(&telegram.Chat{
+				ID: int64(100 + i), Title: "Chat", Type: telegram.ChatTypePrivate,
+			})
+		}
+		m.chatList.MarkLoadedForTest()
+		_ = m.chatList.View()
+		m.chatList.SetSize(38, 8) // 7 list rows: three chats, then a blank half
+
+		if id, ok := m.chatList.ClickAt(1 + 6); ok {
+			t.Errorf("a click on the blank half-row opened chat %d", id)
+		}
+		if _, ok := m.chatList.ClickAt(1 + 5); !ok {
+			t.Error("a click on the last drawn chat selected nothing")
+		}
+	})
+}

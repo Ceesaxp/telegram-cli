@@ -39,10 +39,9 @@ type Model struct {
 	// whether the input is open and consuming keys, filter is what is
 	// applied. They are separate because `enter` closes the input while
 	// KEEPING the filter, which is a normal browsing state.
-	filtering        bool
-	filterJustOpened bool
-	filter           string
-	filterInput      widgets.TextArea
+	filtering   bool
+	filter      string
+	filterInput widgets.TextArea
 }
 
 // New creates a new contacts model.
@@ -146,13 +145,13 @@ func (m Model) IsVisible() bool {
 
 // OpenFilter opens the filter input over the contact list.
 //
-// Idempotent, and it latches the key that opened it: the app binds "/" and
-// calls this, and the same press is then re-delivered to Update on its way
-// to the focused panel. Without the latch the slash would appear in the
-// query it just opened.
+// The caller has consumed the key that asked for it: internal/app matches
+// keys.search and returns, so this component never sees that press. The
+// next key it does see is the first character of the query, and a "/" among
+// them is a literal — a swallow here would make a query starting with one
+// impossible to type.
 func (m *Model) OpenFilter() {
 	m.filtering = true
-	m.filterJustOpened = true
 	m.filterInput.Value = m.filter
 	m.filterInput.Cursor = m.filterInput.Len()
 	m.filterInput.Focused = true
@@ -178,7 +177,6 @@ func (m *Model) ClearFilter() {
 // closeFilterInput closes the input without touching the applied filter.
 func (m *Model) closeFilterInput() {
 	m.filtering = false
-	m.filterJustOpened = false
 	m.filterInput.Focused = false
 }
 
@@ -187,11 +185,6 @@ func (m *Model) closeFilterInput() {
 // contact while the user is typing a name that contains them, which is the
 // whole point of an explicit input mode.
 func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	// Swallow a re-delivery of the key that opened the input. Any other
-	// key clears the latch, so a query can still contain a literal "/".
-	justOpened := m.filterJustOpened
-	m.filterJustOpened = false
-
 	switch msg.String() {
 	case "esc":
 		m.ClearFilter()
@@ -199,10 +192,6 @@ func (m Model) updateFilterKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "enter":
 		m.closeFilterInput()
 		return m, nil
-	case "/":
-		if justOpened && m.filterInput.Len() == 0 {
-			return m, nil
-		}
 	}
 
 	before := m.filterInput.Value

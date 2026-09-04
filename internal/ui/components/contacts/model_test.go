@@ -237,19 +237,24 @@ func TestTheFilterOwnsTheKeyboard(t *testing.T) {
 	}
 }
 
-// TestTheSlashThatOpensTheFilterIsNotTyped, or the query starts with the key
-// that asked for it.
-func TestTheSlashThatOpensTheFilterIsNotTyped(t *testing.T) {
+// TestEveryKeyAfterOpenFilterIsQueryText, the first one included.
+//
+// internal/app matches keys.search, calls OpenFilter and RETURNS — this
+// component never sees the key that opened it. So there is nothing to
+// swallow, and swallowing anyway is what made a query starting with "/"
+// impossible to type: the latch was still armed when the user's own slash
+// arrived. There is no self-binding here to need one.
+func TestEveryKeyAfterOpenFilterIsQueryText(t *testing.T) {
 	m := loaded(t)
 	m.OpenFilter()
+
 	m = press(m, "/")
-	if m.filterInput.Value != "" {
-		t.Errorf("the opening slash landed in the query: %q", m.filterInput.Value)
+	if m.filterInput.Value != "/" {
+		t.Errorf("the first typed slash was swallowed: %q", m.filterInput.Value)
 	}
-	// But a later one is a literal, so a username containing it can be typed.
 	m = typeIn(m, "a/b")
-	if m.filterInput.Value != "a/b" {
-		t.Errorf("query = %q, want a literal slash to survive", m.filterInput.Value)
+	if m.filterInput.Value != "/a/b" {
+		t.Errorf("query = %q, want every slash to survive", m.filterInput.Value)
 	}
 }
 
