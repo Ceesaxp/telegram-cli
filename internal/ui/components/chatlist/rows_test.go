@@ -6,7 +6,6 @@ import (
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
-	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/x/ansi"
@@ -214,51 +213,27 @@ func TestFilterHeaderIsExactlyWide(t *testing.T) {
 	}
 }
 
-func TestFooterIsExactlyWide(t *testing.T) {
+// TestTheColumnIsExactlyWide, header and rows alike: every line this panel
+// emits is cut to the column, or the frame beside it tears.
+func TestTheColumnIsExactlyWide(t *testing.T) {
+	m := newTestModel()
 	for _, width := range []int{20, 38, 60} {
-		if got := cell.Width(rowModel().renderListFooter(width)); got != width {
-			t.Errorf("width %d: footer is %d cells", width, got)
+		if got := cell.Width(m.renderFilterHeader(width)); got != width {
+			t.Errorf("width %d: filter header is %d cells", width, got)
 		}
 	}
 }
 
-// TestFooterOffersTheWayOutOfAFilter: a user who cannot see how to clear a
-// filter is left staring at a partial list wondering where their chats went.
-func TestFooterOffersTheWayOutOfAFilter(t *testing.T) {
-	m := rowModel()
-	m.filter = "al"
-	if got := ansi.Strip(m.renderListFooter(38)); !strings.Contains(got, "esc") {
-		t.Errorf("footer with a filter applied = %q, want it to name esc", got)
-	}
-
-	// With no filter the row is whatever the host handed in — the panel
-	// does not choose it any more (decision I-6), which is what stopped it
-	// advertising "u unread" with nothing bound to u.
-	m.filter = ""
-	m.SetFooterHints([]hintbar.Hint{{Key: "j/k", Label: "move"}})
-	if got := ansi.Strip(m.renderListFooter(38)); !strings.Contains(got, "j/k") {
-		t.Errorf("footer with no filter = %q, want the hints it was given", got)
-	}
-}
-
-// TestFooterDrawsOnlyWhatItIsGiven is the other half of I-6: with no hints
-// handed in there is nothing to draw, rather than a literal that nothing can
-// tell is wrong.
-func TestFooterDrawsOnlyWhatItIsGiven(t *testing.T) {
-	m := rowModel()
-	if got := strings.TrimSpace(ansi.Strip(m.renderListFooter(38))); got != "" {
-		t.Errorf("an unfed footer drew %q", got)
-	}
-
-	m.SetFooterHints([]hintbar.Hint{
-		{Key: "f8", Label: "filter"},
-		{Key: "Q", Label: "quit"},
-	})
-	got := ansi.Strip(m.renderListFooter(38))
-	for _, want := range []string{"f8", "filter", "Q", "quit"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("footer %q omits %q", got, want)
-		}
+// TestTheListKeepsTheRowTheFooterHadIsAboutHeight, not about hints: the
+// motion row under the list is gone (the frame's hint bar is keyed by the
+// live surface and said the same thing, or worse, the wrong thing), so the
+// budget it took goes back to the chats.
+func TestTheListKeepsTheRowTheFooterHad(t *testing.T) {
+	m := newTestModel()
+	m.SetSize(38, 12)
+	if got, want := m.list.Height, 12-1; got != want {
+		t.Errorf("list height = %d, want %d — the column's only chrome row "+
+			"is the filter header", got, want)
 	}
 }
 

@@ -54,7 +54,7 @@ your terminal. It speaks MTProto directly through [gotd/td](https://github.com/g
    thanks, that unblocked me  │ ▌                  reconstruct.
                               │               ···  nadia is typing…
                               │ reply ↳ nadia: Rebased onto main, … esc to drop
- j/k move  l open  / filter   │ NORMAL › i to compose · : for commands       md
+                              │ NORMAL › i to compose · : for commands       md
  j/k move  l open  / filter  [/] folder     idx 12 msgs · 9 buffers · 37 unread
 ```
 

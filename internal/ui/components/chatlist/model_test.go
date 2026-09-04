@@ -1174,13 +1174,12 @@ func TestFilterIndicatorVisibleWhileFiltered(t *testing.T) {
 	if !strings.Contains(open, "/ al") {
 		t.Fatalf("View() while typing does not show the query: %q", open)
 	}
-	// The clear hint moved from the filter chip to the list footer when the
-	// chip was replaced by the header row, but it must still be somewhere:
-	// a user who cannot see how to clear a filter is left staring at a
-	// partial list.
-	if !strings.Contains(open, "esc") {
-		t.Fatalf("View() while typing does not advertise how to clear the filter: %q", open)
-	}
+	// How to CLEAR the filter is the app's hint bar to say, not this
+	// panel's — the panel's motion row is gone, because the bar is keyed by
+	// the live surface and a second row inside the column either repeated
+	// it or described the wrong keymap. The bar's chat list set leads with
+	// the way out while a filter is applied; see
+	// TestTheHintBarSaysHowToClearAFilter in internal/app.
 
 	// The chip must survive `enter` — that is the state in which the
 	// user has no input line to remind them a filter is on.
@@ -1188,9 +1187,6 @@ func TestFilterIndicatorVisibleWhileFiltered(t *testing.T) {
 	closed := ansi.Strip(m.View())
 	if !strings.Contains(closed, "/ al") {
 		t.Fatalf("View() with the input closed does not show the applied filter: %q", closed)
-	}
-	if !strings.Contains(closed, "esc") {
-		t.Fatalf("View() with the input closed does not advertise how to clear: %q", closed)
 	}
 
 	// And it must disappear once the filter is gone.

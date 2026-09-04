@@ -55,8 +55,8 @@ says so: `d` behind a confirm, `q` behind a confirm when a draft exists, and
 Press `?` any time outside the composer for a scrollable cheat sheet.
 [`internal/app/keymap.go`](../internal/app/keymap.go) is where the keymap
 lives in code, and no on-screen surface that names a key holds a literal.
-The help card, its footer, the frame's hint bar, the chat list's footer row
-and the media overlay's strip are all generated from the resolved bindings
+The help card, its footer, the frame's hint bar and the media overlay's
+strip are all generated from the resolved bindings
 `app.go` dispatches on, through the registry in
 [`internal/app/hints.go`](../internal/app/hints.go). A dialog is the one
 surface with a nearer authority: its line is built from its own button set,
@@ -372,9 +372,18 @@ The frame's hint bar is the abbreviation that points at this card. It is
 keyed by **surface** — the panel or overlay whose keymap is live right now —
 and every set it can show is the "Hints" table in
 [interaction-model.md](interaction-model.md), built from the resolved
-bindings. The chat list's own footer row and the media overlay's strip are
-handed their content from the same registry, so a rebound key shows
-correctly everywhere and a key that is not bound shows nowhere.
+bindings. The media overlay's strip is handed its content from the same
+registry, so a rebound key shows correctly everywhere and a key that is not
+bound shows nowhere.
+
+It is the **only** hint row on screen. The chat list drew a second one along
+the foot of its own column and it is gone: with the bar keyed by the live
+surface, that row repeated the bar whenever the list had focus and described
+the chat list's keys whenever it did not — `l open` and `/ filter` while the
+chat view had the keyboard, where they mean a no-op and in-chat find. The
+one thing it said that the bar could not, the way out of a filter, is in the
+chat list's own set now (`esc clear · enter keep` while typing one, `esc
+clear filter` once it is applied).
 
 A dialog's own one-line hint is the exception, and deliberately so: it is
 built from that dialog's button set, which is the only thing that knows

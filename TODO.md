@@ -145,12 +145,13 @@ immediately undoes.
 - [x] ~~**Status bar hints are hardcoded and do not follow rebinds**~~ —
       done twice over. TUI 2.0's hint bar made the bar itself derived, and
       the interaction review's task 12 (decision I-6) finished the job:
-      there is now one registry keyed by surface feeding the bar, the chat
-      list footer and the media overlay's strip, with a drift test that
-      fails when a literal is reintroduced. A dialog's own line is built
-      from its button set instead — the nearer authority on which letters
-      answer — and the bar reads those same buttons, so the two cannot
-      disagree.
+      there is now one registry keyed by surface feeding the bar and the
+      media overlay's strip, with a drift test that fails when a literal is
+      reintroduced. A dialog's own line is built from its button set
+      instead — the nearer authority on which letters answer — and the bar
+      reads those same buttons, so the two cannot disagree. The chat list's
+      own footer row was removed outright: with the bar keyed by the live
+      surface it could only repeat it or describe the wrong keymap.
 - [ ] **Clipboard *text* fallback** — phase 8 already adds a text/code copy
       abstraction for `y` (with a possible OSC 52 path). Read and write
       directions are the same code area; do both in one pass.

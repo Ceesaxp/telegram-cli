@@ -39,6 +39,6 @@
                                       │ ▌                  cursor sits here.             │                              
                                       │               ···  田中さくら is typing…         │                              
                                       │ reply ↳ مريم: اختبار أخير — last li… esc to drop │                              
- j/k move  l open  / filter           │ NORMAL › i to compose · : for commands        md │                              
+                                      │ NORMAL › i to compose · : for commands        md │                              
  j/k move  l open  / filter  [/] folder  u unread  i compose  q quit  ? keymap       idx 7 msgs · 9 buffers · 37 unread 
 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄

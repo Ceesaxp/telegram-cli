@@ -10,7 +10,6 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/render"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
-	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
@@ -27,11 +26,6 @@ type Model struct {
 	store *store.Store
 	tg    *telegram.Client
 	roles theme.Roles
-
-	// footerHints is the last row's content, handed in by the host from the
-	// one hint registry. Held rather than written here: a literal cannot be
-	// wrong in a way anything can detect (decision I-6).
-	footerHints []hintbar.Hint
 
 	// draftChats is the set of chats with unsent work parked in the
 	// composer, projected in by the host. Read-only here.
@@ -272,17 +266,6 @@ type chatsLoadedMsg struct {
 }
 
 // SetSize sets the component dimensions.
-// SetFooterHints supplies the hints the footer draws. The app owns them:
-// they are the first few of the chat list's own set in the one hint registry
-// (decision I-6), so a rebound key shows correctly here and a key that is
-// not bound at all does not show at all.
-//
-// Held rather than derived because this package cannot see the resolved
-// bindings — it does not import config, and the app is what resolves them.
-func (m *Model) SetFooterHints(hints []hintbar.Hint) {
-	m.footerHints = hints
-}
-
 // SetDraftChats tells the list which chats hold unsent work, so their
 // preview row can say so. The composer owns the drafts; this is a projection
 // of them, refreshed by the host whenever they change.
@@ -301,22 +284,27 @@ func (m *Model) SetSize(width, height int) {
 	m.height = height
 	m.list.Width = width
 
-	listHeight := height - m.headerHeight() - m.footerHeight()
+	listHeight := height - m.headerHeight()
 	if listHeight < 0 {
 		listHeight = 0
 	}
 	m.list.Height = listHeight
 }
 
-// headerHeight and footerHeight are the chat list's own chrome rows: the
-// filter header above and the motion hints below.
+// headerHeight is the chat list's own chrome row: the filter header above
+// the list.
 //
-// Unlike the folder tab bar they replaced, both are ALWAYS one row. The tab
-// bar was 0 rows before folders loaded, which meant the list's height budget
-// and ClickAt's row arithmetic changed underneath a running app; a constant
-// removes that whole class of off-by-one.
+// ALWAYS one row, unlike the folder tab bar it replaced. That bar was 0 rows
+// before folders loaded, which meant the list's height budget and ClickAt's
+// row arithmetic changed underneath a running app; a constant removes that
+// whole class of off-by-one.
+//
+// There was a footer row below the list too, carrying motion hints. It is
+// gone: the frame's hint bar is keyed by the live surface, so a second hint
+// row inside this column repeated it whenever the column had focus and
+// described the wrong keymap whenever it did not. The row went back to the
+// list. See the amendment to I-6 in docs/interaction-model.md.
 func (m Model) headerHeight() int { return 1 }
-func (m Model) footerHeight() int { return 1 }
 
 // folderTotal is how many chats the active folder holds before the text
 // filter — the denominator for "shown/total".
@@ -1567,19 +1555,15 @@ func (m Model) View() string {
 	// Folder tabs used to live at the top of this column; TUI 2.0 moves
 	// them to the frame's top bar and gives this row to the filter instead.
 	// Selection and key handling stayed here — only the drawing moved.
-	// The list is padded out to its budget so the hints stay at the FOOT of
-	// the column. Left to itself the list is as tall as it has rows, and a
-	// nine-chat list in a forty-row terminal would put the motion hints
-	// two thirds of the way up the screen, level with nothing.
+	// The list is padded out to its budget so the column is its full height
+	// whatever it holds, rather than as tall as it has rows.
 	rows := strings.Split(m.list.View(), "\n")
 	for len(rows) < m.list.Height {
 		rows = append(rows, "")
 	}
 
-	return strings.Join(append(
-		append([]string{m.renderFilterHeader(m.width)}, rows...),
-		m.renderListFooter(m.width),
-	), "\n")
+	return strings.Join(
+		append([]string{m.renderFilterHeader(m.width)}, rows...), "\n")
 }
 
 // Folder-tab rendering and its hit-test used to live here. They moved to

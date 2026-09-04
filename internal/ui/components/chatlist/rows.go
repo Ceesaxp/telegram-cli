@@ -5,7 +5,6 @@ import (
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
-	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/sigil"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
@@ -171,51 +170,6 @@ func (m Model) renderFilterHeader(width int) string {
 		lipgloss.NewStyle().Foreground(r.Amber).Render("/") + " " +
 		queryStyle.Render(cell.Fit(cell.Truncate(query, queryW), queryW)) +
 		lipgloss.NewStyle().Foreground(r.Ghost).Render(count)
-
-	return cell.Fit(line, width)
-}
-
-// renderListFooter is the chat list's last row: the motions that work here.
-// It is local to the panel, unlike the frame's hint bar, because these keys
-// only do anything while this column has focus.
-//
-// The hints are HANDED IN (SetFooterHints), never written here. This row is
-// where decision I-6 was found: it advertised "u unread" for a release with
-// nothing bound to u, because a literal cannot be wrong in a way anything
-// can detect. They now come from the same registry every other surface reads.
-func (m Model) renderListFooter(width int) string {
-	r := m.roles
-	key := lipgloss.NewStyle().Foreground(r.Cyan)
-	label := lipgloss.NewStyle().Foreground(r.Faint)
-
-	hint := func(h hintbar.Hint) string {
-		return key.Render(h.Key) + " " + label.Render(h.Label)
-	}
-
-	// While a filter is applied the way OUT of it is the only thing worth
-	// the row: the motions are unchanged and already known, but a user who
-	// cannot see how to clear a filter is stuck looking at a partial list
-	// and wondering where their chats went. The old filter chip carried
-	// this hint; the footer inherits it now that the chip is gone. These
-	// two are the panel's own — esc and enter are what its filter input
-	// binds, not app-level bindings the registry could resolve.
-	var line string
-	switch {
-	case m.filtering:
-		line = " " + hint(hintbar.Hint{Key: "esc", Label: "clear"}) +
-			"  " + hint(hintbar.Hint{Key: "enter", Label: "keep"})
-	case m.filter != "":
-		line = " " + hint(hintbar.Hint{Key: "esc", Label: "clear filter"}) +
-			"  " + hint(hintbar.Hint{Key: "j/k", Label: "move"})
-	default:
-		parts := make([]string, 0, len(m.footerHints))
-		for _, h := range m.footerHints {
-			parts = append(parts, hint(h))
-		}
-		if len(parts) > 0 {
-			line = " " + strings.Join(parts, "  ")
-		}
-	}
 
 	return cell.Fit(line, width)
 }

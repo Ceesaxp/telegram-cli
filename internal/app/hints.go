@@ -370,7 +370,28 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 		return nil
 
 	default: // SurfaceChatList
+		// A filter narrows the list and nothing on screen says how to widen
+		// it again, which leaves a reader looking at a partial list and
+		// wondering where their chats went. The way out leads while one is
+		// applied — the same reason the reaction row's enter changes its
+		// wording: a hint set that ignores the state it is drawn over is a
+		// hint set that describes a surface the user is not on.
+		//
+		// The chat list's footer row used to carry this. It is gone (see
+		// the amendment to I-6 in docs/interaction-model.md), so the one
+		// bar carries it instead.
+		var filter []hintbar.Hint
+		if m.chatList.FilterActive() {
+			filter = join(
+				hint("esc", "clear"),
+				hint("enter", "keep"),
+			)
+		} else if m.chatList.FilterQuery() != "" {
+			filter = hint("esc", "clear filter")
+		}
+
 		return join(
+			filter,
 			hint("j/k", "move"),
 			hint("l", "open"),
 			hint(k.search, "filter"),
@@ -381,19 +402,4 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 			hint(k.help, "keymap"),
 		)
 	}
-}
-
-// footerHints is the chat list's own last row: the first few hints of its
-// set, which is all a 38-cell column has space for.
-//
-// Derived from the same registry rather than written out beside it. The
-// footer is where the drift this decision exists to remove was found: it
-// advertised "u unread" for a release with nothing bound to u, because it
-// was a literal and nothing could tell it was wrong.
-func (m Model) footerHints() []hintbar.Hint {
-	hints := m.hintsFor(SurfaceChatList)
-	if len(hints) > 3 {
-		hints = hints[:3]
-	}
-	return hints
 }
