@@ -74,6 +74,14 @@ func main() {
 		return
 	}
 
+	// Said here, before the TUI takes the screen, rather than only under
+	// -migrate-config (decision I-13). A binding that was refused is a
+	// binding the user will otherwise press and find inert, with the
+	// explanation sitting behind a flag they have no reason to run.
+	for _, warning := range config.StartupWarnings(cfg) {
+		fmt.Fprintf(os.Stderr, "config: %s\n", warning)
+	}
+
 	if cfg.Telegram.APIID == 0 || cfg.Telegram.APIHash == "" {
 		if err := setupWizard(cfg); err != nil {
 			fatalf("Setup failed: %v", err)

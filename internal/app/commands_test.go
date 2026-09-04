@@ -161,8 +161,57 @@ func TestValidateArg(t *testing.T) {
 func TestQuitCommandQuits(t *testing.T) {
 	m := mainModel(t, PanelChatList)
 	_, cmd, _ := m.runCommandLine("quit")
-	if cmd == nil {
-		t.Fatal(":quit returned no command")
+	if !quits(cmd) {
+		t.Fatal(":quit with an empty composer did not quit")
+	}
+}
+
+// TestQuitCommandConfirmsOnADraft is decision I-5. :quit returned tea.Quit
+// unconditionally, and the palette opens from a vi composer in its command
+// state — so the one way out reachable with a draft on screen was the one
+// that discarded it without asking, while q asked about the same text.
+func TestQuitCommandConfirmsOnADraft(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m = typeIntoComposer(t, m, "half a thought")
+
+	m, cmd, _ := m.runCommandLine("quit")
+
+	if quits(cmd) {
+		t.Fatal(":quit discarded a draft without asking")
+	}
+	if m.dialog == nil || !m.dialog.IsVisible() {
+		t.Fatal(":quit with a draft opened no confirm")
+	}
+}
+
+// TestQuitCommandConfirmsOnAnAttachment: a staged file is work too, and the
+// same rule covers it — which is the reason the check lives in one method
+// rather than being written out at each way out.
+func TestQuitCommandConfirmsOnAnAttachment(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m.composer.SetAttachment("/tmp/paste-1.png", true)
+
+	m, cmd, _ := m.runCommandLine("quit")
+
+	if quits(cmd) {
+		t.Fatal(":quit discarded a staged attachment without asking")
+	}
+	if m.dialog == nil || !m.dialog.IsVisible() {
+		t.Fatal(":quit with an attachment opened no confirm")
+	}
+}
+
+// TestCtrlQStillQuitsWithADraft: ctrl+q keeps its no-questions behaviour on
+// purpose (I-5). It is the way out of any state, including a broken one, and
+// a modal must never be able to trap someone.
+func TestCtrlQStillQuitsWithADraft(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m = typeIntoComposer(t, m, "half a thought")
+
+	_, cmd := updateCmd(t, m, "\x11")
+
+	if !quits(cmd) {
+		t.Error("ctrl+q did not quit with a draft in the composer")
 	}
 }
 

@@ -102,8 +102,13 @@ func (m Model) commandRegistry() []Command {
 			Arg:         ArgNone,
 			Description: "quit tele-tui",
 			Key:         m.keys.quitBrowsing,
+			// Through the same check q uses (decision I-5). This returned
+			// tea.Quit unconditionally, and the palette opens from a vi
+			// composer in its command state — so the one way out reachable
+			// with a draft on screen was the one that never asked about it.
 			Run: func(m Model, _ string) (Model, tea.Cmd, string) {
-				return m, tea.Quit, ""
+				out, cmd := m.quitConfirming()
+				return out.(Model), cmd, ""
 			},
 		},
 	}

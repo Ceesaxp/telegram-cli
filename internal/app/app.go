@@ -179,8 +179,14 @@ func resolveKeys(kc config.KeyConfig) resolvedKeys {
 		}
 		return config.NormalizeKey(configured)
 	}
+	// quit is resolved by config rather than here: a bare printable is
+	// refused outright and falls back to the default, because quit is
+	// matched ahead of every focus gate and would otherwise make that
+	// character untypable in a message (decision I-13). The refusal is
+	// reported at startup by config.StartupWarnings.
+	quit, _ := config.ResolveQuitKey(kc.Quit)
 	return resolvedKeys{
-		quit:          resolve(kc.Quit, "ctrl+q"),
+		quit:          quit,
 		quitBrowsing:  resolve(kc.QuitBrowsing, "q"),
 		focusChatList: resolve(kc.FocusChatList, "f1"),
 		focusChatView: resolve(kc.FocusChatView, "f2"),
@@ -700,18 +706,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			//
 			// Work in the composer is not dropped on a single keystroke:
 			// an unsent draft or a pending attachment routes through the
-			// same confirm dialog a delete uses. An empty composer quits
-			// at once — a confirm on every quit is a prompt people learn
-			// to dismiss without reading, which is how the one that
-			// mattered gets dismissed too.
+			// same confirm dialog a delete uses. See quitConfirming, which
+			// :quit shares so the two cannot drift (decision I-5).
 			if key.Matches(m.keys.quitBrowsing) && browsing {
-				if m.composer.HasDraft() || m.composer.Attachment() != "" {
-					d := dialog.NewConfirm(m.roles, "quit", "Quit",
-						"Discard the message you are writing and quit?")
-					m.dialog = &d
-					return m, nil
-				}
-				return m, tea.Quit
+				return m.quitConfirming()
 			}
 
 			// Search. Vi convention makes "/" mean "find in the buffer I am
@@ -1141,15 +1139,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "delete":
-			// A cancelled confirm does nothing.
-			if msg.Confirmed {
+			// Three answers now, not two (decision I-7): the reach of the
+			// delete is the user's choice, and Escape or Cancel is still
+			// the one that does nothing. A server refusal of "for
+			// everyone" — the message is too old, or this chat does not
+			// permit it — comes back as an ErrorMsg and lands in the
+			// notice row, which is the only place it could be reported
+			// after the dialog has closed.
+			revoke, ok := deleteRevokes(msg.Value)
+			if ok {
 				tg := m.tg
 				cmds = append(cmds, func() tea.Msg {
-					// revoke=true deletes for everyone, not just locally.
-					// That's the more expected behavior for a delete
-					// confirm; a for-me/for-everyone choice dialog is
-					// future work.
-					if err := tg.DeleteMessages(deleteChatID, []int64{deleteMsgID}, true); err != nil {
+					if err := tg.DeleteMessages(deleteChatID, []int64{deleteMsgID}, revoke); err != nil {
 						return ErrorMsg{Err: err}
 					}
 					return nil
@@ -1359,6 +1360,57 @@ func eitherKey(a, b string) string {
 		return b
 	}
 	return a + " or " + b
+}
+
+// The delete confirm's answers. They travel on DialogResultMsg.Value, so
+// they are constants rather than literals typed out at both ends.
+const (
+	deleteCancel      = "cancel"
+	deleteForMe       = "me"
+	deleteForEveryone = "everyone"
+)
+
+// deleteRevokes maps a delete answer onto Telegram's revoke flag, and
+// reports whether anything should be deleted at all.
+//
+// An unrecognised answer deletes nothing. That is the safe direction for a
+// destructive action: a value this does not know is a bug, and a bug here
+// must not be the one that removes a message from everyone's history.
+func deleteRevokes(answer string) (revoke, ok bool) {
+	switch answer {
+	case deleteForEveryone:
+		return true, true
+	case deleteForMe:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// hasUnsentWork reports whether quitting now would lose something: a draft
+// in the composer, or a file staged on it.
+//
+// One method, consulted by every way out that asks first, because two
+// copies of this test is how :quit came to be the way out that did not
+// (decision I-5).
+func (m Model) hasUnsentWork() bool {
+	return m.composer.HasDraft() || m.composer.Attachment() != ""
+}
+
+// quitConfirming quits, asking first when there is unsent work.
+//
+// An empty composer quits at once — a confirm on every quit is a prompt
+// people learn to dismiss without reading, which is how the one that
+// mattered gets dismissed too. ctrl+q is deliberately not routed through
+// here: it is the documented way out of any state, including a broken one.
+func (m Model) quitConfirming() (tea.Model, tea.Cmd) {
+	if !m.hasUnsentWork() {
+		return m, tea.Quit
+	}
+	d := dialog.NewConfirm(m.roles, "quit", "Quit",
+		"Discard the message you are writing and quit?")
+	m.dialog = &d
+	return m, nil
 }
 
 // mouseInLeftPanel reports whether the point is over the left panel
@@ -1631,11 +1683,20 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 			}
 		}
 	case "delete":
-		// Captured here so DialogResultMsg — which carries no payload of
-		// its own — knows what to delete once the user confirms.
+		// Captured here so DialogResultMsg — which carries the chosen
+		// answer but not the target — knows what to delete.
 		m.pendingDeleteChatId = msg.ChatId
 		m.pendingDeleteMessageId = msg.MessageId
-		d := dialog.NewConfirm(m.roles, "delete", "Delete Message", "Are you sure?")
+		// The question names the consequence and offers Telegram's real
+		// choice (decision I-7). "Are you sure?" deleted for everyone and
+		// said neither of those things: not what was being deleted, and
+		// not that the reach of it was a decision at all.
+		d := dialog.NewChoice(m.roles, "delete", "Delete Message",
+			"Delete this message?", []dialog.Button{
+				{Label: "Cancel", Accel: "n", Value: deleteCancel},
+				{Label: "For me", Accel: "m", Value: deleteForMe, Affirmative: true},
+				{Label: "For everyone", Accel: "e", Value: deleteForEveryone, Affirmative: true},
+			})
 		m.dialog = &d
 
 	case "react":

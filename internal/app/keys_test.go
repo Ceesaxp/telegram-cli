@@ -17,6 +17,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/dialog"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // These tests drive the *real* terminal input decoder rather than hand-built
@@ -2242,4 +2243,257 @@ func TestDialogIsModalForTheKeyboard(t *testing.T) {
 			}
 		}
 	})
+}
+
+// --- decision I-3: Escape never discards typed text -----------------------
+
+// typeIntoComposer drives the whole app with the bytes a terminal sends for
+// each character, so the text arrives at the composer the way it does in the
+// running client — through Update's dispatch — rather than being planted.
+func typeIntoComposer(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for _, r := range text {
+		m = update(t, m, string(r))
+	}
+	return m
+}
+
+// TestEscKeepsTheDraftAcrossTheLadder is the end-to-end form of I-3: the
+// cancel rung took the text with it, so a reply typed and then thought
+// better of cost the words as well as the target. q asks before dropping
+// the same text; esc did not ask at all.
+func TestEscKeepsTheDraftAcrossTheLadder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		editing composer.EditingMode
+		escapes int // presses needed to reach the cancel rung
+	}{
+		{"emacs", composer.ModeEmacs, 1},
+		{"vi", composer.ModeVi, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := openChatModel(t, PanelComposer)
+			m.composer.SetEditingMode(tc.editing)
+			m = typeIntoComposer(t, m, "half a thought")
+			m.composer.EnterReplyMode(7, "someone: hello")
+
+			for range tc.escapes {
+				m = update(t, m, "\x1b")
+			}
+
+			if got := m.composer.Draft(); got != "half a thought" {
+				t.Errorf("Draft = %q, want the text to survive the cancel", got)
+			}
+			if m.composer.IsComposing() {
+				t.Error("reply target survived the cancel")
+			}
+			if m.focus != PanelComposer {
+				t.Errorf("focus = %v, want the composer to keep it", m.focus)
+			}
+		})
+	}
+}
+
+// TestEscAfterAnEditRestoresTheDraft: e loaded the message over whatever was
+// half-written and the draft was gone. It is parked now, and the cancel
+// hands it back.
+func TestEscAfterAnEditRestoresTheDraft(t *testing.T) {
+	m := openChatModel(t, PanelComposer)
+	m = typeIntoComposer(t, m, "unsent")
+	m.composer.EnterEditMode(99, "the old message")
+
+	m = update(t, m, "\x1b")
+
+	if got := m.composer.Draft(); got != "unsent" {
+		t.Errorf("Draft = %q, want the parked draft back", got)
+	}
+	if m.composer.IsEditing() {
+		t.Error("still editing after Esc")
+	}
+}
+
+// --- decision I-7: the delete confirm says for whom -----------------------
+
+// deleteDialog is the model with the real delete confirm up, opened the way
+// pressing d opens it, so the test sees the button set the app actually
+// builds rather than one written out beside it.
+func deleteDialog(t *testing.T) Model {
+	t.Helper()
+	m := openChatModel(t, PanelChatView)
+	out, _ := m.handleMessageAction(chatview.MessageActionMsg{
+		Action: "delete", ChatId: testChatID, MessageId: 7,
+	})
+	got := out.(Model)
+	if got.dialog == nil || !got.dialog.IsVisible() {
+		t.Fatal("d opened no delete dialog")
+	}
+	return got
+}
+
+// TestDeleteConfirmOffersBothReaches: "Are you sure?" named nothing and
+// deleted for everyone. The reach of a delete is a decision, and a dialog
+// that makes it silently is making it for the user.
+func TestDeleteConfirmOffersBothReaches(t *testing.T) {
+	m := deleteDialog(t)
+	plain := ansi.Strip(m.dialog.View())
+
+	for _, want := range []string{"Delete this message?", "Ca(n)cel", "For (m)e", "For (e)veryone"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("the delete dialog is missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "Are you sure?") {
+		t.Errorf("the delete dialog still asks a question that names nothing:\n%s", plain)
+	}
+}
+
+// TestDeleteAnswersChooseTheReach walks the three answers to the dialog
+// itself. What each answer DOES is deleteRevokes's job, tested below,
+// because the command it builds needs a live Telegram client to run.
+func TestDeleteAnswersChooseTheReach(t *testing.T) {
+	cases := []struct {
+		key       rune
+		wantValue string
+	}{
+		{'n', deleteCancel},
+		{'m', deleteForMe},
+		{'e', deleteForEveryone},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.key), func(t *testing.T) {
+			m := deleteDialog(t)
+			d, cmd := m.dialog.Update(tea.KeyPressMsg(tea.Key{
+				Code: tc.key, Text: string(tc.key),
+			}))
+			if d.IsVisible() {
+				t.Errorf("%q left the dialog open", string(tc.key))
+			}
+			if cmd == nil {
+				t.Fatalf("%q produced no result", string(tc.key))
+			}
+			res, ok := cmd().(dialog.DialogResultMsg)
+			if !ok {
+				t.Fatalf("%q produced %T, want DialogResultMsg", string(tc.key), cmd())
+			}
+			if res.Value != tc.wantValue {
+				t.Errorf("%q chose %q, want %q", string(tc.key), res.Value, tc.wantValue)
+			}
+		})
+	}
+}
+
+// TestEnterOnTheDeleteConfirmDeletesNothing: Enter accepts the highlighted
+// button, and the highlighted button is Cancel. This is the reflex the
+// dialog exists to survive.
+func TestEnterOnTheDeleteConfirmDeletesNothing(t *testing.T) {
+	m := deleteDialog(t)
+	_, cmd := m.dialog.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("enter produced no result")
+	}
+	res := cmd().(dialog.DialogResultMsg)
+	if res.Confirmed {
+		t.Errorf("enter on a fresh delete confirm deleted: %+v", res)
+	}
+	if _, ok := deleteRevokes(res.Value); ok {
+		t.Errorf("enter's answer %q deletes something", res.Value)
+	}
+}
+
+// TestDeleteRevokes is the rule the dialog's answers feed: "for everyone"
+// revokes, "for me" does not, and anything else — a cancel, an Escape's
+// empty value, a value from some future dialog — deletes nothing at all.
+// The safe direction for a destructive action is to do nothing.
+func TestDeleteRevokes(t *testing.T) {
+	cases := []struct {
+		answer     string
+		wantRevoke bool
+		wantOK     bool
+	}{
+		{deleteForEveryone, true, true},
+		{deleteForMe, false, true},
+		{deleteCancel, false, false},
+		{"", false, false},
+		{"something else", false, false},
+	}
+	for _, tc := range cases {
+		revoke, ok := deleteRevokes(tc.answer)
+		if revoke != tc.wantRevoke || ok != tc.wantOK {
+			t.Errorf("deleteRevokes(%q) = (%v, %v), want (%v, %v)",
+				tc.answer, revoke, ok, tc.wantRevoke, tc.wantOK)
+		}
+	}
+}
+
+// TestQuitConfirmAnswersToYAndN: the quit confirm gets the accelerators for
+// free, because it is the same component. y quits, n returns.
+func TestQuitConfirmAnswersToYAndN(t *testing.T) {
+	for _, tc := range []struct {
+		key      rune
+		wantQuit bool
+	}{{'y', true}, {'n', false}} {
+		t.Run(string(tc.key), func(t *testing.T) {
+			m := openChatModel(t, PanelComposer)
+			m = typeIntoComposer(t, m, "half a thought")
+			m.setFocus(PanelChatList)
+			m = update(t, m, "q")
+			if m.dialog == nil {
+				t.Fatal("q with a draft opened no confirm")
+			}
+
+			d, cmd := m.dialog.Update(tea.KeyPressMsg(tea.Key{
+				Code: tc.key, Text: string(tc.key),
+			}))
+			if d.IsVisible() {
+				t.Errorf("%q left the confirm open", string(tc.key))
+			}
+			res := cmd().(dialog.DialogResultMsg)
+			if res.Confirmed != tc.wantQuit {
+				t.Errorf("%q gave Confirmed = %v, want %v", string(tc.key), res.Confirmed, tc.wantQuit)
+			}
+
+			out, quitCmd := m.Update(res)
+			if got := quits(quitCmd); got != tc.wantQuit {
+				t.Errorf("%q: quit = %v, want %v", string(tc.key), got, tc.wantQuit)
+			}
+			if out.(Model).dialog != nil {
+				t.Errorf("%q left the dialog on the model", string(tc.key))
+			}
+		})
+	}
+}
+
+// TestARefusedQuitKeyLeavesTheLetterTypable is decision I-13's sharpest
+// edge, from the dispatcher's side: quit is matched before every focus
+// gate, so quit = "x" meant that pressing x while writing a message quit
+// the application. config refuses the binding; this is the proof that the
+// refusal reaches the keymap the app actually dispatches on.
+func TestARefusedQuitKeyLeavesTheLetterTypable(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Keys.Quit = "x"
+	s := store.NewStore()
+	var tg *telegram.Client
+	m := New(cfg, tg, s, telegram.NewTUIAuthorizer(cfg))
+	m.screen = ScreenMain
+	m.composer.SetEditingMode(composer.ModeEmacs)
+	m.chatView.OpenChat(testChatID, "Test Chat")
+	m.composer.SetChatId(testChatID)
+	m.setFocus(PanelComposer)
+
+	if m.keys.quit != config.DefaultQuitKey {
+		t.Fatalf("keys.quit resolved to %q, want the refused value replaced by %q",
+			m.keys.quit, config.DefaultQuitKey)
+	}
+
+	next, cmd := updateCmd(t, m, "x")
+	if quits(cmd) {
+		t.Fatal("x quit the application from the composer")
+	}
+	if got := next.composer.Draft(); got != "x" {
+		t.Errorf("Draft = %q, want the x to have been typed", got)
+	}
+
+	if _, cmd := updateCmd(t, next, "\x11"); !quits(cmd) {
+		t.Error("ctrl+q no longer quits after the refusal")
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -507,6 +509,87 @@ func NormalizeKey(s string) string {
 	}
 	sb.WriteString(key)
 	return sb.String()
+}
+
+// DefaultQuitKey is what [ResolveQuitKey] falls back to. It is a chord on
+// purpose: quit is matched before every focus gate, so a bare letter here is
+// a letter that cannot be typed anywhere in the client.
+const DefaultQuitKey = "ctrl+q"
+
+// namedPrintableKeys are keys whose NAME is longer than the character they
+// produce. There is one: pressing space types a space, and a composer that
+// cannot take a space is not a composer.
+//
+// A set rather than a special case, because the question it answers —
+// "would binding this shadow a character somebody types?" — is the same one
+// [IsBarePrintableKey] asks of the single-rune spellings, and the answer for
+// space is the same yes. [NormalizeKey] folds "spacebar" onto this name, so
+// both spellings are covered by the one entry; a literal " " is trimmed to
+// the empty string there and falls back to the default anyway.
+var namedPrintableKeys = map[string]bool{"space": true}
+
+// IsBarePrintableKey reports whether a NORMALIZED binding types a character
+// when it is pressed: a single unmodified printable ("x", "?", "+"), or
+// "space". A chord ("ctrl+x"), a named key that produces no text ("esc",
+// "f1", "pgup") and the empty string are all false.
+//
+// It answers one question: would binding this shadow a character somebody
+// types? Only the bindings matched ahead of the composer have to ask it.
+func IsBarePrintableKey(key string) bool {
+	if namedPrintableKeys[key] {
+		return true
+	}
+	if utf8.RuneCountInString(key) != 1 {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(key)
+	return unicode.IsGraphic(r) && !unicode.IsSpace(r)
+}
+
+// ResolveQuitKey is the binding [KeyConfig.Quit] resolves to, and whether the
+// configured value was refused (decision I-13).
+//
+// quit is the one field where a bare printable is not merely unwise but
+// broken: it is matched before every focus gate, so quit = "x" meant that
+// pressing x while writing a message quit the application instead of typing
+// an x. Nothing rejected that — [DetectKeyCollisions] only compares bindings
+// against each other, never against "is this a character someone types" — so
+// the documented advice was to avoid it, which is not the same thing as it
+// not happening.
+//
+// The refusal keeps the default rather than leaving quit unbound: a client
+// with no way out is worse than one that ignored a line of config, and
+// [StartupWarnings] says which it did.
+func ResolveQuitKey(configured string) (key string, refused bool) {
+	normalized := NormalizeKey(configured)
+	if normalized == "" {
+		return DefaultQuitKey, false
+	}
+	if IsBarePrintableKey(normalized) {
+		return DefaultQuitKey, true
+	}
+	return normalized, false
+}
+
+// StartupWarnings is everything about the [keys] table worth telling the
+// user before the TUI takes the screen: a refused quit binding, and
+// bindings that cannot all work.
+//
+// At startup, not only under -migrate-config (decision I-13). A warning
+// somebody sees only if they happen to run a migration is a warning about a
+// client they are already using with the broken binding in it.
+func StartupWarnings(cfg *Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	var out []string
+	if key, refused := ResolveQuitKey(cfg.Keys.Quit); refused {
+		out = append(out, fmt.Sprintf(
+			"%q cannot be keys.quit — quit is matched before the composer sees a "+
+				"key, so a bare printable would be untypable in a message; using %s",
+			NormalizeKey(cfg.Keys.Quit), key))
+	}
+	return append(out, DetectKeyCollisions(cfg)...)
 }
 
 func Load() (*Config, error) {
