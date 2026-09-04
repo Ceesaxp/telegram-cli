@@ -68,6 +68,7 @@ cell**, so the picture cannot drift from the program.
 |---|---|
 | [Features](docs/features.md) | what it does — folders, reactions, media, drafts, markdown, notifications |
 | [Keybindings](docs/keys.md) | every key, both editing modes, and how to rebind them |
+| [Interaction model](docs/interaction-model.md) | the rules the keyboard follows, and the decisions behind them |
 | [Configuration](docs/configuration.md) | `config.toml`, where files go, migration |
 | [MCP & REST](docs/integrations.md) | driving the account from another program |
 | [Troubleshooting](docs/troubleshooting.md) | when something does not work |
