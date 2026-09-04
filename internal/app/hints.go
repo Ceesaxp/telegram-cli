@@ -317,11 +317,22 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 
 	case SurfaceDialog:
 		// The answer keys come first because they are the ones a dialog is
-		// asking about. The dialog also draws its own line from its own
-		// button set, which is the authority on WHICH letters those are —
-		// this row says that letters answer at all.
+		// asking about — and they are read off the dialog that is actually
+		// up, because they differ per dialog. A confirm answers to n and y;
+		// the delete choice answers to n, m and e, and a bar that said
+		// "y/n" there advertised an inert key on the one surface where a
+		// wrong press is destructive.
+		//
+		// The dialog's button set is the single authority: this row and the
+		// dialog's own hint line are two renderings of it, not two copies.
+		// With no dialog up there are no accelerators to name, and hint()
+		// drops the row.
+		accels := ""
+		if m.dialog != nil {
+			accels = m.dialog.Accelerators()
+		}
 		return join(
-			hint("y/n", "answer"),
+			hint(accels, "answer"),
 			hint("←/→", "choose"),
 			hint("enter", "accept"),
 			hint("esc", "cancel"),

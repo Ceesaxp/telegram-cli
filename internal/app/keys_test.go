@@ -3052,3 +3052,82 @@ func TestTheBadgeColumnDoesNotMove(t *testing.T) {
 			"changed to VI", insert, got)
 	}
 }
+
+// TestTheDialogHintNamesTheButtonsItHas: the bar said "y/n answer" for every
+// dialog, which is right for a confirm and wrong for the delete choice —
+// advertising an inert y on the one surface where a wrong press is
+// destructive. Both the bar and the dialog's own line are renderings of the
+// one button set, so they cannot name different letters.
+func TestTheDialogHintNamesTheButtonsItHas(t *testing.T) {
+	cases := []struct {
+		name  string
+		open  func(t *testing.T, m Model) Model
+		want  string
+		inert string
+	}{
+		{
+			name: "the delete choice",
+			open: func(t *testing.T, m Model) Model {
+				t.Helper()
+				return deleteDialog(t)
+			},
+			want:  "n/m/e",
+			inert: "y",
+		},
+		{
+			name: "a two-button confirm",
+			open: func(t *testing.T, m Model) Model {
+				t.Helper()
+				d := dialog.NewConfirm(m.roles, "quit", "Quit", "Discard the draft?")
+				m.dialog = &d
+				return m
+			},
+			want: "n/y",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.open(t, sizedMainModel(t, PanelChatView))
+			m.width, m.height = 100, 40
+			m.updateLayout()
+			m.refreshChrome()
+
+			var answer string
+			for _, h := range m.hintsFor(SurfaceDialog) {
+				if h.Label == "answer" {
+					answer = h.Key
+				}
+			}
+			if answer != tc.want {
+				t.Errorf("the bar offers %q, want %q", answer, tc.want)
+			}
+
+			// And the dialog's own line agrees, because it is the same
+			// button set rendered twice rather than two copies of it.
+			if got := m.dialog.Accelerators(); got != tc.want {
+				t.Errorf("the dialog's own line offers %q, want %q", got, tc.want)
+			}
+
+			bar := ansi.Strip(m.hintBar.View())
+			if !strings.Contains(bar, tc.want) {
+				t.Errorf("the rendered bar omits %q:\n%s", tc.want, bar)
+			}
+			if tc.inert != "" && strings.Contains(bar, tc.inert+"/") {
+				t.Errorf("the rendered bar advertises the inert %q:\n%s", tc.inert, bar)
+			}
+		})
+	}
+}
+
+// TestTheDialogHintIsAbsentWithNoDialog: with nothing to answer there are no
+// answer letters, and hint() drops a row whose key resolved to nothing
+// rather than leaving a blank in the bar.
+func TestTheDialogHintIsAbsentWithNoDialog(t *testing.T) {
+	m := sizedMainModel(t, PanelChatView)
+	for _, h := range m.hintsFor(SurfaceDialog) {
+		if h.Label == "answer" {
+			t.Errorf("an answer hint (%q) with no dialog up", h.Key)
+		}
+	}
+}

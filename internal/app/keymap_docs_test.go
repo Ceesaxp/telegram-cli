@@ -462,10 +462,11 @@ var hintSurfaceSections = map[Surface]string{
 var hintTokensAllowedAnywhere = map[string]string{
 	"j/k": "one hint row for a two-key motion; the card gives j and k a " +
 		"row each, and both spellings are checked through them",
-	"y/n": "the confirm dialog's accelerators, drawn in the buttons " +
-		"themselves; the card's Overlays section has room for the rule, " +
-		"not for a row per dialog",
-	"←/→": "the dialog's button movement, same reason as y/n",
+	"←/→": "the dialog's button movement; the card's Overlays section has " +
+		"room for the rule, not for a row per dialog. The answer letters " +
+		"beside it are read off the live dialog's buttons, so they are " +
+		"absent from the set this test builds and covered by " +
+		"TestTheDialogHintNamesTheButtonsItHas instead",
 	"dd": "a vi normal-mode command on the draft, listed on the card as " +
 		"part of the \"x / D / dd\" row",
 	"[/]": "one hint row for the two folder keys; the card gives [ and ] " +
