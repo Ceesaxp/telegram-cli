@@ -304,6 +304,12 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "esc", Desc: "Close — q closes no overlay"},
 			{Keys: "enter", Desc: "Accept the selection"},
 			{Keys: "j / k", Desc: "Move within a list (dialogs use the arrows)"},
+			// The contacts overlay's own two. It draws a whole column and
+			// narrows like the chat list it borrows the column from, which
+			// is worth a row: a contact list long enough to need a filter
+			// is the one you opened to find a name in.
+			{Keys: bound(k.search), Desc: "Filter the contacts list"},
+			{Keys: bound(k.contacts), Desc: "Close the contacts overlay"},
 		}},
 	}
 }

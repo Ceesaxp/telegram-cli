@@ -333,6 +333,21 @@ rather than failing silently. More commands (`pin`, `mute`, `reload-config`,
 this build doesn't have, and a palette entry that can't run would be worse
 than an absent one. See [TODO.md](../TODO.md).
 
+## Contacts (`c`)
+
+Borrows the chat list's column and draws its grid — the same row offsets,
+the same selection bar, the same filter header — because the two swap into
+one region and a reader whose eye has learned where a name starts should not
+have to relearn it. The header's placeholder is what names the surface.
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` (or `↓` / `↑`) | Move the cursor |
+| `Enter` | Open a private chat with the selected contact |
+| `/` | Filter the list live, over both the name and the `@username` (`Esc` clears, `Enter` keeps it applied) |
+| `Esc` | Clear an applied filter; with none, close the panel |
+| `c` | Close the panel — the key that opened it |
+
 ## Overlays — search, contacts, dialogs
 
 | Key | Action |

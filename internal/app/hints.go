@@ -302,10 +302,25 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 		)
 
 	case SurfaceContacts:
+		// The way out of a filter leads while one is applied, for the
+		// reason it does in the chat list: a narrowed list with nothing
+		// saying how to widen it reads as contacts going missing.
+		if m.contacts.FilterActive() {
+			return join(
+				hint("esc", "clear"),
+				hint("enter", "keep"),
+			)
+		}
+		var clear []hintbar.Hint
+		if m.contacts.FilterQuery() != "" {
+			clear = hint("esc", "clear filter")
+		}
 		return join(
+			clear,
 			hint("j/k", "move"),
 			hint("enter", "open"),
-			hint("esc", "close"),
+			hint(k.search, "filter"),
+			hint(k.contacts, "close"),
 		)
 
 	case SurfaceSearch:
