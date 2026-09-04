@@ -33,11 +33,18 @@ ones first, then the two that carry real work. #41 (mention autocomplete),
       cancel, so a cancel lost to a connection blip left a typist on screen
       for the session — survivable while static, a forever-running redraw
       once animated; each action now carries Telegram's own six-second
-      deadline. And the tick chain is generation-guarded: a chat switch
-      followed by a new action would otherwise leave the stopped chain's
-      last tick to re-arm beside the new one, halving the frame time per
-      overlap. Recorded as divergence 52 — animation is a TUI 2.0 non-goal,
-      and this is the second sanctioned exception after the spinner.
+      deadline. And the tick chain is guarded by a running flag PLUS a
+      generation: a chat switch followed by a new action would otherwise
+      leave the stopped chain's last tick to re-arm beside the new one,
+      halving the frame time per overlap.
+
+      Review caught the first version reading both answers off the
+      generation alone — which only counts up, so after the first
+      `OpenChatAt` the guard said "already running" forever and neither the
+      animation nor the expiry ever ran. The stuck "is typing" was still
+      there behind a fix that looked landed. Recorded as divergence 52 —
+      animation is a TUI 2.0 non-goal, and this is the second sanctioned
+      exception after the spinner.
 - [x] **#58 level 1 — document multi-profile.** Docs only. `TELETUI_CONFIG`
       is honoured for both read and write, so a profile is a config file
       and what it points at; only `session_file` and `files_dir` have to
@@ -65,6 +72,16 @@ ones first, then the two that carry real work. #41 (mention autocomplete),
       (`forward_messages`) and REST (`POST /api/forward`) expose the same
       operation with both chats named explicitly. Recorded as divergence
       53, with the I-13 amendment for the returning key.
+
+      Review found four more of the same shape — a value read late that
+      should have been captured, or kept past the question it answered: the
+      destination was not frozen at the confirmation (only the source was),
+      server matches outlived the query they answered, the cursor could
+      select a row the viewport was not drawing, and the forwarded copy was
+      never published locally so it did not appear until reload. A fifth
+      was underneath: `SearchChats` never called `peers.Apply`, so a
+      "not in your chats" result had no access hash and could not be
+      resolved — not new to forwarding, but forwarding is what reached it.
 - [x] **#46 — coalesce per-update RPCs in the open chat.** The focused
       path answered every arrival with its own `readHistory` and every
       edit, reaction or poll tally with its own `getMessages`. Both

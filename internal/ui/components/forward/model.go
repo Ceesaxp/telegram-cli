@@ -115,6 +115,20 @@ type Model struct {
 
 	filtered []Chat
 	cursor   int
+	// offset is the first row drawn, so the cursor can never sit on a
+	// destination the reader cannot see.
+	offset int
+
+	// chosen is the destination frozen when the confirmation opened.
+	//
+	// The source has always been captured; the destination was still read
+	// off the cursor at the moment Enter was pressed the second time. A
+	// search answer landing between the two presses refilters the list and
+	// resets the cursor, so the chat named on the confirmation and the
+	// chat actually forwarded to could differ — the same failure the
+	// captured source exists to prevent, on the other half of the
+	// sentence.
+	chosen Chat
 
 	// searching and searchFailed drive the status line. A failure must not
 	// replace usable local matches — it is a note on the row list, not
@@ -138,6 +152,7 @@ func (m *Model) Open(src Source, candidates []Chat) {
 	m.remote = nil
 	m.searching = false
 	m.searchFailed = false
+	m.chosen = Chat{}
 	m.refilter()
 }
 
@@ -152,6 +167,8 @@ func (m *Model) Close() {
 	m.remote = nil
 	m.filtered = nil
 	m.cursor = 0
+	m.offset = 0
+	m.chosen = Chat{}
 	m.searching = false
 	m.searchFailed = false
 }
@@ -164,8 +181,18 @@ func (m Model) Query() string   { return m.query }
 // while the picker is open.
 func (m Model) Source() Source { return m.source }
 
-// Destination returns the highlighted chat, if anything matched.
+// Destination returns the chat a forward would go to: the frozen choice
+// once the confirmation is open, the highlighted row before that.
 func (m Model) Destination() (Chat, bool) {
+	if m.step == StepConfirm {
+		return m.chosen, m.chosen.ID != 0
+	}
+	return m.highlighted()
+}
+
+// highlighted is the row under the cursor, which is the destination only
+// until the confirmation freezes one.
+func (m Model) highlighted() (Chat, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
 		return Chat{}, false
 	}
@@ -193,6 +220,12 @@ func (m *Model) SetSearching(searching bool) {
 // returns your own peers alongside global ones, and a chat listed twice
 // looks like two different destinations.
 func (m *Model) SetResults(chats []Chat) {
+	if m.step != StepPick {
+		// The confirmation is open. Its destination is frozen, but
+		// refiltering underneath it would still change what the list
+		// shows when Escape steps back, and it costs nothing to wait.
+		return
+	}
 	seen := make(map[int64]bool, len(m.local))
 	for _, c := range m.local {
 		seen[c.ID] = true
@@ -214,6 +247,9 @@ func (m *Model) SetResults(chats []Chat) {
 // matches stay on screen: a picker that empties itself because the network
 // blinked is worse than one that quietly lists less.
 func (m *Model) SetSearchFailed() {
+	if m.step != StepPick {
+		return
+	}
 	m.searching = false
 	m.searchFailed = true
 }
@@ -239,9 +275,11 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 		// Enter on an empty list is not a cancel and not a forward. Doing
 		// nothing is the only honest answer: there is no destination to
 		// confirm.
-		if _, ok := m.Destination(); !ok {
+		chosen, ok := m.highlighted()
+		if !ok {
 			return m, ActionNone
 		}
+		m.chosen = chosen
 		m.step = StepConfirm
 		return m, ActionNone
 
@@ -259,7 +297,7 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 		}
 		r := []rune(m.query)
 		m.query = string(r[:len(r)-1])
-		m.refilter()
+		m.editedQuery()
 		return m, ActionQueryChanged
 
 	case "ctrl+u":
@@ -267,7 +305,7 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 			return m, ActionNone
 		}
 		m.query = ""
-		m.refilter()
+		m.editedQuery()
 		return m, ActionQueryChanged
 	}
 
@@ -276,10 +314,23 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 	// word "space" — a chat title has spaces in it.
 	if msg.Text != "" {
 		m.query += msg.Text
-		m.refilter()
+		m.editedQuery()
 		return m, ActionQueryChanged
 	}
 	return m, ActionNone
+}
+
+// editedQuery re-filters after a change to the query, dropping the server
+// matches with it.
+//
+// They answered the PREVIOUS query. Keeping them until a replacement
+// arrives leaves rows on screen that do not match what is typed — and if
+// the replacement search fails, or the query is emptied so none is run,
+// they stay indefinitely and can be confirmed. The generation guard in the
+// app rejects a late answer; it cannot retract one already accepted.
+func (m *Model) editedQuery() {
+	m.remote = nil
+	m.refilter()
 }
 
 // updateConfirm handles the second screen, where the only questions are yes
@@ -293,6 +344,7 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (Model, Action) {
 		// last step" everywhere else in this client, and a reader who
 		// picked the wrong chat wants the list again, not to start over.
 		m.step = StepPick
+		m.chosen = Chat{}
 		return m, ActionNone
 	}
 	return m, ActionNone
@@ -301,6 +353,7 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (Model, Action) {
 func (m *Model) move(delta int) {
 	if len(m.filtered) == 0 {
 		m.cursor = 0
+		m.offset = 0
 		return
 	}
 	m.cursor += delta
@@ -309,6 +362,28 @@ func (m *Model) move(delta int) {
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = len(m.filtered) - 1
+	}
+	m.scrollToCursor()
+}
+
+// scrollToCursor keeps the selected row inside the rendered window.
+//
+// Without it the cursor walked past row eight while the view kept drawing
+// rows one to eight: the selection marker vanished and Enter confirmed a
+// chat that was not on screen. A picker that can send to something it is
+// not showing is worse than one that cannot reach it at all.
+func (m *Model) scrollToCursor() {
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+maxRows {
+		m.offset = m.cursor - maxRows + 1
+	}
+	if max := len(m.filtered) - maxRows; m.offset > max {
+		m.offset = max
+	}
+	if m.offset < 0 {
+		m.offset = 0
 	}
 }
 
@@ -331,6 +406,7 @@ func (m *Model) refilter() {
 	// transliterated and prefix matches it is better at than we are.
 	m.filtered = append(m.filtered, m.remote...)
 	m.cursor = 0
+	m.offset = 0
 }
 
 // matches reports whether a chat answers the query, by title or by handle.
@@ -363,7 +439,7 @@ func (m Model) pickView() string {
 	muted := theme.OverlayMuted(m.roles)
 
 	var lines []string
-	lines = append(lines, cell.Fit(promptStyle.Render("→")+" "+m.query+"█", Width))
+	lines = append(lines, m.promptRow(promptStyle, muted))
 
 	switch {
 	case len(m.filtered) == 0 && m.searching:
@@ -372,16 +448,16 @@ func (m Model) pickView() string {
 		lines = append(lines, cell.Fit(muted.Render("  no chat matches"), Width))
 	}
 
-	for row, c := range m.filtered {
-		if row >= maxRows {
-			break
-		}
-		lines = append(lines, m.chatLine(c, row == m.cursor))
+	// The window, not the first maxRows: the cursor can be anywhere in a
+	// long list, and it has to be on screen wherever it is.
+	end := m.offset + maxRows
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+	}
+	for i := m.offset; i < end; i++ {
+		lines = append(lines, m.chatLine(m.filtered[i], i == m.cursor))
 	}
 
-	if n := len(m.filtered) - maxRows; n > 0 {
-		lines = append(lines, cell.Fit(muted.Render("  +"+itoa(n)+" more"), Width))
-	}
 	// The status line is additive: it never replaces rows, so a failed
 	// search still leaves the local matches usable.
 	if m.searching && len(m.filtered) > 0 {
@@ -393,6 +469,25 @@ func (m Model) pickView() string {
 
 	lines = append(lines, cell.Fit(muted.Render("  ↵ choose · ↑↓ move · esc cancel"), Width))
 	return theme.OverlayFrame(m.roles).Padding(0, 1).Render(strings.Join(lines, "\n"))
+}
+
+// promptRow is the typed query, with the position in the list right-
+// aligned.
+//
+// The counter replaces the "+N more" line the first draft had, which
+// counted only what was below the fold and so said nothing once the view
+// scrolled. "3 of 12" is the shape the attach picker's prompt row already
+// uses and the shape the chat list's filter header agrees on.
+func (m Model) promptRow(promptStyle, muted lipgloss.Style) string {
+	left := promptStyle.Render("→") + " " + m.query + "█"
+	if len(m.filtered) == 0 {
+		return cell.Fit(left, Width)
+	}
+	right := itoa(m.cursor+1) + " of " + itoa(len(m.filtered))
+	if pad := Width - cell.Width(left) - cell.Width(right); pad > 0 {
+		return cell.Fit(left+strings.Repeat(" ", pad)+muted.Render(right), Width)
+	}
+	return cell.Fit(left, Width)
 }
 
 func (m Model) confirmView() string {

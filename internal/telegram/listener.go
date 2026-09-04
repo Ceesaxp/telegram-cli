@@ -187,8 +187,7 @@ func (l *Listener) onMessage(mc tg.MessageClass) {
 	if m == nil {
 		return
 	}
-	l.client.send(NewMessageMsg{Message: m})
-	l.client.send(ChatLastMessageMsg{ChatId: m.ChatID, LastMessage: m})
+	l.client.publishNewMessage(m)
 }
 
 // onEdit handles edited messages.

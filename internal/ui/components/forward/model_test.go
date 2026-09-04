@@ -276,3 +276,148 @@ func TestBackspaceEditsTheQuery(t *testing.T) {
 		t.Fatalf("backspace on an empty query returned %v, want ActionNone", action)
 	}
 }
+
+// A search answer landing between the two Enter presses used to refilter
+// the list and reset the cursor, so the chat named on the confirmation and
+// the chat actually forwarded to could differ. The source was always
+// captured; this is the other half of the same sentence.
+//
+// Two defences went in together — the destination is frozen, and
+// SetResults declines to refilter outside StepPick — and each one alone
+// hides the other's absence. So this asserts the freeze DIRECTLY, by
+// moving the list underneath the confirmation: whatever else changes,
+// Destination must stop reading the cursor once a choice is frozen.
+func TestTheDestinationIsFrozenAtTheConfirmation(t *testing.T) {
+	m := openPicker(t)
+	m, _ = press(m, "down") // Release team, not the first row
+	chosen, _ := m.Destination()
+
+	m, _ = press(m, "enter")
+
+	// The list moves under the open confirmation, by whatever route.
+	m.filtered = []Chat{{ID: 99, Title: "Somebody Else"}}
+	m.cursor = 0
+
+	got, ok := m.Destination()
+	if !ok || got.ID != chosen.ID {
+		t.Fatalf("destination = %+v, want the frozen %+v", got, chosen)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), chosen.Title) {
+		t.Fatalf("the confirmation stopped naming the frozen destination:\n%s", ansi.Strip(m.View()))
+	}
+
+	_, action := press(m, "enter")
+	if action != ActionForward {
+		t.Fatalf("action = %v, want ActionForward", action)
+	}
+}
+
+// The second defence, on its own terms: a result set arriving while the
+// confirmation is open does not disturb the list behind it.
+func TestResultsAreIgnoredWhileConfirming(t *testing.T) {
+	m := openPicker(t)
+	before := len(m.Matches())
+	m, _ = press(m, "enter")
+
+	m.SetResults([]Chat{{ID: 99, Title: "Aaa Somebody", Note: "not in your chats"}})
+
+	if got := len(m.Matches()); got != before {
+		t.Fatalf("matches = %d, want the %d from before the confirmation", got, before)
+	}
+}
+
+// Stepping back from the confirmation releases the frozen choice, so the
+// list is live again.
+func TestSteppingBackReleasesTheFrozenChoice(t *testing.T) {
+	m := openPicker(t)
+	m, _ = press(m, "enter")
+	m, _ = press(m, "esc")
+
+	m, _ = press(m, "down")
+	got, _ := m.Destination()
+	if got.ID != 2 {
+		t.Fatalf("destination = %d after stepping back and moving, want the cursored row", got.ID)
+	}
+}
+
+// Results answering a query the reader has moved on from must not stay
+// listed. The app's generation guard rejects a late answer; it cannot
+// retract one already accepted.
+func TestEditingTheQueryDropsThePreviousResults(t *testing.T) {
+	m := openPicker(t)
+	m, _ = typeInto(m, "nad")
+	m.SetResults([]Chat{{ID: 7, Title: "Nadia Support", Note: "not in your chats"}})
+	if len(m.Matches()) < 2 {
+		t.Fatal("precondition: the server match is not listed")
+	}
+
+	m, _ = typeInto(m, "x") // query is now "nadx" and matches nothing
+	for _, c := range m.Matches() {
+		if c.ID == 7 {
+			t.Fatalf("a result for the previous query is still listed: %+v", m.Matches())
+		}
+	}
+}
+
+// With more candidates than fit, the cursor has to stay on screen: a
+// picker that can send to something it is not showing is worse than one
+// that cannot reach it.
+func TestTheCursorStaysInsideTheRenderedRows(t *testing.T) {
+	many := make([]Chat, 0, 12)
+	for i := 1; i <= 12; i++ {
+		many = append(many, Chat{ID: int64(i), Title: "chat " + itoa(i), Sigil: "●"})
+	}
+	m := New(theme.DarkRoles(false))
+	m.Open(testSource(), many)
+
+	for i := 0; i < 11; i++ {
+		m, _ = press(m, "down")
+	}
+	dest, ok := m.Destination()
+	if !ok || dest.ID != 12 {
+		t.Fatalf("destination = %+v, want the last chat", dest)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, dest.Title) {
+		t.Fatalf("the selected chat is not drawn:\n%s", view)
+	}
+	// And the marker is on it, so the reader can see which row is armed.
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, dest.Title) && !strings.Contains(line, "▌") {
+			t.Fatalf("the selected row carries no marker: %q", line)
+		}
+	}
+}
+
+// Scrolling back up brings the top of the list back rather than stranding
+// the window.
+func TestTheViewportFollowsTheCursorBackUp(t *testing.T) {
+	many := make([]Chat, 0, 12)
+	for i := 1; i <= 12; i++ {
+		many = append(many, Chat{ID: int64(i), Title: "chat " + itoa(i), Sigil: "●"})
+	}
+	m := New(theme.DarkRoles(false))
+	m.Open(testSource(), many)
+
+	for i := 0; i < 11; i++ {
+		m, _ = press(m, "down")
+	}
+	for i := 0; i < 11; i++ {
+		m, _ = press(m, "up")
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "chat 1") {
+		t.Fatalf("the window did not follow the cursor back to the top:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+// The position counter says where the cursor is in the whole list, which
+// is what the removed "+N more" line stopped answering once the view could
+// scroll.
+func TestThePromptRowCountsThePosition(t *testing.T) {
+	m := openPicker(t)
+	m, _ = press(m, "down")
+
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "2 of 3") {
+		t.Fatalf("prompt row does not carry the position:\n%s", got)
+	}
+}

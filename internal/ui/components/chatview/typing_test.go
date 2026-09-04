@@ -157,3 +157,56 @@ func TestOpeningAnotherChatStopsTheChain(t *testing.T) {
 		t.Fatal("the previous chat's chain re-armed after the switch")
 	}
 }
+
+// Opening a chat is the normal case, not an edge one, and the chain has to
+// arm inside it. The generation-based guard read "already running" from a
+// generation that stopTypingAnim had merely bumped, so after the first
+// OpenChatAt — which every chat open performs — no typing action ever
+// scheduled a tick again: the marker never moved and, worse, nothing
+// pruned a lapsed action, which is the stuck "is typing" this animation
+// was supposed to end.
+func TestTypingArmsAfterOpeningAChat(t *testing.T) {
+	m := gridModel(t, 67)
+	m.OpenChatAt(testChatID, "test", 0)
+
+	m, cmd := m.Update(typingAction(200))
+	if cmd == nil {
+		t.Fatal("no tick scheduled for the first typing action after opening a chat")
+	}
+	// And the chain has to actually advance, not just be handed out once.
+	m, cmd = m.Update(typingTickMsg{at: time.Now(), gen: m.typingGen})
+	if cmd == nil || m.typingFrame != 1 {
+		t.Fatalf("the chain did not advance: cmd=%v frame=%d", cmd != nil, m.typingFrame)
+	}
+}
+
+// The same hole one step along: stopping on a cancel must leave the marker
+// able to start again when the next person types.
+func TestTypingRearmsAfterACancel(t *testing.T) {
+	m := gridModel(t, 67)
+	m, _ = m.Update(typingAction(200))
+	m, _ = m.Update(cancelAction(200))
+
+	m, cmd := m.Update(typingAction(201))
+	if cmd == nil {
+		t.Fatal("no tick scheduled for a typing action after a cancel")
+	}
+}
+
+// The stuck indicator, end to end: an action whose cancel never arrived
+// must leave the row on its own once the tick chain prunes it.
+func TestALapsedTypistLeavesTheRowOnItsOwn(t *testing.T) {
+	m := gridModel(t, 67)
+	m.OpenChatAt(testChatID, "test", 0)
+	m, _ = m.Update(typingAction(200))
+	if m.gridTypingRow() == "" {
+		t.Fatal("precondition: the typing row is not drawn")
+	}
+
+	// No cancel ever arrives — the connection blinked. The next tick past
+	// the deadline is what has to clear it.
+	m, _ = m.Update(typingTickMsg{at: time.Now().Add(typingTTL + time.Second), gen: m.typingGen})
+	if got := m.gridTypingRow(); got != "" {
+		t.Fatalf("a lapsed typist is still on screen: %q", got)
+	}
+}

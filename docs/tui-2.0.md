@@ -2132,13 +2132,25 @@ it re-sends every few seconds — and the tick chain stops when the set
 empties. The animation is what made the missing expiry expensive enough to
 find.
 
-**One chain, guarded by a generation.** The chain is armed by the first
-action and stopped when the set empties or the chat changes; a tick
+**One chain, and it takes two fields to say so.** The chain is armed by the
+first action and stopped when the set empties or the chat changes; a tick
 carrying a stale generation is dropped. Without that check, a chat switch
 followed by a new action leaves the stopped chain's last tick to re-arm
 alongside the new one, and two chains halve the frame time — the same class
 of bug as [divergence 39](#39-a-partial-update-is-not-a-small-complete-one),
 where state was trusted to be told rather than derived.
+
+The first version tried to answer both questions with the generation alone:
+"is a chain running" was read as `typingGen != 0`. Review found what that
+cost. The generation only ever counts UP, because that is what makes a
+stale tick recognisable — so once `stopTypingAnim` had bumped it, the guard
+answered "already running" forever. `OpenChatAt` stops the chain, and every
+normal chat open goes through `OpenChatAt`, which meant the marker never
+animated in real use and, worse, no tick ever ran to prune a lapsed action:
+the stuck "is typing" this whole section exists to end was still there,
+behind a fix that looked like it had landed. Two fields now. One answers
+"is a chain live", the other answers "is this tick from it", and neither
+can do the other's job.
 
 ### 53. Forwarding picks a chat, which is not the same as picking a person
 
@@ -2181,6 +2193,51 @@ because it now dispatches. Anyone who migrates twice is told the key was
 removed and then that it was added; both messages were true when they were
 printed, and a migration that quietly skipped the second would leave a
 config with no `forward` line and a client that has one.
+
+**What review found, and what it was all one bug.** Four of the five
+findings on this surface were the same mistake in different places: a value
+read late that should have been captured early, or a value kept past the
+question it answered.
+
+- **The destination was not frozen.** The source was captured when the
+  picker opened, and the reasoning above says exactly why — then the
+  destination was still read off the cursor at the moment Enter was pressed
+  the second time. A search answer landing between the two presses
+  refilters and resets the cursor, so the chat named on the confirmation
+  and the chat forwarded to could differ. Captured now, at the same moment
+  and for the same reason as the source. `SetResults` also declines to
+  refilter outside `StepPick`; the two defences hide each other's absence,
+  so each has a test that fails on its own.
+- **Results outlived their query.** `refilter` appended the server matches
+  unconditionally, and a query edit only marked a new search pending — so
+  matches for `nad` stayed listed and selectable after typing `xyz`, and
+  indefinitely if the replacement search failed. The app's generation guard
+  rejects a late answer; it cannot retract one already accepted. The remote
+  set is dropped on every edit.
+- **The cursor could leave the screen.** `move` bounded on the whole match
+  list while the view drew the first eight rows, so a ninth candidate could
+  be selected, confirmed and forwarded to without ever being visible. There
+  is a viewport now, and the prompt row carries `3 of 12` — the shape the
+  attach picker and the chat list's filter header already use, and which
+  says more than the `+N more` line it replaces, because that line counted
+  only what was below the fold and so went silent the moment the view
+  scrolled.
+- **The forward did not appear.** The generated `MessagesForwardMessages`
+  returns the updates and does nothing else with them, and the server sends
+  no second copy through the update stream because these updates ARE that
+  copy. Forwarding into the chat you were looking at reported success and
+  changed nothing until reload. The returned messages are published through
+  `publishNewMessage`, which is now also what the listener calls — one
+  function, because a forward that announced the thread but not the chat
+  list would leave the list showing the previous message.
+
+A fifth was in the layer underneath: `SearchChats` never called
+`peers.Apply`, unlike every other loader. It built entities for rendering
+the rows and taught the client nothing, so a result the picker labels "not
+in your chats" had no cached access hash and could not be resolved by
+anything that tried to act on it. That was not new to this feature —
+opening a global search result had the same gap — but forwarding is what
+made it reachable.
 
 **Attribution is kept, and not optional.** `DropAuthor` and
 `DropMediaCaptions` stay unset, so a forward carries who wrote it. Telegram

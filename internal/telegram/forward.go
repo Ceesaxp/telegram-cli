@@ -56,7 +56,37 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 		return nil, fmt.Errorf("forward messages: %w", err)
 	}
 
-	return messagesFromUpdates(c, updates), nil
+	forwarded := messagesFromUpdates(c, updates)
+
+	// Publish them the way an arriving message is published.
+	//
+	// The generated MessagesForwardMessages returns the updates and does
+	// nothing else with them — unlike gotd's higher-level sender, it does
+	// not run them through the update handler — and the server does not
+	// send this client a second copy through the update stream, because
+	// these updates ARE that copy. Without this, forwarding into the chat
+	// you are looking at reported success and changed nothing on screen
+	// until the chat was reloaded.
+	for _, m := range forwarded {
+		c.publishNewMessage(m)
+	}
+	return forwarded, nil
+}
+
+// publishNewMessage announces a message that has just appeared in a chat:
+// to the thread, which appends it, and to the chat list, which re-sorts and
+// redraws its preview.
+//
+// One function rather than two call sites emitting the same pair. The
+// listener and the forward adapter both have to say exactly this, and a
+// forward that announced only half of it would land in the open thread
+// while the chat list went on showing the previous message.
+func (c *Client) publishNewMessage(m *Message) {
+	if m == nil {
+		return
+	}
+	c.send(NewMessageMsg{Message: m})
+	c.send(ChatLastMessageMsg{ChatId: m.ChatID, LastMessage: m})
 }
 
 // messagesFromUpdates collects every new message in an update set, in

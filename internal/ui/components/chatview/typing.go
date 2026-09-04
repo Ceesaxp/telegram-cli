@@ -64,10 +64,21 @@ func typingTick(gen int) tea.Cmd {
 // startTypingAnim arms the marker if it is not already running. Returns
 // nil when a chain is live or nobody is typing, so the caller can pass it
 // straight back to Bubble Tea.
+//
+// "Running" is its own flag rather than a reading of typingGen. The
+// generation only ever counts UP — that is what makes a stale tick
+// recognisable — so once stopTypingAnim had bumped it, a guard on
+// "typingGen != 0" answered "already running" forever. OpenChatAt stops
+// the chain, and every normal chat open goes through OpenChatAt, so the
+// effect was that the marker never animated and, worse, no tick ever ran
+// to prune a lapsed action: the stuck "is typing" this was meant to end.
+// One flag answers "is a chain live", the other answers "is this tick from
+// it", and neither can do the other's job.
 func (m *Model) startTypingAnim() tea.Cmd {
-	if m.typingGen != 0 || len(m.typing) == 0 {
+	if m.typingRunning || len(m.typing) == 0 {
 		return nil
 	}
+	m.typingRunning = true
 	m.typingGen++
 	m.typingFrame = 0
 	return typingTick(m.typingGen)
@@ -76,6 +87,7 @@ func (m *Model) startTypingAnim() tea.Cmd {
 // stopTypingAnim ends the current chain and invalidates its in-flight
 // tick. Called when the set empties and when the open chat changes.
 func (m *Model) stopTypingAnim() {
+	m.typingRunning = false
 	m.typingGen++
 	m.typingFrame = 0
 }

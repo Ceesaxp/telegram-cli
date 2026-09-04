@@ -237,10 +237,14 @@ type Model struct {
 	// draws the indicator as the bottom row of the scroller, aligned with
 	// the message grid, rather than as a line in a status bar.
 	typing []typingUser
-	// typingFrame indexes typingFrames; typingGen identifies the live tick
-	// chain (0 means none is running). See typing.go.
-	typingFrame int
-	typingGen   int
+	// typingFrame indexes typingFrames. typingRunning says whether a tick
+	// chain is live; typingGen identifies WHICH one, so a tick left over
+	// from a stopped chain can be told apart from the current one. Two
+	// fields because the generation only counts up and so can never mean
+	// "idle". See typing.go.
+	typingFrame   int
+	typingRunning bool
+	typingGen     int
 
 	loading     bool
 	historyEnd  bool
@@ -1605,7 +1609,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case typingTickMsg:
 		// A tick from a chain that has been stopped or replaced carries a
 		// stale generation and must not re-arm.
-		if msg.gen != m.typingGen {
+		if !m.typingRunning || msg.gen != m.typingGen {
 			return m, nil
 		}
 		if m.typing = pruneTyping(m.typing, msg.at); len(m.typing) == 0 {
