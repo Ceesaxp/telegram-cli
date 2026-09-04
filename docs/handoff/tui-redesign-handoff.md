@@ -1,5 +1,11 @@
 # Handoff: teletui TUI redesign
 
+> **Archive.** This is the brief the TUI 2.0 redesign was written from, kept
+> unedited as the record of what was asked for. It is not current: the
+> keymap it assumes was rewritten by the 2026-09-04 interaction review, so
+> where it names a binding — `alt+1/2/3`, `}`/`{`, `M` — read
+> [interaction-model.md](../interaction-model.md) instead.
+
 ## Overview
 
 A redesign of the `teletui` terminal client's entire visual layer: chrome, chat

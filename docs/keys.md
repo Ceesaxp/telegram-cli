@@ -44,25 +44,38 @@ applied and leaves a `/query` chip showing in the tab bar); from the chat
 view it's in-chat find, as it always was. `Ctrl+G` is the panel-independent
 global search from everywhere except the composer.
 
+`Esc` steps back, one rung per press, and **never discards typed text**.
+Leave vi insert; cancel a reply or edit target; unstage an attachment;
+close an input line; close an overlay; leave a panel toward the chat list —
+whichever of those applies, the words survive it. Cancelling an edit puts
+back the draft the edit displaced. Work is only ever lost through a key that
+says so: `d` behind a confirm, `q` behind a confirm when a draft exists, and
+`Ctrl+Q`, which is the documented exception.
+
 Press `?` any time outside the composer for a scrollable cheat sheet.
 [`internal/app/keymap.go`](../internal/app/keymap.go) is where the keymap
-lives in code, but it is not all one thing: four on-screen surfaces — the
-help card itself, its footer line, the status bar's hint strip, and the
-one-line hint at the bottom of the screen that changes with focus — are
-genuinely *generated*, built at runtime from the same resolved bindings
-`app.go` dispatches on, so none of them can name a key that does not
-actually fire. The hand-written prose table at the top of that same file,
-`internal/config/config.go`'s `KeyConfig` doc comment, and the tables
-below are not generated — they are maintained by hand, in three separate
-places, and can each say something the code no longer does. The tables
-below are the one exception with a safety net: a test
+lives in code, and no on-screen surface that names a key holds a literal.
+The help card, its footer, the frame's hint bar, the chat list's footer row
+and the media overlay's strip are all generated from the resolved bindings
+`app.go` dispatches on, through the registry in
+[`internal/app/hints.go`](../internal/app/hints.go). A dialog is the one
+surface with a nearer authority: its line is built from its own button set,
+because the buttons *are* the answer keys — and the hint bar reads those
+same buttons rather than guessing, so the two cannot name different
+letters. None of them can name a key that does not fire. The prose table that used to head `keymap.go` is gone — it
+was the copy nothing checked, and it was wrong by the time it was deleted.
+[interaction-model.md](interaction-model.md) holds the reasoning now, and
+the tables below hold the keys, with a safety net: a test
 (`TestKeymapDocMatchesHelpSections` in `internal/app`) diffs the key
 *set* documented here, and which section each key is filed under, against
 what the help card advertises, and fails the build on a mismatch — so this
-page can lag behind by at most one unrun `go test`, not indefinitely. It
-cannot catch a wrong *description* of what a key does, and it does not
-read `keymap.go`'s prose table, `config.go`'s doc comment, or
-`config.example.toml` at all, so drift in any of those is still possible.
+page can lag behind by at most one unrun `go test`, not indefinitely. A
+second test walks every hint surface and refuses a hint that names a key
+the card does not. Neither can catch a wrong *description* of what a key
+does, and neither reads `config.go`'s doc comment or
+`config.example.toml`, so drift in those two is still possible — though
+`TestExampleConfigKeysMatchDefaults` holds the example's `[keys]` block to
+the shipped defaults.
 
 ## Global — any panel
 
@@ -152,7 +165,7 @@ messages, not one — so `Esc` is how you leave it.
 |-----|--------|
 | `Enter` | Send |
 | `Ctrl+J` / `Shift+Enter` | Insert a newline (`Enter` alone sends) |
-| `Esc` | Cancel reply/edit/attachment first, then leave |
+| `Esc` | Cancel reply/edit/attachment first, then leave — never taking the text with it |
 | `Ctrl+T` | Attach a file by path |
 | `Ctrl+V` | Paste a clipboard image |
 | `Ctrl+O` | Edit the draft in `$VISUAL`/`$EDITOR` |
@@ -205,7 +218,7 @@ line break, and `$i` inserts before it rather than after:
 
 | Key | Action |
 |-----|--------|
-| `Esc` | Leave insert mode; `Esc` again cancels reply/edit/attachment, then leaves — same as emacs's Esc, one keystroke later |
+| `Esc` | Leave insert mode; `Esc` again cancels reply/edit/attachment, then leaves — same as emacs's Esc, one keystroke later, and neither press takes the draft |
 | `i` / `a` / `A` | Insert before / after cursor, at end of line |
 | `o` / `O` | Open a line below / above and insert |
 | `h`/`l`/`j`/`k` | Move by character / line (normal mode) |
@@ -324,9 +337,13 @@ than an absent one. See [TODO.md](../TODO.md).
 
 | Key | Action |
 |-----|--------|
-| `Esc` | Close |
+| `Esc` | Close. **`q` closes no overlay** — it is quit and nothing else |
 | `Enter` | Accept the selection — in a **dialog**, this means whichever button is currently highlighted, not "confirm" |
-| `j` / `k` (or `↓` / `↑`) | Move — a dialog's buttons also move with `Tab`/`Left`/`Right`, and (outside the attach-file prompt, where `j`/`k` are typed as path text instead) with `j`/`k` too |
+| `j` / `k` (or `↓` / `↑`) | Move — a dialog's buttons move with `←`/`→` instead, and not with `j`/`k`: those are the keys a reader is already holding when a confirm appears mid-scroll |
+
+`q` used to close the help card, the media overlay and the reaction row, in
+each case one keystroke before it would have quit the client — `?` `q` `q`
+was an exit nobody meant to type. It closes none of them now.
 
 A **confirm dialog** (deleting a message, quitting with an unsent draft) starts with **Cancel** highlighted, not Confirm, precisely because `Enter` fires whichever button is lit: these dialogs guard destructive or lossy actions, so a reflex `Enter` must not be the thing that performs one. The highlighted button is marked two ways — reversed color, and literal `[ Brackets ]` around its label — so it reads correctly without color.
 
@@ -342,18 +359,29 @@ instead of drifting out of sync with what the card shows.
 
 | Key | Action |
 |-----|--------|
-| `?` / `Esc` / `q` | Close |
+| `?` / `Esc` | Close (`q` does not — see above) |
 | `j` / `k` (or `↓` / `↑`) | Scroll |
 | `PgUp` / `PgDn` | Page |
 | `g` / `G` (or Home / End) | Top / bottom |
 
-The card's own footer line only spells out `esc / ? / q to close · j k to
+The card's own footer line only spells out `esc / ? to close · j k to
 scroll` — `PgUp`/`PgDn` and `g`/`G` work too, just not named there; this
-table is the complete list. The status bar's one-line hint strip is even
-more abbreviated — it has no room to be contextual about `/`, and names
-only the shortest path back to moving: `?`, the panels, the folder tabs,
-find, and the way out. It leads with `?:Help` precisely because it is a
-pointer at the full picture rather than the full picture itself.
+table is the complete list.
+
+The frame's hint bar is the abbreviation that points at this card. It is
+keyed by **surface** — the panel or overlay whose keymap is live right now —
+and every set it can show is the "Hints" table in
+[interaction-model.md](interaction-model.md), built from the resolved
+bindings. The chat list's own footer row and the media overlay's strip are
+handed their content from the same registry, so a rebound key shows
+correctly everywhere and a key that is not bound shows nowhere.
+
+A dialog's own one-line hint is the exception, and deliberately so: it is
+built from that dialog's button set, which is the only thing that knows
+whether the answers are `n`/`y` or `n`/`m`/`e`. The hint bar reads the same
+buttons for its `answer` row, so the two are renderings of one source
+rather than two copies of it — the bar used to say `y/n` for every dialog,
+which advertised an inert `y` over the delete choice.
 
 While the help overlay is open it owns the keyboard entirely: everything
 except its own close/scroll keys is swallowed rather than passed through,

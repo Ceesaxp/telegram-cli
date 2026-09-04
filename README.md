@@ -68,7 +68,7 @@ cell**, so the picture cannot drift from the program.
 |---|---|
 | [Features](docs/features.md) | what it does — folders, reactions, media, drafts, markdown, notifications |
 | [Keybindings](docs/keys.md) | every key, both editing modes, and how to rebind them |
-| [Interaction model](docs/interaction-model.md) | the rules the keyboard follows, and the decisions behind them |
+| [Interaction model](docs/interaction-model.md) | the rules the keyboard follows, and the decisions behind them — read this before changing a binding |
 | [Configuration](docs/configuration.md) | `config.toml`, where files go, migration |
 | [MCP & REST](docs/integrations.md) | driving the account from another program |
 | [Troubleshooting](docs/troubleshooting.md) | when something does not work |
@@ -175,7 +175,9 @@ make clean    # remove build artifacts
 the handful of rules worth knowing first — chiefly that all terminal geometry
 goes through `internal/ui/cell`, and that the keymap tables in
 [docs/keys.md](docs/keys.md) are checked against the running app in both
-directions.
+directions — as is every on-screen hint, which is why hints are built from
+the registry in `internal/app/hints.go` rather than written where they are
+drawn.
 
 ## License
 
