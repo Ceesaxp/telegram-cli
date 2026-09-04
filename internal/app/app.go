@@ -666,20 +666,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			noOverlay := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
 
-			// Colon opens the command palette, and only from NORMAL — the
-			// interaction-mode resolver is the authority, so a focused
+			// Colon opens the command palette from NORMAL and from VI —
+			// that is vim's own muscle memory and it stays (decision
+			// I-12). The mode resolver is the authority, so a focused
 			// emacs composer (INSERT) types a colon as text while a vi
 			// composer in its command state opens the palette. Consulting
 			// the mode rather than the focus panel is what keeps that
 			// distinction honest.
-			if key.Matches(":") && noOverlay && m.Mode() == ModeNormal {
+			if key.Matches(":") && noOverlay &&
+				(m.Mode() == ModeNormal || m.Mode() == ModeVi) {
 				m.palette.Open()
 				return m, nil
 			}
 
-			// The context rail. From NORMAL only, for the same reason as
-			// the colon: a backtick is a character somebody may well want
-			// to type into a message, and the composer owns it there.
+			// The context rail. From NORMAL only — unlike the colon,
+			// which vi users expect from their command state as well. A
+			// backtick is a character somebody may well want to type into
+			// a message, and the composer owns it there.
 			if key.Matches("`") && noOverlay && m.Mode() == ModeNormal {
 				return m, m.toggleRail()
 			}
@@ -1172,6 +1175,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatview.OpenPhotoMsg:
 		m.mediaView.SetSize(m.width, m.height)
+		// Fed here as well as on the chrome tick: the overlay covers the
+		// whole screen, and a row that only says how to leave from the
+		// next tick onward is a trap for that long.
+		m.mediaView.SetHints(m.hintsFor(SurfaceMedia))
 		m.mediaView.Open(msg.Caption, "downloading…")
 		return m, nil
 
@@ -1380,56 +1387,6 @@ func (m Model) enterFatalError(reason string) Model {
 // no hint bar: it is read by exactly the user who does not yet know which
 // ones are real.
 //
-// Built from the resolved bindings, like helpSections, hintsForMode and
-// helpFooter — the same rule applies here, and this is the line that is on
-// screen at all times. It returns finished text rather than a format
-// string so that a binding containing a "%" cannot be read as a verb.
-func (m Model) helpLine(focusName string) string {
-	k := m.keys
-	var parts []string
-
-	switch m.focus {
-	case PanelComposer:
-		// None of the navigation keys apply while typing; the composer's
-		// own hint line carries the line-editing detail.
-		parts = []string{
-			"Enter:send", "Ctrl+J:newline", "Ctrl+O:editor",
-			"Ctrl+T:attach", "Ctrl+V:paste", "Esc:cancel", "Tab:switch",
-		}
-
-	case PanelChatView:
-		parts = []string{
-			k.help + ":help", "Tab:switch", "Esc:back",
-			"j/k:message", "h:chats",
-			k.search + ":find", "n/N:match",
-			k.compose + ":compose", k.quitBrowsing + ":quit",
-		}
-
-	case PanelSearch:
-		// The overlay owns its text input; the panel keys behind it are
-		// unreachable until it closes.
-		parts = []string{"type to search", "j/k:move", "Enter:open", "Esc:close"}
-
-	case PanelContacts:
-		parts = []string{
-			"j/k:move", "Enter:open chat",
-			k.contacts + ":close", "Esc:close",
-		}
-
-	default: // PanelChatList
-		// No Esc:back — the chat list is where back goes. No n/N — the
-		// search hits belong to the chat view.
-		parts = []string{
-			k.help + ":help", "Tab:switch",
-			"j/k:move", "l:messages",
-			k.search + ":filter", "Enter:open",
-			k.compose + ":compose", k.quitBrowsing + ":quit",
-		}
-	}
-
-	return " " + strings.Join(append(parts, focusName), " │ ")
-}
-
 // The delete confirm's answers. They travel on DialogResultMsg.Value, so
 // they are constants rather than literals typed out at both ends.
 const (
@@ -1791,6 +1748,9 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 
 	case "react":
 		m.reactions.Open(msg.ChatId, msg.MessageId, m.myReactionOn(msg.ChatId, msg.MessageId))
+		// After Open, so the "takes yours off" wording can read the
+		// reaction this account already left.
+		m.reactions.SetHints(m.hintsFor(SurfaceReactions))
 
 	case "pin":
 		return m, m.togglePin(msg.ChatId, msg.MessageId)

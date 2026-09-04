@@ -329,6 +329,15 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
 
 - **I-12 — A fourth badge, `VI`.** See "Modes and the badge".
 
+  *Amendment, recorded on implementation:* the badge column is padded to
+  **six** cells, not seven. `NORMAL` and `INSERT` are six and `COMMAND` is
+  seven, so six is the width the column already had wherever it can change
+  under the reader's eyes — a vi user pressing `Esc` sees `VI` where
+  `INSERT` was, and the prompt after it must not move. Padding to seven
+  would fix the column at `COMMAND`'s width and shift every existing frame
+  by one cell, which is a geometry change, and the golden fixtures exist to
+  refuse those (TUI 2.0 decision 11).
+
 - **I-13 — `[keys]` has one semantic: replace, refuse collisions, warn at
   startup.** Three semantics (replace / add alongside / accepted-but-inert)
   needed a page to explain and let `forward` sit in the example file bound

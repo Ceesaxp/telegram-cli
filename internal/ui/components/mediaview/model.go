@@ -33,6 +33,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/Ceesaxp/telegram-cli/internal/media"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -47,6 +48,10 @@ type Model struct {
 
 	open    bool
 	caption string // what is being shown: "photo · nadia · 14:03"
+
+	// hints is the foot row, handed in by the host from the one hint
+	// registry rather than written here (decision I-6).
+	hints []hintbar.Hint
 
 	// art is the rendered image, already split into rows. status is what to
 	// say instead when there is no art: "downloading…", or why not.
@@ -213,7 +218,7 @@ func (m Model) View() string {
 		rows = append(rows, cell.Fill(r.Bg, line, m.width))
 	}
 
-	rows = append(rows, m.hints())
+	rows = append(rows, m.hintRow())
 	return strings.Join(rows, "\n")
 }
 
@@ -228,17 +233,28 @@ func (m Model) header() string {
 	return cell.Fill(r.Panel, line, m.width)
 }
 
-// hints is the way out, always. An overlay that covers the whole screen and
-// does not say how to leave is a trap, and this one can be reached by a
+// SetHints supplies the row this overlay draws along its foot. The app owns
+// it: the strings come from the one hint registry (decision I-6), so a
+// rebound key shows correctly and a literal cannot drift out of step with
+// what the overlay actually honours.
+func (m *Model) SetHints(hints []hintbar.Hint) { m.hints = hints }
+
+// hintRow is the way out, always. An overlay that covers the whole screen
+// and does not say how to leave is a trap, and this one can be reached by a
 // single keystroke.
-func (m Model) hints() string {
+func (m Model) hintRow() string {
 	r := m.roles
 	key := lipgloss.NewStyle().Foreground(r.Cyan)
 	label := lipgloss.NewStyle().Foreground(r.Faint)
 
-	line := " " + key.Render("esc") + " " + label.Render("close") +
-		"  " + key.Render("s") + " " + label.Render("save") +
-		"  " + key.Render("o") + " " + label.Render("open externally")
+	parts := make([]string, 0, len(m.hints))
+	for _, h := range m.hints {
+		parts = append(parts, key.Render(h.Key)+" "+label.Render(h.Label))
+	}
+	line := ""
+	if len(parts) > 0 {
+		line = " " + strings.Join(parts, "  ")
+	}
 	return cell.Fill(r.Chrome, line, m.width)
 }
 

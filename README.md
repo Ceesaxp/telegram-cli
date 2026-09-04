@@ -54,8 +54,8 @@ your terminal. It speaks MTProto directly through [gotd/td](https://github.com/g
    thanks, that unblocked me  │ ▌                  reconstruct.
                               │               ···  nadia is typing…
                               │ reply ↳ nadia: Rebased onto main, … esc to drop
- j/k move  g/G ends  u unread │ NORMAL › i to compose · : for commands       md
- q quit  i compose  : command  r reply      idx 12 msgs · 9 buffers · 37 unread
+ j/k move  l open  / filter   │ NORMAL › i to compose · : for commands       md
+ j/k move  l open  / filter  [/] folder     idx 12 msgs · 9 buffers · 37 unread
 ```
 
 That is not a mock-up. It is [`docs/fixtures/frame-80x24.txt`](docs/fixtures/frame-80x24.txt)

@@ -23,8 +23,9 @@ Inside a message, code fences are framed and numbered, quotes get a rule,
 lists get a hanging indent, attachments get a metadata card, and spoilers
 stay hidden until `x`.
 
-The **composer** carries an always-visible mode badge — NORMAL, INSERT or
-COMMAND — so one glance answers whether the next letter types or navigates.
+The **composer** carries an always-visible mode badge — NORMAL, INSERT, VI
+or COMMAND — so one glance answers whether the next letter types, navigates,
+or runs a vi command on the draft.
 `Ctrl+P` expands it to a split view with your source on the left and what
 will actually be sent on the right. Drafts are per chat: switching away parks
 one and switching back restores it, reply target and staged attachment
@@ -73,7 +74,7 @@ transcript — that is a Telegram premium call this client does not make; see
 - **Contacts** — Contact list with online status indicators
 - **Help Overlay** — `?` opens a scrollable, lazygit-style keybinding cheat sheet built from the same bindings the app dispatches on, so it can't drift out of sync
 - **Composer Editing Modes** — emacs (readline) or vi (modal, real cursor semantics) line editing, selectable or auto-detected from `$VISUAL`/`$EDITOR`; `Ctrl+O` edits the draft in a full external editor
-- **Mode Badge** — NORMAL / INSERT / COMMAND at the head of the composer row, derived from what the next key will actually do rather than from a separate flag, so it cannot contradict the keymap
+- **Mode Badge** — NORMAL / INSERT / VI / COMMAND at the head of the composer row, derived from what the next key will actually do rather than from a separate flag, so it cannot contradict the keymap. VI is the composer's own command state: it shared NORMAL with the browsing panels for a release while sharing none of their keys ([interaction-model.md](interaction-model.md), I-12)
 - **Split Compose Preview** — `Ctrl+P` opens a two-column view: your source with line numbers on the left, what will actually be sent on the right, rendered by the same code that draws received messages
 - **Per-Chat Drafts** — switching chats parks the draft and restores that chat’s own, reply target and staged attachment included; the chat list shows `draft: saved locally` where the preview would be. In memory for the session, never synced to Telegram
 - **Config Migration** — `-migrate-config` upgrades an existing `config.toml` to current defaults, with a timestamped backup and a change report

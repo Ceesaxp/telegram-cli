@@ -6,6 +6,7 @@ import (
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/x/ansi"
@@ -230,9 +231,34 @@ func TestFooterOffersTheWayOutOfAFilter(t *testing.T) {
 		t.Errorf("footer with a filter applied = %q, want it to name esc", got)
 	}
 
+	// With no filter the row is whatever the host handed in — the panel
+	// does not choose it any more (decision I-6), which is what stopped it
+	// advertising "u unread" with nothing bound to u.
 	m.filter = ""
+	m.SetFooterHints([]hintbar.Hint{{Key: "j/k", Label: "move"}})
 	if got := ansi.Strip(m.renderListFooter(38)); !strings.Contains(got, "j/k") {
-		t.Errorf("footer with no filter = %q, want the motions", got)
+		t.Errorf("footer with no filter = %q, want the hints it was given", got)
+	}
+}
+
+// TestFooterDrawsOnlyWhatItIsGiven is the other half of I-6: with no hints
+// handed in there is nothing to draw, rather than a literal that nothing can
+// tell is wrong.
+func TestFooterDrawsOnlyWhatItIsGiven(t *testing.T) {
+	m := rowModel()
+	if got := strings.TrimSpace(ansi.Strip(m.renderListFooter(38))); got != "" {
+		t.Errorf("an unfed footer drew %q", got)
+	}
+
+	m.SetFooterHints([]hintbar.Hint{
+		{Key: "f8", Label: "filter"},
+		{Key: "Q", Label: "quit"},
+	})
+	got := ansi.Strip(m.renderListFooter(38))
+	for _, want := range []string{"f8", "filter", "Q", "quit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("footer %q omits %q", got, want)
+		}
 	}
 }
 

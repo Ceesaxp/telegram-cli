@@ -284,6 +284,16 @@ func (m Model) renderHint() string {
 	return theme.OverlayMuted(m.roles).Render(strings.Join(parts, " · "))
 }
 
+// Accelerators is the answer keys in button order: "n/y" for a confirm,
+// "n/m/e" for the delete choice, "" for a dialog whose buttons carry none.
+//
+// Exported because the frame's hint bar has to name the same letters this
+// dialog's own line does, and the button set is the only thing that knows
+// what they are. The bar used to say "y/n" for every dialog, which was
+// wrong on the delete choice — advertising an inert y on the one surface
+// where a wrong key press is destructive.
+func (m Model) Accelerators() string { return m.accelerators() }
+
 // accelerators is the answer keys in button order: "n/y" for a confirm,
 // "n/m/e" for the delete choice.
 func (m Model) accelerators() string {

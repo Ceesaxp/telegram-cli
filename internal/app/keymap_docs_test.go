@@ -430,3 +430,161 @@ var keyTokenAliases = map[string]string{
 	"pgdn": "pgdown", "pagedown": "pgdown", "pageup": "pgup",
 	"return": "enter", "escape": "esc",
 }
+
+// --- decision I-6: every hint is derived, and names a key that exists -----
+
+// hintSurfaceSections maps each surface onto the help-card section that
+// answers for it. The overlays share one section on the card, which has room
+// for the rule rather than for a row per overlay.
+var hintSurfaceSections = map[Surface]string{
+	SurfaceChatList:       "chatlist",
+	SurfaceChatView:       "chatview",
+	SurfaceComposerInsert: "composer",
+	SurfaceComposerVi:     "composer",
+	SurfacePalette:        "palette",
+	SurfaceAttach:         "attach",
+	SurfaceContacts:       "overlays",
+	SurfaceSearch:         "overlays",
+	SurfaceDialog:         "overlays",
+	SurfaceHelp:           "overlays",
+	SurfaceMedia:          "overlays",
+	SurfaceReactions:      "overlays",
+	// Neither has a keymap worth a row, and neither has a card section.
+	SurfaceAuth:    "",
+	SurfaceLoading: "",
+}
+
+// hintTokensAllowedAnywhere are hint keys the help card spells differently
+// or does not spell at all, each with the reason. An entry that stops being
+// necessary fails too, so the list cannot quietly absorb a hint that names a
+// key nothing binds — which is the defect this whole decision exists to
+// remove.
+var hintTokensAllowedAnywhere = map[string]string{
+	"j/k": "one hint row for a two-key motion; the card gives j and k a " +
+		"row each, and both spellings are checked through them",
+	"←/→": "the dialog's button movement; the card's Overlays section has " +
+		"room for the rule, not for a row per dialog. The answer letters " +
+		"beside it are read off the live dialog's buttons, so they are " +
+		"absent from the set this test builds and covered by " +
+		"TestTheDialogHintNamesTheButtonsItHas instead",
+	"dd": "a vi normal-mode command on the draft, listed on the card as " +
+		"part of the \"x / D / dd\" row",
+	"[/]": "one hint row for the two folder keys; the card gives [ and ] " +
+		"a row each",
+	"o": "vi's open-line in the composer set and open-externally in the " +
+		"media set; the card names both, in their own sections",
+	"i": "vi's insert in the composer set; the card names it in the vi " +
+		"editing section",
+}
+
+// TestHintSurfacesMatchHelp is the drift test decision I-6 asks for: a hint
+// may not name a key the help card does not, and a hint belonging to a
+// surface with a section of its own must be in THAT section.
+//
+// The failure it prevents is not cosmetic. "u unread" sat in the chat list
+// footer for a release with nothing bound to u, because the footer held a
+// literal and a literal cannot be wrong in a way anything can detect.
+func TestHintSurfacesMatchHelp(t *testing.T) {
+	cfg := &config.Config{}
+	m := New(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg))
+	advertisedIn := helpSectionTokens(t)
+
+	for _, s := range allSurfaces() {
+		section, mapped := hintSurfaceSections[s]
+		if !mapped {
+			t.Errorf("%v has no help section mapped to it — decide one "+
+				"rather than letting the surface go unchecked", s)
+			continue
+		}
+		for _, h := range m.hintsFor(s) {
+			key := normalizeKeyToken(h.Key)
+			if key == "" {
+				t.Errorf("%v offers a hint with no key: %+v", s, h)
+				continue
+			}
+			if _, allowed := hintTokensAllowedAnywhere[key]; allowed {
+				continue
+			}
+			sections, known := advertisedIn[key]
+			if !known {
+				t.Errorf("%v's hint %q names a key the help card does not "+
+					"advertise at all — either the binding is gone or the "+
+					"card is missing a row", s, h.Key)
+				continue
+			}
+			// Its own section, or Global — a global binding works from
+			// every browsing panel, so a panel's hint set naming one is
+			// correct rather than misplaced. The overlays share one
+			// section on the card and are checked only for existence:
+			// the media overlay's s and o are the chat view's keys, and
+			// listing them twice on the card would be a second copy of
+			// the same fact.
+			if section != "" && section != "overlays" &&
+				!sections[section] && !sections["global"] {
+				t.Errorf("%v's hint %q is advertised under %v, not under %q "+
+					"or global — one of the two has it in the wrong place",
+					s, h.Key, sectionList(sections), section)
+			}
+		}
+	}
+
+	// The allow-list cannot outlive its reasons.
+	for key := range hintTokensAllowedAnywhere {
+		var used bool
+		for _, s := range allSurfaces() {
+			for _, h := range m.hintsFor(s) {
+				if normalizeKeyToken(h.Key) == key {
+					used = true
+				}
+			}
+		}
+		if !used {
+			t.Errorf("hintTokensAllowedAnywhere[%q] is stale — no hint set "+
+				"names it any more; delete the entry", key)
+		}
+	}
+}
+
+// TestNoHintLiteralsInComponents is the structural half. Every hint the app
+// draws comes from hintsFor; a component that builds one out of literals is
+// a surface that can drift again, and it is how the chat list footer came to
+// advertise a key nothing was bound to.
+//
+// It reads the sources the way TestAppFixedMatchesDispatcher reads app.go,
+// because the alternative — trusting that nobody adds one back — is exactly
+// what failed the first time.
+func TestNoHintLiteralsInComponents(t *testing.T) {
+	// The files that draw a hint row, and the token that would mean a
+	// literal crept back in.
+	files := map[string][]string{
+		"chatlist/rows.go": {
+			`"j/k", "move"`, `"u", "unread"`, `"g/G", "ends"`,
+		},
+		"mediaview/model.go": {
+			`Render("esc")`, `Render("s")`, `Render("o")`,
+		},
+		"reactionpicker/model.go": {
+			`" enter pick`, `"enter takes yours off`,
+		},
+	}
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source")
+	}
+	components := filepath.Join(filepath.Dir(thisFile), "..", "ui", "components")
+
+	for name, forbidden := range files {
+		src, err := os.ReadFile(filepath.Join(components, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		for _, bad := range forbidden {
+			if strings.Contains(string(src), bad) {
+				t.Errorf("%s holds the hint literal %s — it must take its "+
+					"row from the app's registry instead (decision I-6)",
+					name, bad)
+			}
+		}
+	}
+}

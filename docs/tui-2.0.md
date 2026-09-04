@@ -115,6 +115,14 @@ high-fidelity reference.
 
 ### Top bar, chat list, and hint bar
 
+> **The hint sets moved.** They live in
+> [interaction-model.md](interaction-model.md)'s "Hints" table now, one row
+> per SURFACE rather than per mode, and every surface that draws a hint —
+> the bar, the chat list footer, a dialog's own line, the media overlay's
+> row — is fed from that one registry (decision I-6). What this section
+> still owns is the geometry: which row, how wide, what happens when it does
+> not fit.
+
 The top bar is one chrome row. It starts with cyan bold tg and a ghost rule,
 then compact numbered folder labels from the current folder model. The active
 folder is bright; inactive folders are dim. Keep existing 1–9, h/l, and
@@ -257,6 +265,13 @@ chord footer. The existing textarea and both emacs and vi editing behaviours
 continue within it.
 
 #### Mode integration
+
+> **Extended by I-12** ([interaction-model.md](interaction-model.md)). There
+> is a fourth badge, VI, for the composer's own command state; it shared
+> NORMAL with the browsing panels while sharing none of their keys. The rule
+> below — derived, never stored, never altering key routing — is unchanged,
+> and the mode is now derived from the SURFACE (I-6) rather than resolved a
+> second time beside it.
 
 Resolved by decision 3 and binding. Keep panel focus and input mode separate,
 but make the displayed mode a derived, impossible-to-contradict state:

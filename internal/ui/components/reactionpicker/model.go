@@ -20,6 +20,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Ceesaxp/telegram-cli/internal/keys"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -51,6 +52,9 @@ type Model struct {
 	messageID int64
 	index     int
 
+	// hints is the row's hint strip, handed in by the host.
+	hints []hintbar.Hint
+
 	// mine is the reaction already on this message from this account, so
 	// choosing it again can mean "take it off" rather than "put it on
 	// twice" — which is what Telegram does with a second identical send,
@@ -63,6 +67,18 @@ func New(r theme.Roles) Model { return Model{roles: r} }
 func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
 func (m *Model) SetWidth(w int)         { m.width = w }
 func (m Model) IsVisible() bool         { return m.visible }
+
+// SetHints supplies the row's own hint strip. See hintRow's comment in
+// mediaview for why these are handed in rather than written here.
+func (m *Model) SetHints(hints []hintbar.Hint) { m.hints = hints }
+
+// Mine is the reaction this account has already left on the message the row
+// is open over, or "" when there is none.
+//
+// Exposed for the hint registry: enter TAKES OFF a reaction you already
+// left, so a row that said "enter pick" there would be describing the
+// opposite of what happens (decision I-6).
+func (m Model) Mine() string { return m.mine }
 
 // Open points the picker at a message. mine is the reaction this account has
 // already left on it, or "".
@@ -179,9 +195,17 @@ func (m Model) View() string {
 		b.WriteString(style.Render("[" + emoji + "]"))
 	}
 
-	hint := " enter pick · esc cancel "
-	if m.mine != "" {
-		hint = " enter takes yours off · esc cancel "
+	// Handed in by the host from the one hint registry (decision I-6),
+	// including the "takes yours off" wording — which depends on whether
+	// this account already reacted, and so is exactly the kind of thing a
+	// literal here would get wrong.
+	parts := make([]string, 0, len(m.hints))
+	for _, h := range m.hints {
+		parts = append(parts, h.Key+" "+h.Label)
+	}
+	hint := ""
+	if len(parts) > 0 {
+		hint = " " + strings.Join(parts, " · ") + " "
 	}
 	b.WriteString(lipgloss.NewStyle().Foreground(r.Faint).Render(hint))
 

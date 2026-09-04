@@ -290,15 +290,16 @@ func TestColonTypesInAnEmacsComposer(t *testing.T) {
 }
 
 // TestColonOpensThePaletteFromAViComposerInCommandState is the other half:
-// the resolver reports NORMAL there, so the colon is a command again.
+// the resolver reports VI there, and `:` opens the palette from NORMAL and
+// from VI alike — that is vim's own muscle memory (decision I-12).
 func TestColonOpensThePaletteFromAViComposerInCommandState(t *testing.T) {
 	m := openChatModel(t, PanelComposer)
 	m.composer.SetEditingMode(composer.ModeVi)
 
 	updated, _ := m.Update(decodeKey(t, "\x1b")) // leave vi insert
 	m = updated.(Model)
-	if m.Mode() != ModeNormal {
-		t.Fatalf("precondition: Mode() = %v, want NORMAL", m.Mode())
+	if m.Mode() != ModeVi {
+		t.Fatalf("precondition: Mode() = %v, want VI", m.Mode())
 	}
 
 	updated, _ = m.Update(decodeKey(t, ":"))

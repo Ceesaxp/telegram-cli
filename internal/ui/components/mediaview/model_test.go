@@ -13,6 +13,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/Ceesaxp/telegram-cli/internal/media"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -115,9 +116,17 @@ func TestTheOverlayFillsTheFrame(t *testing.T) {
 }
 
 // A full-screen overlay that does not say how to leave is a trap, and this
-// one is a single keystroke away from anywhere in the thread.
+// one is a single keystroke away from anywhere in the thread. The row comes
+// from the host's hint registry now (decision I-6) rather than from a
+// literal here, so what this pins is that the component draws what it is
+// given, on both the loading and the loaded frame.
 func TestTheOverlayAlwaysSaysHowToLeave(t *testing.T) {
 	m := sized(t, 80, 24, "blocks")
+	m.SetHints([]hintbar.Hint{
+		{Key: "esc", Label: "close"},
+		{Key: "s", Label: "save"},
+		{Key: "o", Label: "open externally"},
+	})
 	m.Open("photo", "downloading…")
 
 	last := strings.Split(m.View(), "\n")[23]

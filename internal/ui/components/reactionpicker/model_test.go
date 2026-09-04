@@ -12,6 +12,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 )
 
@@ -171,12 +172,23 @@ func TestTheRowFitsThePane(t *testing.T) {
 }
 
 // TestTheRowMarksWhatYouAlreadyLeft, so the press that takes it off is not a
-// guess.
+// guess. The chip styling is the row's own; the wording of the hint comes
+// from the host's registry (decision I-6), which is why Mine() is exposed
+// for it to read.
 func TestTheRowMarksWhatYouAlreadyLeft(t *testing.T) {
 	plain, mine := opened(t, ""), opened(t, Reactions[2])
 	if plain.View() == mine.View() {
 		t.Fatal("a message you have reacted to draws the same row as one you have not")
 	}
+	if mine.Mine() != Reactions[2] {
+		t.Errorf("Mine() = %q, want the reaction already left", mine.Mine())
+	}
+	if plain.Mine() != "" {
+		t.Errorf("Mine() = %q on a message with no reaction of ours", plain.Mine())
+	}
+
+	// And the row draws whatever wording it is handed.
+	mine.SetHints([]hintbar.Hint{{Key: "enter", Label: "takes yours off"}})
 	if !strings.Contains(ansi.Strip(mine.View()), "takes yours off") {
 		t.Errorf("the row does not say what enter will do:\n%s", ansi.Strip(mine.View()))
 	}
