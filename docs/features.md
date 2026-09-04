@@ -40,7 +40,7 @@ exactly what it did before the rail existed.
 whichever image protocol `media.image_protocol` resolves to. Nothing is
 fetched or drawn until you press it, `Esc` puts it away, and `o` hands the
 same file to your system viewer if the terminal draws it badly. `y` copies
-the selected message's text, `space` plays a voice note, and `M` clears the
+the selected message's text, `space` plays a voice note, and `m` clears the
 unread badge without moving your place in the history.
 
 Reactions render as chips under the message, polls show their answers with
@@ -53,7 +53,7 @@ transcript — that is a Telegram premium call this client does not make; see
 ## Everything, briefly
 
 - **Chat Management** — Private chats, groups, supergroups, channels
-- **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]`, arrows, digits `1`-`9`, or a click switch tabs (terminal-independent); `Alt+H`/`Alt+L` work too wherever Option-as-Meta is on; bare `h`/`l` move between panels instead (see [keys.md](keys.md)); Telegram-compatible pinned/include/exclude filter semantics
+- **Chat Folders** — Numbered folder tabs in the top bar (they moved there with the TUI 2.0 frame; selection and keys are unchanged); `[`/`]` from either browsing panel, or the arrows, digits `1`-`9` or a click from the chat list, switch tabs; bare `h`/`l` move between panels instead (see [keys.md](keys.md)); Telegram-compatible pinned/include/exclude filter semantics
 - **Thread Grid** — Messages on a fixed time / sender / body grid rather than bubbles: one body column the whole conversation aligns to, deterministic per-sender colours, day and unread dividers, single-row reply quotes, and delivery marks read from the chat's read markers. Real ANSI-aware word wrap, measured in display cells
 - **Where You Are** — The chat list times are relative (`2m`, `4h`, `yd`, `2d`), because a list is read for recency. The thread header carries the chat's kind and member count, which buffer you are in, and a `bot`/`top`/`all` marker beside the line position, so "is there more below" is answered without comparing two numbers. The hint bar counts what there is — `idx 12 msgs · 9 buffers · 37 unread` — dropping each part when it would say nothing, and saying `3 of 9 buffers` while the list is filtered, so a count that falls does not read as chats going missing
 - **Content Blocks** — Framed, numbered code fences with diff and comment colouring and horizontal truncation (code is never re-wrapped); ruled block quotes; hanging-indent lists; metadata cards for attachments that collapse to one line on a narrow pane; spoilers drawn in their own background until `x` reveals them
@@ -93,8 +93,8 @@ transcript — that is a Telegram premium call this client does not make; see
 A tab bar above the chat list shows your Telegram folders, plus a
 synthesized "All" tab that's always present — even for accounts with no
 custom folders, and even before the folder list has loaded. See
-[keys.md](keys.md) for how to switch tabs — several
-terminal-independent ways, plus `Alt+H`/`Alt+L` where Option-as-Meta is on.
+[keys.md](keys.md) for how to switch tabs: `[`/`]` from either browsing
+panel, and the arrows, the digits or a click from the chat list.
 
 Filtering follows Telegram's own folder semantics: chats explicitly
 *excluded* from a folder are always hidden; chats explicitly *pinned* or

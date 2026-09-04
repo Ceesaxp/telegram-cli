@@ -33,19 +33,18 @@ var AppFixed = []string{
 	// two, and is the chord a terminal user presses to abandon a command
 	// rather than to close an application.
 	"ctrl+q",
-	// The focus ladder and the panel cycle.
+	// The focus ladder and the panel cycle. alt+1/2/3 and f1-f3 were here
+	// and are gone (decision I-1): they only reached the app on a terminal
+	// configured to report Option as a modifier, the failure was silent,
+	// and h, l, i, Esc and Tab cover panel focus without them.
 	"esc", "tab", "shift+tab",
-	"alt+1", "alt+2", "alt+3",
 	// Lazygit-style movement between the two browsing panels.
 	"h", "l",
-	// The way into the composer. One letter — c was a second spelling of
-	// i, and the badge and the hint bar both answer for i.
-	"i",
 	// Clipboard paste, from whichever panel has focus.
 	"ctrl+v",
-	// The command palette. Claimed only from NORMAL — a focused emacs
-	// composer types a colon as text — but from a browsing panel it is
-	// always the app's, so a component that bound it would never fire.
+	// The command palette. Claimed only from NORMAL and VI — a focused
+	// emacs composer types a colon as text — but from a browsing panel it
+	// is always the app's, so a component that bound it would never fire.
 	":",
 	// The context rail toggle. Same rule as the colon: claimed only from
 	// NORMAL, so a focused composer types a backtick as text.

@@ -132,29 +132,26 @@ type Model struct {
 }
 
 // resolvedKeys holds the subset of config.KeyConfig that app.go dispatches
-// on directly, after normalization and defaulting. See the doc comment on
-// config.KeyConfig for which keys are wired here versus left inert.
+// on directly, after normalization, defaulting and collision refusal. See
+// the doc comment on config.KeyConfig for the one rule they all follow.
 type resolvedKeys struct {
-	quit          string
-	quitBrowsing  string
-	focusChatList string
-	focusChatView string
-	focusComposer string
-	search        string
-	globalSearch  string
-	contacts      string
-	contactsAlt   string
-	help          string
-	nextFolder    string
-	prevFolder    string
-	nextChat      string
-	prevChat      string
+	quit         string
+	quitBrowsing string
+	search       string
+	globalSearch string
+	contacts     string
+	compose      string
+	help         string
+	nextFolder   string
+	prevFolder   string
+	nextChat     string
+	prevChat     string
+	nextUnread   string
 
 	// The chat view's own bindings. app.go does not dispatch on these —
 	// it normalizes and defaults them here and hands them to chatview via
 	// SetKeys in New, which is what ends config.toml advertising fields
-	// nothing reads. The defaults are the keys chatview hardcoded before
-	// it was made configurable.
+	// nothing reads.
 	//
 	// These are the values going IN. What comes back out of
 	// chatview.ActiveKeys is what the panel actually accepted, and that
@@ -162,52 +159,117 @@ type resolvedKeys struct {
 	reply         string
 	editMessage   string
 	deleteMessage string
-	scrollUp      string
-	scrollDown    string
-	pageUp        string
-	pageDown      string
+	markRead      string
 }
 
-// resolveKeys normalizes the configured key bindings app.go consults,
-// falling back to the given hardcoded default whenever a field is empty
-// (e.g. an older config.toml predating a field, or a zero-value Config in
-// tests).
+// resolveKeys turns config.toml's [keys] table into the bindings the
+// dispatcher matches, under decision I-13's single rule: a value replaces
+// the default, and a value that collides with something already bound is
+// refused rather than allowed to shadow it.
+//
+// Resolution runs in the same three passes chatview.SetKeys uses, and for
+// the same reason: explicit configuration has to outrank a built-in default
+// regardless of field order.
+//
+//  1. Claim what the app hardcodes (keys.AppFixed).
+//  2. Take every EXPLICITLY configured field, in field order, claiming as
+//     it goes. A value already claimed is refused outright and the field
+//     falls through to pass 3 as if it had not been set.
+//  3. Every field without an accepted value takes its default, unless that
+//     is claimed too — in which case the action is left with no key at all
+//     rather than sharing one. The help card renders that as "(unbound)".
+//
+// The refusals are not silent: config.StartupWarnings reports them before
+// the TUI takes the screen. Nothing here can happen with a default config,
+// where no two fields and no fixed key share a spelling.
 func resolveKeys(kc config.KeyConfig) resolvedKeys {
-	resolve := func(configured, def string) string {
-		if configured == "" {
-			return def
-		}
-		return config.NormalizeKey(configured)
+	claimed := map[string]bool{}
+	for _, k := range keys.AppFixed {
+		claimed[k] = true
 	}
-	// quit is resolved by config rather than here: a bare printable is
-	// refused outright and falls back to the default, because quit is
-	// matched ahead of every focus gate and would otherwise make that
-	// character untypable in a message (decision I-13). The refusal is
-	// reported at startup by config.StartupWarnings.
-	quit, _ := config.ResolveQuitKey(kc.Quit)
-	return resolvedKeys{
-		quit:          quit,
-		quitBrowsing:  resolve(kc.QuitBrowsing, "q"),
-		focusChatList: resolve(kc.FocusChatList, "f1"),
-		focusChatView: resolve(kc.FocusChatView, "f2"),
-		focusComposer: resolve(kc.FocusComposer, "f3"),
-		search:        resolve(kc.Search, "/"),
-		globalSearch:  resolve(kc.GlobalSearch, "ctrl+g"),
-		contacts:      resolve(kc.Contacts, "alt+c"),
-		contactsAlt:   resolve(kc.ContactsAlt, "f4"),
-		help:          resolve(kc.Help, "?"),
-		nextFolder:    resolve(kc.NextFolder, "alt+l"),
-		prevFolder:    resolve(kc.PrevFolder, "alt+h"),
-		nextChat:      resolve(kc.NextChat, "alt+j"),
-		prevChat:      resolve(kc.PrevChat, "alt+k"),
 
-		reply:         resolve(kc.Reply, "r"),
-		editMessage:   resolve(kc.EditMessage, "e"),
-		deleteMessage: resolve(kc.DeleteMessage, "d"),
-		scrollUp:      resolve(kc.ScrollUp, "k"),
-		scrollDown:    resolve(kc.ScrollDown, "j"),
-		pageUp:        resolve(kc.PageUp, "pgup"),
-		pageDown:      resolve(kc.PageDown, "pgdown"),
+	// quit is settled first and separately: config refuses a bare
+	// printable there outright, because quit is matched ahead of every
+	// focus gate and a letter bound to it is a letter that cannot be typed
+	// anywhere in the client (see config.ResolveQuitKey).
+	quit, _ := config.ResolveQuitKey(kc.Quit)
+	claimed[quit] = true
+
+	// The fields, in two tiers. Within a tier, pass 2 (everything the user
+	// set explicitly) runs before pass 3 (defaults), so an explicit value
+	// outranks a default regardless of field order — order is only a
+	// tie-break between two explicit settings, which is a situation the
+	// user has already made ambiguous.
+	//
+	// The tiers themselves are not a preference, they are the dispatch
+	// order: app-level matching runs before the focused panel sees the
+	// event, so a chat-view binding pointed at an app-level one is not
+	// ambiguous, it is dead. reply = "q" was accepted, advertised on the
+	// help card as Reply, and quit the application when pressed. Resolving
+	// the app's tier first is what makes that refusable here rather than
+	// discovered by pressing it.
+	out := resolvedKeys{quit: quit}
+	appTier := []keyField{
+		{kc.QuitBrowsing, "q", &out.quitBrowsing},
+		{kc.Search, "/", &out.search},
+		{kc.GlobalSearch, "ctrl+g", &out.globalSearch},
+		{kc.Contacts, "c", &out.contacts},
+		{kc.Compose, "i", &out.compose},
+		{kc.Help, "?", &out.help},
+		{kc.NextChat, "J", &out.nextChat},
+		{kc.PrevChat, "K", &out.prevChat},
+		{kc.NextUnread, "u", &out.nextUnread},
+		{kc.NextFolder, "]", &out.nextFolder},
+		{kc.PrevFolder, "[", &out.prevFolder},
+	}
+	// The chat view's own. Resolved here so config.toml, the help card and
+	// the panel describe one keymap; chatview.SetKeys resolves them again
+	// against the keys the panel itself owns, and ActiveKeys is what the
+	// card must quote.
+	chatViewTier := []keyField{
+		{kc.Reply, "r", &out.reply},
+		{kc.EditMessage, "e", &out.editMessage},
+		{kc.DeleteMessage, "d", &out.deleteMessage},
+		{kc.MarkRead, "m", &out.markRead},
+	}
+
+	resolveTier(claimed, appTier)
+	resolveTier(claimed, chatViewTier)
+	return out
+}
+
+// keyField is one row of the resolution table: what the file said, what the
+// client falls back to, and where the answer goes.
+type keyField struct {
+	configured string
+	def        string
+	out        *string
+}
+
+// resolveTier runs decision I-13's two passes over one tier of fields,
+// claiming as it goes.
+//
+// A field left empty is UNREACHABLE, not unbound-to-nothing-in-particular:
+// keys.Press.Matches treats "" as never matching, so the action is inert
+// rather than firing on somebody else's key, and the help card renders it as
+// "(unbound)" so the user can see which binding to free.
+func resolveTier(claimed map[string]bool, fields []keyField) {
+	accepted := make([]bool, len(fields))
+	for i, f := range fields {
+		key := config.NormalizeKey(f.configured)
+		if key == "" || claimed[key] {
+			continue
+		}
+		claimed[key] = true
+		*f.out = key
+		accepted[i] = true
+	}
+	for i, f := range fields {
+		if accepted[i] || claimed[f.def] {
+			continue
+		}
+		claimed[f.def] = true
+		*f.out = f.def
 	}
 }
 
@@ -263,13 +325,10 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// them: handing it the resolved values keeps the panel, the help card
 	// and config.toml describing one keymap instead of three.
 	m.chatView.SetKeys(chatview.Keys{
-		Reply:      m.keys.reply,
-		Edit:       m.keys.editMessage,
-		Delete:     m.keys.deleteMessage,
-		ScrollUp:   m.keys.scrollUp,
-		ScrollDown: m.keys.scrollDown,
-		PageUp:     m.keys.pageUp,
-		PageDown:   m.keys.pageDown,
+		Reply:    m.keys.reply,
+		Edit:     m.keys.editMessage,
+		Delete:   m.keys.deleteMessage,
+		MarkRead: m.keys.markRead,
 	})
 	// Built once from the resolved bindings and the resolved editing mode:
 	// neither changes after startup, so there is nothing to keep in sync
@@ -451,7 +510,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the overlay's own hint row advertises.
 			if m.mediaView.IsVisible() {
 				switch {
-				case key.Matches("esc", "q"):
+				// Esc, not q (decision I-8). q closed the overlay and,
+				// one keystroke later, quit the application — the same
+				// double-press that made the help card an exit.
+				case key.Matches("esc"):
 					m.mediaTeardown += m.mediaView.Close()
 					return m, nil
 				case key.Matches("s"):
@@ -470,7 +532,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// behind the overlay, so a key that changed one would take
 			// effect invisibly.
 			if m.help.IsVisible() {
-				if key.Matches("esc", m.keys.help, "q") {
+				// Esc, or the help key itself. NOT q: it closed the card
+				// and then quit, so "?qq" was an exit nobody meant to
+				// type (decision I-8). q has one meaning.
+				if key.Matches("esc", m.keys.help) {
 					m.help.SetVisible(false)
 					return m, nil
 				}
@@ -592,51 +657,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Alt+1/2/3 for panel focus, plus whatever F-key the config
-			// assigns (config.KeyConfig.FocusXxx). The F-keys are the escape
-			// hatch for terminals that cannot be made to report Option/Alt as
-			// a modifier at all — see the macOS notes on config.KeyConfig.
-			if key.Matches("alt+1", m.keys.focusChatList) {
-				m.setFocus(PanelChatList)
-				return m, nil
-			}
-			if key.Matches("alt+2", m.keys.focusChatView) {
-				m.setFocus(PanelChatView)
-				return m, nil
-			}
-			if key.Matches("alt+3", m.keys.focusComposer) {
-				m.setFocus(PanelComposer)
-				return m, nil
-			}
+			// Panel focus has no keys of its own any more (decision I-1).
+			// alt+1/2/3 and f1-f3 are gone: the alt spellings only reached the
+			// app on a terminal configured to report Option as a modifier —
+			// silently, undetectably not the case on most macOS terminals —
+			// and the function keys existed only as their fallback. h, l, i,
+			// Esc and Tab cover the three panels between them.
 
-			// Alt+j / Alt+k: next/prev chat (config.KeyConfig.NextChat/PrevChat,
-			// default alt+j/alt+k) — gated like folder cycling below, since
-			// both walk the same chat list.
-			chatNav := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
-			if key.Matches(m.keys.nextChat) && chatNav {
-				if chatID, ok := m.chatList.SelectDelta(1); ok {
-					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
-				}
-				return m, nil
-			}
-			if key.Matches(m.keys.prevChat) && chatNav {
-				if chatID, ok := m.chatList.SelectDelta(-1); ok {
-					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
-				}
-				return m, nil
-			}
-
-			// Folder cycling (config.KeyConfig.NextFolder/PrevFolder,
-			// default alt+l/alt+h) — only while no overlay or dialog is
-			// stealing input.
-			//
-			// The alt-free spellings of folder cycling — the lazygit
-			// [ and ], the left/right arrows, and the 1-9 jump — are
-			// deliberately NOT handled here: chatlist binds them itself.
-			// Claiming them in both places would mean two implementations
-			// of one behavior, and app-level dispatch runs first, so the
-			// chatlist copy would be dead code that still has to be kept
-			// in step.
 			noOverlay := m.dialog == nil && !m.search.IsVisible() && !m.contacts.IsVisible()
 
 			// Colon opens the command palette, and only from NORMAL — the
@@ -657,27 +684,75 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.toggleRail()
 			}
 
-			if key.Matches(m.keys.prevFolder) && noOverlay {
-				m.chatList.CycleFolder(-1)
-				return m, m.chatList.FolderLoadCmd()
-			}
-			if key.Matches(m.keys.nextFolder) && noOverlay {
-				m.chatList.CycleFolder(1)
-				return m, m.chatList.FolderLoadCmd()
-			}
-
 			// browsing is the two panels that are neither a text surface
 			// nor an overlay: the chat list and the chat view. Bare-letter
 			// bindings are only safe there.
 			browsing := noOverlay &&
 				(m.focus == PanelChatList || m.focus == PanelChatView)
 
+			// Folder cycling, from BOTH browsing panels (decision I-1).
+			// It was alt+h / alt+l at app level and [ / ] inside the chat
+			// list — one behaviour with two implementations, of which the
+			// reachable-everywhere one was the one that mostly did not
+			// work. [ and ] are the whole binding now, at app level, and
+			// the chat list keeps only the arrows and the digits, which
+			// are its own.
+			if key.Matches(m.keys.prevFolder) && browsing {
+				m.chatList.CycleFolder(-1)
+				return m, m.chatList.FolderLoadCmd()
+			}
+			if key.Matches(m.keys.nextFolder) && browsing {
+				m.chatList.CycleFolder(1)
+				return m, m.chatList.FolderLoadCmd()
+			}
+
+			// J / K open the next and previous chat outright. That is the
+			// point of them, and what separates them from the chat list's
+			// own j / k, which move the cursor and open nothing (I-2):
+			// this is "take me to the next conversation", not "look down
+			// the list". They were alt+j / alt+k.
+			if key.Matches(m.keys.nextChat) && browsing {
+				if chatID, ok := m.chatList.SelectDelta(1); ok {
+					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+				}
+				return m, nil
+			}
+			if key.Matches(m.keys.prevChat) && browsing {
+				if chatID, ok := m.chatList.SelectDelta(-1); ok {
+					return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+				}
+				return m, nil
+			}
+
+			// u opens the next chat with unread messages: down from the
+			// cursor within the active folder, wrapping once. The chat
+			// list footer advertised this key for a whole release with
+			// nothing bound to it, which is how decision I-6 came to
+			// require every hint to be derived rather than written.
+			//
+			// With nothing unread it says so rather than moving. A key
+			// that silently does nothing is a key people learn is broken.
+			if key.Matches(m.keys.nextUnread) && browsing {
+				chatID, ok := m.chatList.SelectNextUnread()
+				if !ok {
+					m.notify("no unread chats")
+					return m, nil
+				}
+				return m, func() tea.Msg { return chatlist.ChatSelectedMsg{ChatId: chatID} }
+			}
+
 			// Bare h/l move between panels — the lazygit reading of
 			// left/right, and the one a two-column layout invites: l from
 			// the chat list enters the chat view, h from the chat view
-			// goes back. They used to cycle the folder tabs; that role
-			// now belongs entirely to [ / ], the arrows, the digits and
-			// alt+h / alt+l, which lose nothing.
+			// goes back.
+			//
+			// l takes the CURSORED chat with it (decision I-2). The cursor
+			// was decoupled from the open chat so that j would not load a
+			// history per press, which stands; what did not stand was l and
+			// i acting on the OPEN chat while the cursor sat somewhere else,
+			// so that jjjl landed in the wrong conversation. Enter has
+			// always opened what the cursor is on, and now means exactly
+			// what l means.
 			//
 			// One step at a time, like the esc ladder: h at the left edge
 			// and l at the right edge are no-ops, not wraps, and neither
@@ -686,6 +761,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// panel underneath can give the key a second meaning.
 			if key.Matches("l") && browsing {
 				if m.focus == PanelChatList {
+					if cmd, moved := m.openCursoredChat(); moved {
+						// openChatAt, reached through the message, focuses
+						// the chat view itself.
+						return m, cmd
+					}
 					m.setFocus(PanelChatView)
 				}
 				return m, nil
@@ -752,24 +832,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Contacts toggle. ContactsAlt (f4) is the alt-free alternative
-			// for terminals that cannot report Option/Alt. ctrl+k was
-			// considered and rejected: the composer's textarea widget binds
-			// it to readline kill-to-end-of-line, and app-level bindings are
-			// checked before the focused panel sees the key.
+			// Contacts toggle, on a plain letter now (decision I-1). alt+c
+			// and its f4 fallback are gone; ctrl+k was considered years ago
+			// and rejected, because the composer's textarea binds it to
+			// readline kill-to-end-of-line and app-level bindings are checked
+			// before the focused panel sees the key.
 			//
-			// Gated on the dialog and the search overlay, but NOT on the
-			// contacts overlay itself — this is a toggle, and gating it on
-			// noOverlay would make the key that opens contacts unable to
-			// close it. A modal dialog is the thing that must not be
-			// bypassed: it is waiting for an answer, and swapping the panel
-			// behind it out from under the user answers nothing. The search
-			// overlay owns a text input for the same reason "/" is gated.
-			//
-			// It still fires from a focused composer, deliberately — alt+c
-			// and f4 are not characters. See the composer exception list in
-			// this file's keymap table.
-			if key.Matches(m.keys.contacts, m.keys.contactsAlt) &&
+			// Gated on the browsing panels, plus the contacts overlay itself
+			// so the key that opens it can close it. It no longer fires from
+			// a focused composer: alt+c was not a character, and "c" is —
+			// rule 1 says a printable belongs to whoever owns typing.
+			if key.Matches(m.keys.contacts) && (browsing || m.focus == PanelContacts) &&
 				m.dialog == nil && !m.search.IsVisible() {
 				m.contacts.SetVisible(!m.contacts.IsVisible())
 				if m.contacts.IsVisible() {
@@ -803,29 +876,38 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, pasteFromClipboard(m.composer.ChatId())
 			}
 
-			// Compose: i (vi insert) or c (compose) from either browsing
-			// panel moves focus to the composer.
+			// Compose (keys.compose, default i): move focus to the composer,
+			// opening the cursored chat first when it is not already the open
+			// one (decision I-2). Every key that leaves the chat list
+			// rightward takes the cursor with it.
 			//
-			// Typing is always an explicit move now. The app used to
-			// forward any printable key straight to the composer, which
-			// made every single-character binding a trade-off against
-			// being able to start a message with that character, and made
-			// the reverse mistake — a stray keystroke silently becoming
-			// message text — just as easy.
-			// Gated like every other bare-key binding: an open overlay or
-			// dialog owns its own input, and with no chat selected the
-			// composer has nothing to send to — it would only show its
-			// "open a chat first" notice, so "c" is better left inert.
+			// Typing is always an explicit move. The app used to forward any
+			// printable key straight to the composer, which made every
+			// single-character binding a trade-off against being able to
+			// start a message with that character, and made the reverse
+			// mistake — a stray keystroke silently becoming message text —
+			// just as easy.
 			//
-			// The composer's own chat id is the condition, not the chat
-			// list's: it is what submit actually sends to, and the two are
-			// set from the same ChatSelectedMsg.
-			// i alone. c was a second spelling of the same action, and the
-			// letter is worth more free than spent twice: vi's i is what
-			// the hint bar advertises and what the badge answers.
-			if key.Matches("i") && noOverlay &&
-				m.composer.ChatId() != 0 &&
-				(m.focus == PanelChatView || m.focus == PanelChatList) {
+			// From the chat view the condition is the composer's own chat id:
+			// it is what submit sends to. From the chat list it is "there is
+			// a chat under the cursor", because opening it is the first half
+			// of what the key does.
+			if key.Matches(m.keys.compose) && browsing {
+				if m.focus == PanelChatList {
+					cmd, _ := m.openCursoredChat()
+					// Nothing to send to at all — an empty or unloaded
+					// list and no open chat — would only show the
+					// composer's "open a chat first", so the key is
+					// better left inert.
+					if m.chatList.CursorChatId() == 0 && m.composer.ChatId() == 0 {
+						return m, nil
+					}
+					m.setFocus(PanelComposer)
+					return m, cmd
+				}
+				if m.composer.ChatId() == 0 {
+					return m, nil
+				}
 				m.setFocus(PanelComposer)
 				return m, nil
 			}
@@ -1318,9 +1400,9 @@ func (m Model) helpLine(focusName string) string {
 	case PanelChatView:
 		parts = []string{
 			k.help + ":help", "Tab:switch", "Esc:back",
-			"j/k:scroll", "h:chats",
+			"j/k:message", "h:chats",
 			k.search + ":find", "n/N:match",
-			"i:compose", k.quitBrowsing + ":quit",
+			k.compose + ":compose", k.quitBrowsing + ":quit",
 		}
 
 	case PanelSearch:
@@ -1331,7 +1413,7 @@ func (m Model) helpLine(focusName string) string {
 	case PanelContacts:
 		parts = []string{
 			"j/k:move", "Enter:open chat",
-			eitherKey(k.contacts, k.contactsAlt) + ":close", "Esc:close",
+			k.contacts + ":close", "Esc:close",
 		}
 
 	default: // PanelChatList
@@ -1341,25 +1423,11 @@ func (m Model) helpLine(focusName string) string {
 			k.help + ":help", "Tab:switch",
 			"j/k:move", "l:messages",
 			k.search + ":filter", "Enter:open",
-			"i:compose", k.quitBrowsing + ":quit",
+			k.compose + ":compose", k.quitBrowsing + ":quit",
 		}
 	}
 
 	return " " + strings.Join(append(parts, focusName), " │ ")
-}
-
-// eitherKey joins two spellings of one binding for the hint bar, dropping
-// the second when it is absent or identical. Named for its prose ("alt+c
-// or f4") to keep it distinct from the " / " joiner helpSections uses —
-// the two render the same idea for different widths.
-func eitherKey(a, b string) string {
-	if b == "" || a == b {
-		return a
-	}
-	if a == "" {
-		return b
-	}
-	return a + " or " + b
 }
 
 // The delete confirm's answers. They travel on DialogResultMsg.Value, so
@@ -1385,6 +1453,22 @@ func deleteRevokes(answer string) (revoke, ok bool) {
 	default:
 		return false, false
 	}
+}
+
+// openCursoredChat opens the chat under the chat list's cursor, and reports
+// whether it had to: the cursored chat being the open one already is the
+// common case, and reloading it would cost a history fetch for nothing.
+//
+// It is what l, Enter and compose share (decision I-2). Called directly
+// rather than by emitting a ChatSelectedMsg, because compose has to land
+// focus on the composer AFTER the open — and openChatAt, which the message
+// would reach eventually, focuses the chat view.
+func (m *Model) openCursoredChat() (tea.Cmd, bool) {
+	chatID, ok := m.chatList.OpenCursor()
+	if !ok || chatID == m.chatView.ChatId() {
+		return nil, false
+	}
+	return m.openChatAt(chatID, 0), true
 }
 
 // hasUnsentWork reports whether quitting now would lose something: a draft
@@ -1470,6 +1554,12 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// Chrome row: the top and hint bars are not click targets.
 	case row < m.layout.ThreadHeight:
 		m.setFocus(PanelChatView)
+		// And the cursor goes to the message under the pointer (decision
+		// I-11). Focusing the panel alone left a mouse user with no way to
+		// choose what r, y or + would act on — the cursor stayed wherever
+		// the keyboard had put it, which on a live chat is the newest
+		// message whatever they clicked.
+		m.chatView.ClickAt(row)
 	default:
 		m.setFocus(PanelComposer)
 	}

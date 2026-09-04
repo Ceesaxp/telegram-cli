@@ -965,7 +965,7 @@ func TestSearchModeCapturesKeys(t *testing.T) {
 	}
 
 	// Scrolling works again once the input is closed.
-	m3, _ := m2.handleKey(key('k'))
+	m3, _ := m2.handleKey(ctrlKey('y'))
 	if m3.scrollOffset == m2.scrollOffset {
 		t.Fatalf("expected scroll keys to work again after esc")
 	}
@@ -1763,28 +1763,35 @@ func TestSetKeysDefaultsUnchanged(t *testing.T) {
 		t.Fatalf("expected 'd' to delete by default, got %+v", got)
 	}
 
+	// mark_read is on "m" by default (decision I-10). Asserted through
+	// ActiveKeys rather than by pressing it: MarkReadCmd needs a live
+	// Telegram client and returns nil without one, so a nil command here
+	// would say nothing either way.
+	if got := base.ActiveKeys().MarkRead; got != "m" {
+		t.Fatalf("default mark_read = %q, want m", got)
+	}
+
+	// The buffer motions, which no configuration can move: one line per
+	// press, up and back down again.
 	m := base
 	m.scrollOffset = 0
-	m, _ = m.handleKey(key('k'))
-	if m.scrollOffset != 3 {
-		t.Fatalf("expected 'k' to scroll up by default, offset = %d", m.scrollOffset)
+	m, _ = m.handleKey(ctrlKey('y'))
+	if m.scrollOffset != 1 {
+		t.Fatalf("expected ctrl+y to scroll one line up, offset = %d", m.scrollOffset)
 	}
-	m, _ = m.handleKey(specialKey(tea.KeyUp))
-	if m.scrollOffset != 6 {
-		t.Fatalf("expected up arrow to scroll up by default, offset = %d", m.scrollOffset)
+	m, _ = m.handleKey(ctrlKey('y'))
+	if m.scrollOffset != 2 {
+		t.Fatalf("expected a second ctrl+y to scroll again, offset = %d", m.scrollOffset)
 	}
-	m, _ = m.handleKey(key('j'))
-	if m.scrollOffset != 3 {
-		t.Fatalf("expected 'j' to scroll down by default, offset = %d", m.scrollOffset)
-	}
-	m, _ = m.handleKey(specialKey(tea.KeyDown))
-	if m.scrollOffset != 0 {
-		t.Fatalf("expected down arrow to scroll down by default, offset = %d", m.scrollOffset)
+	m, _ = m.handleKey(ctrlKey('e'))
+	if m.scrollOffset != 1 {
+		t.Fatalf("expected ctrl+e to scroll one line down, offset = %d", m.scrollOffset)
 	}
 }
 
 // TestSetKeysConfiguredValuesDispatch checks that a non-default Keys value
-// takes effect for both the mnemonic (replace) and motion (add) fields.
+// takes effect. Every field replaces its built-in letter (decision I-13);
+// the additive motion fields that used to live here are gone.
 func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	// "b" has to be a key this panel does not claim, or the collision
 	// resolver refuses it and the dispatch below fails for a reason that
@@ -1792,16 +1799,14 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	// because it has now moved three times — p to t to b — each time a new
 	// message action claimed the letter it was using.
 	requireFreeKey(t, "b")
+	requireFreeKey(t, "v")
 
 	m := keysTestModel()
 	m.SetKeys(Keys{
-		Reply:      "ctrl+r",
-		Edit:       "v",
-		Delete:     "b",
-		ScrollUp:   "w",
-		ScrollDown: "z",
-		PageUp:     "u",
-		PageDown:   "i",
+		Reply:    "ctrl+r",
+		Edit:     "v",
+		Delete:   "b",
+		MarkRead: "ctrl+alt+m",
 	})
 
 	if _, cmd := m.handleKey(ctrlKey('r')); dispatchedAction(t, cmd).Action != "reply" {
@@ -1824,69 +1829,40 @@ func TestSetKeysConfiguredValuesDispatch(t *testing.T) {
 	if _, cmd := m.handleKey(key('d')); cmd != nil {
 		t.Fatalf("expected bare 'd' to be inert once delete is rebound, got a cmd")
 	}
+	if _, cmd := m.handleKey(key('m')); cmd != nil {
+		t.Fatalf("expected bare 'm' to be inert once mark_read is rebound, got a cmd")
+	}
 
-	// Add semantics: the configured motion key works...
+	// The motions are not configurable and keep working regardless: they
+	// are vi's, and nothing in [keys] can move them.
 	m2 := m
 	m2.scrollOffset = 0
-	m2, _ = m2.handleKey(key('w'))
-	if m2.scrollOffset != 3 {
-		t.Fatalf("expected configured 'w' to scroll up, offset = %d", m2.scrollOffset)
+	m2, _ = m2.handleKey(ctrlKey('y'))
+	if m2.scrollOffset != 1 {
+		t.Fatalf("expected ctrl+y to scroll one line up, offset = %d", m2.scrollOffset)
 	}
-	m2, _ = m2.handleKey(key('z'))
+	m2, _ = m2.handleKey(ctrlKey('e'))
 	if m2.scrollOffset != 0 {
-		t.Fatalf("expected configured 'z' to scroll down, offset = %d", m2.scrollOffset)
+		t.Fatalf("expected ctrl+e to scroll one line down, offset = %d", m2.scrollOffset)
 	}
 	before := m2.scrollOffset
-	m2, _ = m2.handleKey(key('u'))
+	m2, _ = m2.handleKey(specialKey(tea.KeyPgUp))
 	if m2.scrollOffset != before+m2.pageStep() {
-		t.Fatalf("expected configured 'u' to page up")
+		t.Fatalf("expected pgup to page up")
 	}
-	m2, _ = m2.handleKey(key('i'))
+	m2, _ = m2.handleKey(specialKey(tea.KeyPgDown))
 	if m2.scrollOffset != before {
-		t.Fatalf("expected configured 'i' to page down back to start")
-	}
-
-	// ...and so do the untouched hardcoded arrows/letters/pgup/pgdown: the
-	// arrows and hjkl are always-on, configuration only adds a binding.
-	m3 := m
-	m3.scrollOffset = 0
-	m3, _ = m3.handleKey(specialKey(tea.KeyUp))
-	if m3.scrollOffset != 3 {
-		t.Fatalf("expected the up arrow to still scroll up after rebinding scroll_up, offset = %d", m3.scrollOffset)
-	}
-	m3, _ = m3.handleKey(key('k'))
-	if m3.scrollOffset != 6 {
-		t.Fatalf("expected 'k' to still scroll up after rebinding scroll_up, offset = %d", m3.scrollOffset)
-	}
-	m3, _ = m3.handleKey(specialKey(tea.KeyDown))
-	if m3.scrollOffset != 3 {
-		t.Fatalf("expected the down arrow to still scroll down after rebinding scroll_down, offset = %d", m3.scrollOffset)
-	}
-	m3, _ = m3.handleKey(key('j'))
-	if m3.scrollOffset != 0 {
-		t.Fatalf("expected 'j' to still scroll down after rebinding scroll_down, offset = %d", m3.scrollOffset)
-	}
-	m3.scrollOffset = 5
-	before = m3.scrollOffset
-	m3, _ = m3.handleKey(specialKey(tea.KeyPgUp))
-	if m3.scrollOffset != before+m3.pageStep() {
-		t.Fatalf("expected pgup to still page up after rebinding page_up")
-	}
-	m3, _ = m3.handleKey(specialKey(tea.KeyPgDown))
-	if m3.scrollOffset != before {
-		t.Fatalf("expected pgdown to still page down after rebinding page_down")
+		t.Fatalf("expected pgdown to page back down")
 	}
 }
 
 // TestSetKeysCollisionFallsBackToBuiltin covers the shadowing rule: a
 // configured mnemonic that collides with one of chatview's fixed keys is
-// ignored, and a configured motion extra that collides with an already
-// claimed key (fixed, or an earlier-resolved field) is dropped rather than
-// silently making something unreachable.
+// refused, and the built-in letter keeps working.
 func TestSetKeysCollisionFallsBackToBuiltin(t *testing.T) {
 	m := keysTestModel()
-	// "j" is the fixed scroll-down key: reply must fall back to "r" rather
-	// than shadowing scroll-down or leaving reply unreachable.
+	// "j" is the fixed cursor-down key: reply must fall back to "r" rather
+	// than shadowing the motion or leaving reply unreachable.
 	m.SetKeys(Keys{Reply: "j"})
 
 	if m.keys.reply != "r" {
@@ -1895,27 +1871,32 @@ func TestSetKeysCollisionFallsBackToBuiltin(t *testing.T) {
 	if _, cmd := m.handleKey(key('r')); dispatchedAction(t, cmd).Action != "reply" {
 		t.Fatalf("expected 'r' to still reply")
 	}
-	// Scroll up first so there is room for 'j' to visibly scroll back down.
-	m2, _ := m.handleKey(key('k'))
-	before := m2.scrollOffset
-	if before == 0 {
-		t.Fatalf("test needs 'k' to have scrolled up")
-	}
-	m2, _ = m2.handleKey(key('j'))
-	if m2.scrollOffset >= before {
-		t.Fatalf("expected 'j' to keep scrolling down, not reply")
+	// And 'j' still moves the cursor rather than replying. It reports the
+	// lazy-thumbnail command whether or not the cursor could move, so the
+	// proof is that nothing was dispatched as a message action.
+	if _, cmd := m.handleKey(key('j')); cmd != nil {
+		if msg, ok := cmd().(MessageActionMsg); ok {
+			t.Fatalf("'j' dispatched %q instead of moving the cursor", msg.Action)
+		}
 	}
 
-	// A motion configured to a key another field already claimed: reply
-	// claims "r" first (struct order), so scroll_up = "r" must get no
-	// extra binding, and 'r' must still mean reply.
+	// Explicit configuration outranks a default, whatever the field order:
+	// mark_read = "r" takes "r", and reply — which was only ever going to
+	// get it as a fallback — is left honestly unreachable rather than
+	// quietly sharing the key.
 	m3 := keysTestModel()
-	m3.SetKeys(Keys{ScrollUp: "r"})
-	if m3.keys.scrollUpExtra != "" {
-		t.Fatalf("expected scroll_up = 'r' to be dropped as a collision, got extra %q", m3.keys.scrollUpExtra)
+	m3.SetKeys(Keys{MarkRead: "r"})
+	got := m3.ActiveKeys()
+	if got.MarkRead != "r" {
+		t.Fatalf("explicit mark_read = 'r' was refused: %q", got.MarkRead)
 	}
-	if _, cmd := m3.handleKey(key('r')); dispatchedAction(t, cmd).Action != "reply" {
-		t.Fatalf("expected 'r' to still reply, not scroll up")
+	if got.Reply != "" {
+		t.Fatalf("reply = %q, want it reported unreachable", got.Reply)
+	}
+	if _, cmd := m3.handleKey(key('r')); cmd != nil {
+		if msg, ok := cmd().(MessageActionMsg); ok {
+			t.Fatalf("'r' still dispatched %q", msg.Action)
+		}
 	}
 }
 
@@ -1925,52 +1906,37 @@ func TestSetKeysCollisionFallsBackToBuiltin(t *testing.T) {
 // report the post-collision-fallback state, not the raw Keys SetKeys was
 // given, or a help card could advertise a binding the panel doesn't honor.
 func TestActiveKeysReflectsWhatHandleKeyActuallyMatches(t *testing.T) {
-	// Unconfigured: the built-in mnemonics, and no motion extras.
+	// Unconfigured: the built-in mnemonics.
 	unconfigured := keysTestModel()
 	got := unconfigured.ActiveKeys()
-	want := Keys{Reply: "r", Edit: "e", Delete: "d"}
+	want := Keys{Reply: "r", Edit: "e", Delete: "d", MarkRead: "m"}
 	if got != want {
 		t.Fatalf("unconfigured ActiveKeys = %+v, want %+v", got, want)
 	}
 
-	// Accepted configuration: reports the configured values, including the
-	// motion extras that were actually accepted.
+	// Accepted configuration: reports the configured values.
+	requireFreeKey(t, "b")
+	requireFreeKey(t, "v")
 	accepted := keysTestModel()
 	accepted.SetKeys(Keys{
-		Reply:      "ctrl+r",
-		Edit:       "v",
-		Delete:     "b",
-		ScrollUp:   "w",
-		ScrollDown: "z",
-		PageUp:     "u",
-		PageDown:   "i",
+		Reply:    "ctrl+r",
+		Edit:     "v",
+		Delete:   "b",
+		MarkRead: "ctrl+alt+m",
 	})
 	got = accepted.ActiveKeys()
-	want = Keys{
-		Reply: "ctrl+r", Edit: "v", Delete: "b",
-		ScrollUp: "w", ScrollDown: "z", PageUp: "u", PageDown: "i",
-	}
+	want = Keys{Reply: "ctrl+r", Edit: "v", Delete: "b", MarkRead: "ctrl+alt+m"}
 	if got != want {
 		t.Fatalf("accepted ActiveKeys = %+v, want %+v", got, want)
 	}
 
-	// Colliding mnemonic: reply = "j" collides with the fixed scroll-down
+	// Colliding mnemonic: reply = "j" collides with the fixed cursor-down
 	// key, so handleKey falls back to "r" — ActiveKeys must report "r", not
 	// the rejected "j", or a help card would advertise a dead binding.
 	collidingMnemonic := keysTestModel()
 	collidingMnemonic.SetKeys(Keys{Reply: "j"})
 	if got := collidingMnemonic.ActiveKeys().Reply; got != "r" {
 		t.Fatalf("expected ActiveKeys().Reply = %q after a collision, got %q", "r", got)
-	}
-
-	// Rejected motion: scroll_up = "r" collides with reply's already-claimed
-	// "r" (struct order), so no extra scroll-up binding was accepted.
-	// ActiveKeys must report empty, not the rejected "r" — the built-ins
-	// (up/k) are always live and are not this field's job to repeat.
-	rejectedMotion := keysTestModel()
-	rejectedMotion.SetKeys(Keys{ScrollUp: "r"})
-	if got := rejectedMotion.ActiveKeys().ScrollUp; got != "" {
-		t.Fatalf("expected ActiveKeys().ScrollUp = %q after a collision, got %q", "", got)
 	}
 }
 
@@ -2090,26 +2056,27 @@ func TestSetReservedKeysBlocksAppLevelShadowing(t *testing.T) {
 	}
 }
 
-// TestSetKeysMotionsUnaffectedByMnemonicResolution pins that the
-// three-pass mnemonic rework did not change motion resolution: additive
-// semantics still apply, and a configured motion still layers on top of
-// the always-on hardcoded spellings.
-func TestSetKeysMotionsUnaffectedByMnemonicResolution(t *testing.T) {
+// TestMotionsAreNotConfigurable pins decision I-13's other half: the
+// motions are vi's, and no [keys] value can move them. The three-pass
+// mnemonic resolver claims them before it considers anything configured,
+// so a field pointed at one is refused rather than shadowing it.
+func TestMotionsAreNotConfigurable(t *testing.T) {
+	for _, motion := range []string{"j", "k", "g", "G", "ctrl+e", "ctrl+y"} {
+		m := keysTestModel()
+		m.SetKeys(Keys{Reply: motion})
+		if got := m.ActiveKeys().Reply; got != "r" {
+			t.Errorf("reply = %q was accepted over a motion; ActiveKeys().Reply = %q",
+				motion, got)
+		}
+	}
+
+	// And the motions themselves still fire.
 	m := keysTestModel()
-	m.SetKeys(Keys{Reply: "e", Edit: "r", ScrollUp: "w"})
-
-	if got := m.ActiveKeys().ScrollUp; got != "w" {
-		t.Fatalf("expected the configured scroll_up extra to still be accepted, got %q", got)
-	}
-
+	m.SetKeys(Keys{Reply: "ctrl+y"})
 	before := m.scrollOffset
-	m2, _ := m.handleKey(key('w'))
+	m2, _ := m.handleKey(ctrlKey('y'))
 	if m2.scrollOffset <= before {
-		t.Fatalf("expected configured 'w' to still scroll up")
-	}
-	m3, _ := m.handleKey(specialKey(tea.KeyUp))
-	if m3.scrollOffset <= before {
-		t.Fatalf("expected the built-in up arrow to still scroll up alongside the configured extra")
+		t.Fatalf("ctrl+y stopped scrolling after a field tried to claim it")
 	}
 }
 

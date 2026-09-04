@@ -590,10 +590,12 @@ func TestUpdateArrowKeysCycleFoldersWhenFocused(t *testing.T) {
 	}
 }
 
-// TestUpdateBracketKeysCycleFoldersWhenFocused checks the lazygit-style
-// '['/']' aliases cycle folders exactly like the left/right arrows
-// (including wraparound), gated on focus the same way.
-func TestUpdateBracketKeysCycleFoldersWhenFocused(t *testing.T) {
+// TestBracketKeysAreNotThisPanels covers decision I-1's other half: [ and ]
+// moved to app level, where they cycle folders from the chat view too. The
+// panel-local copy is gone, so pressing them here does nothing — one
+// behaviour with one implementation, rather than an app-level pair of alt
+// chords and a panel-local pair of brackets that only agreed by hand.
+func TestBracketKeysAreNotThisPanels(t *testing.T) {
 	m := newTestModel()
 	m.loading = false
 	m.focused = true
@@ -604,27 +606,18 @@ func TestUpdateBracketKeysCycleFoldersWhenFocused(t *testing.T) {
 	}
 	m.activeFolder = 0
 
-	m, _ = m.Update(key(']'))
-	if m.activeFolder != 1 {
-		t.Fatalf("after ']': activeFolder = %d, want 1", m.activeFolder)
-	}
-	m, _ = m.Update(key(']'))
-	if m.activeFolder != 2 {
-		t.Fatalf("after ']': activeFolder = %d, want 2", m.activeFolder)
-	}
-	m, _ = m.Update(key(']'))
-	if m.activeFolder != 0 {
-		t.Fatalf("']' should wrap around: activeFolder = %d, want 0", m.activeFolder)
-	}
-	m, _ = m.Update(key('['))
-	if m.activeFolder != 2 {
-		t.Fatalf("'[' should wrap backward: activeFolder = %d, want 2", m.activeFolder)
+	for _, r := range []rune{']', '['} {
+		next, _ := m.Update(key(r))
+		if next.activeFolder != 0 {
+			t.Errorf("%q cycled the folder inside the panel: activeFolder = %d, want 0",
+				string(r), next.activeFolder)
+		}
 	}
 
-	m.focused = false
-	m, _ = m.Update(key(']'))
-	if m.activeFolder != 2 {
-		t.Fatalf("']' should be a no-op while unfocused, got activeFolder=%d", m.activeFolder)
+	// The arrows are this panel's own and still work.
+	m, _ = m.Update(specialKey(tea.KeyRight))
+	if m.activeFolder != 1 {
+		t.Errorf("the right arrow stopped cycling: activeFolder = %d, want 1", m.activeFolder)
 	}
 }
 
@@ -1217,4 +1210,113 @@ func tabTestFolders() []*telegram.ChatFolder {
 		{ID: 2, Title: "Family", Emoticon: "👨‍👩‍👧"},
 		{ID: 3, Title: "日本語のグループ", Emoticon: "🗾"},
 	}
+}
+
+// --- decision I-2 / I-1: the cursor, and the unread walk ------------------
+
+// TestCursorChatIdIsNotTheOpenChat: the two were deliberately decoupled so
+// that j would not load a history per press, which stands. What did not
+// stand was every key that leaves the list rightward reading the OPEN chat
+// while the cursor sat somewhere else — jjjl landed in the wrong
+// conversation.
+func TestCursorChatIdIsNotTheOpenChat(t *testing.T) {
+	m := listWithChats(t, 4)
+
+	first := m.CursorChatId()
+	if first == 0 {
+		t.Fatal("no chat under the cursor")
+	}
+	if _, ok := m.OpenCursor(); !ok {
+		t.Fatal("OpenCursor found nothing to open")
+	}
+	if m.ActiveChatId() != first {
+		t.Fatalf("ActiveChatId = %d, want the opened %d", m.ActiveChatId(), first)
+	}
+
+	// Moving the cursor does not move the open chat.
+	m.list.ScrollBy(2)
+	moved := m.CursorChatId()
+	if moved == first {
+		t.Fatal("the cursor did not move")
+	}
+	if m.ActiveChatId() != first {
+		t.Errorf("ActiveChatId = %d — moving the cursor opened a chat", m.ActiveChatId())
+	}
+
+	// And opening again takes the cursor with it.
+	if got, _ := m.OpenCursor(); got != moved {
+		t.Errorf("OpenCursor returned %d, want the cursored %d", got, moved)
+	}
+}
+
+// TestSelectNextUnreadWalksDownAndWrapsOnce is the binding the chat list
+// footer advertised for a release with nothing behind it. Down-then-wrap
+// rather than "the first unread in the list": the list is ordered by
+// recency, so starting from the top would mean pressing u twice went back to
+// the same conversation.
+func TestSelectNextUnreadWalksDownAndWrapsOnce(t *testing.T) {
+	m := listWithChats(t, 5)
+	ids := make([]int64, 0, 5)
+	for _, item := range m.list.Items {
+		ids = append(ids, itemChatId(item))
+	}
+
+	// Two unread, one below the cursor and one above it after a wrap.
+	m.store.Chats.Set(&telegram.Chat{ID: ids[1], Title: "b", UnreadCount: 2})
+	m.store.Chats.Set(&telegram.Chat{ID: ids[3], Title: "d", UnreadCount: 1})
+
+	got, ok := m.SelectNextUnread()
+	if !ok || got != ids[1] {
+		t.Fatalf("first u chose (%d, %v), want %d", got, ok, ids[1])
+	}
+	got, ok = m.SelectNextUnread()
+	if !ok || got != ids[3] {
+		t.Fatalf("second u chose (%d, %v), want %d", got, ok, ids[3])
+	}
+	// Past the end it wraps, once, back to the first unread.
+	got, ok = m.SelectNextUnread()
+	if !ok || got != ids[1] {
+		t.Fatalf("the wrap chose (%d, %v), want %d", got, ok, ids[1])
+	}
+}
+
+// TestSelectNextUnreadReportsWhenThereIsNone, so the caller can say so
+// rather than leaving a key that looks broken.
+func TestSelectNextUnreadReportsWhenThereIsNone(t *testing.T) {
+	m := listWithChats(t, 3)
+	before := m.CursorChatId()
+
+	if got, ok := m.SelectNextUnread(); ok {
+		t.Errorf("SelectNextUnread chose %d with nothing unread", got)
+	}
+	if m.CursorChatId() != before {
+		t.Error("the cursor moved with nothing unread")
+	}
+
+	empty := newTestModel()
+	empty.loading = false
+	if _, ok := empty.SelectNextUnread(); ok {
+		t.Error("an empty list reported an unread chat")
+	}
+}
+
+// listWithChats is a loaded, focused list holding n chats.
+func listWithChats(t *testing.T, n int) Model {
+	t.Helper()
+	m := newTestModel()
+	m.loading = false
+	m.focused = true
+	for i := range n {
+		id := int64(100 + i)
+		m.store.Chats.Set(&telegram.Chat{
+			ID:    id,
+			Title: "Chat " + itoa(int(id)),
+			Type:  telegram.ChatTypePrivate,
+		})
+	}
+	m.refreshList()
+	if got := len(m.list.Items); got != n {
+		t.Fatalf("seeded %d chats, want %d", got, n)
+	}
+	return m
 }

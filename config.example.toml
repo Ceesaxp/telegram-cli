@@ -147,53 +147,38 @@ show_preview = true
 method = "auto"
 
 # Keybindings — values below are the built-in defaults (see defaultConfig()
-# in internal/config/config.go); only listed fields are actually consulted,
-# see the KeyConfig doc comment there for which.
+# in internal/config/config.go). Every field follows one rule:
 #
-# Wired app-level bindings (quit through prev_folder) are matched before
-# the focused panel sees the key, so a bare printable binding (e.g.
-# quit_browsing = "q") shadows that key in the chat list and chat view.
-# MOST of them never reach the composer — it only ever gets focus
-# deliberately (i, c, Tab, a focus key, or a click), and app-level
-# dispatch claims almost nothing while it's focused — but "quit" is the
-# exception: it is matched before every other check in Update, focus
-# included, so quit = "x" means pressing x while writing a message quits
-# the app instead of typing an x. Nothing rejects that. Prefer a chord or
-# a function key for quit especially.
+#   A value REPLACES the default. A value that collides with anything
+#   already bound — another field here, or a key a panel owns outright —
+#   is REFUSED: the default keeps working and the client says so on
+#   stderr at startup. The "?" help card shows an action left with no key
+#   at all as "(unbound)".
 #
-# reply/edit_message/delete_message are mnemonics: a value here REPLACES
-# the chat view's built-in r/e/d. scroll_up/scroll_down/page_up/page_down
-# are motions: a value here is ADDED alongside the always-live
-# k/j/arrows/pgup/pgdown, which keep working regardless. Either way, a
-# value that collides with a key already claimed elsewhere (the chat
-# view's own g/G, ctrl+u/ctrl+d, n/N, ctrl+f, enter/o/s, or the app-level
-# surface: h, l, i, c, tab, ctrl+v, and whatever quit/quit_browsing/help/
-# search/global_search/contacts/contacts_alt resolve to) is REFUSED, not
-# silently double-bound — the built-in keeps working and the configured
-# value is just never reached. Two things surface a refusal: running
-# -migrate-config (see the README) reports it as a warning, and the "?"
-# help card shows the now-unreachable action as "(unbound)" instead of a
-# blank or the wrong key.
+# These are matched before the focused panel sees the key, so a bare
+# printable shadows that key in the chat list and the chat view. It does
+# not shadow it in the composer: typing is only ever entered deliberately
+# (i, Tab, an action that needs text, or a click). "quit" is the one
+# exception — it is matched before every focus check, so a bare printable
+# there would be untypable in a message, and is refused outright.
+#
+# The motions are not configurable and are not meant to be: j/k, the
+# arrows, g/G, ctrl+e/ctrl+y, ctrl+d/ctrl+u and the page keys are vi's.
+# See docs/interaction-model.md for the whole keymap.
 [keys]
-quit = "ctrl+q"
-quit_browsing = "q"          # quits from the chat list/chat view only; confirms first if the composer holds a draft or attachment
-focus_chat_list = "f1"
-focus_chat_view = "f2"
-focus_composer = "f3"
-search = "/"
-global_search = "ctrl+g"
-contacts = "alt+c"
-contacts_alt = "f4"
+quit = "ctrl+q"               # from anywhere, without asking; a bare printable is refused
+quit_browsing = "q"           # chat list / chat view only; confirms first if the composer holds a draft
+search = "/"                  # find in the buffer in front of you
+global_search = "ctrl+g"      # search every chat, from any panel
+contacts = "c"                # toggle the contacts overlay
+compose = "i"                 # open the cursored chat and focus the composer
 help = "?"
-next_chat = "alt+j"
-prev_chat = "alt+k"
-reply = "r"                   # mnemonic: replaces the chat view's built-in "r" (refused, falling back to "r", on a collision)
-edit_message = "e"            # mnemonic: replaces the built-in "e"
-delete_message = "d"          # mnemonic: replaces the built-in "d"
-forward = "f"                 # accepted for round-trip compatibility only — no forward-message feature exists to dispatch it to
-scroll_up = "k"                # motion: adds to the always-live k/up (refused, adding nothing, on a collision)
-scroll_down = "j"              # motion: adds to the always-live j/down
-page_up = "pgup"                # motion: adds to the always-live PgUp
-page_down = "pgdown"            # motion: adds to the always-live PgDn
-next_folder = "alt+l"
-prev_folder = "alt+h"
+next_chat = "J"               # open the next chat outright, unlike the list's own j
+prev_chat = "K"
+next_unread = "u"             # next chat with unread messages, wrapping once
+next_folder = "]"
+prev_folder = "["
+reply = "r"                   # acts on the cursored message in the chat view
+edit_message = "e"
+delete_message = "d"
+mark_read = "m"               # mark the open chat read without moving

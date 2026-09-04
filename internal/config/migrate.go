@@ -58,14 +58,11 @@ func (c MigrationChange) String() string {
 // A field holding one of these is treated as never having been chosen: the
 // user got it from an example file, not from a decision, and leaving it
 // behind is how someone ends up with ctrl+k opening contacts while the help
-// overlay and every document say alt+c. A value that matches nothing here is
-// a real customization and is never touched.
+// overlay and every document say "c". A value that matches nothing here is a
+// real customization and is never touched.
 //
 // Keys are TOML field names; values are the stale defaults for that field.
 var staleKeyDefaults = map[string][]string{
-	// page_up/page_down are deliberately absent: they are inert (chatview
-	// hardcodes pgup/pgdown), so rewriting them changes nothing a user can
-	// observe while adding noise to the summary. See migratableKeyFields.
 	// ctrl+c was the shipped default for quit until it was retired: it is
 	// the chord a terminal user presses to abandon a command rather than to
 	// close an application, and it was reachable by accident from every
@@ -73,37 +70,40 @@ var staleKeyDefaults = map[string][]string{
 	// "ctrl+q / ctrl+c", which is the duplicate the retirement removed.
 	"quit": {"ctrl+c"},
 
-	"focus_chat_list": {"ctrl+1"},
-	"focus_chat_view": {"ctrl+2"},
-	"focus_composer":  {"ctrl+3"},
-	// ctrl+k was the old contacts binding. It now belongs to the composer's
-	// readline kill-to-end-of-line, so leaving it bound here breaks typing.
-	"contacts": {"ctrl+k"},
-	// ctrl+j/ctrl+k moved to alt+j/alt+k for the same reason — ctrl+j is
-	// the composer's newline.
-	"next_chat": {"ctrl+j"},
-	"prev_chat": {"ctrl+k"},
+	// The alt spellings, retired by decision I-1. They only ever reached
+	// the app on a terminal configured to report Option as a modifier,
+	// which on macOS is the minority, and the failure was silent: the key
+	// arrived as the composed character with no modifier bit, which is
+	// indistinguishable from the user typing it. Every one has a plain
+	// spelling now, and a config still holding the old one is holding a
+	// binding that mostly did not work.
+	//
+	// ctrl+k was the contacts binding before alt+c; it belongs to the
+	// composer's readline kill-to-end-of-line, so leaving it bound here
+	// breaks typing. ctrl+j is the composer's newline, for the same reason.
+	"contacts":    {"ctrl+k", "alt+c"},
+	"next_chat":   {"ctrl+j", "alt+j"},
+	"prev_chat":   {"ctrl+k", "alt+k"},
+	"next_folder": {"alt+l"},
+	"prev_folder": {"alt+h"},
 }
 
-// migratableKeyFields lists the [keys] fields the migration will rewrite:
-// exactly the ones that reach a dispatcher — those internal/app matches
-// itself, plus those it resolves and hands to the chat view. The remainder
-// (forward) is parsed and preserved but never consulted, so changing it
-// cannot change behavior; rewriting it would only add noise to the summary
-// and churn to the file.
+// migratableKeyFields lists the [keys] fields the migration will rewrite.
 //
-// The same set answers "is this binding live?" for DetectKeyCollisions, so
-// a field belongs here exactly when a value in it can shadow another.
+// It is now every field, because every field reaches a dispatcher: the
+// inert one (forward) and the additive motions were removed by decision
+// I-13, and with them the reason this set was ever narrower than keyFields.
+// It stays as a set rather than being folded away because the same question
+// — "is this binding live?" — is what DetectKeyCollisions asks, and a field
+// that were ever added without a dispatcher would have to answer no.
 var migratableKeyFields = map[string]bool{
 	"quit": true, "quit_browsing": true,
-	"focus_chat_list": true, "focus_chat_view": true,
-	"focus_composer": true, "search": true, "global_search": true,
-	"contacts": true, "contacts_alt": true, "help": true,
-	"next_chat": true, "prev_chat": true,
+	"search": true, "global_search": true,
+	"contacts": true, "compose": true, "help": true,
+	"next_chat": true, "prev_chat": true, "next_unread": true,
 	"next_folder": true, "prev_folder": true,
 	"reply": true, "edit_message": true, "delete_message": true,
-	"scroll_up": true, "scroll_down": true,
-	"page_up": true, "page_down": true,
+	"mark_read": true,
 }
 
 // keyFields maps each TOML key name to accessors on a KeyConfig, so the
@@ -116,26 +116,20 @@ var keyFields = []struct {
 }{
 	{"quit", func(k *KeyConfig) string { return k.Quit }, func(k *KeyConfig, v string) { k.Quit = v }},
 	{"quit_browsing", func(k *KeyConfig) string { return k.QuitBrowsing }, func(k *KeyConfig, v string) { k.QuitBrowsing = v }},
-	{"focus_chat_list", func(k *KeyConfig) string { return k.FocusChatList }, func(k *KeyConfig, v string) { k.FocusChatList = v }},
-	{"focus_chat_view", func(k *KeyConfig) string { return k.FocusChatView }, func(k *KeyConfig, v string) { k.FocusChatView = v }},
-	{"focus_composer", func(k *KeyConfig) string { return k.FocusComposer }, func(k *KeyConfig, v string) { k.FocusComposer = v }},
 	{"search", func(k *KeyConfig) string { return k.Search }, func(k *KeyConfig, v string) { k.Search = v }},
 	{"global_search", func(k *KeyConfig) string { return k.GlobalSearch }, func(k *KeyConfig, v string) { k.GlobalSearch = v }},
 	{"contacts", func(k *KeyConfig) string { return k.Contacts }, func(k *KeyConfig, v string) { k.Contacts = v }},
-	{"contacts_alt", func(k *KeyConfig) string { return k.ContactsAlt }, func(k *KeyConfig, v string) { k.ContactsAlt = v }},
+	{"compose", func(k *KeyConfig) string { return k.Compose }, func(k *KeyConfig, v string) { k.Compose = v }},
 	{"help", func(k *KeyConfig) string { return k.Help }, func(k *KeyConfig, v string) { k.Help = v }},
 	{"next_chat", func(k *KeyConfig) string { return k.NextChat }, func(k *KeyConfig, v string) { k.NextChat = v }},
 	{"prev_chat", func(k *KeyConfig) string { return k.PrevChat }, func(k *KeyConfig, v string) { k.PrevChat = v }},
+	{"next_unread", func(k *KeyConfig) string { return k.NextUnread }, func(k *KeyConfig, v string) { k.NextUnread = v }},
 	{"next_folder", func(k *KeyConfig) string { return k.NextFolder }, func(k *KeyConfig, v string) { k.NextFolder = v }},
 	{"prev_folder", func(k *KeyConfig) string { return k.PrevFolder }, func(k *KeyConfig, v string) { k.PrevFolder = v }},
 	{"reply", func(k *KeyConfig) string { return k.Reply }, func(k *KeyConfig, v string) { k.Reply = v }},
 	{"edit_message", func(k *KeyConfig) string { return k.EditMessage }, func(k *KeyConfig, v string) { k.EditMessage = v }},
 	{"delete_message", func(k *KeyConfig) string { return k.DeleteMessage }, func(k *KeyConfig, v string) { k.DeleteMessage = v }},
-	{"forward", func(k *KeyConfig) string { return k.Forward }, func(k *KeyConfig, v string) { k.Forward = v }},
-	{"scroll_up", func(k *KeyConfig) string { return k.ScrollUp }, func(k *KeyConfig, v string) { k.ScrollUp = v }},
-	{"scroll_down", func(k *KeyConfig) string { return k.ScrollDown }, func(k *KeyConfig, v string) { k.ScrollDown = v }},
-	{"page_up", func(k *KeyConfig) string { return k.PageUp }, func(k *KeyConfig, v string) { k.PageUp = v }},
-	{"page_down", func(k *KeyConfig) string { return k.PageDown }, func(k *KeyConfig, v string) { k.PageDown = v }},
+	{"mark_read", func(k *KeyConfig) string { return k.MarkRead }, func(k *KeyConfig, v string) { k.MarkRead = v }},
 }
 
 // Migrate brings an older config up to the current defaults in place and
@@ -374,8 +368,22 @@ type RawFile struct {
 // ui.mode_indicator is deliberately NOT a config key at all, here or in
 // Config. A modal client whose mode indicator can be switched off is a modal
 // client that will be used with it switched off.
+// The [keys] entries are decision I-13's half of that: the fields the
+// keymap cut removed. focus_chat_list/view/composer went with the Alt and
+// function keys (I-1) — h, l, i, Esc and Tab cover panel focus — and
+// contacts_alt was the alt-free fallback for a binding that is now a plain
+// letter. forward was never dispatched at all. scroll_up/scroll_down/
+// page_up/page_down were the additive motions: motions are vi's now, and
+// not configurable.
 var removedFields = map[string]map[string]bool{
 	"ui": {"chat_list_width": true, "show_avatars": true},
+	"keys": {
+		"focus_chat_list": true, "focus_chat_view": true,
+		"focus_composer": true, "contacts_alt": true,
+		"forward":   true,
+		"scroll_up": true, "scroll_down": true,
+		"page_up": true, "page_down": true,
+	},
 }
 
 // Removed returns the deliberately-dropped keys the file carried, as
@@ -509,7 +517,6 @@ func rawKeyPresence(raw *RawFile) map[string]bool {
 // to the same key is redundant, not ambiguous — the one action fires either
 // way — so it is not worth warning about.
 var aliasPairs = [][2]string{
-	{"contacts", "contacts_alt"},
 	{"search", "global_search"},
 }
 
@@ -521,8 +528,7 @@ var aliasPairs = [][2]string{
 // all.
 var componentDispatchedFields = map[string]bool{
 	"reply": true, "edit_message": true, "delete_message": true,
-	"scroll_up": true, "scroll_down": true,
-	"page_up": true, "page_down": true,
+	"mark_read": true,
 }
 
 // appDispatchedValue returns the binding internal/app will actually match
@@ -614,6 +620,33 @@ func DetectKeyCollisions(cfg *Config) []string {
 		out = append(out, fmt.Sprintf("%q is bound to %s", binding, strings.Join(fields, ", ")))
 	}
 
+	// Against the keys the app hardcodes. These are not [keys] fields, so
+	// the pass above cannot see them, and a field pointed at one of them
+	// is refused rather than shadowing it: contacts = "h" leaves h moving
+	// between panels and contacts on its default.
+	def := defaultConfig()
+	for _, f := range keyFields {
+		if componentDispatchedFields[f.name] {
+			continue
+		}
+		v := NormalizeKey(f.get(&cfg.Keys))
+		if v == "" || reported[v] {
+			continue
+		}
+		// A field set to its own default is not a clash with itself. quit
+		// is why this is needed: ctrl+q is in AppFixed because the
+		// dispatcher hardcodes it as a second spelling of the same action.
+		if v == NormalizeKey(f.get(&def.Keys)) {
+			continue
+		}
+		if slices.Contains(keys.AppFixed, v) {
+			reported[v] = true
+			out = append(out, fmt.Sprintf(
+				"%q is bound to %s, but the app already owns it — the default is kept",
+				v, f.name))
+		}
+	}
+
 	// Across the package boundary: app-level dispatch runs before the
 	// focused panel sees the key, so a component field set to something
 	// internal/app claims is not ambiguous — it is simply dead, and it is
@@ -650,12 +683,10 @@ func appReserved(cfg *Config) []string {
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Search }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.GlobalSearch }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Contacts }),
-		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.ContactsAlt }),
-		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusChatList }),
-		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusChatView }),
-		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.FocusComposer }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.Compose }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.NextChat }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.PrevChat }),
+		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.NextUnread }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.NextFolder }),
 		appDispatchedValue(cfg, func(k *KeyConfig) string { return k.PrevFolder }),
 	)

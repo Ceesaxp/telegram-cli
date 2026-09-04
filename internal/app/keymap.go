@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/Ceesaxp/telegram-cli/internal/keys"
@@ -10,173 +9,19 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/help"
 )
 
-// # Keymap
+// The keymap lives in two places, and neither of them is here.
 //
-// The app follows vi convention: motions are h/j/k/l, g/G jump to the ends,
-// ctrl+u/ctrl+d move a half page, "/" searches the buffer in front of you and
-// n/N step through the matches. Bindings marked [keys.x] are configurable in
-// config.toml's [keys] table (see [config.KeyConfig]); the rest are owned by
-// the component that implements them.
+//   - docs/interaction-model.md is the authority on what a key means and
+//     why. It is where a decision about the keyboard gets made.
+//   - docs/keys.md is the table of which key, checked against helpSections
+//     at the bottom of this file by TestKeymapDocMatchesHelpSections.
 //
-// Every alt+ binding has an alt-free alternative, because a terminal that does
-// not report Option/Alt as a modifier makes alt bindings unreachable and
-// undetectable — see the macOS notes on [config.KeyConfig].
-//
-// Typing is always entered deliberately: i, c, Tab, a focus key, or a click
-// on the composer. Nothing is forwarded there implicitly, so a binding here
-// never costs the ability to type that character.
-//
-// This table is prose for readers of the source; helpSections at the bottom
-// of this file is the same map as data, and is what the user sees in the
-// help overlay.
-//
-// ## Global — any panel
-//
-//	ctrl+q             quit                          ([keys.quit])
-//	q                  quit, from the browsing panels only [keys.quit_browsing]
-//	tab, shift+tab     cycle panel focus            (including from the composer)
-//	alt+1, f1          focus chat list               [keys.focus_chat_list]
-//	alt+2, f2          focus chat view               [keys.focus_chat_view]
-//	alt+3, f3          focus composer                [keys.focus_composer]
-//	esc                close overlay, else step back
-//	alt+j, alt+k       next / previous chat          [keys.next_chat, keys.prev_chat]
-//	alt+l, alt+h       next / previous folder        [keys.next_folder, keys.prev_folder]
-//	alt+c, f4          toggle contacts overlay       [keys.contacts, keys.contacts_alt]
-//	ctrl+g             search all chats              [keys.global_search], not from the composer
-//	?                  toggle the help overlay       [keys.help]
-//	`                  toggle the context rail       (not while composing)
-//	ctrl+v             paste clipboard image
-//
-// ## Chat list
-//
-//	j, k / down, up    next / previous chat
-//	l                  focus the chat view           (h here is a no-op)
-//	[, ] / left, right previous / next folder tab    (alt-free folder cycling)
-//	1-9                jump to folder N (1 = All)
-//	g, G / home, end   first / last chat
-//	enter              open the selected chat
-//	i, c               focus the composer
-//	/                  filter this list              [keys.search]
-//	q                  quit                          [keys.quit_browsing]
-//	click              select a chat, or switch to a clicked folder tab
-//	wheel              scroll
-//
-// ## Chat view
-//
-//	j, k / down, up    scroll down / up              [+keys.scroll_down, +keys.scroll_up]
-//	g, G / home, end   top / bottom
-//	ctrl+d, ctrl+u     page down / up
-//	pgdown, pgup       page down / up                [+keys.page_down, +keys.page_up]
-//	h                  focus the chat list           (l here is a no-op)
-//	/, ctrl+f          find in this chat             [keys.search]
-//	n, N               next / previous match
-//	esc                close the find input, else leave the panel
-//	r, e, d            reply / edit / delete message [keys.reply, keys.edit_message, keys.delete_message]
-//	enter, o           open attachment
-//	s                  save attachment
-//	x                  reveal spoilers in the selected message
-//	i, c               focus the composer
-//	q                  quit                          [keys.quit_browsing]
-//
-// A [+keys.x] above is additive: the configured key is an extra spelling
-// alongside the hardcoded one, never a replacement. The chat view's
-// mnemonics (r/e/d) are the other way round — configuring one moves it.
-// See chatview.Keys.
-//
-// ## Composer
-//
-// Focus stays here after a send — a conversation is a run of messages, not
-// one. Esc is how you leave.
-//
-//	enter              send
-//	ctrl+j, shift+ent  insert a newline
-//	esc                cancel reply/edit/attachment, then leave the panel
-//	ctrl+t             attach a file (opens the picker)
-//	ctrl+v             paste a clipboard image
-//	ctrl+o             edit the draft in $VISUAL/$EDITOR
-//	ctrl+p             expand the composer, and back
-//	ctrl+a, ctrl+e     start / end of line           (emacs mode)
-//	ctrl+b, ctrl+f     back / forward one character  (emacs mode)
-//	ctrl+u, ctrl+k     kill to start / end of line   (emacs mode)
-//	ctrl+w, ctrl+d     kill previous word / delete   (emacs mode)
-//
-// The composer's line editing follows either the emacs (readline) or the vi
-// keymap, selected by ui.compose_editing in config.toml — "emacs", "vi", or
-// "auto" (the default), which infers it from $VISUAL/$EDITOR. See
-// [config.ResolveComposeEditing].
-//
-// App-level dispatch deliberately claims almost nothing while the composer is
-// focused, so neither keymap's chords are shadowed. The complete list of keys
-// that still fire from a focused composer:
-//
-//	ctrl+q             quit                          ([keys.quit])
-//	ctrl+v             paste a clipboard image
-//	esc                only when the composer has nothing to cancel
-//	tab, shift+tab     cycle panel focus            (including from the composer)
-//	alt+1/2/3, f1-f3   focus a panel                 [keys.focus_chat_list, _chat_view, _composer]
-//	alt+j/k, alt+h/l   chat and folder navigation    [keys.next_chat, prev_chat, next_folder, prev_folder]
-//	alt+c, f4          contacts overlay              [keys.contacts, keys.contacts_alt]
-//
-// Every one of those is a modifier or function key that no line-editing
-// keymap binds. Note "?" is absent, as is [keys.quit_browsing]: the
-// composer owns printables, and a bare letter would be text here.
-// No other ctrl+<letter> is claimed at app level — in particular
-// ctrl+a/b/d/e/f/j/k/o/t/u/w all fall through to the composer.
-//
-// The [keys.x] tags on that list are load-bearing, not decoration. Those
-// bindings are matched BEFORE the composer sees the event, so rebinding
-// one to a printable character makes that character untypable in a
-// message. [keys.quit] is the sharpest edge: it is matched before every
-// focus gate in Update, so keys.quit = "x" means pressing x while writing
-// quits the application instead of typing an x. Nothing rejects that
-// configuration — [config.DetectKeyCollisions] only compares bindings
-// against each other, not against "is this a character someone types".
-// Prefer a chord or a function key for all of them.
-//
-// ## Overlays — search, contacts, dialogs
-//
-//	esc                close
-//	enter              accept the selection
-//	j, k / down, up    move
-//
-// ## Help overlay
-//
-//	?, esc, q          close
-//	j, k / down, up    scroll
-//	pgup, pgdown       page
-//	g, G / home, end   top / bottom
-//
-// ## Deliberate departures from lazygit
-//
-// The layout is lazygit's — panels side by side, h/l between them, [ and ]
-// for the tabs inside one, ? for the card, q for the way out. Three places
-// deviate on purpose. They are listed here so they are read rather than
-// discovered.
-//
-//   - Digits select folders, not panels. Lazygit gives 1-5 to its panels;
-//     here 1-9 jump to a folder tab and alt+1/2/3 focus a panel. Folder
-//     switching is the higher-frequency action in a chat client — a folder
-//     is a whole different set of conversations, while the panels are two
-//     halves of the one you already have open — and alt+digit for "tab N"
-//     is browser muscle memory that costs nothing to honor. It is a
-//     paradigm inversion, and it is the one an incoming lazygit user is
-//     most likely to trip over.
-//
-//   - Enter in the chat view opens the attachment. A drill-in convention
-//     would make enter focus or expand the item under the cursor; there is
-//     nothing to drill into here, because the chat view is already the
-//     bottom of the hierarchy. Opening the media is the only action the
-//     key could usefully name, and o is its synonym.
-//
-//   - o means two different things by panel: open the attachment in the
-//     chat view, open a line below in the composer's vi normal mode. That
-//     is legitimate under the modal design — the composer owns its own
-//     keymap and app-level dispatch claims almost nothing while it has
-//     focus — but the collision is real, and someone comparing the two
-//     halves of this table should find it stated rather than infer a bug.
+// There used to be a third copy in this comment. It was the one nothing
+// checked, and by the time it was deleted it was already wrong — it still
+// listed "c" for compose after "c" had been removed (decision I-15).
 //
 // If the Telegram client dies (see Model.fatalError), the UI is replaced by
-// an error panel and every binding above except quit becomes inert — there is
+// an error panel and every binding becomes inert except quit — there is
 // nothing left to act on.
 
 // FocusPanel identifies which UI panel has focus.
@@ -272,7 +117,9 @@ func (m Model) composerHelpSection() help.Section {
 // the resolved bindings for the same reason the sections are: a rebound help
 // key must not leave the card advertising "?" as the way out.
 func (m Model) helpFooter() string {
-	return fmt.Sprintf("esc / %s / q to close · j k to scroll", m.keys.help)
+	// q is not on it any more (decision I-8): it closed the card and then
+	// quit the application, so "?qq" was an exit nobody meant to type.
+	return fmt.Sprintf("esc / %s to close · j k to scroll", m.keys.help)
 }
 
 // reservedKeys is every key app-level dispatch takes before the focused
@@ -297,9 +144,8 @@ func (m Model) reservedKeys() []string {
 	return keys.AppReserved(
 		k.quit, k.quitBrowsing, k.help,
 		k.search, k.globalSearch,
-		k.contacts, k.contactsAlt,
-		k.focusChatList, k.focusChatView, k.focusComposer,
-		k.nextChat, k.prevChat,
+		k.contacts, k.compose,
+		k.nextChat, k.prevChat, k.nextUnread,
 		k.nextFolder, k.prevFolder,
 	)
 }
@@ -339,10 +185,7 @@ const unboundKey = "(unbound)"
 func (m Model) helpSections() []help.Section {
 	k := m.keys
 	// Post-resolution, so a configured binding the chat view refused is
-	// not advertised as if it had been accepted. The motion fields carry
-	// only the extra accepted spelling ("" when there is none); the
-	// built-in j/k, arrows and pgup/pgdown are always live and are named
-	// by alsoBound below.
+	// not advertised as if it had been accepted.
 	cv := m.chatView.ActiveKeys()
 	// A mnemonic can come back empty: a configuration that points reply at
 	// edit's letter leaves edit with nothing, and chatview reports that
@@ -354,36 +197,17 @@ func (m Model) helpSections() []help.Section {
 		}
 		return key
 	}
-	// or joins the app-level spelling of a binding with its alt-free
-	// alternative, skipping the alternative when a user has configured both
-	// to the same key.
-	or := func(a, b string) string {
-		if a == b || b == "" {
-			return a
-		}
+	// pair joins two bindings that are one row on the card — next and
+	// previous of the same thing — skipping the half a configuration left
+	// unbound.
+	pair := func(a, b string) string {
 		if a == "" {
-			return b
+			return bound(b)
+		}
+		if b == "" {
+			return bound(a)
 		}
 		return a + " / " + b
-	}
-	// alsoBound renders a motion row: the spellings chatview hardcodes,
-	// plus any configured extra that is not already one of them. Motions
-	// there are additive — a configured scroll_up is an ADDITIONAL way to
-	// scroll up, never a replacement for k or the arrow — so a row that
-	// showed only the configured key would be advertising the removal of
-	// keys that still work. See chatview.Keys's doc comment.
-	alsoBound := func(fixed string, extras ...string) string {
-		out := fixed
-		for _, e := range extras {
-			if e == "" {
-				continue
-			}
-			if slices.Contains(strings.Split(out, " / "), e) {
-				continue
-			}
-			out += " / " + e
-		}
-		return out
 	}
 
 	return []help.Section{
@@ -391,13 +215,11 @@ func (m Model) helpSections() []help.Section {
 			{Keys: quitKeys(k.quit), Desc: "Quit"},
 			{Keys: k.help, Desc: "Toggle this help"},
 			{Keys: "tab / shift+tab", Desc: "Cycle panel focus"},
-			{Keys: or("alt+1", k.focusChatList), Desc: "Focus chat list"},
-			{Keys: or("alt+2", k.focusChatView), Desc: "Focus chat view"},
-			{Keys: or("alt+3", k.focusComposer), Desc: "Focus composer"},
 			{Keys: "esc", Desc: "Close overlay, else step back"},
-			{Keys: or(k.nextChat, k.prevChat), Desc: "Next / previous chat"},
-			{Keys: or(k.nextFolder, k.prevFolder), Desc: "Next / previous folder"},
-			{Keys: or(k.contacts, k.contactsAlt), Desc: "Contacts overlay"},
+			{Keys: pair(k.nextChat, k.prevChat), Desc: "Open the next / previous chat"},
+			{Keys: bound(k.nextUnread), Desc: "Open the next chat with unread messages"},
+			{Keys: pair(k.prevFolder, k.nextFolder), Desc: "Previous / next folder"},
+			{Keys: bound(k.contacts), Desc: "Contacts overlay"},
 			{Keys: k.globalSearch, Desc: "Search all chats (not while composing)"},
 			{Keys: ":", Desc: "Command palette (not while composing)"},
 			{Keys: "`", Desc: "Toggle the context rail (not while composing)"},
@@ -433,9 +255,8 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "esc", Desc: "Cancel without attaching"},
 		}},
 		{Title: "Chat list", Bindings: []help.Binding{
-			{Keys: "j / k", Desc: "Next / previous chat"},
-			{Keys: "l", Desc: "Focus the chat view"},
-			{Keys: "[ / ]", Desc: "Previous / next folder tab"},
+			{Keys: "j / k", Desc: "Move the cursor — opens nothing"},
+			{Keys: "l", Desc: "Open the cursored chat and focus the chat view"},
 			{Keys: "left / right", Desc: "Previous / next folder tab"},
 			{Keys: "1-9", Desc: "Jump to folder N (1 = All)"},
 			// Split in two rather than "g / G / home / end": the Keys
@@ -445,24 +266,23 @@ func (m Model) helpSections() []help.Section {
 			// (internal/ui/widgets/list.go), not chatlist's own.
 			{Keys: "g / home", Desc: "First chat"},
 			{Keys: "G / end", Desc: "Last chat"},
-			{Keys: "enter", Desc: "Open the selected chat"},
-			{Keys: "i", Desc: "Compose a message"},
+			{Keys: "enter", Desc: "Open the cursored chat — the same as l"},
+			{Keys: bound(k.compose), Desc: "Open the cursored chat and compose"},
 			{Keys: k.search, Desc: "Filter this chat list"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 			{Keys: "click", Desc: "Select a chat, or switch folder tab"},
 		}},
 		{Title: "Chat view", Bindings: []help.Binding{
-			{Keys: alsoBound("j / k", cv.ScrollDown, cv.ScrollUp), Desc: "Scroll down / up"},
+			{Keys: "j / k", Desc: "Cursor to the next / previous message"},
+			{Keys: "ctrl+e / ctrl+y", Desc: "Scroll the buffer one line down / up"},
 			{Keys: "g / home", Desc: "Top"},
 			{Keys: "G / end", Desc: "Bottom"},
 			{Keys: "ctrl+d / ctrl+u", Desc: "Page down / up"},
-			{Keys: alsoBound("pgdown / pgup", cv.PageDown, cv.PageUp),
-				Desc: "Page down / up, keeping a line of context"},
+			{Keys: "pgdown / pgup", Desc: "Page down / up, keeping a line of context"},
 			{Keys: "h", Desc: "Focus the chat list"},
-			{Keys: or(k.search, "ctrl+f"), Desc: "Find in this chat"},
+			{Keys: pair(k.search, "ctrl+f"), Desc: "Find in this chat"},
 			{Keys: "n / N", Desc: "Next / previous match"},
-			{Keys: "} / {", Desc: "Next / previous message (j/k scroll lines)"},
-			{Keys: "1-9", Desc: "Count prefix — 9{ moves nine messages back"},
+			{Keys: "1-9", Desc: "Count prefix — 9k moves nine messages back"},
 			{Keys: strings.Join([]string{
 				bound(cv.Reply), bound(cv.Edit), bound(cv.Delete),
 			}, " / "), Desc: "Reply / edit / delete message"},
@@ -474,14 +294,14 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "+", Desc: "React — pick one, or press it again to take it off"},
 			{Keys: "p", Desc: "Pin or unpin the selected message"},
 			{Keys: "t", Desc: "Open the discussion under a channel post"},
-			{Keys: "M", Desc: "Mark this chat read without moving"},
+			{Keys: bound(cv.MarkRead), Desc: "Mark this chat read without moving"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
-			{Keys: "i", Desc: "Compose a message"},
+			{Keys: bound(k.compose), Desc: "Compose a message"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 		}},
 		m.composerHelpSection(),
 		{Title: "Overlays", Bindings: []help.Binding{
-			{Keys: "esc", Desc: "Close"},
+			{Keys: "esc", Desc: "Close — q closes no overlay"},
 			{Keys: "enter", Desc: "Accept the selection"},
 			{Keys: "j / k", Desc: "Move within a list (dialogs use the arrows)"},
 		}},

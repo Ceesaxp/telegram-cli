@@ -171,7 +171,6 @@ func TestNewlineChordsInsertNewline(t *testing.T) {
 		{"shift+enter (kitty, with text)", "\x1b[13;2;13u"},
 		{"shift+enter (modifyOtherKeys)", "\x1b[27;2;13~"},
 		{"ctrl+enter (kitty)", "\x1b[13;5u"},
-		{"alt+enter (kitty)", "\x1b[13;3u"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -660,10 +659,6 @@ func TestViOpenLineProducesRealNewline(t *testing.T) {
 // Normal mode inserts nothing, so every newline chord is inert there — which
 // is what the hint line promises once it stops advertising ctrl+j. They all
 // come back the moment insert mode does.
-//
-// alt+enter is the case that makes this more than tidiness: its legacy
-// encoding is ESC CR, byte-for-byte "Escape, then Enter", which is the
-// sequence a vi user types to leave insert mode and send.
 func TestViNormalModeIgnoresNewlineChords(t *testing.T) {
 	for _, seq := range []string{
 		"\n",            // ctrl+j
@@ -671,8 +666,6 @@ func TestViNormalModeIgnoresNewlineChords(t *testing.T) {
 		"\x1b[13;2u",    // shift+enter
 		"\x1b[13;2;13u", // shift+enter with associated text
 		"\x1b[13;5u",    // ctrl+enter
-		"\x1b[13;3u",    // alt+enter
-		"\x1b\r",        // legacy alt+enter == Esc then Enter
 	} {
 		t.Run(seq, func(t *testing.T) {
 			m := chars(t, viComposer(t), "hi")
@@ -685,9 +678,7 @@ func TestViNormalModeIgnoresNewlineChords(t *testing.T) {
 				t.Errorf("%q left normal mode", seq)
 			}
 
-			// Back in insert mode the chord works again (except alt+enter's
-			// legacy spelling, which the decoder cannot tell from Esc+Enter
-			// — it is still accepted, it just is not the primary chord).
+			// Back in insert mode the chord works again.
 			m = chars(t, m, "A")
 			m, _ = send(t, m, seq)
 			if m.textarea.Value != "hi\n" {
@@ -1124,5 +1115,26 @@ func TestExternalEditorNoticeNamesTheEditor(t *testing.T) {
 	}
 	if strings.Contains(view, "/bin/sh") {
 		t.Errorf("notice names the shell instead of the editor:\n%s", view)
+	}
+}
+
+// TestAltEnterIsNotANewlineChord is decision I-1's negative test in this
+// package. alt+enter was accepted as a third newline chord; Alt is gone from
+// the client, and this one carried a hazard of its own — its legacy encoding
+// is ESC CR, byte-for-byte what "press Escape, then press Enter" produces,
+// which is exactly what a vi user types to leave insert mode and send.
+func TestAltEnterIsNotANewlineChord(t *testing.T) {
+	for _, seq := range []string{
+		"\x1b[13;3u",    // kitty alt+enter
+		"\x1b[27;3;13~", // modifyOtherKeys alt+enter
+	} {
+		t.Run(seq, func(t *testing.T) {
+			m := chars(t, newFocused(), "ab")
+			m, _ = send(t, m, seq)
+			m = chars(t, m, "cd")
+			if strings.Contains(m.textarea.Value, "\n") {
+				t.Errorf("alt+enter inserted a newline: %q", m.textarea.Value)
+			}
+		})
 	}
 }

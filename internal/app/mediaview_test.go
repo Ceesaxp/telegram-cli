@@ -61,33 +61,28 @@ func TestTheMediaOverlayOwnsTheKeyboard(t *testing.T) {
 	}
 }
 
-func TestEscapeAndQCloseTheMediaOverlay(t *testing.T) {
-	for _, k := range []string{"\x1b", "q"} {
-		t.Run(k, func(t *testing.T) {
-			m := overlayModel(t)
-			updated, _ := m.Update(decodeKey(t, k))
-			if updated.(Model).mediaView.IsVisible() {
-				t.Errorf("%q did not close the overlay", k)
-			}
-		})
+func TestEscapeClosesTheMediaOverlay(t *testing.T) {
+	m := overlayModel(t)
+	updated, _ := m.Update(decodeKey(t, "\x1b"))
+	if updated.(Model).mediaView.IsVisible() {
+		t.Error("esc did not close the overlay")
 	}
 }
 
-// Closing must not also quit. "q" is the quit binding from a browsing
-// panel, and an overlay that let it through would exit the client when the
-// user meant to put a photo away.
-func TestQClosesTheOverlayWithoutQuitting(t *testing.T) {
+// TestQClosesNoOverlay is decision I-8. q used to close this overlay and,
+// one keystroke later, quit the client — the same double-press the help card
+// had. q has one meaning now, and closing an overlay is not it: the key is
+// swallowed here like every other key behind a full-screen surface.
+func TestQClosesNoOverlay(t *testing.T) {
 	m := overlayModel(t)
 	updated, cmd := m.Update(decodeKey(t, "q"))
 	got := updated.(Model)
 
-	if got.mediaView.IsVisible() {
-		t.Fatal("q did not close the overlay")
+	if !got.mediaView.IsVisible() {
+		t.Error("q closed the media overlay; only esc closes it")
 	}
-	// tea.Quit is the only command that could have been produced here, and
-	// closing an overlay must not produce it.
-	if cmd != nil {
-		t.Error("q produced a command; closing the overlay should be silent")
+	if quits(cmd) {
+		t.Error("q quit from behind the media overlay")
 	}
 	if got.dialog != nil {
 		t.Error("q raised the quit confirmation from the overlay")

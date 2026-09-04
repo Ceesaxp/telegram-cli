@@ -42,24 +42,24 @@ func cursorIndex(t *testing.T, m Model) int {
 	return -1
 }
 
-// The gap this closes: j/k scroll lines, so before } and { there was no way
-// to say "the message above this one" — you scrolled until the right one
-// happened to sit at the edge of the window.
-func TestBraceMovesTheCursorOneMessage(t *testing.T) {
+// The gap this closes: j/k used to scroll lines, so there was no way to say
+// "the message above this one" — you scrolled until the right one happened
+// to sit at the edge of the window (decision I-4).
+func TestJKMoveTheCursorOneMessage(t *testing.T) {
 	m := motionModel(t)
 	start := cursorIndex(t, m)
 	if start != 39 {
 		t.Fatalf("precondition: the cursor starts on the newest message, got %d", start)
 	}
 
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if got := cursorIndex(t, m); got != start-1 {
-		t.Errorf("{ moved the cursor to %d, want %d", got, start-1)
+		t.Errorf("k moved the cursor to %d, want %d", got, start-1)
 	}
 
-	m, _ = m.handleKey(motionKey('}'))
+	m, _ = m.handleKey(motionKey('j'))
 	if got := cursorIndex(t, m); got != start {
-		t.Errorf("} did not come back: %d, want %d", got, start)
+		t.Errorf("j did not come back: %d, want %d", got, start)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestAMovedCursorSurvivesTheTailRule(t *testing.T) {
 		t.Fatalf("precondition: expected to start at the bottom, offset %d", m.scrollOffset)
 	}
 
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	want := cursorIndex(t, m)
 
 	// A message arrives. The pinned cursor does not chase it.
@@ -86,8 +86,8 @@ func TestAMovedCursorSurvivesTheTailRule(t *testing.T) {
 // says they are done holding a place.
 func TestGReleasesTheCursor(t *testing.T) {
 	m := motionModel(t)
-	m, _ = m.handleKey(motionKey('{'))
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
+	m, _ = m.handleKey(motionKey('k'))
 
 	m, _ = m.handleKey(motionKey('G'))
 	msgs := m.store.Messages.Get(testChatID)
@@ -110,7 +110,7 @@ func TestTheCursorStaysOnScreen(t *testing.T) {
 	m := motionModel(t)
 
 	for range 20 {
-		m, _ = m.handleKey(motionKey('{'))
+		m, _ = m.handleKey(motionKey('k'))
 		idx := cursorIndex(t, m)
 		first, last, ok := m.visibleMessages()
 		if !ok {
@@ -130,9 +130,12 @@ func TestAMotionWithinTheWindowDoesNotScroll(t *testing.T) {
 
 	// Away from the bottom first. Pinned at scrollOffset 0 the clamp hides
 	// any centring — there is nowhere further down to scroll — so a test
-	// that stayed there would pass whatever revealMessage did.
-	for range 4 {
-		m, _ = m.handleKey(motionKey('k'))
+	// that stayed there would pass whatever revealMessage did. ctrl+y
+	// rather than k: k is the message motion this test is about, and
+	// scrolling with it would be the thing under test setting up for
+	// itself.
+	for range 8 {
+		m, _ = m.handleKey(ctrlKey('y'))
 	}
 	if m.scrollOffset == 0 {
 		t.Fatal("precondition: expected to be off the bottom of the history")
@@ -148,7 +151,7 @@ func TestAMotionWithinTheWindowDoesNotScroll(t *testing.T) {
 	m.cursorPinned = true
 
 	before := m.scrollOffset
-	for _, k := range []rune{'{', '}'} {
+	for _, k := range []rune{'k', 'j'} {
 		m, _ = m.handleKey(motionKey(k))
 		if m.scrollOffset != before {
 			t.Errorf("%c moved to a visible message and scrolled from %d to %d",
@@ -161,21 +164,21 @@ func TestAMotionWithinTheWindowDoesNotScroll(t *testing.T) {
 func TestTheMotionsStopAtTheEnds(t *testing.T) {
 	m := motionModel(t)
 
-	m, _ = m.handleKey(motionKey('}'))
+	m, _ = m.handleKey(motionKey('j'))
 	msgs := m.store.Messages.Get(testChatID)
 	if got := cursorIndex(t, m); got != len(msgs)-1 {
-		t.Errorf("} past the newest message moved to %d", got)
+		t.Errorf("j past the newest message moved to %d", got)
 	}
 
 	for range len(msgs) + 5 {
-		m, _ = m.handleKey(motionKey('{'))
+		m, _ = m.handleKey(motionKey('k'))
 	}
 	if got := cursorIndex(t, m); got != 0 {
-		t.Errorf("{ past the oldest message landed on %d, want 0", got)
+		t.Errorf("k past the oldest message landed on %d, want 0", got)
 	}
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if got := cursorIndex(t, m); got != 0 {
-		t.Errorf("{ at the oldest message moved to %d", got)
+		t.Errorf("k at the oldest message moved to %d", got)
 	}
 }
 
@@ -184,14 +187,16 @@ func TestTheMotionsStopAtTheEnds(t *testing.T) {
 // arrivals. Otherwise a pin made once would outlive every later scroll.
 func TestScrollingAwayReleasesThePin(t *testing.T) {
 	m := motionModel(t)
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	if !m.cursorPinned {
-		t.Fatal("precondition: { did not pin the cursor")
+		t.Fatal("precondition: k did not pin the cursor")
 	}
 
-	// Scroll up until the pinned message is gone.
-	for range 30 {
-		m, _ = m.handleKey(motionKey('k'))
+	// Scroll up until the pinned message is gone. The buffer motion, not
+	// the message one: moving the cursor is what pinned it in the first
+	// place, and would keep it on screen.
+	for range 60 {
+		m, _ = m.handleKey(ctrlKey('y'))
 		if !m.cursorPinned {
 			break
 		}
@@ -206,7 +211,7 @@ func TestScrollingAwayReleasesThePin(t *testing.T) {
 // action keys will act on.
 func TestTheBarFollowsTheMotion(t *testing.T) {
 	m := motionModel(t)
-	m, _ = m.handleKey(motionKey('{'))
+	m, _ = m.handleKey(motionKey('k'))
 	target := m.cursorMessage()
 
 	var barred []string
@@ -226,4 +231,73 @@ func TestTheBarFollowsTheMotion(t *testing.T) {
 	}
 	t.Errorf("the bar is not on the cursored message (%q):\n%s", body,
 		strings.Join(barred, "\n"))
+}
+
+// TestTheRetiredMotionKeysAreInert is the negative half of decision I-4 and
+// I-10. `}` and `{` were the message-wise motion and `M` was mark-read; with
+// j/k message-wise and m marking read, keeping them would be a second
+// spelling of each. They are freed rather than reassigned, so the proof they
+// are gone is that they do nothing at all.
+func TestTheRetiredMotionKeysAreInert(t *testing.T) {
+	for _, r := range []rune{'}', '{', 'M'} {
+		t.Run(string(r), func(t *testing.T) {
+			m := motionModel(t)
+			start := cursorIndex(t, m)
+			offset := m.scrollOffset
+
+			next, cmd := m.handleKey(motionKey(r))
+
+			if got := cursorIndex(t, next); got != start {
+				t.Errorf("%q moved the cursor from %d to %d", string(r), start, got)
+			}
+			if next.scrollOffset != offset {
+				t.Errorf("%q scrolled from %d to %d", string(r), offset, next.scrollOffset)
+			}
+			if cmd != nil {
+				t.Errorf("%q produced %T", string(r), cmd())
+			}
+		})
+	}
+}
+
+// TestCtrlEAndCtrlYScrollOneLine covers the buffer motion that took over
+// from j/k. One line per count, not the three j/k used to move: a line is a
+// line, and the count is what asks for more of them.
+func TestCtrlEAndCtrlYScrollOneLine(t *testing.T) {
+	m := motionModel(t)
+	m.scrollOffset = 0
+
+	m, _ = m.handleKey(ctrlKey('y'))
+	if m.scrollOffset != 1 {
+		t.Fatalf("ctrl+y scrolled to %d, want one line up", m.scrollOffset)
+	}
+	m, _ = m.handleKey(ctrlKey('y'))
+	if m.scrollOffset != 2 {
+		t.Fatalf("a second ctrl+y scrolled to %d, want 2", m.scrollOffset)
+	}
+	m, _ = m.handleKey(ctrlKey('e'))
+	if m.scrollOffset != 1 {
+		t.Fatalf("ctrl+e scrolled to %d, want one line back down", m.scrollOffset)
+	}
+
+	// It does not pin the cursor — that is what an explicit j/k does. The
+	// cursor follows the viewport instead.
+	if m.cursorPinned {
+		t.Error("a buffer scroll pinned the cursor")
+	}
+}
+
+// TestCtrlYAtTheTopAsksForAnOlderPage: the upward buffer motion keeps the
+// older-page fetch j/k used to carry, or scrolling up would stop dead at the
+// oldest loaded message.
+func TestCtrlYAtTheTopAsksForAnOlderPage(t *testing.T) {
+	m := motionModel(t)
+	m.tg = nil // no client: loadHistoryCmd is not reachable, so assert the clamp
+	m.scrollOffset = 0
+	for range 200 {
+		m, _ = m.handleKey(ctrlKey('y'))
+	}
+	if got, max := m.scrollOffset, m.maxScrollOffset(); got != max {
+		t.Errorf("ctrl+y past the top left the offset at %d, want the clamp %d", got, max)
+	}
 }

@@ -93,13 +93,24 @@ func TestTheReactionRowOwnsTheKeyboard(t *testing.T) {
 	m = acted.(Model)
 
 	before := m.chatView.ChatId()
-	// "q" quits from the chat list and the chat view. It must not here.
-	typed := update(t, m, "q")
+	// "q" quits from the chat list and the chat view. It must not here —
+	// and since decision I-8 it does not cancel the row either: q closes
+	// no overlay. It is simply swallowed.
+	typed, cmd := updateCmd(t, m, "q")
 	if typed.chatView.ChatId() != before {
 		t.Error("a key reached the thread while the picker was open")
 	}
-	if typed.reactions.IsVisible() {
-		t.Error("q did not close the picker")
+	if quits(cmd) {
+		t.Error("q quit from behind the reaction row")
+	}
+	if !typed.reactions.IsVisible() {
+		t.Error("q cancelled the reaction row; only esc does")
+	}
+
+	// Esc is the way out, and it leaves the message alone.
+	out := update(t, typed, "\x1b")
+	if out.reactions.IsVisible() {
+		t.Error("esc did not cancel the reaction row")
 	}
 }
 
