@@ -172,7 +172,7 @@ Emacs and vi line editing are unchanged; see [keys.md](keys.md).
 | Palette | `↑`/`↓` move, `Tab` complete, `Enter` run, `ctrl+u` clear, `Esc` cancel. Printables type |
 | Attach picker | `↑`/`↓`, `Tab` complete, `Enter` enter / attach, `←` and `Backspace` up, `ctrl+t` photo/document, `ctrl+u` clear, `Esc` cancel. Printables type |
 | Search | printables type, `Tab` scope, `Enter` search / open, `j`/`k` in the results, `Esc` close |
-| Contacts | `j`/`k`, `Enter` open chat, `c` or `Esc` close |
+| Contacts | `j`/`k`, `Enter` open chat, `/` filter the list, `c` or `Esc` close. `Esc` clears an applied filter before it closes the panel |
 | Confirm dialog | `←`/`→` choose, `Enter` accept the highlighted button, **`y` / `n` answer directly** (*new*, I-7), `Esc` cancel. Any button may carry its own accelerator letter, shown in its label |
 | Help | `j`/`k`, `PgUp`/`PgDn`, `g`/`G` scroll; `Esc` or `?` close. **`q` no longer closes it** (I-8) |
 | Media | `Esc` close (**not `q`**, I-8), `s` save, `o` open externally |
@@ -213,7 +213,7 @@ on a narrow terminal. The sets:
 | Composer VI | `i insert · esc leave · o open line · dd delete line · : command` |
 | Palette | `enter run · tab complete · esc cancel` |
 | Attach picker | `enter attach · tab complete · esc cancel` |
-| Contacts | `j/k move · enter open · esc close` |
+| Contacts | `j/k move · enter open · / filter · c close` — led by `esc clear · enter keep` while a query is being typed, and by `esc clear filter` once one is applied |
 | Search | `enter search · tab scope · esc close` |
 | Dialog | `y/n answer · ←/→ choose · enter accept · esc cancel` |
 | Help | `esc close · j/k scroll` |

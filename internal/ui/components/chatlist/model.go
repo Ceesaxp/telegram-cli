@@ -500,12 +500,30 @@ func (m *Model) SetFocused(focused bool) {
 // The caller should treat the key that opened the filter as consumed and
 // NOT also forward it to Update. If it does anyway, that first key press
 // is swallowed rather than typed into the query (filterJustOpened).
+// OpenFilter opens the filter input. The CALLER has consumed the key that
+// asked for it — internal/app matches keys.search and returns — so nothing
+// is latched here: the next key this component sees is the first character
+// of the query, and a "/" among them is a literal.
+//
+// Latching here is what made a query starting with "/" impossible to type:
+// the app never re-delivers the opening key, so the latch was still armed
+// when the user's own slash arrived. See openFilterFromKey for the path
+// that does need it.
 func (m *Model) OpenFilter() {
 	m.filtering = true
-	m.filterJustOpened = true
+	m.filterJustOpened = false
 	m.filterInput.Value = m.filter
 	m.filterInput.Cursor = m.filterInput.Len()
 	m.filterInput.Focused = true
+}
+
+// openFilterFromKey is OpenFilter for the one path where the opening key IS
+// re-delivered: this component's own "/" binding, which runs when the model
+// is driven directly rather than through internal/app. The latch swallows
+// that second delivery, and nothing else.
+func (m *Model) openFilterFromKey() {
+	m.OpenFilter()
+	m.filterJustOpened = true
 }
 
 // FilterActive reports whether the filter input is open and consuming
@@ -932,12 +950,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// keep in sync with here.
 			switch msg.String() {
 			case "/":
-				// The app normally binds '/' and calls OpenFilter
-				// itself; handling it here too keeps the component
-				// self-contained standalone (and under test), and is
-				// harmless either way because OpenFilter is idempotent
-				// and swallows a re-delivered '/'.
-				m.OpenFilter()
+				// The app normally binds '/' and calls OpenFilter itself,
+				// consuming the key; handling it here too keeps the
+				// component self-contained standalone (and under test).
+				// This is the path where the opening key is re-delivered,
+				// so this is the path that latches.
+				m.openFilterFromKey()
 				return m, nil
 			case "esc":
 				// Only meaningful in the applied-but-closed state, the

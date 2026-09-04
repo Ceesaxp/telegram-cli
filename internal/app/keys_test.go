@@ -3225,3 +3225,223 @@ func TestEscUnderAnOverlayLeavesTheDraftAlone(t *testing.T) {
 		})
 	}
 }
+
+// --- the contacts overlay: styling and its own filter ---------------------
+
+// contactsOpen is a main-screen model with the contacts overlay up and
+// three people in it.
+func contactsOpen(t *testing.T) Model {
+	t.Helper()
+	m := sizedMainModel(t, PanelChatList)
+	m = update(t, m, "c")
+	if !m.contacts.IsVisible() || m.focus != PanelContacts {
+		t.Fatalf("precondition: contacts visible=%v focus=%v",
+			m.contacts.IsVisible(), m.focus)
+	}
+	m.contacts.SetContactsForTest([]*telegram.User{
+		{ID: 1, FirstName: "Alice", LastName: "Anderson", Username: "alice"},
+		{ID: 2, FirstName: "Bob", LastName: "Brown", Username: "bobby"},
+		{ID: 3, FirstName: "Carol", LastName: "Clark", Username: "carol"},
+	})
+	return m
+}
+
+// TestSlashFiltersTheContactsOverlay. The overlay borrows the chat list's
+// column; it borrows the column's filter too, because a contact list long
+// enough to need one is exactly the list you opened to find a name in.
+func TestSlashFiltersTheContactsOverlay(t *testing.T) {
+	m := contactsOpen(t)
+
+	m = update(t, m, "/")
+	if !m.contacts.FilterActive() {
+		t.Fatal("/ did not open the contacts filter")
+	}
+	// And it did not open the GLOBAL search instead, which is what "/"
+	// means from every panel that has no buffer of its own.
+	if m.search.IsVisible() {
+		t.Error("/ opened the global search over the contacts overlay")
+	}
+
+	m = typeIntoComposer(t, m, "bo")
+	if got := m.contacts.FilterQuery(); got != "bo" {
+		t.Errorf("query = %q, want the typed bo", got)
+	}
+}
+
+// TestTheContactsFilterOwnsTheKeyboard: while a query is being typed, c and
+// q are letters in somebody's name — not the keys that close the panel and
+// quit the client.
+func TestTheContactsFilterOwnsTheKeyboard(t *testing.T) {
+	m := contactsOpen(t)
+	m = update(t, m, "/")
+
+	next, cmd := updateCmd(t, m, "q")
+	if quits(cmd) {
+		t.Error("q quit while a contacts filter was being typed")
+	}
+	next, _ = updateCmd(t, next, "c")
+	if !next.contacts.IsVisible() {
+		t.Error("c closed the panel while a filter was being typed")
+	}
+	if got := next.contacts.FilterQuery(); got != "qc" {
+		t.Errorf("query = %q, want both letters typed", got)
+	}
+}
+
+// TestEscWidensTheContactsBeforeItCloses is the Esc ladder, one rung per
+// press: the rung that gives the contacts back comes before the one that
+// gives the panel back.
+func TestEscWidensTheContactsBeforeItCloses(t *testing.T) {
+	m := contactsOpen(t)
+	m = update(t, m, "/")
+	m = typeIntoComposer(t, m, "bo")
+	m = update(t, m, "\r") // keep the filter, close the input
+
+	if m.contacts.FilterQuery() == "" || m.contacts.FilterActive() {
+		t.Fatalf("precondition: query=%q active=%v",
+			m.contacts.FilterQuery(), m.contacts.FilterActive())
+	}
+
+	m = update(t, m, "\x1b")
+	if got := m.contacts.FilterQuery(); got != "" {
+		t.Errorf("the first esc left the filter applied: %q", got)
+	}
+	if !m.contacts.IsVisible() {
+		t.Error("the first esc closed the panel instead of clearing the filter")
+	}
+
+	m = update(t, m, "\x1b")
+	if m.contacts.IsVisible() {
+		t.Error("the second esc did not close the panel")
+	}
+}
+
+// TestTheContactsHintSetFollowsTheFilter, because the way out of a narrowed
+// list is the one thing worth the row while it is narrowed.
+func TestTheContactsHintSetFollowsTheFilter(t *testing.T) {
+	m := contactsOpen(t)
+	m.refreshChrome()
+
+	bar := ansi.Strip(m.hintBar.View())
+	for _, want := range []string{"filter", "open", "close"} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("the contacts bar omits %q: %q", want, bar)
+		}
+	}
+
+	m = update(t, m, "/")
+	m.refreshChrome()
+	if got := ansi.Strip(m.hintBar.View()); !strings.Contains(got, "clear") {
+		t.Errorf("the bar does not say how to clear a filter being typed: %q", got)
+	}
+}
+
+// TestTheContactsColumnDrawsTheChatListsGrid: the two swap into one region,
+// so a reader whose eye has learned where a name starts should not have to
+// relearn it. The overlay styling this replaced drew a bold heading over
+// rows that painted their own background.
+func TestTheContactsColumnDrawsTheChatListsGrid(t *testing.T) {
+	m := contactsOpen(t)
+	m.refreshChrome()
+	rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+
+	var header, name string
+	for _, row := range rows {
+		if strings.Contains(row, "filter contacts") {
+			header = row
+		}
+		if strings.Contains(row, "Alice Anderson") {
+			name = row
+		}
+	}
+	if header == "" {
+		t.Fatalf("no filter header in the column:\n%s", strings.Join(rows, "\n"))
+	}
+	if name == "" {
+		t.Fatalf("no contact row in the column:\n%s", strings.Join(rows, "\n"))
+	}
+	if strings.Contains(strings.Join(rows, "\n"), "Contacts") {
+		t.Error("the overlay still draws its old bold heading")
+	}
+}
+
+// TestASlashCanBeTheFirstCharacterOfAFilter covers the path the running
+// client actually takes, which no component test could: Update matches
+// keys.search, opens the filter and RETURNS, so the component never sees
+// the key that opened it. A latch inside OpenFilter was therefore still
+// armed when the user's own slash arrived, and ate it.
+//
+// Both filters, because both are opened the same way.
+func TestASlashCanBeTheFirstCharacterOfAFilter(t *testing.T) {
+	t.Run("contacts", func(t *testing.T) {
+		m := contactsOpen(t)
+		m = update(t, m, "/") // opens the filter; the key is consumed
+		m = update(t, m, "/") // the user's own, and a literal
+		if got := m.contacts.FilterQuery(); got != "/" {
+			t.Errorf("query = %q, want the typed slash", got)
+		}
+	})
+
+	t.Run("chat list", func(t *testing.T) {
+		m := sizedMainModel(t, PanelChatList)
+		m.chatList.MarkLoadedForTest()
+		m = update(t, m, "/")
+		if !m.chatList.FilterActive() {
+			t.Fatal("/ did not open the chat list filter")
+		}
+		m = update(t, m, "/")
+		if got := m.chatList.FilterQuery(); got != "/" {
+			t.Errorf("query = %q, want the typed slash", got)
+		}
+	})
+}
+
+// TestAClickOnBlankSpaceSelectsNothing. A list whose height is not a whole
+// number of rows leaves a part-row at the foot, and a list with more items
+// than fit has a REAL item at the index that row maps to — one scrolled
+// below the fold. Clicking the blank strip under the last visible row
+// therefore selected something that was not on screen; in the chat list it
+// opened a conversation the reader could not see.
+func TestAClickOnBlankSpaceSelectsNothing(t *testing.T) {
+	t.Run("contacts", func(t *testing.T) {
+		m := contactsOpen(t)
+		users := make([]*telegram.User, 0, 11)
+		for i := 1; i <= 11; i++ {
+			users = append(users, &telegram.User{
+				ID: int64(i), FirstName: "Person", LastName: string(rune('A' + i - 1)),
+			})
+		}
+		m.contacts.SetContactsForTest(users)
+		// 21 list rows at two lines per contact: ten are drawn, and row 20
+		// is the blank half-row under them.
+		m.contacts.SetSize(38, 22)
+
+		if id, ok := m.contacts.ClickAt(1 + 20); ok {
+			t.Errorf("a click on the blank half-row selected contact %d", id)
+		}
+		// The row above it is a real contact, so the guard is not simply
+		// refusing everything.
+		if _, ok := m.contacts.ClickAt(1 + 19); !ok {
+			t.Error("a click on the last drawn contact selected nothing")
+		}
+	})
+
+	t.Run("chat list", func(t *testing.T) {
+		m := sizedMainModel(t, PanelChatList)
+		for i := range 8 {
+			m.store.Chats.Set(&telegram.Chat{
+				ID: int64(100 + i), Title: "Chat", Type: telegram.ChatTypePrivate,
+			})
+		}
+		m.chatList.MarkLoadedForTest()
+		_ = m.chatList.View()
+		m.chatList.SetSize(38, 8) // 7 list rows: three chats, then a blank half
+
+		if id, ok := m.chatList.ClickAt(1 + 6); ok {
+			t.Errorf("a click on the blank half-row opened chat %d", id)
+		}
+		if _, ok := m.chatList.ClickAt(1 + 5); !ok {
+			t.Error("a click on the last drawn chat selected nothing")
+		}
+	})
+}

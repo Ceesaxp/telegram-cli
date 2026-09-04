@@ -1087,13 +1087,24 @@ func TestFilterConsumesNavigationAndFolderKeys(t *testing.T) {
 	}
 }
 
-// TestFilterSwallowsTheKeyThatOpenedIt: a caller that both calls
-// OpenFilter and forwards the '/' key press must not end up with "/" as
-// the first character of the query. A later '/' is ordinary text.
+// TestFilterSwallowsTheKeyThatOpenedIt, on the ONE path that re-delivers
+// it: this component's own '/' binding, which runs when the model is driven
+// directly rather than through internal/app.
+//
+// internal/app takes the other path — it matches keys.search, calls
+// OpenFilter and returns, consuming the key — so OpenFilter itself must not
+// swallow anything. It used to, which made a query starting with "/"
+// impossible to type in the running client: the latch was still armed when
+// the user's own slash arrived.
 func TestFilterSwallowsTheKeyThatOpenedIt(t *testing.T) {
 	m := newLoadedModel(t, "Alice", "a/b")
-	m.OpenFilter()
+	m.focused = true
 
+	// The component's own binding opens it AND sees the same key again.
+	m, _ = m.Update(key('/'))
+	if !m.FilterActive() {
+		t.Fatal("the component's own '/' did not open the filter")
+	}
 	m, _ = m.Update(key('/'))
 	if m.FilterQuery() != "" {
 		t.Fatalf("a re-delivered '/' was typed into the query: %q", m.FilterQuery())

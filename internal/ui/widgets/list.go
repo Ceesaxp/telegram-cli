@@ -79,6 +79,23 @@ func (l *List) ItemAtRow(row int) int {
 	if row < 0 {
 		return -1
 	}
+	// Only rows an item was actually DRAWN on. A list whose height is not
+	// a whole number of items leaves a part-row at the foot, and a list
+	// with more items than fit has a real item at the index that row
+	// arithmetic maps it to — one scrolled below the fold. Clicking the
+	// blank strip under the last visible row therefore used to select
+	// something that was not on screen: in the chat list, it OPENED a
+	// conversation the reader could not see.
+	//
+	// The visible count is View's own, clamp included, so the two cannot
+	// disagree about which rows exist.
+	visibleItems := l.Height / l.itemHeight
+	if visibleItems <= 0 {
+		visibleItems = 1
+	}
+	if row >= visibleItems*l.itemHeight {
+		return -1
+	}
 	idx := l.Offset + row/l.itemHeight
 	if idx < 0 || idx >= len(l.Items) {
 		return -1

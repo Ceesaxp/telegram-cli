@@ -590,6 +590,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == PanelChatList && m.chatList.FilterActive() {
 				break
 			}
+			// And the contacts overlay's, which borrows the chat list's
+			// column and its filter along with it. Yielded for the same
+			// reason: while the input is open, "c" and "q" are letters in
+			// somebody's name rather than the keys that close the panel
+			// and quit the client.
+			if m.focus == PanelContacts && m.contacts.FilterActive() {
+				break
+			}
 			// After the input closes, n/N cycle the surviving hits. They
 			// are plain printables, so this must precede quick-type (and
 			// chatview's own "n"-less default handling) to reach chatview.
@@ -637,6 +645,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.contacts.IsVisible() {
+					// An applied filter is a rung of its own: esc widens
+					// the list back before it gives the panel back, the
+					// same ladder the chat list follows. Yielded rather
+					// than handled here so the component owns its own
+					// state — the sub-model dispatch below routes it.
+					if m.contacts.FilterQuery() != "" {
+						break
+					}
 					m.contacts.SetVisible(false)
 					m.setFocus(PanelChatList)
 					return m, nil
@@ -818,6 +834,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key.Matches(m.keys.search) && m.focus == PanelChatList && noOverlay {
 				m.chatList.OpenFilter()
+				return m, nil
+			}
+			// The contacts overlay narrows the same way its column does.
+			// NOT gated on noOverlay — contacts IS the overlay, and the
+			// gate exists to stop "/" being stolen from an overlay's own
+			// text input, which is exactly what this is.
+			if key.Matches(m.keys.search) && m.focus == PanelContacts &&
+				m.contacts.IsVisible() && m.dialog == nil {
+				m.contacts.OpenFilter()
 				return m, nil
 			}
 			if key.Matches(m.keys.search, m.keys.globalSearch) &&

@@ -267,7 +267,11 @@ func canonicalSection(title string) string {
 		// here: the split is by editing mode, not by panel, and the
 		// the document covers both modes under one heading.
 		return "composer"
-	case strings.HasPrefix(title, "Overlays"):
+	case strings.HasPrefix(title, "Overlays"), strings.HasPrefix(title, "Contacts"):
+		// Contacts has a section of its own in the document — it draws a
+		// whole column and has a filter — and shares the card's one
+		// Overlays section, which has room for the rule rather than a row
+		// per overlay.
 		return "overlays"
 	case strings.HasPrefix(title, "Command palette"):
 		return "palette"
