@@ -85,15 +85,32 @@ remains.
 - [x] **Bounded `image.Decode`** — 20 MiB / 20e6 pixels via
       `DecodeConfig` before Decode
 
-## Interaction review — open
+## Interaction review — shipped
 
 A review of the interaction model, keymaps and interactive surfaces
 (2026-09-04) produced fifteen tasks in four waves, sequenced in
 [INTERACTION-REVIEW.md](INTERACTION-REVIEW.md); the decisions they
 implement are in [docs/interaction-model.md](docs/interaction-model.md).
-Headlines: `Esc` never discards text, Alt and function keys are dropped,
-`j`/`k` step messages, one hint table for every surface. The
-"Status bar hints are hardcoded" item below is absorbed by its task 12.
+All four waves landed. Headlines: `Esc` never discards text, Alt and
+function keys are dropped, `j`/`k` step messages and `ctrl+e`/`ctrl+y`
+scroll, `[keys]` has one semantic, and one hint registry feeds every
+surface that draws a hint.
+
+Two things the review found and deliberately did **not** fix, because
+neither is a keymap problem — they are missing features, and binding a key
+to nothing is what the review exists to stop:
+
+- [ ] **No forward-message feature.** `keys.forward` existed, was parsed and
+      saved, and reached no dispatcher; it shipped in
+      `config.example.toml` bound to `f`, advertising an action the client
+      cannot perform. The field is removed (reported by `-migrate-config`
+      as removed). Whoever implements forwarding adds the field back with
+      the feature, not before it.
+- [ ] **No mute key.** `:mute` is designed in
+      [tui-2.0.md](docs/tui-2.0.md) decision 8 and is not in the command
+      registry — it needs a Telegram service this build does not have. The
+      chat list already draws the muted state; only the way to change it is
+      missing. Same rule: the binding lands with the command.
 
 ## Remaining — product / cleanup
 
@@ -125,11 +142,15 @@ immediately undoes.
       destructive palette commands (pin, mute, secret chat, export), which is
       what a single-button alert is for. Expect phase 7 to give it its first
       caller; revisit only if phase 7 ships without one.
-- [ ] **Status bar hints are hardcoded and do not follow rebinds** — the
-      second half of the stale-`config.example.toml` item below. TUI 2.0
-      replaces the status bar with a context-sensitive hint bar that should
-      read from the phase 7 command registry, which is precisely what stops
-      hints drifting from bindings. Fix it there, once.
+- [x] ~~**Status bar hints are hardcoded and do not follow rebinds**~~ —
+      done twice over. TUI 2.0's hint bar made the bar itself derived, and
+      the interaction review's task 12 (decision I-6) finished the job:
+      there is now one registry keyed by surface feeding the bar, the chat
+      list footer and the media overlay's strip, with a drift test that
+      fails when a literal is reintroduced. A dialog's own line is built
+      from its button set instead — the nearer authority on which letters
+      answer — and the bar reads those same buttons, so the two cannot
+      disagree.
 - [ ] **Clipboard *text* fallback** — phase 8 already adds a text/code copy
       abstraction for `y` (with a possible OSC 52 path). Read and write
       directions are the same code area; do both in one pass.
@@ -251,11 +272,11 @@ immediately undoes.
       fixed**, verified 2026-08-29. The quick-type wording is gone; the
       comment now correctly describes what happens today (a wired bare
       printable shadows that key in the chat list and chat view, with `quit`
-      called out as the exception that also reaches the composer), and
-      `forward` is marked as accepted for round-trip compatibility only. The
-      file still needs a pass for `ui.inline_images` / `ui.rail` and the
-      removal of `chat_list_width` / `show_avatars` under decision 10 — that
-      lands with phase 5, not as a standalone doc fix.
+      called out as the exception that also reaches the composer). The
+      `[keys]` block was rewritten again by the interaction review's task 9
+      (decision I-13): one semantic instead of three, `forward` and the
+      additive motion fields removed outright rather than documented as
+      inert.
 - [ ] **MCP and REST remain a 1:1 copy**
 - [ ] `isWildcardHost` edge-case spellings if REST binds beyond loopback
 - [ ] Expose photo sending via REST `/api/send-file` and MCP `send_file`

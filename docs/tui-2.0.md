@@ -2132,6 +2132,14 @@ deferral — the top-bar placeholders — has been discharged.
    composer. Escape from an ordinary draft still leaves the composer without
    discarding the draft.
 
+   > **Refined by I-3, and by I-12**
+   > ([interaction-model.md](interaction-model.md)). The ladder's *shape* is
+   > unchanged — vi still costs one more Escape than emacs — but the
+   > cancellation rung no longer takes the TEXT with it: cancelling a reply
+   > keeps what was typed, and cancelling an edit puts back the draft the
+   > edit displaced. The badge in vi's command state reads `VI` rather than
+   > `NORMAL`; the rest of this decision stands.
+
    The rejected alternative was to make Escape exit INSERT first in every
    editing mode, so vi and emacs users would get an identical first Escape.
    That was declined because it would cost vi users one extra keystroke for

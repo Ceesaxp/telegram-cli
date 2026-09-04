@@ -1,10 +1,20 @@
 # Interaction review — work order
 
-> **Status: open.** Raised 2026-09-04 from a review of the interaction
-> model, keymaps and interactive surfaces of `teletui`. The decisions it
-> implements are in [docs/interaction-model.md](docs/interaction-model.md)
-> (cited as I-n below); read that first, it is the authority on *what* and
-> *why*. This file is only *in what order* and *what done looks like*.
+> **Status: shipped.** All four waves landed. Raised 2026-09-04 from a
+> review of the interaction model, keymaps and interactive surfaces of
+> `teletui`. The decisions it implements are in
+> [docs/interaction-model.md](docs/interaction-model.md) (cited as I-n
+> below); read that first, it is the authority on *what* and *why*. This
+> file is only *in what order* and *what done looks like*, and is kept as
+> the record of the round rather than as outstanding work.
+>
+> Two deviations were made on implementation and are recorded rather than
+> left in a commit message: `keymap.go`'s prose keymap was deleted in wave
+> 2 rather than wave 4, because a commit that removed `alt+1/2/3` while
+> shipping a table describing them would break this file's own first ground
+> rule; and the badge column is padded to six cells rather than seven,
+> which is written up as an amendment to I-12 in the model document because
+> seven would have moved the frame.
 >
 > Successor to [`KEYMAP-REVIEW.md`](KEYMAP-REVIEW.md), which stays as the
 > record of the previous round. Its verdict that the paradigm should not be

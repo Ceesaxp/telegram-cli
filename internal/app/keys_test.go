@@ -3131,3 +3131,55 @@ func TestTheDialogHintIsAbsentWithNoDialog(t *testing.T) {
 		}
 	}
 }
+
+// TestEscFromABrowsingPanelLeavesTheDraftAlone completes decision I-3's
+// coverage: the composer's own rungs are tested in its package and at the
+// ladder above, and this is the other half — Esc pressed anywhere else must
+// not reach across and take the words with it.
+//
+// The draft is parked in a chat the reader has navigated away from, which is
+// the state where losing it would be least noticed and hardest to explain.
+func TestEscFromABrowsingPanelLeavesTheDraftAlone(t *testing.T) {
+	for _, panel := range []FocusPanel{PanelChatList, PanelChatView} {
+		t.Run(fmt.Sprint(panel), func(t *testing.T) {
+			m := openChatModel(t, PanelComposer)
+			m = typeIntoComposer(t, m, "half a thought")
+			m.setFocus(panel)
+
+			for range 3 {
+				m = update(t, m, "\x1b")
+			}
+
+			if got := m.composer.Draft(); got != "half a thought" {
+				t.Errorf("Draft = %q after three Escapes from %v", got, panel)
+			}
+		})
+	}
+}
+
+// TestEscUnderAnOverlayLeavesTheDraftAlone: the overlays close on Esc, and
+// closing one must not be a way to lose what is in the composer behind it.
+func TestEscUnderAnOverlayLeavesTheDraftAlone(t *testing.T) {
+	overlays := map[string]func(t *testing.T, m Model) Model{
+		"contacts": func(t *testing.T, m Model) Model { return update(t, m, "c") },
+		"help":     func(t *testing.T, m Model) Model { return update(t, m, "?") },
+		"palette":  func(t *testing.T, m Model) Model { return update(t, m, ":") },
+		"search": func(t *testing.T, m Model) Model {
+			return update(t, m, "\x07") // ctrl+g
+		},
+	}
+	for name, open := range overlays {
+		t.Run(name, func(t *testing.T) {
+			m := openChatModel(t, PanelComposer)
+			m = typeIntoComposer(t, m, "half a thought")
+			m.setFocus(PanelChatList)
+			m = open(t, m)
+
+			m = update(t, m, "\x1b")
+
+			if got := m.composer.Draft(); got != "half a thought" {
+				t.Errorf("Draft = %q after closing the %s overlay", got, name)
+			}
+		})
+	}
+}
