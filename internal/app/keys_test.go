@@ -2111,7 +2111,9 @@ func TestLiveKeysAreAdvertisedWhereTheyWork(t *testing.T) {
 		for _, tc := range []struct{ desc, want string }{
 			{"First chat", "g / home"},
 			{"Last chat", "G / end"},
-			{"Top", "g / home"},
+			// The chat view's Top is gg, not g: g became a prefix there so
+			// gx could follow a link, the way vim spells both.
+			{"Top", "gg / home"},
 			{"Bottom", "G / end"},
 		} {
 			row, ok := findBinding(sections, tc.desc)

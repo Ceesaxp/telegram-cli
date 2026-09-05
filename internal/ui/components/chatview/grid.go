@@ -328,12 +328,18 @@ func (m Model) gridMessageLines(msg *telegram.Message, prev *telegram.Message, s
 		out = append(out, gridDivider(label, g.Width, r.Amber, r.Amber))
 	}
 
+	// The armed link is marked only on the message that owns it, the same
+	// rule spoilers follow.
+	armedLo, armedHi := m.armedRange(msg.ID)
+
 	body := m.renderer.RenderBody(msg, m.store, render.BodyOptions{
 		Width: g.BodyW,
 		// Spoilers only ever open on the message the cursor is on, and
 		// only after x. Revealing them anywhere else would defeat the
 		// point of a spoiler on a screen somebody else can see.
 		RevealSpoilers: m.revealedID != 0 && msg.ID == m.revealedID,
+		ArmedLinkLo:    armedLo,
+		ArmedLinkHi:    armedHi,
 	})
 
 	var rows []string

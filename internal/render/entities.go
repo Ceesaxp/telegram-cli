@@ -25,6 +25,12 @@ type inlineStyle struct {
 	link      bool
 	mention   bool
 
+	// armed marks the one link the reader is about to follow. It is part of
+	// the style for the same reason uri is: renderRunes cuts a run wherever
+	// the style changes, so marking a range here is all it takes to make
+	// that range its own span.
+	armed bool
+
 	// uri is where a link goes, for the OSC 8 sequence. It is part of the
 	// style rather than a parallel table because renderRunes cuts runs
 	// wherever the style changes, and two adjacent links to different
@@ -48,6 +54,14 @@ type textOpts struct {
 	// was found to support them (theme.SupportsHyperlinks) or the user
 	// asked for them outright.
 	links bool
+
+	// armedLo/armedHi are the rune offsets of the link the reader has
+	// armed with gx, in the message's OWN text. Absolute rather than
+	// block-relative because splitBlocks preserves absolute offsets, so a
+	// link inside a quote is reachable by the same number.
+	//
+	// armedHi <= armedLo means nothing is armed, which is the zero value.
+	armedLo, armedHi int
 }
 
 // inlineStyles builds a per-rune style table by layering every entity over
@@ -190,6 +204,12 @@ func (s inlineStyle) style(roles theme.Roles, reveal bool) lipgloss.Style {
 	}
 	if s.spoiler && !reveal {
 		out = out.Background(roles.Sel).Foreground(roles.Sel)
+	}
+	// Last, so it survives every rule above. An armed link that a bold or a
+	// spoiler could overpaint would be a cursor you cannot find, which is
+	// the whole job of this one.
+	if s.armed {
+		out = out.Background(roles.Sel).Bold(true)
 	}
 	return out
 }

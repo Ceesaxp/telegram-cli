@@ -138,6 +138,13 @@ func renderBlocks(ft *telegram.FormattedText, roles theme.Roles, width int, o te
 	runes := []rune(ft.Text)
 	styles := inlineStyles(ft, len(runes))
 
+	// Mark the armed link. The offsets are absolute and this table is built
+	// over the whole message, so this lands correctly whichever block the
+	// link turns out to sit in.
+	for i := max(o.armedLo, 0); i < min(o.armedHi, len(styles)); i++ {
+		styles[i].armed = true
+	}
+
 	var out []string
 	for _, b := range splitBlocks(ft) {
 		switch b.kind {

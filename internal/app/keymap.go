@@ -275,7 +275,7 @@ func (m Model) helpSections() []help.Section {
 		{Title: "Chat view", Bindings: []help.Binding{
 			{Keys: "j / k", Desc: "Cursor to the next / previous message"},
 			{Keys: "ctrl+e / ctrl+y", Desc: "Scroll the buffer one line down / up"},
-			{Keys: "g / home", Desc: "Top"},
+			{Keys: "gg / home", Desc: "Top"},
 			{Keys: "G / end", Desc: "Bottom"},
 			{Keys: "ctrl+d / ctrl+u", Desc: "Page down / up"},
 			{Keys: "pgdown / pgup", Desc: "Page down / up, keeping a line of context"},
@@ -296,6 +296,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: bound(cv.Forward), Desc: "Forward the message to another chat"},
 			{Keys: "t", Desc: "Open the discussion under a channel post"},
 			{Keys: bound(cv.MarkRead), Desc: "Mark this chat read without moving"},
+			{Keys: "gx", Desc: "Follow a link — again to cycle, enter to open"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
 			{Keys: bound(k.compose), Desc: "Compose a message"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},

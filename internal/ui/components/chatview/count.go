@@ -66,3 +66,18 @@ func (m Model) countLabel() string {
 	}
 	return itoa(m.pendingCount)
 }
+
+// prefixLabel is the pending state the header shows: a count, a g waiting
+// for its suffix, or both.
+//
+// Shown for countLabel's reason, which applies harder to g: a count at least
+// echoes the digit you typed, while a lone g used to jump to the top and now
+// does nothing visible at all. A prefix you cannot see is indistinguishable
+// from a key that is broken.
+func (m Model) prefixLabel() string {
+	label := m.countLabel()
+	if m.pendingG {
+		label += "g"
+	}
+	return label
+}

@@ -169,6 +169,13 @@ type BodyOptions struct {
 	// RevealSpoilers un-hides spoiler spans. True only for the message
 	// under the cursor, and only after x.
 	RevealSpoilers bool
+
+	// ArmedLinkLo/ArmedLinkHi are the rune offsets of the link the reader
+	// has armed with gx, from [Link.Lo] and [Link.Hi]. Set only for the
+	// message under the cursor, the same as RevealSpoilers.
+	//
+	// Hi <= Lo means nothing is armed.
+	ArmedLinkLo, ArmedLinkHi int
 }
 
 // RenderBody lays a message's content out for the TUI 2.0 thread grid's
@@ -203,8 +210,10 @@ func (r *MessageRenderer) RenderBody(msg *telegram.Message, s *store.Store, opts
 	}
 	if rc.text != nil && rc.text.Text != "" {
 		out = append(out, renderBlocks(rc.text, r.roles, width, textOpts{
-			reveal: opts.RevealSpoilers,
-			links:  r.hyperlinks,
+			reveal:  opts.RevealSpoilers,
+			links:   r.hyperlinks,
+			armedLo: opts.ArmedLinkLo,
+			armedHi: opts.ArmedLinkHi,
 		})...)
 	}
 	out = append(out, rc.blocks...)
@@ -344,6 +353,12 @@ func captionOf(content telegram.MessageContent) *telegram.FormattedText {
 	case *telegram.MessageDocument:
 		return c.Caption
 	case *telegram.MessageVoiceNote:
+		return c.Caption
+	case *telegram.MessageAnimation:
+		// mediaCardFor draws a card for an animation, and this did not
+		// return its caption — so a GIF sent WITH something written under
+		// it drew the card and dropped the words. Found while listing a
+		// message's links, which reads captions through here too.
 		return c.Caption
 	}
 	return nil

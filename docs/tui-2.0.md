@@ -2248,6 +2248,49 @@ doing — loses the attribution, the entities, the media semantics and the
 server-side restriction on chats that forbid forwarding out, while looking
 close enough that nobody notices until it matters.
 
+### 54. A link you could see and could not open
+
+Links have been drawn underlined and cyan since the grid landed, and wrapped
+in OSC 8 where the terminal takes it ([divergence 14](#14-resolved-osc-8-hyperlinks-without-the-wrapper-they-were-costed-at)).
+Both of those are for a reader with a mouse. From the keyboard there was no
+way to open a link at all, and no way to say WHICH link in a message with
+three of them — a rendering that advertised an affordance the client did not
+have.
+
+`gx` is the binding, because vim already had this exact problem and answered
+it: `gx` is netrw's "open the URL under the cursor". `Ctrl+]` was the
+alternative and is jump-to-tag — a different idea, and the wrong analogy to
+teach. The cost is real and is recorded as
+[decision I-16](interaction-model.md): `g` becomes a prefix in the thread and
+Top becomes `gg`, which is also what vim does, with `Home` still the one-key
+route.
+
+**It arms, it does not open.** The first `gx` marks a link and puts its
+destination on screen; `Enter` opens it. That is one keystroke more than
+opening outright, and it buys the two things that matter. It answers "which
+of these three", without a second binding. And it puts the DESTINATION in
+front of the reader before they commit, which matters because a link's
+visible text and its target are allowed to disagree — `entityURI` already
+refuses to guess a destination for exactly this reason, calling the
+disagreement "the shape of a phishing link". A client that renders
+`[click here]` and opens somewhere else on one keystroke has built the
+attack.
+
+**What reaches the opener is not what was in the message.** The armed URI
+goes through `cell.SafeLinkURI` — the same allowlist OSC 8 is held to:
+`http`, `https`, `mailto`, `tg`, printable ASCII, percent-encoded, length
+bounded. A scheme outside that set is still armed and still cycled past,
+and says why. Dropping it from the list would have been the safer-looking
+choice and the worse one: the link is visible on screen, underlined, and a
+key that skipped it silently is a key the reader concludes is broken.
+
+**The mark is a render option, not a second renderer.** `BodyOptions` already
+carried `RevealSpoilers` for exactly this shape — per-message state, set only
+for the cursored message — so the armed range travels the same way, and
+`inlineStyle` gains one field. `renderRunes` already cuts a run wherever the
+style changes, so marking a range is all it takes to make that range its own
+span; nothing needed to learn about link boundaries a second time.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this

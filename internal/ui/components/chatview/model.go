@@ -191,6 +191,14 @@ type Model struct {
 	// refused rather than guessed at — see saveInto.
 	downloadDir string
 
+	// pendingG is a g waiting for its suffix. g is a PREFIX now (gg to the
+	// top, gx to follow a link), which is what vim does with it — bare g
+	// does nothing there either. home is still the one-key route to the
+	// top, so nothing became unreachable.
+	pendingG bool
+	// armed is the link cursor: see links.go.
+	armed armedLink
+
 	// pendingCount is the vi count prefix typed but not yet spent: the 9
 	// in "9{". Zero means none. See count.go.
 	pendingCount int
@@ -866,6 +874,8 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.cursorID = 0 // re-anchors to this chat's newest message on first paint
 	m.cursorPinned = false
 	m.pendingCount = 0
+	m.pendingG = false
+	m.armed = armedLink{}
 	m.revealedID = 0
 	m.loading = true
 	m.historyEnd = false
@@ -1732,6 +1742,30 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// String() exactly when nothing is modified.
 	kp := keys.NewPress(msg)
 
+	// g is a prefix. Consumed before everything else, because what follows
+	// it is not the key it would otherwise be.
+	if m.pendingG {
+		m.pendingG = false
+		switch msg.String() {
+		case "g":
+			// gg is what g alone used to be. Rewritten to home rather than
+			// reimplemented, so Top has one implementation and two
+			// spellings instead of two implementations.
+			msg = tea.KeyPressMsg{Code: tea.KeyHome}
+			kp = keys.NewPress(msg)
+		case "x":
+			return m.armNextLink()
+		default:
+			// Not a suffix this prefix has. The g is dropped and the key
+			// goes on to do its own job rather than being swallowed — the
+			// same rule the count prefix follows, for the same reason: a
+			// prefix thought better of must not eat the next keystroke.
+		}
+	} else if msg.String() == "g" {
+		m.pendingG = true
+		return m, nil
+	}
+
 	// A digit is a count prefix, not a command. Taken before the motion
 	// switch so no binding has to know about it, and before the isScroll
 	// test so a digit does not cancel a pending jump.
@@ -1746,7 +1780,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// and scroll only the minimum needed to show it.
 	isScroll := kp.Matches(
 		"ctrl+y", "ctrl+e",
-		"G", "end", "g", "home",
+		"G", "end", "home",
 		"ctrl+u", "ctrl+d",
 		"pgup", "pgdown",
 	)
@@ -1805,7 +1839,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		// Back to the bottom is "stop holding my place": from here the
 		// cursor follows arrivals again.
 		m.unpinCursor()
-	case kp.Matches("g", "home"):
+	case kp.Matches("home"):
 		m.scrollOffset = m.maxScrollOffset()
 	case kp.Matches("ctrl+u"):
 		m.scrollOffset += m.height * count
@@ -1819,6 +1853,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 
 	case kp.Matches("esc"):
+		// An armed link goes first, being the most recent thing the reader
+		// put on screen — and the one that is pointing at something.
+		if m.HasArmedLink() {
+			m.clearArmedLink()
+			return m, nil
+		}
 		// Vim-style: the first esc after a search drops the held hits, so
 		// n/N stop being claimed by this panel and the host can go back to
 		// quick-typing words that start with n/N. A second esc is the
@@ -1881,6 +1921,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// everything else keeps going to the platform, because a video or a
 	// document has no in-terminal form this client can draw.
 	case kp.Matches("enter"):
+		// An armed link first. Arming is something the reader did two
+		// keystrokes ago and can see on screen; the attachment is still
+		// there under o, and enter goes back to meaning it as soon as the
+		// link is opened or dropped.
+		if next, cmd, handled := m.openArmedLink(); handled {
+			return next, cmd
+		}
 		if cmd := m.OverlayPhotoCmd(); cmd != nil {
 			return m, cmd
 		}
@@ -2570,7 +2617,7 @@ func (m Model) renderHeader() string {
 	if m.bufferIndex > 0 {
 		right = "buf " + strconv.Itoa(m.bufferIndex) + " │ " + right
 	}
-	if n := m.countLabel(); n != "" {
+	if n := m.prefixLabel(); n != "" {
 		right = n + "  " + right
 	}
 	if m.metaBusy {
