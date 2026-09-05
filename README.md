@@ -108,15 +108,28 @@ project's Releases page, or before its checksum matches.
 
 Releases are fully automatic: every push to `main` bumps the patch version, tags, builds, and publishes (use `#minor` / `#major` in a commit message to bump those instead).
 
+### With Homebrew
+
+```bash
+brew install ceesaxp/tap/tele-tui
+```
+
+macOS and Linux, Intel and ARM. Installs all three binaries — `tele-tui`,
+`telegram-mcp` and `telegram-api` — from the release archives, so there is no
+Go toolchain and no build step involved.
+
 ### With the Go toolchain
 
 ```bash
 go install github.com/Ceesaxp/telegram-cli/cmd/teletui@latest
 ```
 
-The binary lands in `$GOPATH/bin` as `teletui` rather than `tele-tui` — `go
-install` names it after its directory. The release archives and `make build`
-both call it `tele-tui`.
+Two caveats, neither of which changes what the program does. The binary lands
+in `$GOPATH/bin` as `teletui` rather than `tele-tui` — `go install` names it
+after its directory, while the release archives and `make build` both call it
+`tele-tui`. And it reports its version as `dev`: the version is stamped in at
+link time from `LDFLAGS` (see the Makefile) and `go install` does not run
+them. `brew install` and `make build` both stamp it correctly.
 
 ### Build from source
 
