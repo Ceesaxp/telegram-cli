@@ -1,4 +1,4 @@
-.PHONY: build run test lint clean dist dist-all checksums version
+.PHONY: build run test lint fmt fmt-check clean dist dist-all checksums version
 
 # VERSION is what the binaries report and what the archive is named after.
 #
@@ -54,8 +54,33 @@ run: build
 test:
 	go test ./...
 
-lint:
-	golangci-lint run ./...
+# fmt rewrites; fmt-check only reports. CI runs the equivalent of the second
+# one, and the only way to find out you had tripped it used to be to push and
+# lose a run — `gofmt -l` prints nothing on success and the workflow printed
+# nothing on failure either.
+fmt:
+	gofmt -w .
+
+fmt-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "not gofmt'd (run 'make fmt'):"; \
+		echo "$$unformatted" | sed 's/^/  /'; \
+		exit 1; \
+	fi; \
+	echo "gofmt: clean"
+
+# The same three things CI runs, in the same order, so `make lint` locally
+# answers the question CI answers. golangci-lint is optional: it is not in
+# go.mod, not everyone has it, and its absence should not make the formatting
+# and vet checks unrunnable.
+lint: fmt-check
+	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed, skipping (brew install golangci-lint)"; \
+	fi
 
 # version is what the release would call this commit. Printed rather than
 # guessed at: the workflow and a person staging a build should be able to
