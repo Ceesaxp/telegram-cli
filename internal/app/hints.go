@@ -25,6 +25,11 @@ const (
 	// The browsing panels.
 	SurfaceChatList Surface = iota
 	SurfaceChatView
+	// SurfaceChatViewLink is the chat view with a link armed by gx. Its own
+	// surface rather than a flag on the row, because every key on it means
+	// something different: enter opens a link instead of an attachment, and
+	// esc drops the link instead of stepping back to the chat list.
+	SurfaceChatViewLink
 
 	// The composer, in each of its two keymaps. They are separate surfaces
 	// rather than one, because vi's command state shares nothing with
@@ -54,6 +59,8 @@ func (s Surface) String() string {
 	switch s {
 	case SurfaceChatView:
 		return "chat view"
+	case SurfaceChatViewLink:
+		return "chat view (link)"
 	case SurfaceComposerInsert:
 		return "composer (insert)"
 	case SurfaceComposerVi:
@@ -123,12 +130,15 @@ type surfaceInputs struct {
 	reactionsOpen bool
 	attachOpen    bool
 	forwardOpen   bool
-	paletteOpen   bool
-	mediaOpen     bool
-	helpOpen      bool
-	dialogOpen    bool
-	searchOpen    bool
-	contactsOpen  bool
+	// linkArmed is chatview.HasArmedLink(): gx has marked a link and enter
+	// would follow it.
+	linkArmed    bool
+	paletteOpen  bool
+	mediaOpen    bool
+	helpOpen     bool
+	dialogOpen   bool
+	searchOpen   bool
+	contactsOpen bool
 
 	// composerViNormal is composer.IsViNormalMode(): vi editing is selected
 	// and the editor has returned to its command state.
@@ -179,6 +189,9 @@ func resolveSurface(in surfaceInputs) Surface {
 		}
 		return SurfaceComposerInsert
 	case in.focus == PanelChatView:
+		if in.linkArmed {
+			return SurfaceChatViewLink
+		}
 		return SurfaceChatView
 	default:
 		return SurfaceChatList
@@ -201,6 +214,7 @@ func (m Model) surfaceInputs() surfaceInputs {
 		reactionsOpen: m.reactions.IsVisible(),
 		attachOpen:    m.attach.IsVisible(),
 		forwardOpen:   m.forward.IsVisible(),
+		linkArmed:     m.chatView.HasArmedLink(),
 		paletteOpen:   m.palette.IsVisible(),
 		mediaOpen:     m.mediaView.IsVisible(),
 		helpOpen:      m.help.IsVisible(),
@@ -306,6 +320,16 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 			hint("enter", "attach"),
 			hint("tab", "complete"),
 			hint("esc", "cancel"),
+		)
+
+	case SurfaceChatViewLink:
+		// The destination itself is shown by the chat view, which owns the
+		// link; this row is what can be DONE with it. gx is named because
+		// the reader has just pressed it and needs to know it repeats.
+		return join(
+			hint("enter", "open"),
+			hint("gx", "next link"),
+			hint("esc", "drop"),
 		)
 
 	case SurfaceForward:

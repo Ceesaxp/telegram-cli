@@ -119,7 +119,7 @@ the shipped defaults.
 |-----|--------|
 | `j` / `k` (or `↓` / `↑`) | Move the cursor to the next / previous **message** — the unit every action key acts on |
 | `Ctrl+E` / `Ctrl+Y` | Scroll the buffer one line down / up, as in vi. The cursor follows the viewport |
-| `g` / `Home` | Top |
+| `gg` / `Home` | Top. `g` is a **prefix** in this panel — see `gx` below — so it no longer jumps on its own; `Home` is the one-key route. (In the chat list `g` is still a plain First-chat key: nothing there needs a prefix) |
 | `G` / `End` | Bottom |
 | `Ctrl+D` / `Ctrl+U` | Page down / up |
 | `PgDn` / `PgUp` | Page down / up, keeping a line of context |
@@ -139,6 +139,7 @@ the shipped defaults.
 | `f` | Forward the selected message to another chat (`keys.forward`). Opens a searchable destination picker — type to filter the chats you already have, and anything the server matches by title or `@username` is appended below them — then a confirmation naming the destination and previewing the message. `Esc` steps back from the confirmation to the list, and out of the list entirely. Telegram's own forwarding is used, so the original sender's attribution and any caption are kept |
 | `t` | Open the discussion under a channel post — jumps to the linked group at the post's own copy, where the comments hang off it |
 | `m` | Mark this chat read without moving the scroll or the unread divider (`keys.mark_read`) |
+| `gx` | Follow a link in the selected message — vim's own spelling for "open the URL under the cursor". The first press arms the first link and shows **where it actually goes**, which is the point: a link's visible text and its destination are allowed to differ. Press again to cycle (it wraps), `Enter` opens it, `Esc` drops it. A link whose scheme this client will not open is still armed and says so, rather than being skipped as though the key were broken |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` | Compose a message |
 | click | Focus the panel **and** move the cursor to the clicked message — a click on a day divider or the header moves nothing |

@@ -124,7 +124,7 @@ newline chord.
 | `ctrl+e` / `ctrl+y` | Scroll the buffer one line down / up | *new*, see I-4; count applies |
 | `ctrl+d` / `ctrl+u` | Half page | cursor follows the viewport |
 | `PgDn` / `PgUp` | Page, keeping a line of context | cursor follows |
-| `g` / `G`, `Home` / `End` | Top / bottom; `G` also hands the cursor back to the tail rule | |
+| `gg` / `G`, `Home` / `End` | Top / bottom; `G` also hands the cursor back to the tail rule | *changed*: `g` is a prefix here, see I-16 |
 | `1`–`9` | Count prefix for the motions | |
 | `h` | Focus the chat list | `l` is the right edge, a no-op |
 | `/`, `ctrl+f` | Find in this chat; `n` / `N` step through hits | |
@@ -133,6 +133,7 @@ newline chord.
 | `+` | React | |
 | `p` | Pin / unpin | |
 | `f` | Forward the cursored message to another chat | *new*, see I-13 — the one removed field that came back |
+| `gx` | Follow a link in the cursored message — arms, cycles, `Enter` opens | *new*, see I-16 |
 | `t` | Open the discussion under a channel post | |
 | `m` | Mark this chat read without moving | *moved* from `M`, see I-10 |
 | `x` | Reveal / hide spoilers | |
@@ -378,6 +379,33 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   it has been added, which is more churn than either message alone
   deserves — and the honest sequence, because both were true when they
   were said.
+
+- **I-16 — `g` is a prefix in the chat view, and Top becomes `gg`.**
+  Following a link needed a binding, and vim already has one: `gx` is what
+  netrw binds to "open the URL under the cursor". `Ctrl+]` was the other
+  candidate and was rejected — in vi that is jump-to-tag, a different idea
+  about a different kind of destination, and borrowing it would have taught
+  the wrong analogy.
+
+  The cost is that `g` stops being Top on its own, which it has been since
+  the beginning. That is what vim does too — bare `g` is a prefix there and
+  does nothing alone — and `Home` is still the one-key route, so nothing
+  became unreachable. A pending `g` shows in the thread header beside the
+  count prefix, for the count prefix's reason: a prefix you cannot see is
+  indistinguishable from a key that is broken, and this one is worse than a
+  digit because a lone `g` used to visibly do something.
+
+  Only the chat view. The chat list keeps plain `g` for First chat: it has
+  no `gx`, so a prefix there would cost a keystroke and buy nothing. Two
+  panels spelling a motion differently is the I-14 situation again, and the
+  answer is the same — the binding belongs to the panel.
+
+  `gx` ARMS rather than opens. A link's visible text and its destination are
+  allowed to differ — that is what a `text_url` entity is, and
+  `entityURI`'s own comment calls the disagreement "the shape of a phishing
+  link" — so the destination goes on screen and the reader presses `Enter`
+  having read it. Arming also answers "which of these three links" without
+  needing a second binding.
 
 - **I-14 — Accepted as they are.** Digits jump folders in the chat list and
   count motions in the chat view: adjacent panels, different meanings,

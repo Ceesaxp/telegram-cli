@@ -2248,6 +2248,85 @@ doing — loses the attribution, the entities, the media semantics and the
 server-side restriction on chats that forbid forwarding out, while looking
 close enough that nobody notices until it matters.
 
+### 54. A link you could see and could not open
+
+Links have been drawn underlined and cyan since the grid landed, and wrapped
+in OSC 8 where the terminal takes it ([divergence 14](#14-resolved-osc-8-hyperlinks-without-the-wrapper-they-were-costed-at)).
+Both of those are for a reader with a mouse. From the keyboard there was no
+way to open a link at all, and no way to say WHICH link in a message with
+three of them — a rendering that advertised an affordance the client did not
+have.
+
+`gx` is the binding, because vim already had this exact problem and answered
+it: `gx` is netrw's "open the URL under the cursor". `Ctrl+]` was the
+alternative and is jump-to-tag — a different idea, and the wrong analogy to
+teach. The cost is real and is recorded as
+[decision I-16](interaction-model.md): `g` becomes a prefix in the thread and
+Top becomes `gg`, which is also what vim does, with `Home` still the one-key
+route.
+
+**It arms, it does not open.** The first `gx` marks a link and puts its
+destination on screen; `Enter` opens it. That is one keystroke more than
+opening outright, and it buys the two things that matter. It answers "which
+of these three", without a second binding. And it puts the DESTINATION in
+front of the reader before they commit, which matters because a link's
+visible text and its target are allowed to disagree — `entityURI` already
+refuses to guess a destination for exactly this reason, calling the
+disagreement "the shape of a phishing link". A client that renders
+`[click here]` and opens somewhere else on one keystroke has built the
+attack.
+
+**What reaches the opener is not what was in the message.** The armed URI
+goes through `cell.SafeLinkURI` — the same allowlist OSC 8 is held to:
+`http`, `https`, `mailto`, `tg`, printable ASCII, percent-encoded, length
+bounded. A scheme outside that set is still armed and still cycled past,
+and says why. Dropping it from the list would have been the safer-looking
+choice and the worse one: the link is visible on screen, underlined, and a
+key that skipped it silently is a key the reader concludes is broken.
+
+**The mouse never worked, and nothing had noticed.**
+[Divergence 14](#14-resolved-osc-8-hyperlinks-without-the-wrapper-they-were-costed-at)
+costed OSC 8 carefully and concluded the terminal would make links clickable.
+It does emit them, and the terminal does understand them — but the frame asks
+for mouse reporting (`MouseModeCellMotion`) for the whole session, because
+clicks select a chat, move the thread cursor and switch folder tabs. While
+that is on, the terminal forwards clicks to this program rather than acting
+on them, and acting on an OSC 8 link is exactly the sort of thing it has
+stopped doing. Two deliberate decisions, each right on its own, and the
+interaction between them was never written down: the hyperlink work was
+costed as though the mouse were free when the frame had already taken it.
+
+So the keyboard route is not a convenience beside the mouse one. Until now
+there was no way to open a link at all, short of knowing your terminal's
+modifier for bypassing mouse reporting — Shift in most, Cmd in iTerm2 — which
+is a thing about your terminal that this client never told you. See
+[troubleshooting](troubleshooting.md#clicking-a-link-does-nothing).
+
+**Two places the mark cannot go, and what happens there instead.**
+
+A link inside an unrevealed **spoiler** is not armed at all. A hidden spoiler
+is painted foreground-on-background so it occupies the right cells and reads
+as a deliberate block; anything laid over it is invisible too, and revealing
+it to show the mark would defeat the spoiler. `gx` says so and asks for `x`
+first, which is a sentence rather than a key that appears to do nothing.
+
+A link inside a **block quote** is armed but not marked, because
+`renderQuoteBlock` takes plain text and draws the whole quote uniformly dim
+and italic — no inline formatting survives in a quote at all today, so a link
+in one is not underlined or coloured either, let alone marked. The
+destination still appears in the notice, and the frozen URI still guarantees
+enter opens what was shown, so the surface is degraded rather than unsafe.
+Rendering entities inside quotes is the real fix and is bigger than this: it
+would change how every quoted link, bold run and code span draws, and the
+golden fixtures with it.
+
+**The mark is a render option, not a second renderer.** `BodyOptions` already
+carried `RevealSpoilers` for exactly this shape — per-message state, set only
+for the cursored message — so the armed range travels the same way, and
+`inlineStyle` gains one field. `renderRunes` already cuts a run wherever the
+style changes, so marking a range is all it takes to make that range its own
+span; nothing needed to learn about link boundaries a second time.
+
 ## Decisions
 
 **All thirteen are resolved.** Decisions 1, 2, 4, and 5 were settled when this
