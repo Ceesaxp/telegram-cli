@@ -2284,6 +2284,24 @@ and says why. Dropping it from the list would have been the safer-looking
 choice and the worse one: the link is visible on screen, underlined, and a
 key that skipped it silently is a key the reader concludes is broken.
 
+**The mouse never worked, and nothing had noticed.**
+[Divergence 14](#14-resolved-osc-8-hyperlinks-without-the-wrapper-they-were-costed-at)
+costed OSC 8 carefully and concluded the terminal would make links clickable.
+It does emit them, and the terminal does understand them — but the frame asks
+for mouse reporting (`MouseModeCellMotion`) for the whole session, because
+clicks select a chat, move the thread cursor and switch folder tabs. While
+that is on, the terminal forwards clicks to this program rather than acting
+on them, and acting on an OSC 8 link is exactly the sort of thing it has
+stopped doing. Two deliberate decisions, each right on its own, and the
+interaction between them was never written down: the hyperlink work was
+costed as though the mouse were free when the frame had already taken it.
+
+So the keyboard route is not a convenience beside the mouse one. Until now
+there was no way to open a link at all, short of knowing your terminal's
+modifier for bypassing mouse reporting — Shift in most, Cmd in iTerm2 — which
+is a thing about your terminal that this client never told you. See
+[troubleshooting](troubleshooting.md#clicking-a-link-does-nothing).
+
 **The mark is a render option, not a second renderer.** `BodyOptions` already
 carried `RevealSpoilers` for exactly this shape — per-message state, set only
 for the cursored message — so the armed range travels the same way, and

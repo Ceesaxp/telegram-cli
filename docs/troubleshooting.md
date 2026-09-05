@@ -39,6 +39,33 @@ update-state database being locked by another `tele-tui`/`login` process
 and the peer cache in `state.db` having belonged to a different account
 (rebuilt automatically, also covered there).
 
+## Clicking a link does nothing
+
+The client asks the terminal for mouse reporting (`MouseModeCellMotion`) for
+the whole session, because clicks select a chat, move the thread cursor and
+switch folder tabs, and the wheel scrolls. While that is on, the **terminal
+hands clicks to this program instead of acting on them itself** — and an OSC 8
+hyperlink is something the terminal acts on. So the link is emitted, it is
+underlined, your terminal knows where it points, and a plain click still goes
+to the chat view.
+
+Two ways round it:
+
+- **`gx`** follows a link from the keyboard: it arms the first link in the
+  cursored message and shows where it actually goes, `gx` again cycles,
+  `Enter` opens, `Esc` drops it. This is the route that always works.
+- **Hold a modifier to bypass mouse reporting.** Most terminals reserve one
+  for exactly this: Shift in kitty, Ghostty, foot, WezTerm, xterm and the
+  VTE family (GNOME Terminal, Tilix); iTerm2 uses Cmd for URLs. Which one is
+  your terminal's decision, not this client's.
+
+If a link is not underlined at all, the terminal is not on the OSC 8
+allowlist (`ui.hyperlinks = "auto"` only emits the sequence where it is known
+to be understood, because a terminal that prints it instead of acting on it
+puts a URL in the middle of somebody's message). Set `ui.hyperlinks =
+"always"` to force it. `gx` does not care either way — it never needed the
+terminal's help.
+
 ## Alt bindings do nothing on macOS
 
 Your terminal is sending the composed character rather than a meta key. It
