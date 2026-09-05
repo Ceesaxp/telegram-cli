@@ -20,10 +20,29 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # `test -z "$(gofmt -l .)"` was the whole check, and on failure it said
+      # nothing at all — exit code 1, no file named, no diff. Both times this
+      # job has ever gone red it was this step, and both times the only way
+      # to find out WHAT was unformatted was to run gofmt again locally.
+      # `make fmt` fixes whatever this reports.
       - name: Format check
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt: the following files are not formatted. Run 'make fmt'."
+            echo "$unformatted" | sed 's/^/  /'
+            echo
+            gofmt -d .
+            exit 1
+          fi
+          echo "gofmt: clean"
 
+      # always(), so a stray blank line does not hide whether the tests pass.
+      # Previously Format check failing skipped this step, which cost a whole
+      # extra round trip to learn anything about the actual code: fix the
+      # whitespace, push, and only then find out if something was broken.
       - name: Test
+        if: always()
         run: go test ./...
 
   build:
