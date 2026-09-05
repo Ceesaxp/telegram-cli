@@ -1,6 +1,7 @@
 package chatview
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -241,5 +242,150 @@ func TestOpeningAnotherChatDropsTheArmedLink(t *testing.T) {
 	m.OpenChatAt(testChatID+1, "elsewhere", 0)
 	if m.armed.index != 0 || m.pendingG {
 		t.Errorf("the switch left state behind: armed=%d pendingG=%v", m.armed.index, m.pendingG)
+	}
+}
+
+// The destination shown is the destination opened. An edit landing between
+// gx and enter used to re-derive the link at the same index, so enter could
+// open a URI the reader was never shown — the same mistake the forward
+// picker's captured Source exists to prevent.
+func TestTheArmedDestinationIsFrozen(t *testing.T) {
+	m := linkModel(t)
+	m, _ = press(m, "g", "x")
+
+	shown := m.armed.uri
+	if shown != "https://first.example" {
+		t.Fatalf("precondition: armed %q", shown)
+	}
+
+	// The message is replaced under the decision, same entity position,
+	// different destination.
+	m.store.Messages.UpdateMessage(testChatID, 1, linkMessage(1, "see one and two here",
+		textURL(4, 3, "https://attacker.example"),
+		textURL(12, 3, "https://second.example"),
+	))
+
+	if got := m.armed.uri; got != shown {
+		t.Errorf("armed URI changed under an edit: %q, was %q", got, shown)
+	}
+	if got := m.armed.safeURI; got != "https://first.example" {
+		t.Errorf("the URI that would be opened is %q, want the one that was shown", got)
+	}
+}
+
+// And the other half: a replaced message releases the cursor, because the
+// marked range now describes text that is not there any more.
+func TestAReplacedMessageDropsTheArmedLink(t *testing.T) {
+	m := linkModel(t)
+	m, _ = press(m, "g", "x")
+	if !m.HasArmedLink() {
+		t.Fatal("precondition: nothing armed")
+	}
+
+	m, _ = m.Update(refetchedMsg{chatID: testChatID, messages: []*telegram.Message{
+		linkMessage(1, "see one and two here", textURL(4, 3, "https://attacker.example")),
+	}})
+	if m.HasArmedLink() {
+		t.Error("the armed link survived its message being replaced")
+	}
+}
+
+// A link the reader cannot see cannot be armed: a hidden spoiler paints
+// foreground and background alike, so the mark would be invisible, and
+// revealing it to show the mark would defeat the spoiler.
+func TestSpoileredLinksAreNotArmedUntilRevealed(t *testing.T) {
+	m := newTestModel()
+	m.store.Messages.Activate(testChatID)
+	m.store.Messages.Append(testChatID, &telegram.Message{
+		ID: 1, ChatID: testChatID,
+		Content: &telegram.MessageText{Text: &telegram.FormattedText{
+			Text: "open secret here",
+			Entities: []*telegram.TextEntity{
+				textURL(5, 6, "https://hidden.example"),
+				{Offset: 5, Length: 6, Type: &telegram.TextEntityTypeSpoiler{}},
+			},
+		}},
+	})
+	m.MarkLoadedForTest()
+	m.moveCursor(0)
+
+	m, cmd := press(m, "g", "x")
+	if m.HasArmedLink() {
+		t.Error("a link under an unrevealed spoiler was armed — its mark would be invisible")
+	}
+	if got := infoOf(cmd); !strings.Contains(got, "spoiler") {
+		t.Errorf("notice = %q, want it to say to reveal them first", got)
+	}
+
+	// After x, it arms normally.
+	m.revealedID = 1
+	m, _ = press(m, "g", "x")
+	if !m.HasArmedLink() {
+		t.Error("a revealed spoiler's link still could not be armed")
+	}
+}
+
+// The opener must never be a command interpreter.
+//
+// SafeLinkURI deliberately passes `&`, `|`, `<`, `>` and `^` through — they
+// are printable ASCII and legal in a query string — so `cmd /c start` would
+// read `https://example.invalid/?x&calc` as a URL AND a second command, from
+// a string a stranger put in a message. Go's Windows argument quoting does
+// not help: it quotes for spaces and quotes, not for shell metacharacters,
+// because there is normally no shell.
+func TestTheOpenerIsNeverAShell(t *testing.T) {
+	const hostile = "https://example.invalid/?x&calc"
+
+	// Every platform, not just this one. The branch that mattered is the one
+	// nobody running these tests would ever execute.
+	for _, goos := range []string{"darwin", "windows", "linux", "freebsd"} {
+		cmd := openCmdFor(goos, hostile)
+		if cmd == nil {
+			t.Errorf("%s: no opener", goos)
+			continue
+		}
+		for _, banned := range []string{"cmd", "cmd.exe", "sh", "bash", "powershell", "powershell.exe"} {
+			if strings.EqualFold(filepath.Base(cmd.Path), banned) {
+				t.Errorf("%s: opener is %q — a message-controlled URL must not go through an interpreter",
+					goos, cmd.Path)
+			}
+		}
+		// And the URL survives as one argument: an opener that split it
+		// would be opening something other than what was shown.
+		found := false
+		for _, a := range cmd.Args {
+			if a == hostile {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: the URL is not passed as a single argument: %q", goos, cmd.Args)
+		}
+	}
+}
+
+// A failed start is not a success. On a machine with no xdg-open, saying
+// "opened" is how a reader waits for a window that is never coming.
+func TestAFailedOpenIsReported(t *testing.T) {
+	m := linkModel(t)
+	m, _ = press(m, "g", "x")
+
+	// Point the opener at something that cannot start.
+	m.armed.safeURI = "https://example.invalid/ok"
+	_, cmd, handled := m.openArmedLink()
+	if !handled {
+		t.Fatal("enter did not take the armed link")
+	}
+	if cmd == nil {
+		t.Fatal("no command returned")
+	}
+	// The message either opened or said why; what it must never do is claim
+	// success without having started anything.
+	msg, ok := cmd().(MediaPlayMsg)
+	if !ok {
+		t.Fatalf("unexpected message %T", cmd())
+	}
+	if msg.Status != "opened" && msg.Status != "error" {
+		t.Errorf("status = %q, want opened or error", msg.Status)
 	}
 }

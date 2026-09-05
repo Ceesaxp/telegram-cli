@@ -354,6 +354,11 @@ func captionOf(content telegram.MessageContent) *telegram.FormattedText {
 		return c.Caption
 	case *telegram.MessageVoiceNote:
 		return c.Caption
+	case *telegram.MessageAudio:
+		// Audio carries a caption too. Omitted here for the same reason
+		// animation was: this switch was written from the media-card list
+		// rather than from the types that actually have the field.
+		return c.Caption
 	case *telegram.MessageAnimation:
 		// mediaCardFor draws a card for an animation, and this did not
 		// return its caption — so a GIF sent WITH something written under

@@ -167,3 +167,51 @@ func TestArmedLinkIsMarkedInTheBody(t *testing.T) {
 		t.Error("arming the second link produced the same output as arming the first")
 	}
 }
+
+// Audio carries a caption too, and captionOf was written from the media-card
+// list rather than from the types that have the field.
+func TestAudioCaptionsAreNotDropped(t *testing.T) {
+	m := &telegram.Message{ID: 1, Content: &telegram.MessageAudio{
+		Caption: msgFT("see docs", linkTextURLEntity(4, 4, "https://docs.example")),
+	}}
+	if links := MessageLinks(m); len(links) != 1 {
+		t.Fatalf("audio caption links = %+v, want one", links)
+	}
+	if got := captionOf(m.Content); got == nil || got.Text != "see docs" {
+		t.Errorf("captionOf dropped the audio caption: %+v", got)
+	}
+}
+
+// A hidden spoiler paints foreground and background the same colour, so a
+// mark laid over a link inside one is invisible. MessageLinks reports the
+// overlap so the caller can decline to arm it.
+func TestLinksInsideSpoilersAreFlagged(t *testing.T) {
+	f := msgFT("open secret and plain here",
+		linkTextURLEntity(5, 6, "https://hidden.example"),
+		&telegram.TextEntity{Offset: 5, Length: 6, Type: &telegram.TextEntityTypeSpoiler{}},
+		linkTextURLEntity(16, 5, "https://shown.example"),
+	)
+	links := MessageLinks(&telegram.Message{ID: 1, Content: &telegram.MessageText{Text: f}})
+	if len(links) != 2 {
+		t.Fatalf("got %d links, want 2", len(links))
+	}
+	if !links[0].InSpoiler {
+		t.Error("the spoilered link is not flagged")
+	}
+	if links[1].InSpoiler {
+		t.Error("the plain link is flagged as spoilered")
+	}
+}
+
+// Any overlap counts: half a link showing is still a link whose destination
+// cue the reader cannot see.
+func TestAPartiallySpoileredLinkCounts(t *testing.T) {
+	f := msgFT("see thelink here",
+		linkTextURLEntity(4, 7, "https://x.example"),
+		&telegram.TextEntity{Offset: 8, Length: 3, Type: &telegram.TextEntityTypeSpoiler{}},
+	)
+	links := MessageLinks(&telegram.Message{ID: 1, Content: &telegram.MessageText{Text: f}})
+	if len(links) != 1 || !links[0].InSpoiler {
+		t.Fatalf("partial overlap not flagged: %+v", links)
+	}
+}

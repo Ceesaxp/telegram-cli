@@ -1677,6 +1677,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.store.Messages.UpdateMessage(m.chatID, fetched.ID, fetched)
 			m.cache.invalidate(fetched.ID)
+			m.dropArmedLinkOn(fetched.ID)
 		}
 
 	case telegram.MessageDeletedMsg:
@@ -1708,6 +1709,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.chatID == m.chatID && msg.message != nil {
 			m.store.Messages.UpdateMessage(m.chatID, msg.message.ID, msg.message)
 			m.cache.invalidate(msg.message.ID)
+			m.dropArmedLinkOn(msg.message.ID)
 		}
 
 	case telegram.FileUpdateMsg:
@@ -2416,12 +2418,35 @@ func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {
 	}
 }
 
-func defaultOpenCmd(path string) *exec.Cmd {
-	switch runtime.GOOS {
+// defaultOpenCmd hands a path or a URL to the platform's own handler.
+//
+// The Windows branch is deliberately NOT `cmd /c start`. Everything reaching
+// here came off the wire — an attachment's filename is chosen by whoever sent
+// it, and a URL is the whole of a link entity — and cmd.exe would interpret
+// `&`, `|`, `<`, `>` and `^` inside it. SafeLinkURI does not encode those:
+// they are printable ASCII and legal in a query string, so
+// `https://example.invalid/?x&calc` is a URL this client considers safe to
+// open and `cmd /c start` would treat as two commands. Go's own Windows
+// argument quoting does not save it either — it quotes for spaces and
+// quotes, not for shell metacharacters, because there is normally no shell.
+//
+// rundll32's FileProtocolHandler is the documented way to ask Windows to
+// open a thing with its default handler and involves no command
+// interpreter, so the argument is data rather than syntax. `start` also
+// treats a leading quoted argument as a window title, which is its own way
+// of opening the wrong thing.
+func defaultOpenCmd(path string) *exec.Cmd { return openCmdFor(runtime.GOOS, path) }
+
+// openCmdFor is defaultOpenCmd with the platform passed in, so every branch
+// can be tested from any machine. A switch on runtime.GOOS is a switch whose
+// other arms never run in CI, and the arm that mattered here was the one
+// nobody on macOS or Linux would ever execute.
+func openCmdFor(goos, path string) *exec.Cmd {
+	switch goos {
 	case "darwin":
 		return exec.Command("open", path)
 	case "windows":
-		return exec.Command("cmd", "/c", "start", path)
+		return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", path)
 	default:
 		return exec.Command("xdg-open", path)
 	}

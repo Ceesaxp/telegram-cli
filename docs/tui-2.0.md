@@ -2302,6 +2302,24 @@ modifier for bypassing mouse reporting — Shift in most, Cmd in iTerm2 — whic
 is a thing about your terminal that this client never told you. See
 [troubleshooting](troubleshooting.md#clicking-a-link-does-nothing).
 
+**Two places the mark cannot go, and what happens there instead.**
+
+A link inside an unrevealed **spoiler** is not armed at all. A hidden spoiler
+is painted foreground-on-background so it occupies the right cells and reads
+as a deliberate block; anything laid over it is invisible too, and revealing
+it to show the mark would defeat the spoiler. `gx` says so and asks for `x`
+first, which is a sentence rather than a key that appears to do nothing.
+
+A link inside a **block quote** is armed but not marked, because
+`renderQuoteBlock` takes plain text and draws the whole quote uniformly dim
+and italic — no inline formatting survives in a quote at all today, so a link
+in one is not underlined or coloured either, let alone marked. The
+destination still appears in the notice, and the frozen URI still guarantees
+enter opens what was shown, so the surface is degraded rather than unsafe.
+Rendering entities inside quotes is the real fix and is bigger than this: it
+would change how every quoted link, bold run and code span draws, and the
+golden fixtures with it.
+
 **The mark is a render option, not a second renderer.** `BodyOptions` already
 carried `RevealSpoilers` for exactly this shape — per-message state, set only
 for the cursored message — so the armed range travels the same way, and

@@ -20,6 +20,12 @@ type Link struct {
 	// the renderer uses for OSC 8, so a link cannot be drawn pointing one
 	// way and opened pointing another.
 	URI string
+	// InSpoiler marks a link that a spoiler covers. A hidden spoiler is
+	// drawn foreground-on-background so it occupies the right cells and
+	// reads as a deliberate block — which means a mark laid over it is
+	// invisible too. The caller decides what to do about that; this only
+	// reports it.
+	InSpoiler bool
 	// Lo and Hi are the rune offsets the entity covers in the message's own
 	// text. The renderer marks exactly this range when the link is armed;
 	// the block splitter preserves absolute offsets, so a link inside a
@@ -94,7 +100,10 @@ func MessageLinks(msg *telegram.Message) []Link {
 			// not a link.
 			continue
 		}
-		out = append(out, Link{Text: string(runes[lo:hi]), URI: uri, Lo: lo, Hi: hi})
+		out = append(out, Link{
+			Text: string(runes[lo:hi]), URI: uri, Lo: lo, Hi: hi,
+			InSpoiler: overlapsSpoiler(ft, lo, hi, n),
+		})
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
@@ -113,4 +122,24 @@ func textOf(content telegram.MessageContent) *telegram.FormattedText {
 		return t.Text
 	}
 	return captionOf(content)
+}
+
+// overlapsSpoiler reports whether any part of [lo,hi) is covered by a spoiler
+// entity. Any overlap counts: half a link showing is still a link the reader
+// cannot read the destination cue on.
+func overlapsSpoiler(ft *telegram.FormattedText, lo, hi, n int) bool {
+	for _, e := range ft.Entities {
+		if e == nil || e.Type == nil {
+			continue
+		}
+		if _, ok := e.Type.(*telegram.TextEntityTypeSpoiler); !ok {
+			continue
+		}
+		slo := max(int(e.Offset), 0)
+		shi := min(int(e.Offset+e.Length), n)
+		if slo < hi && lo < shi {
+			return true
+		}
+	}
+	return false
 }
