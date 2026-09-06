@@ -406,6 +406,22 @@ func (m Model) ChatId() int64 { return m.chatID }
 // which is two round trips a test does not have.
 func (m Model) TargetMessageId() int64 { return m.targetMsgID }
 
+// CursorMessageId is the message the cursor is on, 0 when the panel is
+// empty.
+//
+// Exported for the host's jump list, which has to record WHERE the reader
+// was before a jump carries them off — a chat ID alone would bring them
+// back to the bottom of the buffer rather than to the message they were
+// reading. It is the resolved cursor, not the stored one: at the bottom of
+// the history nothing is stored, and the cursor is the newest message.
+func (m Model) CursorMessageId() int64 {
+	msg := m.cursorMessage()
+	if msg == nil {
+		return 0
+	}
+	return msg.ID
+}
+
 // SearchActive reports whether the in-chat search input is open. While it
 // is, every key belongs to the input: the host must route input events to
 // this panel without consuming them first (esc, quick-type, etc.).
@@ -520,7 +536,12 @@ func chatViewFixedKeys() map[string]bool {
 		"g": true, "G": true, "home": true, "end": true,
 		"ctrl+u": true, "ctrl+d": true,
 		"esc": true, "ctrl+f": true,
-		"n": true, "N": true,
+		// ctrl+o is vi's jump-back. It belongs to this panel rather than
+		// to app-level dispatch so the composer keeps its own ctrl+o
+		// (edit the draft in $EDITOR): app dispatch runs before the
+		// focused panel and would take the key from both.
+		"ctrl+o": true,
+		"n":      true, "N": true,
 		"enter": true, "o": true, "s": true, "x": true,
 		// space is spelled as the config vocabulary spells it
 		// (config.NormalizeKey maps "spacebar" and " " onto it), so a user
@@ -1895,6 +1916,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case kp.Matches("ctrl+f"):
 		m.OpenFind()
 		return m, nil
+
+	// ctrl+o goes back to where the last jump left from. The panel only
+	// reports the press: see [JumpBackMsg].
+	case kp.Matches("ctrl+o"):
+		return m, func() tea.Msg { return JumpBackMsg{} }
 
 	case kp.Matches("n"):
 		if len(m.searchHits) == 0 {

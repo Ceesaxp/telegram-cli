@@ -384,6 +384,35 @@ func (c *Client) GetChat(chatID int64) (*Chat, error) {
 	return c.resolvedChat(ctx, peer)
 }
 
+// ResolveUsername turns a public @username into the chat behind it.
+//
+// It is the network half of following a t.me link (see [ParseTmeLink]): a
+// public link names a username, and a username is not a chat ID until the
+// server says which peer it belongs to.
+//
+// The chat comes back rather than only its ID, because a username may well
+// name a chat this account has never opened — that is the ordinary case for
+// a link somebody pasted. ResolveDomain teaches the peer manager the access
+// hash on the way through, so the history fetch that follows can work; the
+// returned chat is what gives the caller a title to open it under, and the
+// announcement below is what puts it in the chat list. Both halves of
+// "a chat this client has not seen before" are therefore answered here,
+// exactly as [Client.CreatePrivateChat] answers them for a contact.
+func (c *Client) ResolveUsername(username string) (*Chat, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.peers.ResolveDomain(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve @%s: %w", username, err)
+	}
+	chat, err := c.resolvedChat(ctx, peer)
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve @%s: %w", username, err)
+	}
+	c.send(peerChatUpdate(chat))
+	return chat, nil
+}
+
 // resolvedChat builds the domain chat for an already-resolved peer, mute
 // flag included.
 //

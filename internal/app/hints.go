@@ -274,7 +274,18 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 
 	switch s {
 	case SurfaceChatView:
+		// The way back leads while there is one, for the reason the
+		// contacts filter's "esc clear" does: a reader who has just been
+		// carried into another chat by a link needs the return route
+		// named, and naming it the rest of the time would advertise a key
+		// that answers "no jump to go back from". The row is full at 80
+		// columns, so it goes first or it is the one that gets truncated.
+		var back []hintbar.Hint
+		if len(m.jumps) > 0 {
+			back = hint("ctrl+o", "back")
+		}
 		return join(
+			back,
 			hint("j/k", "message"),
 			hint(cv.Reply, "reply"),
 			hint("y", "yank"),

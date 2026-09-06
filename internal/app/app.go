@@ -123,6 +123,10 @@ type Model struct {
 	// message is this client's invention.
 	lastLocalEchoID int64
 
+	// jumps is the jump list ctrl+o walks backwards. See jumps.go for what
+	// counts as a jump and what deliberately does not.
+	jumps []jumpPoint
+
 	// railOpen is whether the user wants the context rail. Whether it is
 	// actually drawn is layout's decision — below 118 columns there is no
 	// room for it and the preference is kept rather than overwritten, so
@@ -1113,6 +1117,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Straight to the post's copy in the linked group, the same way a
 		// search result opens: the comments hang off it, and the top of
 		// the group is not where the reader was going.
+		m.pushJump()
 		cmds = append(cmds, m.openChatAt(msg.ChatId, msg.MessageId))
 
 	case reactionpicker.ChosenMsg:
@@ -1131,7 +1136,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case search.SearchResultMsg:
 		// Jump straight to the matched message rather than the bottom of
 		// the chat.
+		m.pushJump()
 		cmds = append(cmds, m.openChatAt(msg.ChatId, msg.MessageId))
+
+	case chatview.TelegramLinkMsg:
+		cmds = append(cmds, m.followTelegramLink(msg))
+
+	case telegramLinkResolvedMsg:
+		cmds = append(cmds, m.openResolvedLink(msg))
+
+	case chatview.JumpBackMsg:
+		cmds = append(cmds, m.jumpBack())
 
 	case composer.MessageSubmittedMsg:
 		// Focus deliberately stays on the composer after a send. Chatting
