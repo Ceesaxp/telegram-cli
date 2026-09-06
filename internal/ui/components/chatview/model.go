@@ -2427,11 +2427,7 @@ func playVoice(voice *media.VoicePlayer, path string) error {
 	if cmd == nil {
 		return nil
 	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go cmd.Wait()
-	return nil
+	return startOpener(cmd)
 }
 
 func playVideo(video *media.VideoPlayer, path string) error {
@@ -2447,11 +2443,7 @@ func playVideo(video *media.VideoPlayer, path string) error {
 	if cmd == nil {
 		return nil
 	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go cmd.Wait()
-	return nil
+	return startOpener(cmd)
 }
 
 func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {
@@ -2468,14 +2460,32 @@ func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
 
-		cmd := defaultOpenCmd(file.Path)
-		if cmd != nil {
-			cmd.Start()
-			go cmd.Wait()
+		if cmd := defaultOpenCmd(file.Path); cmd != nil {
+			startOpener(cmd)
 		}
 
 		return MediaPlayMsg{Status: "opened", Info: statusMsg}
 	}
+}
+
+// startOpener starts an opener command and, once it is actually running,
+// reaps it in the background so it never lingers as a zombie.
+//
+// It is a package-level var rather than a plain call to cmd.Start(), because
+// every path that reaches here — gx's enter, voice and video playback
+// falling back to the platform handler, downloadAndOpen — would otherwise
+// have to exec a real /usr/bin/open or xdg-open in its tests to observe what
+// happens when starting the process fails. Wait belongs inside the seam
+// rather than after it: a test's fake substituted here can report success or
+// failure without ever calling cmd.Start(), and since it therefore never
+// reaches the `go cmd.Wait()` below, it cannot leak a reaper goroutine or
+// wait on a process that was never started.
+var startOpener = func(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
 }
 
 // defaultOpenCmd hands a path or a URL to the platform's own handler.
