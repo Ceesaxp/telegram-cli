@@ -148,14 +148,15 @@ func (m Model) openArmedLink() (Model, tea.Cmd, bool) {
 		if cmd == nil {
 			return MediaPlayMsg{Status: "error", Info: "⚠ no way to open " + uri + " on this platform"}
 		}
-		// Start's error is the difference between "your browser is opening"
-		// and "there is no xdg-open on this machine". Reporting the second
-		// as the first is how a reader waits for a window that is never
-		// coming.
-		if err := cmd.Start(); err != nil {
+		// startOpener rather than cmd.Start() directly, so a test can stand
+		// in for the platform opener instead of actually launching a
+		// browser. Its error is the difference between "your browser is
+		// opening" and "there is no xdg-open on this machine". Reporting the
+		// second as the first is how a reader waits for a window that is
+		// never coming.
+		if err := startOpener(cmd); err != nil {
 			return MediaPlayMsg{Status: "error", Info: "⚠ could not open " + uri + ": " + err.Error()}
 		}
-		go cmd.Wait()
 		return MediaPlayMsg{Status: "opened", Info: "opened " + uri}
 	}, true
 }

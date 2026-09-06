@@ -1,6 +1,8 @@
 package chatview
 
 import (
+	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -366,26 +368,83 @@ func TestTheOpenerIsNeverAShell(t *testing.T) {
 
 // A failed start is not a success. On a machine with no xdg-open, saying
 // "opened" is how a reader waits for a window that is never coming.
+//
+// startOpener is the seam that makes both directions testable without ever
+// launching a real browser: production would otherwise have to exec
+// /usr/bin/open (or find a machine missing xdg-open) just to exercise the
+// error branch, and would pop a real window to exercise the success one.
 func TestAFailedOpenIsReported(t *testing.T) {
-	m := linkModel(t)
-	m, _ = press(m, "g", "x")
+	const uri = "https://first.example"
 
-	// Point the opener at something that cannot start.
-	m.armed.safeURI = "https://example.invalid/ok"
-	_, cmd, handled := m.openArmedLink()
-	if !handled {
-		t.Fatal("enter did not take the armed link")
+	armed := func(t *testing.T) Model {
+		t.Helper()
+		m := linkModel(t)
+		m, _ = press(m, "g", "x")
+		m.armed.safeURI = uri
+		return m
 	}
-	if cmd == nil {
-		t.Fatal("no command returned")
-	}
-	// The message either opened or said why; what it must never do is claim
-	// success without having started anything.
-	msg, ok := cmd().(MediaPlayMsg)
-	if !ok {
-		t.Fatalf("unexpected message %T", cmd())
-	}
-	if msg.Status != "opened" && msg.Status != "error" {
-		t.Errorf("status = %q, want opened or error", msg.Status)
-	}
+
+	t.Run("a failed start is reported as an error naming the uri and the reason", func(t *testing.T) {
+		m := armed(t)
+		prev := startOpener
+		reason := errors.New("no xdg-open in $PATH")
+		startOpener = func(*exec.Cmd) error { return reason }
+		t.Cleanup(func() { startOpener = prev })
+
+		_, cmd, handled := m.openArmedLink()
+		if !handled {
+			t.Fatal("enter did not take the armed link")
+		}
+		if cmd == nil {
+			t.Fatal("no command returned")
+		}
+		msg, ok := cmd().(MediaPlayMsg)
+		if !ok {
+			t.Fatalf("unexpected message %T", cmd())
+		}
+		if msg.Status != "error" {
+			t.Errorf("status = %q, want %q", msg.Status, "error")
+		}
+		if !strings.Contains(msg.Info, uri) {
+			t.Errorf("message = %q, want it to name %q", msg.Info, uri)
+		}
+		if !strings.Contains(msg.Info, reason.Error()) {
+			t.Errorf("message = %q, want it to name the reason %q", msg.Info, reason.Error())
+		}
+	})
+
+	t.Run("a successful start is reported as opened, with the armed uri actually handed to the opener", func(t *testing.T) {
+		m := armed(t)
+		prev := startOpener
+		var started *exec.Cmd
+		startOpener = func(cmd *exec.Cmd) error {
+			started = cmd
+			return nil
+		}
+		t.Cleanup(func() { startOpener = prev })
+
+		_, cmd, handled := m.openArmedLink()
+		if !handled {
+			t.Fatal("enter did not take the armed link")
+		}
+		msg, ok := cmd().(MediaPlayMsg)
+		if !ok {
+			t.Fatalf("unexpected message %T", cmd())
+		}
+		if msg.Status != "opened" {
+			t.Errorf("status = %q, want %q", msg.Status, "opened")
+		}
+		if started == nil {
+			t.Fatal("startOpener was never called — nothing was started, but nothing was recorded either")
+		}
+		found := false
+		for _, a := range started.Args {
+			if a == uri {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("opener args = %v, want the armed uri %q among them", started.Args, uri)
+		}
+	})
 }
