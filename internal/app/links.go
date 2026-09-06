@@ -25,6 +25,9 @@ type telegramLinkResolvedMsg struct {
 	chat      *telegram.Chat
 	username  string
 	messageID int64
+	// gen is the navigation the resolution was started for. See
+	// [Model.openResolvedLink] for what a mismatch means.
+	gen int
 }
 
 // followTelegramLink navigates to where an armed t.me link pointed.
@@ -41,15 +44,26 @@ func (m *Model) followTelegramLink(msg chatview.TelegramLinkMsg) tea.Cmd {
 		// the honest test of that: a chat in it has been resolved once
 		// already, and a chat that is not can only produce a buffer that
 		// fails to load with the reader sitting in it.
-		if _, ok := m.store.Chats.Get(msg.ChatID); !ok {
+		//
+		// Membership alone is not that test, though. The store INVENTS an
+		// entry to hold a message from a chat nobody has described yet,
+		// and for as long as that entry stands unresolved it is exactly
+		// the title-less, may-fail-to-load buffer the paragraph above
+		// promises to keep the reader out of — so the flag is read too,
+		// and only a chat something has actually described counts as
+		// reached once already.
+		if entry, ok := m.store.Chats.Get(msg.ChatID); !ok || entry.Unresolved {
 			m.notify("⚠ that chat is not in your chat list: " + msg.URI)
 			return nil
 		}
-		m.pushJump()
+		m.pushJumpTo(msg.ChatID, msg.MessageID)
 		return m.openChatAt(msg.ChatID, msg.MessageID)
 	}
 
-	tg, link := m.tg, msg.TmeLink
+	// The generation is read HERE, when the reader asks, and travels with
+	// the question: it is what tells the answer apart from an answer to a
+	// question they have since replaced.
+	tg, link, gen := m.tg, msg.TmeLink, m.navGen
 	return func() tea.Msg {
 		chat, err := tg.ResolveUsername(link.Username)
 		if err != nil {
@@ -57,6 +71,7 @@ func (m *Model) followTelegramLink(msg chatview.TelegramLinkMsg) tea.Cmd {
 		}
 		return telegramLinkResolvedMsg{
 			chat: chat, username: link.Username, messageID: link.MessageID,
+			gen: gen,
 		}
 	}
 }
@@ -73,12 +88,24 @@ func (m *Model) followTelegramLink(msg chatview.TelegramLinkMsg) tea.Cmd {
 // The jump is pushed here rather than before the round trip, so a
 // resolution that fails leaves the jump list exactly as it was: ctrl+o must
 // not offer to return from somewhere the reader never went.
+//
+// An answer from an earlier navigation is dropped, and dropped SILENTLY. A
+// round trip is long enough to follow a link, think better of it and open
+// something else in, and a late reply that acted anyway would yank the
+// reader off the destination they chose second and push a jump origin they
+// never left — the arrival is where the push happens, so the wrong arrival
+// records the wrong way back. Nothing is said about it because nothing went
+// wrong: they asked for one thing and then asked for another, and the
+// second ask is the one that wins.
 func (m *Model) openResolvedLink(msg telegramLinkResolvedMsg) tea.Cmd {
+	if msg.gen != m.navGen {
+		return nil
+	}
 	if msg.chat == nil || msg.chat.ID == 0 {
 		m.notify("⚠ @" + msg.username + " resolved to no chat")
 		return nil
 	}
 	m.store.Chats.Merge(msg.chat)
-	m.pushJump()
+	m.pushJumpTo(msg.chat.ID, msg.messageID)
 	return m.openChatAt(msg.chat.ID, msg.messageID)
 }

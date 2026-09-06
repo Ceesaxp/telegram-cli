@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gotd/td/constant"
 	"github.com/gotd/td/telegram/deeplink"
 )
 
@@ -77,6 +78,15 @@ var tmeNotNavigation = map[string]bool{
 	"boost": true, "giftcode": true,
 }
 
+// maxMessageID is the largest message ID a link may name.
+//
+// Message IDs are int32 on the wire, and this client casts them back down
+// to build a request, so a number that does not fit is not a message
+// anything could be asked for — it is a link to nothing. Bounding it here
+// means the parser never hands on an ID whose meaning changes on the way
+// to the server.
+const maxMessageID = 1<<31 - 1
+
 // ParseTmeLink reads a URI as a Telegram navigation link.
 //
 // It reports false for everything it is not certain about, and that is the
@@ -128,6 +138,16 @@ func ParseTmeLink(raw string) (TmeLink, bool) {
 	if u.User != nil {
 		return TmeLink{}, false
 	}
+	// A port is the same substitution spelled differently: Hostname()
+	// drops it, so "t.me:8080" passes a host check and is then followed as
+	// a chat inside the reader's own account while the URI they were shown
+	// named a different origin. Interception is only honest while the
+	// authority it matched is the one the link names, so the match has to
+	// be exact — and Telegram never writes a port, not even 443, so any
+	// port at all means this was not written by Telegram.
+	if u.Port() != "" {
+		return TmeLink{}, false
+	}
 	if !strings.EqualFold(u.Hostname(), tmeHost) {
 		return TmeLink{}, false
 	}
@@ -158,13 +178,13 @@ func ParseTmeLink(raw string) (TmeLink, bool) {
 		if len(seg) < 2 || len(seg) > 3 {
 			return TmeLink{}, false
 		}
-		id, ok := parsePositiveID(seg[1])
+		id, ok := parsePositiveID(seg[1], constant.MaxTDLibChannelID)
 		if !ok {
 			return TmeLink{}, false
 		}
 		link := TmeLink{ChatID: channelChatID(id)}
 		if len(seg) == 3 {
-			if link.MessageID, ok = parsePositiveID(seg[2]); !ok {
+			if link.MessageID, ok = parsePositiveID(seg[2], maxMessageID); !ok {
 				return TmeLink{}, false
 			}
 		}
@@ -181,7 +201,7 @@ func ParseTmeLink(raw string) (TmeLink, bool) {
 		link := TmeLink{Username: name}
 		if len(seg) == 2 {
 			var ok bool
-			if link.MessageID, ok = parsePositiveID(seg[1]); !ok {
+			if link.MessageID, ok = parsePositiveID(seg[1], maxMessageID); !ok {
 				return TmeLink{}, false
 			}
 		}
@@ -189,13 +209,21 @@ func ParseTmeLink(raw string) (TmeLink, bool) {
 	}
 }
 
-// parsePositiveID reads a path segment as a positive decimal ID.
+// parsePositiveID reads a path segment as a decimal ID in [1, max].
+//
+// The upper bound is taken here rather than left to the call sites because
+// this parser's contract is to fail closed, and an out-of-range ID is the
+// one way an ACCEPTED link still means nothing. A channel ID above
+// constant.MaxTDLibChannelID is not merely large: [channelChatID] is
+// ZeroTDLibChannelID minus it, so t.me/c/9223372036854775807 wraps back
+// around into a POSITIVE chat ID naming some unrelated peer — reported,
+// until the bound existed, with ok = true.
 //
 // The digit sweep is not redundant with ParseInt: ParseInt accepts a
 // leading sign and an underscore separator, neither of which is a thing a
 // t.me link contains — and "+1" reaching this as a channel ID would be an
 // invite hash read as a number.
-func parsePositiveID(s string) (int64, bool) {
+func parsePositiveID(s string, max int64) (int64, bool) {
 	if s == "" || len(s) > 19 {
 		return 0, false
 	}
@@ -205,7 +233,7 @@ func parsePositiveID(s string) (int64, bool) {
 		}
 	}
 	id, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || id <= 0 {
+	if err != nil || id <= 0 || id > max {
 		return 0, false
 	}
 	return id, true

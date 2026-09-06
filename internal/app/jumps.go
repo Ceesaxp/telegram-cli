@@ -37,18 +37,26 @@ type jumpPoint struct {
 // is not going to want the 33rd-from-last one.
 const maxJumps = 32
 
-// pushJump records where the reader is, before something carries them off.
+// pushJumpTo records where the reader is, before something carries them off
+// to chatID at messageID.
 //
-// A jump to the chat and message the reader is ALREADY on is not recorded:
-// it would make ctrl+o a key that appears to do nothing, which is worse
-// than a key that says the list is empty. A jump with no origin — nothing
-// open yet — is not recorded either, for the same reason.
-func (m *Model) pushJump() {
+// It takes the DESTINATION because the thing worth suppressing is a jump
+// that goes nowhere: selecting the search hit for the message already under
+// the cursor is a move to where the reader is standing, and recording it
+// makes the next ctrl+o a key that visibly does nothing — worse than a key
+// that says the list is empty. Dedup against the top of the stack cannot
+// see that: the origin is a fine origin, it is the arrival that is not a
+// departure. A jump with no origin — nothing open yet — is not recorded
+// either, for the same reason.
+func (m *Model) pushJumpTo(chatID, messageID int64) {
 	from := jumpPoint{
 		ChatID:    m.chatView.ChatId(),
 		MessageID: m.chatView.CursorMessageId(),
 	}
 	if from.ChatID == 0 {
+		return
+	}
+	if m.isCurrentPosition(jumpPoint{ChatID: chatID, MessageID: messageID}, from) {
 		return
 	}
 	if n := len(m.jumps); n > 0 && m.jumps[n-1] == from {
@@ -61,6 +69,31 @@ func (m *Model) pushJump() {
 		// furthest from that question.
 		m.jumps = m.jumps[len(m.jumps)-maxJumps:]
 	}
+}
+
+// isCurrentPosition reports whether a jump destination is the spot the
+// reader is already standing on.
+//
+// The messageID-0 convention is what makes this more than an equality: 0
+// means "the newest message", which is what openChatAt means by it. In
+// ANOTHER chat that is unambiguously a move. In the chat already open it is
+// a move from anywhere except the newest message — a reader halfway up a
+// buffer really is going somewhere when they land at the bottom of it — so
+// the one case that is not a move is resolved against the store rather than
+// guessed: the cursor sitting on the last message this client holds is the
+// same position openChatAt(chat, 0) would put it in.
+func (m *Model) isCurrentPosition(dest, from jumpPoint) bool {
+	if dest.ChatID != from.ChatID {
+		return false
+	}
+	if dest.MessageID == from.MessageID {
+		return true
+	}
+	if dest.MessageID != 0 {
+		return false
+	}
+	msgs := m.store.Messages.Get(dest.ChatID)
+	return len(msgs) > 0 && msgs[len(msgs)-1].ID == from.MessageID
 }
 
 // popJump takes the most recent jump origin off the stack.

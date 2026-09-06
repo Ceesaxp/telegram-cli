@@ -11,6 +11,16 @@ import "testing"
 // risk in a t.me/c/ link is getting this one conversion wrong.
 const zeroChannel = -1000000000000
 
+// maxChannel is gotd's constant.MaxTDLibChannelID, written out for the same
+// reason zeroChannel is: the bound is the whole point of the test, and a
+// bound asserted against the constant the parser reads would hold whatever
+// that constant became.
+const maxChannel = 997852516352
+
+// maxMessage is the largest int32, which is what a message ID is on the
+// wire.
+const maxMessage = 2147483647
+
 // TestParseTmeLink is the parser's whole contract: which links this client
 // follows itself, which it hands to the browser, and which it refuses
 // because they are not what they look like.
@@ -73,6 +83,12 @@ func TestParseTmeLink(t *testing.T) {
 		{"lookalike prefix host", "https://evil-t.me/telegram", TmeLink{}, false},
 		{"host as a path", "https://evil.com/t.me/telegram", TmeLink{}, false},
 		{"credentials in the authority", "https://t.me@evil.com/telegram", TmeLink{}, false},
+		// A port makes t.me:8080 a different origin from the t.me the
+		// reader was shown, and Hostname() drops it — including the
+		// default port spelled out, because Telegram never writes one and
+		// this parser matches what Telegram writes.
+		{"nonstandard port", "https://t.me:8080/alice", TmeLink{}, false},
+		{"default port spelled out", "https://t.me:443/alice", TmeLink{}, false},
 		{"at-prefixed username", "https://t.me/@telegram", TmeLink{}, false},
 		{"encoded separator", "https://t.me/telegram%2F123", TmeLink{}, false},
 		{"encoded username", "https://t.me/%74elegram", TmeLink{}, false},
@@ -81,6 +97,24 @@ func TestParseTmeLink(t *testing.T) {
 		{"non-numeric message id", "https://t.me/telegram/abc", TmeLink{}, false},
 		{"zero message id", "https://t.me/telegram/0", TmeLink{}, false},
 		{"overlong message id", "https://t.me/telegram/99999999999999999999", TmeLink{}, false},
+
+		// Numbers that fit in an int64 and in nothing else. A channel ID
+		// past the maximum wraps through channelChatID's
+		// -1000000000000 - id into a POSITIVE chat ID naming an unrelated
+		// peer, and a message ID past int32 is truncated by the cast the
+		// client makes to build the request: both are links to nothing,
+		// and the parser has to say so rather than hand on the wrong
+		// destination.
+		{"channel id that overflows the conversion",
+			"https://t.me/c/9223372036854775807/1", TmeLink{}, false},
+		{"largest channel id", "https://t.me/c/997852516352",
+			TmeLink{ChatID: zeroChannel - maxChannel}, true},
+		{"channel id past the maximum", "https://t.me/c/997852516353", TmeLink{}, false},
+		{"largest message id", "https://t.me/telegram/2147483647",
+			TmeLink{Username: "telegram", MessageID: maxMessage}, true},
+		{"message id past int32", "https://t.me/telegram/2147483648", TmeLink{}, false},
+		{"private channel message id past int32", "https://t.me/c/2233445566/2147483648",
+			TmeLink{}, false},
 		{"username starting with a digit", "https://t.me/1telegram", TmeLink{}, false},
 		{"username ending in underscore", "https://t.me/telegram_", TmeLink{}, false},
 		{"overlong username", "https://t.me/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TmeLink{}, false},

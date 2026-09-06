@@ -43,7 +43,7 @@ func TestAJumpRemembersTheMessageTheReaderWasOn(t *testing.T) {
 		t.Fatalf("precondition: cursor is on %d, want 501", got)
 	}
 
-	m.pushJump()
+	m.pushJumpTo(22, 0)
 	if len(m.jumps) != 1 {
 		t.Fatalf("stack holds %d entries, want 1", len(m.jumps))
 	}
@@ -74,7 +74,10 @@ func TestTheJumpListIsBounded(t *testing.T) {
 	for i := int64(1); i <= maxJumps+8; i++ {
 		m.store.Chats.Set(&telegram.Chat{ID: 1000 + i, Title: "n"})
 		m.openChatAt(1000+i, 0)
-		m.pushJump()
+		// Carried off to the chat the reader started in, every time: a
+		// destination that is never the chat now open, so the cap is what
+		// is under test and not the suppression.
+		m.pushJumpTo(11, 0)
 	}
 
 	if len(m.jumps) != maxJumps {
@@ -105,8 +108,8 @@ func TestGoingBackWithNoJumpSaysSo(t *testing.T) {
 // I" would make the first ctrl+o look like a key that did nothing.
 func TestTheSamePositionIsNotRecordedTwice(t *testing.T) {
 	m := jumpModel(t)
-	m.pushJump()
-	m.pushJump()
+	m.pushJumpTo(22, 0)
+	m.pushJumpTo(22, 0)
 	if len(m.jumps) != 1 {
 		t.Errorf("stack holds %d entries, want 1", len(m.jumps))
 	}
@@ -115,7 +118,7 @@ func TestTheSamePositionIsNotRecordedTwice(t *testing.T) {
 // Nothing open is not a place to come back to.
 func TestNothingOpenIsNotAJumpOrigin(t *testing.T) {
 	m := newTestModel(t)
-	m.pushJump()
+	m.pushJumpTo(22, 0)
 	if len(m.jumps) != 0 {
 		t.Errorf("stack holds %d entries with no chat open, want 0", len(m.jumps))
 	}
@@ -167,6 +170,39 @@ func TestAnUnknownPrivateChannelLinkIsRefusedOutLoud(t *testing.T) {
 	}
 }
 
+// A chat the store only INVENTED an entry for is refused the same way a
+// chat it has never heard of is. The entry exists to hold a message from a
+// chat nobody has described yet — no title, nothing fetched — and following
+// a link into it lands the reader in exactly the buffer the refusal exists
+// to keep them out of.
+func TestAnUnresolvedPrivateChannelLinkIsRefusedToo(t *testing.T) {
+	m := jumpModel(t)
+	const chatID = -1000000000000 - 999
+	// The store invents the entry: a message arrived from a chat that was
+	// not in the dialog page this client loaded.
+	m.store.Chats.UpdateLastMessage(chatID, &telegram.Message{ID: 5, ChatID: chatID})
+	if entry, ok := m.store.Chats.Get(chatID); !ok || !entry.Unresolved {
+		t.Fatalf("precondition: the entry is not the invented kind (%v, %+v)", ok, entry)
+	}
+
+	cmd := m.followTelegramLink(chatview.TelegramLinkMsg{
+		TmeLink: telegram.TmeLink{ChatID: chatID, MessageID: 5},
+		URI:     "https://t.me/c/999/5",
+	})
+	if cmd != nil {
+		t.Error("an unresolved chat still produced an open")
+	}
+	if got := m.chatView.ChatId(); got != 11 {
+		t.Errorf("the reader was moved to chat %d anyway", got)
+	}
+	if len(m.jumps) != 0 {
+		t.Errorf("a jump that did not happen was recorded: %+v", m.jumps)
+	}
+	if row := hintBarRow(t, m); !strings.Contains(row, "not in your chat list") {
+		t.Errorf("the refusal was silent:\n%s", row)
+	}
+}
+
 // A username link is a round trip: nothing moves and nothing is recorded
 // until the server has answered, so a resolution that fails leaves the jump
 // list exactly as it was.
@@ -189,7 +225,7 @@ func TestAUsernameLinkOnlyJumpsOnceItResolves(t *testing.T) {
 	// The answer, carrying a chat this client had never heard of.
 	resolved := &telegram.Chat{ID: -1000000000000 - 77, Title: "Elsewhere"}
 	if cmd := m.openResolvedLink(telegramLinkResolvedMsg{
-		chat: resolved, username: "elsewhere", messageID: 42,
+		chat: resolved, username: "elsewhere", messageID: 42, gen: m.navGen,
 	}); cmd == nil {
 		t.Fatal("the resolved link produced no open")
 	}
@@ -207,6 +243,108 @@ func TestAUsernameLinkOnlyJumpsOnceItResolves(t *testing.T) {
 	entry, ok := m.store.Chats.Get(resolved.ID)
 	if !ok || entry.Chat == nil || entry.Chat.Title != "Elsewhere" {
 		t.Error("the resolved chat did not reach the store before the open")
+	}
+}
+
+// A resolution that lands after the reader has gone somewhere else is
+// dropped where it lands. The round trip is long enough to follow a link
+// and then change your mind in, and acting on the older answer would both
+// move the reader off the destination they chose second and record a way
+// back from a place they never left.
+func TestALateUsernameResolutionIsDropped(t *testing.T) {
+	m := jumpModel(t)
+	if cmd := m.followTelegramLink(chatview.TelegramLinkMsg{
+		TmeLink: telegram.TmeLink{Username: "elsewhere", MessageID: 42},
+		URI:     "https://t.me/elsewhere/42",
+	}); cmd == nil {
+		t.Fatal("a username link produced no resolution command")
+	}
+	// What the command captured: the navigation the reader was on when
+	// they asked.
+	asked := m.navGen
+
+	// They do not wait for it, and open something else.
+	m.openChatAt(22, 0)
+
+	resolved := &telegram.Chat{ID: -1000000000000 - 77, Title: "Elsewhere"}
+	if cmd := m.openResolvedLink(telegramLinkResolvedMsg{
+		chat: resolved, username: "elsewhere", messageID: 42, gen: asked,
+	}); cmd != nil {
+		t.Error("a stale resolution still produced an open")
+	}
+	if got := m.chatView.ChatId(); got != 22 {
+		t.Errorf("the reader was yanked to chat %d, want to be left in 22", got)
+	}
+	if len(m.jumps) != 0 {
+		t.Errorf("a jump nobody took was recorded: %+v", m.jumps)
+	}
+	if row := hintBarRow(t, m); strings.Contains(row, "Elsewhere") ||
+		strings.Contains(row, "elsewhere") {
+		t.Errorf("the dropped resolution said something:\n%s", row)
+	}
+}
+
+// A jump that arrives where the reader already stands is not recorded: the
+// next ctrl+o would be a key that visibly does nothing.
+func TestAJumpToWhereTheReaderAlreadyIsIsNotRecorded(t *testing.T) {
+	m := jumpModel(t)
+	if got := m.chatView.CursorMessageId(); got != 501 {
+		t.Fatalf("precondition: cursor is on %d, want 501", got)
+	}
+
+	t.Run("the cursored message itself", func(t *testing.T) {
+		m := jumpModel(t)
+		m.pushJumpTo(11, 501)
+		if len(m.jumps) != 0 {
+			t.Errorf("stack holds %d entries, want 0", len(m.jumps))
+		}
+	})
+
+	t.Run("the newest message, with the cursor on it", func(t *testing.T) {
+		// 0 means "the newest message", and 501 is the only message in
+		// the chat, so this destination is the position the reader is in.
+		m := jumpModel(t)
+		m.pushJumpTo(11, 0)
+		if len(m.jumps) != 0 {
+			t.Errorf("stack holds %d entries, want 0", len(m.jumps))
+		}
+	})
+
+	t.Run("another message in the same chat is still a jump", func(t *testing.T) {
+		m := jumpModel(t)
+		m.pushJumpTo(11, 777)
+		if len(m.jumps) != 1 {
+			t.Errorf("stack holds %d entries, want 1", len(m.jumps))
+		}
+	})
+
+	t.Run("another chat is still a jump", func(t *testing.T) {
+		m := jumpModel(t)
+		m.pushJumpTo(22, 0)
+		if len(m.jumps) != 1 {
+			t.Errorf("stack holds %d entries, want 1", len(m.jumps))
+		}
+	})
+}
+
+// The other half of the 0 convention: from the middle of a buffer, the
+// newest message is somewhere to come back from. The suppression is about
+// a jump that goes nowhere, not about the number 0.
+func TestGoingToTheNewestMessageFromFurtherUpIsAJump(t *testing.T) {
+	m := jumpModel(t)
+	m.store.Messages.Append(11, &telegram.Message{ID: 502, ChatID: 11})
+	// k pins the cursor one message up, off the newest.
+	m.chatView, _ = m.chatView.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if got := m.chatView.CursorMessageId(); got != 501 {
+		t.Fatalf("precondition: cursor is on %d, want 501", got)
+	}
+
+	m.pushJumpTo(11, 0)
+	if len(m.jumps) != 1 {
+		t.Fatalf("stack holds %d entries, want 1", len(m.jumps))
+	}
+	if want := (jumpPoint{ChatID: 11, MessageID: 501}); m.jumps[0] != want {
+		t.Errorf("recorded %+v, want %+v", m.jumps[0], want)
 	}
 }
 
@@ -241,6 +379,16 @@ func TestWhichMovesAreJumps(t *testing.T) {
 		}
 	})
 
+	t.Run("a search hit on the cursored message is not", func(t *testing.T) {
+		// The hit the reader is already looking at. Selecting it moves
+		// nothing, so there is nothing for ctrl+o to undo.
+		m := jumpModel(t)
+		updated, _ := m.Update(search.SearchResultMsg{ChatId: 11, MessageId: 501})
+		if got := updated.(Model); len(got.jumps) != 0 {
+			t.Errorf("a hit on the current message recorded %d jumps, want 0", len(got.jumps))
+		}
+	})
+
 	t.Run("a discussion is", func(t *testing.T) {
 		m := jumpModel(t)
 		updated, _ := m.Update(openDiscussionMsg{ChatId: 22, MessageId: 7})
@@ -266,7 +414,7 @@ func TestTheBackHintLeadsOnlyWhileThereIsAJump(t *testing.T) {
 	if named := namesKey(m.hintsFor(SurfaceChatView), "ctrl+o"); named {
 		t.Error("the chat view offers a way back with nothing on the stack")
 	}
-	m.pushJump()
+	m.pushJumpTo(22, 0)
 	if named := namesKey(m.hintsFor(SurfaceChatView), "ctrl+o"); !named {
 		t.Error("the chat view does not name the way back after a jump")
 	}
