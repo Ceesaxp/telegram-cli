@@ -407,6 +407,33 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   having read it. Arming also answers "which of these three links" without
   needing a second binding.
 
+- **I-17 — A `t.me` link is followed here, and `Ctrl+O` is the way back.**
+  A link into Telegram that goes to the browser gets a "VIEW IN TELEGRAM"
+  interstitial, which tries to hand it to a Telegram client — and the client
+  it finds is not this one. So `t.me/name`, `t.me/name/123` and
+  `t.me/c/<id>/<id>` are read by the client and followed in place, through
+  the same `openChatAt` a search hit goes through. Everything else keeps
+  going to the platform opener, and the parser refuses anything it is not
+  certain about: an accepted link opens the wrong place inside the reader's
+  own account, silently, while a refused one merely opens the way it always
+  did.
+
+  Invite links (`t.me/+hash`, `t.me/joinchat/…`) are deliberately not
+  followed. Following one JOINS a chat, and joining is a decision, not a
+  move — the same distinction that keeps `/proxy`, `/share` and the sticker
+  and theme links on the browser side. `tg://` is left alone as well: the
+  scheme carries a dozen verbs and reading one of them is a bigger feature
+  than this.
+
+  Going somewhere needs a way back, and vi has one: `Ctrl+O` walks the
+  jumplist. It lives in the chat view rather than in app-level dispatch, so
+  the composer keeps its own `Ctrl+O` (edit the draft in `$EDITOR`) — app
+  dispatch runs first and would take the key from both. A jump is a move
+  that teleports: a link follow, a search hit, a channel post's discussion.
+  Opening a chat from the LIST is not one, because the list is still on
+  screen holding the cursor the reader left; making `Ctrl+O` a chat history
+  as well would give one key two jobs.
+
 - **I-14 — Accepted as they are.** Digits jump folders in the chat list and
   count motions in the chat view: adjacent panels, different meanings,
   documented, kept because both are the right vi-shaped answer in their

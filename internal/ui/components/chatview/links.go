@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Ceesaxp/telegram-cli/internal/render"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // Following a link, vim's way: gx arms the first link in the cursored
@@ -121,6 +122,32 @@ func (m Model) armedNotice(link render.Link, idx, total int) tea.Cmd {
 	}
 }
 
+// TelegramLinkMsg is an armed link that pointed back INTO Telegram, handed
+// to the host to navigate to.
+//
+// It carries the parse, not the URI, because deciding where to go is the
+// host's job and reading a link is this panel's. The panel does no network
+// call and no navigation of its own: that is the same division the search
+// results follow (search.SearchResultMsg → the host's openChatAt), and it
+// is what keeps "every way a chat gets opened" a single function.
+type TelegramLinkMsg struct {
+	telegram.TmeLink
+	// URI is the destination as it was shown to the reader, for the notice
+	// the host writes when the link cannot be followed after all.
+	URI string
+}
+
+// JumpBackMsg is ctrl+o: go back to where the last jump left from.
+//
+// vi's own spelling — ctrl+o walks the jumplist backwards — and it is empty
+// of arguments for the same reason [TelegramLinkMsg] carries a parse rather
+// than a destination: the panel knows a key was pressed, and the host is
+// the only thing that knows where the reader has been. ctrl+o is free here
+// because the app dispatches nothing on it and the composer's ctrl+o (edit
+// the draft in $EDITOR) only ever reaches a FOCUSED composer, which is not
+// this panel.
+type JumpBackMsg struct{}
+
 // openArmedLink is enter on an armed link.
 //
 // The scheme is checked here rather than when the list was built, so a
@@ -128,6 +155,14 @@ func (m Model) armedNotice(link render.Link, idx, total int) tea.Cmd {
 // the platform opener is [render.Link.SafeURI] — percent-encoded, length-
 // bounded, and one of the four schemes a message plausibly means — never the
 // raw string out of the message.
+//
+// A link back into Telegram is intercepted before the opener and travels to
+// the host instead. Sending the reader to a browser to be told "VIEW IN
+// TELEGRAM" — by a client that is already showing them Telegram — is a
+// round trip through two applications to arrive at a chat this one has
+// open. [telegram.ParseTmeLink] decides which links those are, and refuses
+// everything it is not certain about, so a link it does not recognise still
+// opens exactly the way it did before.
 func (m Model) openArmedLink() (Model, tea.Cmd, bool) {
 	if !m.HasArmedLink() {
 		return m, nil, false
@@ -139,6 +174,17 @@ func (m Model) openArmedLink() (Model, tea.Cmd, bool) {
 	if uri == "" {
 		return m, func() tea.Msg {
 			return MediaPlayMsg{Status: "error", Info: "⚠ refusing to open " + raw}
+		}, true
+	}
+
+	// The SAFE form is parsed, the same string the opener would have been
+	// given: the raw one out of the message has not been through the scheme
+	// allowlist or the encoding sweep, so reading it here would mean this
+	// client navigating on a URI nothing had checked.
+	if link, ok := telegram.ParseTmeLink(uri); ok {
+		m.clearArmedLink()
+		return m, func() tea.Msg {
+			return TelegramLinkMsg{TmeLink: link, URI: uri}
 		}, true
 	}
 

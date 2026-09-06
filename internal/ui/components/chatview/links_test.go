@@ -448,3 +448,141 @@ func TestAFailedOpenIsReported(t *testing.T) {
 		}
 	})
 }
+
+// A link back into Telegram does not go to a browser. It is handed to the
+// host as a destination, and the opener is never reached — which is the
+// whole point: sending the reader out to be told "VIEW IN TELEGRAM" by a
+// client that is already showing them Telegram is a round trip through two
+// applications to arrive where they started.
+func TestATelegramLinkIsHandedToTheHost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		uri  string
+		want TelegramLinkMsg
+	}{
+		{"username", "https://t.me/telegram",
+			TelegramLinkMsg{TmeLink: telegram.TmeLink{Username: "telegram"}}},
+		{"username at message", "https://t.me/telegram/77",
+			TelegramLinkMsg{TmeLink: telegram.TmeLink{Username: "telegram", MessageID: 77}}},
+		{"private channel", "https://t.me/c/2233445566/789",
+			TelegramLinkMsg{TmeLink: telegram.TmeLink{
+				ChatID: -1000000000000 - 2233445566, MessageID: 789}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := linkModel(t)
+			m, _ = press(m, "g", "x")
+			m.armed.safeURI, m.armed.uri = tc.uri, tc.uri
+
+			next, cmd, handled := m.openArmedLink()
+			if !handled {
+				t.Fatal("enter did not take the armed link")
+			}
+			if cmd == nil {
+				t.Fatal("no command returned")
+			}
+			got, ok := cmd().(TelegramLinkMsg)
+			if !ok {
+				t.Fatalf("enter produced %T, want a TelegramLinkMsg — the "+
+					"link went to the platform opener instead", cmd())
+			}
+			tc.want.URI = tc.uri
+			if got != tc.want {
+				t.Errorf("navigation = %+v, want %+v", got, tc.want)
+			}
+			// Following it consumes the cursor, exactly as opening one does.
+			if next.HasArmedLink() {
+				t.Error("the link cursor survived being followed")
+			}
+		})
+	}
+}
+
+// And the other half, which is the one that has to keep working: a link
+// that is not a Telegram link still goes where it always went. The panel
+// intercepts a destination it can serve and nothing else.
+func TestANonTelegramLinkStillGoesToTheOpener(t *testing.T) {
+	m := linkModel(t)
+	m, _ = press(m, "g", "x")
+	m.armed.safeURI, m.armed.uri = "https://example.invalid/ok", "https://example.invalid/ok"
+
+	// Through the seam, never a real process: "which path was taken" is
+	// answered by the fake recording a start, not by a browser opening —
+	// the exact mistake TestAFailedOpenIsReported used to make.
+	prev := startOpener
+	var started *exec.Cmd
+	startOpener = func(cmd *exec.Cmd) error {
+		started = cmd
+		return nil
+	}
+	t.Cleanup(func() { startOpener = prev })
+
+	_, cmd, handled := m.openArmedLink()
+	if !handled {
+		t.Fatal("enter did not take the armed link")
+	}
+	if cmd == nil {
+		t.Fatal("no command returned")
+	}
+	switch msg := cmd().(type) {
+	case TelegramLinkMsg:
+		t.Fatalf("an ordinary web link was intercepted as Telegram navigation: %+v", msg)
+	case MediaPlayMsg:
+		if msg.Status != "opened" {
+			t.Errorf("status = %q, want opened", msg.Status)
+		}
+	default:
+		t.Fatalf("unexpected message %T", msg)
+	}
+	if started == nil {
+		t.Fatal("the opener was never handed the link")
+	}
+}
+
+// A t.me link that is NOT navigation keeps going to the browser. Following
+// an invite is joining a chat, which is a decision the reader makes rather
+// than a side effect of pressing enter on a link cursor.
+func TestAnInviteLinkIsNotFollowedInPlace(t *testing.T) {
+	m := linkModel(t)
+	m, _ = press(m, "g", "x")
+	m.armed.safeURI, m.armed.uri = "https://t.me/+AbCdEf123", "https://t.me/+AbCdEf123"
+
+	// Faked, because on macOS the real opener would route a t.me link to
+	// Telegram Desktop — a test that pops a join prompt for a bogus invite
+	// hash is worse than the tab TestAFailedOpenIsReported used to open.
+	prev := startOpener
+	var started *exec.Cmd
+	startOpener = func(cmd *exec.Cmd) error {
+		started = cmd
+		return nil
+	}
+	t.Cleanup(func() { startOpener = prev })
+
+	_, cmd, _ := m.openArmedLink()
+	if cmd == nil {
+		t.Fatal("no command returned")
+	}
+	if msg, ok := cmd().(TelegramLinkMsg); ok {
+		t.Errorf("an invite link was followed in place: %+v", msg)
+	}
+	if started == nil {
+		t.Fatal("the invite link was not handed to the opener either")
+	}
+}
+
+// ctrl+o reports the press and does nothing else. Where the reader has
+// been is the host's knowledge, not this panel's.
+func TestCtrlOAsksTheHostToGoBack(t *testing.T) {
+	m := linkModel(t)
+	before := m.cursorID
+
+	next, cmd := m.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+o produced no command")
+	}
+	if _, ok := cmd().(JumpBackMsg); !ok {
+		t.Fatalf("ctrl+o produced %T, want a JumpBackMsg", cmd())
+	}
+	if next.cursorID != before || next.chatID != m.chatID {
+		t.Error("ctrl+o moved the panel itself — navigation is the host's")
+	}
+}
