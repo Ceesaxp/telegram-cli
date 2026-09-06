@@ -622,3 +622,97 @@ func TestTheParkedDraftFollowsTheChat(t *testing.T) {
 		t.Errorf("Draft = %q, want the parked draft back in its own chat", got)
 	}
 }
+
+// The chip reports the upload of the file it is showing, and only that one.
+// An upload started for an attachment that has since been replaced outlives
+// it by a moment, and its percentage must not appear under the new file's
+// name.
+func TestUploadProgressOnlyShowsForTheAttachmentOnScreen(t *testing.T) {
+	m := newFocused()
+	m.SetAttachment("/tmp/paste-2.png", true)
+
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 50, 100, false)
+	if view := m.View(); strings.Contains(view, "50%") {
+		t.Errorf("view = %q, want no progress for a file that is no longer attached", view)
+	}
+
+	m.SetUploadProgress("/tmp/paste-2.png", 1, 50, 100, false)
+	if view := m.View(); !strings.Contains(view, "↑ 50%") {
+		t.Errorf("view = %q, want the attached file's progress", view)
+	}
+
+	// A failed upload drops the percentage rather than freezing it: the send
+	// re-uploads the file itself, so there is nothing to act on.
+	m.SetUploadProgress("/tmp/paste-2.png", 1, 0, 0, true)
+	if view := m.View(); strings.Contains(view, "%") {
+		t.Errorf("view = %q, want no percentage after the upload failed", view)
+	}
+
+	// And a new file starts from nothing known about it.
+	m.SetUploadProgress("/tmp/paste-2.png", 1, 50, 100, false)
+	m.SetAttachment("/tmp/paste-3.png", true)
+	if view := m.View(); strings.Contains(view, "50%") {
+		t.Errorf("view = %q, want the replaced file's progress forgotten", view)
+	}
+}
+
+// The percentage must never fall. Four upload threads confirm parts at once
+// and gotd calls back outside its own counter's lock, so an older number can
+// arrive after a newer one — and a chip that dropped from ✓ back to ↑ 99%
+// would stay there, because the report that would have repaired it has
+// already been delivered.
+func TestUploadProgressNeverGoesBackwards(t *testing.T) {
+	m := newFocused()
+	m.SetAttachment("/tmp/paste-1.png", true)
+
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 100, 100, false)
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 90, 100, false)
+
+	view := m.View()
+	if strings.Contains(view, "90%") {
+		t.Errorf("view = %q, want the late 90%% ignored", view)
+	}
+	if !strings.Contains(view, "✓") {
+		t.Errorf("view = %q, want the file still shown as up", view)
+	}
+}
+
+// Attaching a file, discarding it and attaching the same one again leaves
+// the abandoned upload reporting under a path the live one now owns. Only
+// the attempt number can tell them apart.
+func TestUploadProgressIgnoresACancelledAttempt(t *testing.T) {
+	m := newFocused()
+	m.SetAttachment("/tmp/paste-1.png", true)
+
+	m.SetUploadProgress("/tmp/paste-1.png", 2, 40, 100, false)
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 90, 100, false)
+	if view := m.View(); !strings.Contains(view, "↑ 40%") {
+		t.Errorf("view = %q, want the live attempt's progress", view)
+	}
+
+	// A failure belonging to the cancelled attempt is not news about the
+	// file now going up, and must not blank its chip.
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 0, 0, true)
+	if view := m.View(); !strings.Contains(view, "↑ 40%") {
+		t.Errorf("view = %q, want a stale failure ignored", view)
+	}
+}
+
+// The replacement attempt starts from nothing known: it is uploading the
+// file again from the beginning, and carrying the old attempt's percentage
+// over would claim progress it has not made.
+func TestANewerUploadAttemptResetsTheChip(t *testing.T) {
+	m := newFocused()
+	m.SetAttachment("/tmp/paste-1.png", true)
+
+	m.SetUploadProgress("/tmp/paste-1.png", 1, 80, 100, false)
+	m.SetUploadProgress("/tmp/paste-1.png", 2, 10, 100, false)
+
+	view := m.View()
+	if !strings.Contains(view, "↑ 10%") {
+		t.Errorf("view = %q, want the new attempt's own progress", view)
+	}
+	if strings.Contains(view, "80%") {
+		t.Errorf("view = %q, want the previous attempt's progress forgotten", view)
+	}
+}

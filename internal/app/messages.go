@@ -52,4 +52,9 @@ type SendFailedMsg struct {
 	ChatId     int64 // chat the send was for; restore only into that composer
 	Attachment string
 	AsPhoto    bool
+
+	// EchoId names the local placeholder the send drew into the thread, so
+	// that row can be marked failed instead of sitting there pending
+	// forever. Zero when the send drew none.
+	EchoId int64
 }

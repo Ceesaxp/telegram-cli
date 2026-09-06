@@ -447,7 +447,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := s.tg.SendTextMessage(in.ChatID, in.Text, in.ReplyToMessageID)
+	msg, err := s.tg.SendTextMessage(in.ChatID, in.Text, in.ReplyToMessageID, 0)
 	if err != nil {
 		writeTelegramError(w, err)
 		return
@@ -475,7 +475,9 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := s.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID)
+	// No placeholder to swap: this server has no thread of its own to
+	// echo into.
+	msg, err := s.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID, 0)
 	if err != nil {
 		writeTelegramError(w, err)
 		return

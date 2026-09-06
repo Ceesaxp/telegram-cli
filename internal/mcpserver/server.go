@@ -252,7 +252,7 @@ func (h *handlers) getContacts(ctx context.Context, _ *mcp.CallToolRequest, _ ge
 }
 
 func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in sendMessageIn) (*mcp.CallToolResult, messageOut, error) {
-	msg, err := h.tg.SendTextMessage(in.ChatID, in.Text, in.ReplyToMessageID)
+	msg, err := h.tg.SendTextMessage(in.ChatID, in.Text, in.ReplyToMessageID, 0)
 	if err != nil {
 		return nil, messageOut{}, err
 	}
@@ -264,7 +264,9 @@ func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in send
 	if err != nil {
 		return nil, messageOut{}, err
 	}
-	msg, err := h.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID)
+	// No placeholder to swap: this server has no thread of its own to
+	// echo into.
+	msg, err := h.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID, 0)
 	if err != nil {
 		return nil, messageOut{}, err
 	}

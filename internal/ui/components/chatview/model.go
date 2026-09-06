@@ -1700,9 +1700,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case telegram.MessageSendSucceededMsg:
-		if msg.Message.ChatID == m.chatID {
-			m.store.Messages.ReplaceMessageId(m.chatID, msg.OldMessageId, msg.Message)
+		// Keyed by the message's own chat, not by the one on screen. A send
+		// outlives the chat it was made in — submit, then switch away while
+		// the round trip runs — and a placeholder nobody reconciles is
+		// still sitting there when the reader comes back, beside the real
+		// message the update stream delivered. Only the cache is view-local,
+		// so only the cache is gated on the open chat.
+		chatID := msg.Message.ChatID
+		m.store.Messages.ReplaceMessageId(chatID, msg.OldMessageId, msg.Message)
+		if chatID == m.chatID {
 			m.cache.invalidate(msg.OldMessageId, msg.Message.ID)
+		}
+
+	case telegram.MessageSendFailedMsg:
+		// The row stays where it is and stops claiming to be on its way.
+		// Removing it would throw away the text the user typed, which is
+		// the one thing they cannot get back from anywhere else.
+		//
+		// Marked in whichever chat the send was made in, for the same
+		// reason the success above is: a failure that lands after the
+		// reader moved on would otherwise leave a row pending forever.
+		if m.store.Messages.MarkSendFailed(msg.ChatId, msg.OldMessageId) && msg.ChatId == m.chatID {
+			m.cache.invalidate(msg.OldMessageId)
 		}
 
 	case messageFetchedMsg:
@@ -1895,6 +1914,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case kp.Matches(m.keys.edit):
 		return m, m.messageAction("edit")
 	case kp.Matches(m.keys.delete):
+		// A failed echo is this client's own row and nothing else: the
+		// server never saw the message, so there is nothing to ask it to
+		// delete and the gate in messageAction would refuse. Dropping the
+		// row locally is the only way out of it, and without one a failed
+		// send is selectable forever. A pending echo is not offered the
+		// same exit — it may still confirm.
+		if msg := m.cursorMessage(); msg != nil && msg.ID <= 0 && msg.SendFailed {
+			return m.dismissFailedEcho(msg.ID)
+		}
 		return m, m.messageAction("delete")
 	case kp.Matches(m.keys.forward):
 		return m, m.messageAction("forward")
@@ -2172,10 +2200,42 @@ func (m *Model) setCursor(id int64) {
 	m.cursorID = id
 }
 
+// dismissFailedEcho drops a row whose send failed out of the store, which
+// is a local edit rather than a delete: nothing about it ever reached
+// Telegram, so nothing there has to be told.
+//
+// The same three steps a real deletion takes — the cached rendering goes,
+// the hit list loses it, and the scroll re-clamps — because the thread just
+// got one message shorter either way.
+func (m Model) dismissFailedEcho(id int64) (Model, tea.Cmd) {
+	m.store.Messages.Delete(m.chatID, []int64{id})
+	m.cache.invalidate(id)
+	m.pruneSearchHits([]int64{id})
+	m.clampScroll()
+	return m, func() tea.Msg {
+		return MediaPlayMsg{Status: "info", Info: "dismissed — this message was never sent"}
+	}
+}
+
 func (m Model) messageAction(action string) tea.Cmd {
 	msg := m.cursorMessage()
 	if msg == nil {
 		return nil
+	}
+	// Every action below ends in a call naming a message ID to Telegram,
+	// and a local echo's ID is one this client invented: negative for a row
+	// drawn at Enter, 0 for a copy built without one. Sending it would name
+	// whichever real message happens to carry that number, or nothing at
+	// all. The refusal says which of the two states the row is in, because
+	// "wait" and "it will never work" are different answers.
+	if msg.ID <= 0 {
+		notice := "⚠ not sent yet — this message has no ID to act on"
+		if msg.SendFailed {
+			notice = "⚠ send failed — this message was never sent"
+		}
+		return func() tea.Msg {
+			return MediaPlayMsg{Status: "error", Info: notice}
+		}
 	}
 	if action == "edit" && !isOwnMessage(msg, m.myUserId) {
 		// Telegram allows editing only your own messages, and a refusal

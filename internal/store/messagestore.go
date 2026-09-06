@@ -169,27 +169,68 @@ func (s *MessageStore) Clear(chatID int64) {
 }
 
 // ReplaceMessageId replaces a temporary message ID with the real one (after send).
+//
+// The update dispatcher races the send: the server's copy of the message
+// can be appended here before the send call returns. Both halves of this
+// therefore have to cope with the confirmed message already being present —
+// the placeholder is dropped rather than swapped, because swapping it would
+// leave the thread showing the same message twice.
 func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *telegram.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	msgs := s.messages[chatID]
-	for i, m := range msgs {
-		if m.ID == oldID {
-			msgs[i] = newMsg
-			s.storeLocked(chatID, msgs)
-			return
-		}
-	}
-	// If old ID not found, append — unless the message is already there
-	// (it may have arrived via the update dispatcher first).
+	alreadyThere := false
 	for _, m := range msgs {
 		if m.ID == newMsg.ID {
-			s.storeLocked(chatID, msgs)
-			return
+			alreadyThere = true
+			break
 		}
 	}
+
+	for i, m := range msgs {
+		if m.ID != oldID {
+			continue
+		}
+		if alreadyThere {
+			// The dispatcher won the race. Remove the placeholder row and
+			// keep the copy that is already in the right place.
+			s.storeLocked(chatID, append(msgs[:i:i], msgs[i+1:]...))
+			return
+		}
+		msgs[i] = newMsg
+		s.storeLocked(chatID, msgs)
+		return
+	}
+
+	// If old ID not found, append — unless the message is already there
+	// (it may have arrived via the update dispatcher first).
+	if alreadyThere {
+		s.storeLocked(chatID, msgs)
+		return
+	}
 	s.storeLocked(chatID, append(msgs, newMsg))
+}
+
+// MarkSendFailed flags a locally echoed message as one whose send failed,
+// and reports whether the row was still there to flag. The placeholder can
+// legitimately be gone by the time a failure lands — the chat was cleared,
+// or the cache trimmed past it — and that is not an error.
+//
+// The flag is set here rather than by the caller mutating the message it
+// found, because every other write to a stored message goes through the
+// store's lock and this one has no reason to be the exception.
+func (s *MessageStore) MarkSendFailed(chatID int64, messageID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, m := range s.messages[chatID] {
+		if m.ID == messageID {
+			m.SendFailed = true
+			return true
+		}
+	}
+	return false
 }
 
 func (s *MessageStore) storeLocked(chatID int64, msgs []*telegram.Message) {
@@ -209,15 +250,21 @@ func trimNewest(msgs []*telegram.Message, maxSize int) []*telegram.Message {
 }
 
 // OldestMessageId returns the oldest cached message ID for a chat.
+//
+// Locally echoed sends are skipped: their IDs are negative placeholders
+// this client invented, and handing one to Telegram as the point to page
+// backwards from asks for history either side of a message the server has
+// never heard of.
 func (s *MessageStore) OldestMessageId(chatID int64) int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	msgs := s.messages[chatID]
-	if len(msgs) == 0 {
-		return 0
+	for _, m := range s.messages[chatID] {
+		if m.ID > 0 {
+			return m.ID
+		}
 	}
-	return msgs[0].ID
+	return 0
 }
 
 // Count returns the number of cached messages for a chat.

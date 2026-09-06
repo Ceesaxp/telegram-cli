@@ -83,6 +83,13 @@ type Message struct {
 
 	ReplyToMessageID int64
 
+	// SendFailed marks a locally echoed message whose send never reached
+	// the server. It is only ever set on a placeholder — a message this
+	// client invented so the thread could show the text the instant it was
+	// typed — and it is what turns that row's pending mark into a failure
+	// mark. Nothing the server sends ever sets it.
+	SendFailed bool
+
 	Content MessageContent
 
 	// Reactions are the emoji tallies on this message, in the order

@@ -33,6 +33,11 @@ type Client struct {
 	cancel     context.CancelFunc
 	files      *fileRegistry
 
+	// uploads holds attachment uploads started when the file was attached,
+	// so that pressing Enter has nothing left to wait for. Its zero value
+	// works, which is why there is no constructor call for it.
+	uploads uploadCache
+
 	// dialogs is how far down the dialog list has been read. See
 	// LoadMoreChats: the chat list asks for the next page when the reader
 	// reaches the bottom, and the cursor stays here rather than travelling

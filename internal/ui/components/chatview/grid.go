@@ -108,10 +108,9 @@ func senderIdentity(msg *telegram.Message) int64 {
 
 // sendState is what is known about an outgoing message's progress.
 //
-// There is no failure state here, deliberately: nothing in the client
-// currently reports a send failure, and a glyph for a state that can never
-// be reached would be decoration pretending to be information. The design
-// record lists a red failure mark; it arrives with the data.
+// The failure state is real data now rather than decoration: a text send
+// that never reaches the server marks its own local echo, and this is the
+// mark that says so.
 type sendState int
 
 const (
@@ -119,6 +118,7 @@ const (
 	sendPending                  // no server ID yet
 	sendSent                     // delivered, not read by the other side
 	sendRead                     // read
+	sendFailed                   // the send came back with an error
 )
 
 // glyph is the mark drawn after an outgoing message's last body line.
@@ -130,13 +130,18 @@ func (s sendState) glyph() string {
 		return "✓"
 	case sendRead:
 		return "✓✓"
+	case sendFailed:
+		return "⚠"
 	}
 	return ""
 }
 
 func (s sendState) colour(r theme.Roles) lipgloss.Color {
-	if s == sendRead {
+	switch s {
+	case sendRead:
 		return r.Green
+	case sendFailed:
+		return r.Red
 	}
 	return r.Faint
 }
@@ -151,7 +156,13 @@ func (m Model) sendStateFor(msg *telegram.Message) sendState {
 	if msg == nil || !isOwnMessage(msg, m.myUserId) {
 		return sendNone
 	}
-	if msg.ID == 0 {
+	if msg.SendFailed {
+		return sendFailed
+	}
+	// A non-positive ID is a message the server has not acknowledged: 0 for
+	// a copy built without one, negative for a local echo drawn the moment
+	// the text was typed. Neither has been delivered to anybody yet.
+	if msg.ID <= 0 {
 		return sendPending
 	}
 	if entry, ok := m.store.Chats.Get(m.chatID); ok && entry.Chat != nil {
