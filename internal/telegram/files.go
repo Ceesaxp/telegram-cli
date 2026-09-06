@@ -380,3 +380,16 @@ func (c *Client) inputPeer(ctx context.Context, chatID int64) (tg.InputPeerClass
 	}
 	return peer.InputPeer(), nil
 }
+
+// WarmPeer resolves chatID in the peers manager in the background, so a
+// cache miss (which costs a users.getUsers/channels.getChannels round trip)
+// is paid when a chat is opened rather than when the first message in it is
+// sent. It is best-effort: the resolution is purely to populate the cache,
+// so any error is dropped rather than surfaced.
+func (c *Client) WarmPeer(chatID int64) {
+	go func() {
+		ctx, cancel := opCtx()
+		defer cancel()
+		_, _ = c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
+	}()
+}

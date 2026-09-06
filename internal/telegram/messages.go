@@ -9,7 +9,12 @@ import (
 )
 
 // SendTextMessage sends a plain text message, optionally as a reply.
-func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int64) (*Message, error) {
+//
+// placeholderID is the ID of the local echo the caller already put in the
+// thread, or 0 for callers that draw nothing (the REST and MCP servers). It
+// is handed straight back on the success message so the thread knows which
+// row the confirmed message replaces.
+func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, placeholderID int64) (*Message, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
@@ -54,7 +59,7 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID int
 			msg.Date = int32(s.Date)
 		}
 	}
-	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: 0})
+	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
 	return msg, nil
 }
 

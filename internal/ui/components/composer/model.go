@@ -43,6 +43,15 @@ type Model struct {
 	asPhoto    bool
 	notice     string
 
+	// uploadPath and uploadPercent are how far the host has got uploading
+	// the pending attachment ahead of the send. Keyed by path rather than
+	// held as a bare percentage: the answer belongs to one file, and a
+	// number left over from the file it replaced would be a lie about the
+	// new one. uploadPath is empty when nothing is known — before the first
+	// report, and after an upload that failed.
+	uploadPath    string
+	uploadPercent int
+
 	// editing selects the line-editing keymap (emacs or vi); vi/viPending
 	// hold the modal state that only ModeVi uses. See editing.go.
 	editing   EditingMode
@@ -254,6 +263,8 @@ func (m *Model) clearContext() {
 	m.attachment = ""
 	m.asPhoto = false
 	m.notice = ""
+	m.uploadPath = ""
+	m.uploadPercent = 0
 }
 
 // Reset clears the composer state, text included.
@@ -446,7 +457,32 @@ func (m *Model) SetAttachment(path string, asPhoto bool) string {
 	m.attachment = path
 	m.asPhoto = asPhoto
 	m.notice = ""
+	// Whatever was known about the outgoing file was about the old one.
+	m.uploadPath = ""
+	m.uploadPercent = 0
 	return previous
+}
+
+// SetUploadProgress records how far the pending attachment has got on its
+// way to Telegram, for the chip above the prompt to show. Reports about any
+// other file are ignored: an upload started for an attachment that has since
+// been replaced outlives it by a moment, and the chip must not show its
+// progress under the new file's name.
+//
+// A failed upload clears the state instead of freezing a percentage that
+// will never advance — the send re-uploads the file itself, so there is
+// nothing for the reader to act on.
+func (m *Model) SetUploadProgress(path string, uploaded, total int64, failed bool) {
+	if path == "" || path != m.attachment {
+		return
+	}
+	if failed || total <= 0 {
+		m.uploadPath = ""
+		m.uploadPercent = 0
+		return
+	}
+	m.uploadPath = path
+	m.uploadPercent = min(int(uploaded*100/total), 100)
 }
 
 // Attachment returns the pending attachment path, empty when there is none.

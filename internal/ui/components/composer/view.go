@@ -425,7 +425,20 @@ func (m Model) attachmentChip() string {
 	if m.asPhoto {
 		glyph = "▣"
 	}
-	return m.barRow("attach", glyph, filepath.Base(m.attachment), m.roles.Amber)
+	// The upload runs from the moment the file is attached, so by the time
+	// the caption is typed it is often already up. Saying so is what makes
+	// Enter's silence explicable — and while it is still climbing, the
+	// percentage is the only thing on screen that says the wait is the
+	// file's rather than the client's.
+	name := filepath.Base(m.attachment)
+	if m.uploadPath == m.attachment {
+		if m.uploadPercent >= 100 {
+			name += "  ✓"
+		} else {
+			name += "  ↑ " + strconv.Itoa(m.uploadPercent) + "%"
+		}
+	}
+	return m.barRow("attach", glyph, name, m.roles.Amber)
 }
 
 // barRow draws a labelled context row with a right-hand way out.

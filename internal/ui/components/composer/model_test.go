@@ -622,3 +622,36 @@ func TestTheParkedDraftFollowsTheChat(t *testing.T) {
 		t.Errorf("Draft = %q, want the parked draft back in its own chat", got)
 	}
 }
+
+// The chip reports the upload of the file it is showing, and only that one.
+// An upload started for an attachment that has since been replaced outlives
+// it by a moment, and its percentage must not appear under the new file's
+// name.
+func TestUploadProgressOnlyShowsForTheAttachmentOnScreen(t *testing.T) {
+	m := newFocused()
+	m.SetAttachment("/tmp/paste-2.png", true)
+
+	m.SetUploadProgress("/tmp/paste-1.png", 50, 100, false)
+	if view := m.View(); strings.Contains(view, "50%") {
+		t.Errorf("view = %q, want no progress for a file that is no longer attached", view)
+	}
+
+	m.SetUploadProgress("/tmp/paste-2.png", 50, 100, false)
+	if view := m.View(); !strings.Contains(view, "↑ 50%") {
+		t.Errorf("view = %q, want the attached file's progress", view)
+	}
+
+	// A failed upload drops the percentage rather than freezing it: the send
+	// re-uploads the file itself, so there is nothing to act on.
+	m.SetUploadProgress("/tmp/paste-2.png", 0, 0, true)
+	if view := m.View(); strings.Contains(view, "%") {
+		t.Errorf("view = %q, want no percentage after the upload failed", view)
+	}
+
+	// And a new file starts from nothing known about it.
+	m.SetUploadProgress("/tmp/paste-2.png", 50, 100, false)
+	m.SetAttachment("/tmp/paste-3.png", true)
+	if view := m.View(); strings.Contains(view, "50%") {
+		t.Errorf("view = %q, want the replaced file's progress forgotten", view)
+	}
+}

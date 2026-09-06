@@ -1,6 +1,43 @@
 # TODO
 
-## Current wave — issue triage of 2026-09-04
+## Current wave — send-path latency (2026-09-06)
+
+Four steps run by subagents; 1+2 parallel, 3 then 4 sequential.
+
+## Step 1 — Uploader tuning (agent: sonnet) — [x]
+- [x] `internal/telegram/files_send.go` `uploadForSend`: 512 KiB parts (`WithPartSize(512*1024)`), `WithThreads(4)`
+- [x] Verified gotd v0.161.0 API: both builders return `*Uploader`; 524288 is max valid part size (`constant.UploadMaxPartSize`)
+- [x] `make build` + `go test ./internal/telegram/...` pass
+
+## Step 2 — Peer warm-up on chat open (agent: sonnet) — [x]
+- [x] `Client.WarmPeer(chatID)` in `internal/telegram/files.go` (background goroutine, opCtx, errors dropped)
+- [x] Called from `switchComposerTo` in `internal/app/app.go`, nil-guarded for tests; sole caller `openChatAt` always passes a real chat ID
+- [x] `make build` + tests pass
+
+## Step 3 — Optimistic local echo for text sends (agent: opus) — [x]
+- [x] Placeholder message (negative synthetic ID, IsOutgoing, Date=now) inserted into store on `composer.MessageSubmittedMsg` (text sends); counter is `Model.lastLocalEchoID`
+- [x] Thread placeholder ID → `SendTextMessage` → `MessageSendSucceededMsg{OldMessageId}` → `ReplaceMessageId` swap
+- [x] Update other `SendTextMessage` call sites (restapi, mcpserver) with 0
+- [x] chatview renders pending marker for negative-ID messages; failure flips to a `⚠` marker driven by `telegram.Message.SendFailed`
+- [x] Handle race: `ReplaceMessageId` drops the placeholder when the confirmed ID is already present
+- [x] `OldestMessageId` skips placeholders, so paging backwards never asks Telegram about an invented ID
+- [x] Tests + `make build` + `make test` pass
+
+## Step 4 — Eager attachment upload + progress + echo (agent: opus) — [x]
+- [x] Start upload when attachment is set; cache `tg.InputFileClass` by path; cancel on discard
+- [x] Send awaits in-flight upload; done → single `MessagesSendMedia`
+- [x] `uploader.WithProgress` → progress msgs → the composer's attachment chip shows `↑ NN%`, then `✓`
+- [x] Extend optimistic echo (step 3) to attachment sends; `SendFailedMsg` keeps re-attach behavior and marks the echo
+- [x] Tests + `make build` + `make test` pass
+
+## Final validation (orchestrator) — [x]
+- [x] `gofmt -l` clean, `go vet ./...` clean, `make build`, `make test` all pass; fresh `-race -count=1` run over the five touched packages clean
+- [x] golangci-lint step of `make lint` fails on a pre-existing toolchain mismatch (binary built with go1.24, repo targets 1.25) — unrelated to this wave
+- [x] Reviewed diff coherence: upload-cache lifecycle (start/await/cancel, happens-before via channel close), discard-path cancel audit, echo threading, and msg routing (broadcast at app.go dispatch reaches chatview for text-path failures; attachment path translates SendFailedMsg directly — marked exactly once)
+- Follow-up (pre-existing, not fixed): `UpdateShortSentMessage` fallback in SendTextMessage builds the confirmed message without SenderID, so private-chat sends briefly render unattributed after the echo swap; needs self user ID inside the telegram client
+
+
+## Previous wave — issue triage of 2026-09-04
 
 Picked from the open issues in this order: the two small, well-specified
 ones first, then the two that carry real work. #41 (mention autocomplete),

@@ -1705,6 +1705,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cache.invalidate(msg.OldMessageId, msg.Message.ID)
 		}
 
+	case telegram.MessageSendFailedMsg:
+		// The row stays where it is and stops claiming to be on its way.
+		// Removing it would throw away the text the user typed, which is
+		// the one thing they cannot get back from anywhere else.
+		if msg.ChatId == m.chatID && m.store.Messages.MarkSendFailed(m.chatID, msg.OldMessageId) {
+			m.cache.invalidate(msg.OldMessageId)
+		}
+
 	case messageFetchedMsg:
 		if msg.chatID == m.chatID && msg.message != nil {
 			m.store.Messages.UpdateMessage(m.chatID, msg.message.ID, msg.message)

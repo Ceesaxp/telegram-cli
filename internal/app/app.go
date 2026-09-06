@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"mime"
 	"path/filepath"
 	"strings"
 	"time"
@@ -102,9 +103,25 @@ type Model struct {
 	height     int
 	myUserId   int64
 
+	// uploads is the slice of the Telegram client the attachment path uses:
+	// files start uploading when they are attached, not when Enter is
+	// pressed. An interface rather than a use of m.tg directly so the tests
+	// can watch the start/cancel pairing, which is what stands between a
+	// discarded attachment and a goroutine reading a deleted spool file.
+	// Nil when there is no client.
+	uploads uploadController
+
 	// pasteInFlight is set while a clipboard paste command is running, so a
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
+
+	// lastLocalEchoID is the last ID handed to a locally echoed send. It
+	// only ever decrements, so every send in flight owns a distinct
+	// negative ID and two of them cannot collide on a slow link — which is
+	// exactly the link where more than one is in flight at a time. Negative
+	// because Telegram's own IDs are positive, so the sign alone says a
+	// message is this client's invention.
+	lastLocalEchoID int64
 
 	// railOpen is whether the user wants the context rail. Whether it is
 	// actually drawn is layout's decision — below 118 columns there is no
@@ -315,6 +332,12 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
 		keys:       resolveKeys(cfg.Keys),
+	}
+	// A typed nil *telegram.Client is not a nil interface, so the client is
+	// installed only when there is one to install — several tests build a
+	// Model without.
+	if tg != nil {
+		m.uploads = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -1149,9 +1172,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notify(fmt.Sprintf("⚠ %s", msg.Err))
 
 	case composer.AttachmentDiscardedMsg:
+		m.cancelUpload(msg.Path)
 		clipboard.Remove(msg.Path)
 
 	case SendFailedMsg:
+		// The row the send echoed stops claiming to be on its way. The
+		// thread's own handler marks it and drops its cached render, so it
+		// is handed the message directly rather than re-emitted as a
+		// command — that would also reach the case below and print the
+		// error a second time, under a different wording.
+		if msg.EchoId != 0 {
+			var cmd tea.Cmd
+			m.chatView, cmd = m.chatView.Update(telegram.MessageSendFailedMsg{
+				ChatId: msg.ChatId, OldMessageId: msg.EchoId, Err: msg.Err,
+			})
+			cmds = append(cmds, cmd)
+		}
 		// The composer was reset at submit time, so put the attachment back
 		// rather than losing a pasted image to a transient send failure —
 		// but only into the composer it came from, and only while nothing
@@ -1163,9 +1199,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notify(fmt.Sprintf("⚠ send failed — attachment restored: %v", msg.Err))
 				break
 			}
+			// Nowhere to put it back: the file is deleted, so anything
+			// still reading it has to stop.
+			m.cancelUpload(msg.Attachment)
 			clipboard.Remove(msg.Attachment)
 		}
 		m.notify(fmt.Sprintf("⚠ send failed: %v", msg.Err))
+
+	case telegram.UploadProgressMsg:
+		// Shown on the attachment chip, which is where the reader is
+		// looking while the caption is typed.
+		m.composer.SetUploadProgress(msg.Path, msg.Uploaded, msg.Total, msg.Failed)
+
+	case telegram.MessageSendFailedMsg:
+		// The thread marks its own row failed off this same message; all
+		// that is left here is the error text, and it goes through the
+		// notice row the way every other failed operation does.
+		cmds = append(cmds, func() tea.Msg { return ErrorMsg{Err: msg.Err} })
 
 	case ErrorMsg:
 		m.notify(fmt.Sprintf("⚠ %v", msg.Err))
@@ -1633,14 +1683,43 @@ func (m Model) stageAttachment(path string, asPhoto bool) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// uploadController is what the app needs of the Telegram client to upload
+// attachments ahead of the send that uses them.
+type uploadController interface {
+	StartUpload(path string)
+	CancelUpload(path string)
+}
+
+// startUpload puts an attachment on its way to Telegram as soon as it is
+// staged, rather than at Enter. The user has already chosen the file and is
+// about to spend seconds typing a caption; spending them on the upload
+// instead is the difference between a send that appears instant and one that
+// stalls the thread for as long as the file takes.
+func (m *Model) startUpload(path string) {
+	if m.uploads != nil && path != "" {
+		m.uploads.StartUpload(path)
+	}
+}
+
+// cancelUpload stops an upload for an attachment that is being discarded.
+// Every path that drops a staged file has to call it: the upload goroutine
+// is reading a spool file its caller is about to delete.
+func (m *Model) cancelUpload(path string) {
+	if m.uploads != nil && path != "" {
+		m.uploads.CancelUpload(path)
+	}
+}
+
 // replaceAttachment hands a new pending attachment to the composer and
 // deletes the spool file it displaces, so at most one spooled paste is alive
 // at a time.
 func (m *Model) replaceAttachment(path string, asPhoto bool) {
 	previous := m.composer.SetAttachment(path, asPhoto)
 	if previous != "" && previous != path {
+		m.cancelUpload(previous)
 		clipboard.Remove(previous)
 	}
+	m.startUpload(path)
 }
 
 // pasteFromClipboard spools the system clipboard image to a temp file and
@@ -1691,10 +1770,16 @@ func (m *Model) openPrivateChat(userID int64) tea.Cmd {
 	}
 }
 
-func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
+// handleMessageSubmit turns a submitted composer line into the command that
+// sends it. It takes a pointer receiver because a text send draws its own
+// local echo first, which consumes an ID from the model.
+func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	if msg.ChatId == 0 {
 		return func() tea.Msg { return ErrorMsg{Err: errNoChatOpen} }
 	}
+	// Bound to a local so the commands below close over the client rather
+	// than over the model, which they now only borrow.
+	tg := m.tg
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
 			// Edits carry text only. Nothing upstream should let an
@@ -1702,9 +1787,12 @@ func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 			// than leak it — and say so instead of failing silently.
 			dropped := msg.Attachment != ""
 			if dropped {
+				if tg != nil {
+					tg.CancelUpload(msg.Attachment)
+				}
 				clipboard.Remove(msg.Attachment)
 			}
-			if _, err := m.tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text); err != nil {
+			if _, err := tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text); err != nil {
 				return ErrorMsg{Err: err}
 			}
 			if dropped {
@@ -1714,21 +1802,29 @@ func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 		}
 	}
 	if msg.Attachment != "" {
+		// An attachment send earns the echo more than a text one does:
+		// even with the file already uploaded there is a round trip to
+		// wait out, and when it is not, the wait is the whole file. The
+		// thread showed nothing at all for the length of it.
+		echoID := m.echoAttachment(msg)
 		return func() tea.Msg {
 			var err error
 			if msg.AsPhoto {
-				_, err = m.tg.SendPhotoMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId)
+				_, err = tg.SendPhotoMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
 			} else {
-				_, err = m.tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId)
+				_, err = tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
 			}
 			if err != nil {
 				// Keep the file: the composer is already reset, so the app
-				// re-attaches it from this message.
+				// re-attaches it from this message. The echo it names is
+				// marked failed rather than removed, for the same reason a
+				// failed text send's is.
 				return SendFailedMsg{
 					Err:        err,
 					ChatId:     msg.ChatId,
 					Attachment: msg.Attachment,
 					AsPhoto:    msg.AsPhoto,
+					EchoId:     echoID,
 				}
 			}
 			// Drop the spool file once it is on its way to Telegram.
@@ -1736,12 +1832,83 @@ func (m Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 			return nil
 		}
 	}
+
+	// Everything below is a plain text send, and it gets a local echo: the
+	// composer has already cleared, and on a reconnecting link the round
+	// trip can run to the operation timeout. Without this the reader is
+	// left staring at an unchanged thread wondering whether anything was
+	// sent at all.
+	//
+	// The echo carries the text exactly as it was typed, markdown markers
+	// and all, because formatting it here would mean reimplementing the
+	// outgoing formatter's answer and possibly disagreeing with it. The
+	// success message swaps in the server-rendered copy a moment later, so
+	// the only cost is that a **bold** run shows its asterisks until then.
+	m.lastLocalEchoID--
+	echoID := m.lastLocalEchoID
+	m.store.Messages.Append(msg.ChatId, &telegram.Message{
+		ID:     echoID,
+		ChatID: msg.ChatId,
+		// The thread reads ownership off the sender, not off IsOutgoing:
+		// without this the echo renders as somebody else's message and
+		// gets no send-state mark at all.
+		SenderID:         &telegram.MessageSenderUser{UserID: m.myUserId},
+		Date:             int32(time.Now().Unix()),
+		IsOutgoing:       true,
+		ReplyToMessageID: msg.ReplyToId,
+		Content:          &telegram.MessageText{Text: &telegram.FormattedText{Text: msg.Text}},
+	})
+
 	return func() tea.Msg {
-		if _, err := m.tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId); err != nil {
-			return ErrorMsg{Err: err}
+		if _, err := tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId, echoID); err != nil {
+			// Not a bare ErrorMsg any more: the thread needs to know WHICH
+			// row never went out, and the notice row still gets the text
+			// via the handler for this message.
+			return telegram.MessageSendFailedMsg{ChatId: msg.ChatId, OldMessageId: echoID, Err: err}
 		}
 		return nil
 	}
+}
+
+// echoAttachment puts the placeholder row for an attachment send in the
+// store and returns the ID it was given.
+//
+// The content is a document card carrying the real filename, which is what
+// the thread already draws for a file whose bytes it has not downloaded —
+// so the placeholder is the same shape as the row that replaces it, rather
+// than a form invented for this one moment. An image sent as a photo echoes
+// as a document too, and the renderer reads the mime type and labels it IMG;
+// the server's copy arrives a moment later and brings the real photo with
+// it.
+func (m *Model) echoAttachment(msg composer.MessageSubmittedMsg) int64 {
+	m.lastLocalEchoID--
+	echoID := m.lastLocalEchoID
+
+	mimeType := mime.TypeByExtension(filepath.Ext(msg.Attachment))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	content := &telegram.MessageDocument{
+		Document: &telegram.Document{
+			FileName: filepath.Base(msg.Attachment),
+			MimeType: mimeType,
+		},
+	}
+	if msg.Text != "" {
+		content.Caption = &telegram.FormattedText{Text: msg.Text}
+	}
+
+	m.store.Messages.Append(msg.ChatId, &telegram.Message{
+		ID:     echoID,
+		ChatID: msg.ChatId,
+		// The thread reads ownership off the sender, not off IsOutgoing.
+		SenderID:         &telegram.MessageSenderUser{UserID: m.myUserId},
+		Date:             int32(time.Now().Unix()),
+		IsOutgoing:       true,
+		ReplyToMessageID: msg.ReplyToId,
+		Content:          content,
+	})
+	return echoID
 }
 
 func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, tea.Cmd) {
@@ -1777,7 +1944,9 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 				if text, ok := message.Content.(*telegram.MessageText); ok {
 					// An edit cannot carry media — the composer drops any
 					// pending attachment and hands back its path.
-					clipboard.Remove(m.composer.EnterEditMode(msg.MessageId, text.Text.Text))
+					dropped := m.composer.EnterEditMode(msg.MessageId, text.Text.Text)
+					m.cancelUpload(dropped)
+					clipboard.Remove(dropped)
 					m.setFocus(PanelComposer)
 				}
 				break
@@ -1940,6 +2109,17 @@ func (m *Model) switchComposerTo(chatID int64) {
 	clipboard.Remove(m.composer.SetChatId(chatID))
 	m.chatList.SetDraftChats(m.composer.DraftChats())
 	m.updateLayout()
+	// Warm the peer cache now, in the background, so a cache miss costs
+	// nothing on the send path later — the first message to a chat would
+	// otherwise pay for it inline.
+	if m.tg != nil {
+		m.tg.WarmPeer(chatID)
+	}
+	// A draft restored for this chat can bring an attachment back with it,
+	// and that file has as much claim to an early upload as one just
+	// staged. Starting an upload already in flight or finished is a no-op,
+	// so this costs nothing when the chat is merely revisited.
+	m.startUpload(m.composer.Attachment())
 }
 
 // openRailFor points the rail at a chat, but only when it is actually on

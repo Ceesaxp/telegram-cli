@@ -106,16 +106,37 @@ type ConnectionStateMsg struct {
 	State ConnectionState
 }
 
+// UploadProgressMsg reports how far an eager attachment upload has got, so
+// the composer's attachment chip can show it. Path is the key the composer
+// knows the file by — the same path it was attached from.
+//
+// Failed says the upload ended without producing anything. It carries no
+// numbers: the chip drops the percentage rather than freezing it, because
+// the send that follows will upload the file again itself and report its
+// own failure if that fails too.
+type UploadProgressMsg struct {
+	Path     string
+	Uploaded int64
+	Total    int64
+	Failed   bool
+}
+
 // MessageSendSucceededMsg is sent when a message is successfully sent.
 type MessageSendSucceededMsg struct {
 	Message      *Message
 	OldMessageId int64
 }
 
-// MessageSendFailedMsg is sent when a message fails to send.
+// MessageSendFailedMsg reports that an outgoing message never reached the
+// server. It names the local placeholder the sender echoed into the thread
+// so that row can be marked failed instead of sitting there pending
+// forever, which would be the client telling a lie it never takes back.
+//
+// It lives here, next to the success message, because both the app (which
+// surfaces the error text) and the thread (which marks the row) have to see
+// it, and the telegram package is the one they both already import.
 type MessageSendFailedMsg struct {
-	Message      *Message
+	ChatId       int64
 	OldMessageId int64
-	ErrorCode    int32
-	ErrorMessage string
+	Err          error
 }
