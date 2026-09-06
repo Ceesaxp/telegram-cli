@@ -171,7 +171,7 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 		return peer, file, nil
 	}
 
-	inputFile, err := c.uploadFile(ctx, path)
+	inputFile, err := c.uploadFile(ctx, path, c.uploads.nextGeneration())
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload %q: %w", path, err)
 	}

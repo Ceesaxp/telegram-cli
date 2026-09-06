@@ -296,3 +296,39 @@ func TestUploadProgressReachesTheAttachmentChip(t *testing.T) {
 		t.Errorf("composer view = %q, want the ready mark once the file is up", view)
 	}
 }
+
+// The attachment failure is handed to the thread directly rather than
+// re-emitted, so it has its own way of reaching the reconciliation — and it
+// has to work after the reader has moved to another chat, which on a slow
+// upload is most of the time.
+func TestAttachmentSendFailureMarksTheEchoAfterSwitchingChats(t *testing.T) {
+	m := newTestModel(t)
+	m.composer.SetChatId(7)
+	m.chatView.OpenChatAt(7, "somewhere", 0)
+
+	updated, _ := m.Update(composer.MessageSubmittedMsg{
+		ChatId: 7, Text: "caption", Attachment: "/tmp/spool/fix.png", AsPhoto: true,
+	})
+	got := updated.(Model)
+	echoID := got.store.Messages.Get(7)[0].ID
+
+	// Away to another chat while the upload is still going up.
+	got.chatView.OpenChatAt(8, "elsewhere", 0)
+	got.composer.SetChatId(8)
+
+	updated, _ = got.Update(SendFailedMsg{
+		Err: errors.New("connection lost"), ChatId: 7,
+		Attachment: "/tmp/spool/fix.png", AsPhoto: true, EchoId: echoID,
+	})
+	got = updated.(Model)
+
+	msgs := got.store.Messages.Get(7)
+	if len(msgs) != 1 || !msgs[0].SendFailed {
+		t.Fatalf("chat 7 = %v, want its echo still there and marked failed", msgs)
+	}
+	// The file has nowhere to go back to — the composer is on another chat
+	// now — so it is dropped rather than restored into the wrong one.
+	if att := got.composer.Attachment(); att != "" {
+		t.Errorf("composer attachment = %q, want nothing restored into the other chat", att)
+	}
+}

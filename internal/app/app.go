@@ -1209,7 +1209,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case telegram.UploadProgressMsg:
 		// Shown on the attachment chip, which is where the reader is
 		// looking while the caption is typed.
-		m.composer.SetUploadProgress(msg.Path, msg.Uploaded, msg.Total, msg.Failed)
+		m.composer.SetUploadProgress(msg.Path, msg.Generation, msg.Uploaded, msg.Total, msg.Failed)
 
 	case telegram.MessageSendFailedMsg:
 		// The thread marks its own row failed off this same message; all

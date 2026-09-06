@@ -114,11 +114,18 @@ type ConnectionStateMsg struct {
 // numbers: the chip drops the percentage rather than freezing it, because
 // the send that follows will upload the file again itself and report its
 // own failure if that fails too.
+//
+// Generation says which attempt is reporting. The same path can be uploaded
+// twice — attach, discard, attach the same file again — and the abandoned
+// attempt's callbacks are still arriving when the new one starts; the path
+// alone cannot tell them apart. It rises with every upload started, so the
+// consumer can drop anything older than what it is already showing.
 type UploadProgressMsg struct {
-	Path     string
-	Uploaded int64
-	Total    int64
-	Failed   bool
+	Path       string
+	Generation uint64
+	Uploaded   int64
+	Total      int64
+	Failed     bool
 }
 
 // MessageSendSucceededMsg is sent when a message is successfully sent.

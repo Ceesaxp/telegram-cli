@@ -52,6 +52,15 @@ type Model struct {
 	uploadPath    string
 	uploadPercent int
 
+	// uploadGen is the newest upload attempt the chip has heard from. The
+	// same file can be uploaded twice — attached, discarded, attached
+	// again — and the abandoned attempt goes on reporting for a while
+	// after the one that replaced it began, so the path alone cannot say
+	// whose progress is whose. It is never lowered, the attachment
+	// changing included: its whole job is to be the line below which a
+	// report belongs to an attempt nobody is waiting for.
+	uploadGen uint64
+
 	// editing selects the line-editing keymap (emacs or vi); vi/viPending
 	// hold the modal state that only ModeVi uses. See editing.go.
 	editing   EditingMode
@@ -469,20 +478,44 @@ func (m *Model) SetAttachment(path string, asPhoto bool) string {
 // been replaced outlives it by a moment, and the chip must not show its
 // progress under the new file's name.
 //
+// generation says which attempt is reporting. One older than the attempt on
+// the chip is dropped — a cancelled upload of the same path is still
+// reporting after its replacement started, and neither its percentage nor
+// its failure is news about the file now going up. A newer one is the
+// replacement, and starts from nothing known.
+//
+// Within an attempt the percentage only ever climbs. The parts are
+// confirmed by four threads and the callback runs outside the counter's
+// lock, so an older percentage can arrive after a newer one — and a chip
+// that fell from ✓ back to ↑ 99% would sit there, because the report that
+// would have repaired it has already been and gone.
+//
 // A failed upload clears the state instead of freezing a percentage that
 // will never advance — the send re-uploads the file itself, so there is
 // nothing for the reader to act on.
-func (m *Model) SetUploadProgress(path string, uploaded, total int64, failed bool) {
+func (m *Model) SetUploadProgress(path string, generation uint64, uploaded, total int64, failed bool) {
 	if path == "" || path != m.attachment {
 		return
+	}
+	if generation < m.uploadGen {
+		return
+	}
+	if generation > m.uploadGen {
+		m.uploadGen = generation
+		m.uploadPath = ""
+		m.uploadPercent = 0
 	}
 	if failed || total <= 0 {
 		m.uploadPath = ""
 		m.uploadPercent = 0
 		return
 	}
+	percent := min(int(uploaded*100/total), 100)
+	if m.uploadPath == path && percent < m.uploadPercent {
+		return
+	}
 	m.uploadPath = path
-	m.uploadPercent = min(int(uploaded*100/total), 100)
+	m.uploadPercent = percent
 }
 
 // Attachment returns the pending attachment path, empty when there is none.

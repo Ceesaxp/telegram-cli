@@ -182,3 +182,76 @@ func TestAttachmentEchoRendersAsAPendingFileCard(t *testing.T) {
 		t.Errorf("rendered echo = %q, want the pending mark in it", out)
 	}
 }
+
+// A send outlives the chat it was made in: submit, then switch chats while
+// the round trip runs. The placeholder still has to be reconciled, or the
+// reader comes back to the message twice over — once as the echo nobody
+// swapped out and once as the copy the update stream delivered.
+func TestSendSuccessReconcilesAChatThatIsNotOpen(t *testing.T) {
+	const other = testChatID + 1
+	m := echoModel()
+	echo := localEcho(-1, "**sent from elsewhere**")
+	echo.ChatID = other
+	m.store.Messages.Append(other, echo)
+
+	confirmed := localEcho(9, "sent from elsewhere")
+	confirmed.ChatID = other
+	m, _ = m.Update(telegram.MessageSendSucceededMsg{Message: confirmed, OldMessageId: -1})
+
+	got := m.store.Messages.Get(other)
+	if len(got) != 1 || got[0].ID != 9 {
+		t.Fatalf("messages in the closed chat = %v, want the echo replaced by ID 9", messageIDs(got))
+	}
+}
+
+// And when the update stream beat the send home into that closed chat, the
+// echo is removed rather than duplicated — the same rule the open chat gets.
+func TestSendSuccessLeavesNoDuplicateInAChatThatIsNotOpen(t *testing.T) {
+	const other = testChatID + 1
+	m := echoModel()
+	echo := localEcho(-1, "**hi**")
+	echo.ChatID = other
+	confirmed := localEcho(9, "hi")
+	confirmed.ChatID = other
+	m.store.Messages.Append(other, echo)
+	m.store.Messages.Append(other, confirmed)
+
+	m, _ = m.Update(telegram.MessageSendSucceededMsg{Message: confirmed, OldMessageId: -1})
+
+	got := m.store.Messages.Get(other)
+	if len(got) != 1 || got[0].ID != 9 {
+		t.Fatalf("messages in the closed chat = %v, want only ID 9", messageIDs(got))
+	}
+}
+
+// A failure for a chat that is no longer open still marks its row. Left
+// unmarked it sits there pending forever, which is the client telling a lie
+// it never takes back.
+func TestSendFailureMarksTheEchoInAChatThatIsNotOpen(t *testing.T) {
+	const other = testChatID + 1
+	m := echoModel()
+	open := localEcho(-1, "this chat's own row")
+	m.store.Messages.Append(testChatID, open)
+	renderOne(m, open) // warm the open chat's cache at the same ID
+
+	elsewhere := localEcho(-1, "never left")
+	elsewhere.ChatID = other
+	m.store.Messages.Append(other, elsewhere)
+
+	m, _ = m.Update(telegram.MessageSendFailedMsg{
+		ChatId: other, OldMessageId: -1, Err: errors.New("connection lost"),
+	})
+
+	if got := m.store.Messages.Get(other); len(got) != 1 || !got[0].SendFailed {
+		t.Fatalf("closed chat = %v, want its echo marked failed", got)
+	}
+	// The store write is unconditional; the cache is not. Dropping the open
+	// chat's rendering off another chat's failure would be a redraw for a
+	// row that did not change.
+	if _, ok := m.cache.get(-1); !ok {
+		t.Error("another chat's failure dropped this thread's cached row")
+	}
+	if m.store.Messages.Get(testChatID)[0].SendFailed {
+		t.Error("another chat's failure marked this thread's row")
+	}
+}

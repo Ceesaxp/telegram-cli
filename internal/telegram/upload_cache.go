@@ -13,7 +13,10 @@ import (
 // a field on the Client so the cache's state machine can be exercised
 // without a connection — the only part of it that needs the network is this
 // one function.
-type uploadFunc func(ctx context.Context, path string) (tg.InputFileClass, error)
+//
+// generation is the attempt number the cache handed this upload; see
+// uploadCache.gen for what it is for.
+type uploadFunc func(ctx context.Context, path string, generation uint64) (tg.InputFileClass, error)
 
 // uploadEntry is one file being put on Telegram's servers ahead of the send
 // that will use it. file and err are written once, before done closes, so a
@@ -39,6 +42,14 @@ type uploadEntry struct {
 type uploadCache struct {
 	mu      sync.Mutex
 	entries map[string]*uploadEntry
+	// gen numbers the attempts, so a report from one can be told from a
+	// report from another. Attaching a file, discarding it and attaching
+	// the same file again produces two uploads under one path, and the
+	// cancelled one's callbacks are still in flight when the new one
+	// starts — without a number on them the consumer cannot tell whose
+	// progress it is being shown. Per cache rather than per path: the only
+	// thing asked of it is that later attempts sort after earlier ones.
+	gen uint64
 }
 
 // start begins uploading path in the background. An upload already in
@@ -62,12 +73,25 @@ func (u *uploadCache) start(path string, run uploadFunc) {
 	ctx, cancel := transferCtx()
 	entry := &uploadEntry{done: make(chan struct{}), cancel: cancel}
 	u.entries[path] = entry
+	u.gen++
+	generation := u.gen
 	u.mu.Unlock()
 
 	go func() {
-		entry.file, entry.err = run(ctx, path)
+		entry.file, entry.err = run(ctx, path, generation)
 		close(entry.done)
 	}()
+}
+
+// nextGeneration numbers an upload that runs outside the cache: the
+// synchronous one a send falls back to when the eager upload failed or was
+// never started. It sorts after every attempt the cache has handed out, for
+// the same reason those sort against each other.
+func (u *uploadCache) nextGeneration() uint64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.gen++
+	return u.gen
 }
 
 // await takes path's entry and waits for it to finish, reporting whether
@@ -133,17 +157,17 @@ func (c *Client) CancelUpload(path string) {
 // network and Telegram's part-based protocol underused. 512 KiB is the
 // largest part size Telegram accepts, and uploading with several threads
 // lets those parts go out in parallel.
-func (c *Client) uploadFile(ctx context.Context, path string) (tg.InputFileClass, error) {
+func (c *Client) uploadFile(ctx context.Context, path string, generation uint64) (tg.InputFileClass, error) {
 	file, err := uploader.NewUploader(c.api).
 		WithPartSize(512*1024).
 		WithThreads(4).
-		WithProgress(&uploadProgress{client: c, path: path, last: -1}).
+		WithProgress(&uploadProgress{client: c, path: path, generation: generation, last: -1}).
 		FromPath(ctx, path)
 	if err != nil {
 		// Say so, or the composer keeps showing a percentage that will
 		// never advance. The send that follows re-uploads synchronously
 		// and reports its own failure, so this is only about the chip.
-		c.send(UploadProgressMsg{Path: path, Failed: true})
+		c.send(UploadProgressMsg{Path: path, Generation: generation, Failed: true})
 	}
 	return file, err
 }
@@ -155,8 +179,9 @@ func (c *Client) uploadFile(ctx context.Context, path string) (tg.InputFileClass
 // every one of them would otherwise be a full redraw of the frame. The parts
 // are confirmed by several upload threads at once, hence the lock.
 type uploadProgress struct {
-	client *Client
-	path   string
+	client     *Client
+	path       string
+	generation uint64
 
 	mu   sync.Mutex
 	last int // the last percent reported; -1 before the first part
@@ -179,9 +204,10 @@ func (p *uploadProgress) Chunk(_ context.Context, state uploader.ProgressState) 
 	p.mu.Unlock()
 
 	p.client.send(UploadProgressMsg{
-		Path:     p.path,
-		Uploaded: state.Uploaded,
-		Total:    state.Total,
+		Path:       p.path,
+		Generation: p.generation,
+		Uploaded:   state.Uploaded,
+		Total:      state.Total,
 	})
 	return nil
 }

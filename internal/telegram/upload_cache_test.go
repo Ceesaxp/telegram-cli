@@ -42,7 +42,7 @@ func TestUploadCacheServesTheUploadStartedAtAttachTime(t *testing.T) {
 	var cache uploadCache
 	var calls atomic.Int64
 
-	cache.start("/tmp/one.png", func(context.Context, string) (tg.InputFileClass, error) {
+	cache.start("/tmp/one.png", func(context.Context, string, uint64) (tg.InputFileClass, error) {
 		calls.Add(1)
 		return uploadedFile(7), nil
 	})
@@ -67,7 +67,7 @@ func TestUploadCacheAwaitWaitsForAnUploadStillInFlight(t *testing.T) {
 	var cache uploadCache
 	release := make(chan struct{})
 
-	cache.start("/tmp/big.bin", func(context.Context, string) (tg.InputFileClass, error) {
+	cache.start("/tmp/big.bin", func(context.Context, string, uint64) (tg.InputFileClass, error) {
 		<-release
 		return uploadedFile(9), nil
 	})
@@ -103,7 +103,7 @@ func TestUploadCacheAwaitObeysTheSendsContext(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	cache.start("/tmp/stalled.bin", func(ctx context.Context, _ string) (tg.InputFileClass, error) {
+	cache.start("/tmp/stalled.bin", func(ctx context.Context, _ string, _ uint64) (tg.InputFileClass, error) {
 		uploadCtx <- ctx
 		<-release
 		return nil, nil
@@ -135,7 +135,7 @@ func TestUploadCacheCancelStopsAndForgetsTheUpload(t *testing.T) {
 	var cache uploadCache
 	uploadCtx := make(chan context.Context, 1)
 
-	cache.start("/tmp/dropped.png", func(ctx context.Context, _ string) (tg.InputFileClass, error) {
+	cache.start("/tmp/dropped.png", func(ctx context.Context, _ string, _ uint64) (tg.InputFileClass, error) {
 		uploadCtx <- ctx
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -157,7 +157,7 @@ func TestUploadCacheReportsAFailureAndDropsTheEntry(t *testing.T) {
 	var cache uploadCache
 	boom := errors.New("connection reset")
 
-	cache.start("/tmp/failed.png", func(context.Context, string) (tg.InputFileClass, error) {
+	cache.start("/tmp/failed.png", func(context.Context, string, uint64) (tg.InputFileClass, error) {
 		return nil, boom
 	})
 
@@ -177,7 +177,7 @@ func TestUploadCacheReportsAFailureAndDropsTheEntry(t *testing.T) {
 func TestUploadCacheStartIsANoOpForAFileItAlreadyHas(t *testing.T) {
 	var cache uploadCache
 	starts := make(chan struct{}, 4)
-	run := func(ctx context.Context, _ string) (tg.InputFileClass, error) {
+	run := func(ctx context.Context, _ string, _ uint64) (tg.InputFileClass, error) {
 		starts <- struct{}{}
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -200,11 +200,45 @@ func TestUploadCacheStartIsANoOpForAFileItAlreadyHas(t *testing.T) {
 // entry keyed by "" and hold it against every other blank path.
 func TestUploadCacheIgnoresAnEmptyPath(t *testing.T) {
 	var cache uploadCache
-	cache.start("", func(context.Context, string) (tg.InputFileClass, error) {
+	cache.start("", func(context.Context, string, uint64) (tg.InputFileClass, error) {
 		t.Error("an empty path started an upload")
 		return nil, nil
 	})
 	if _, cached, _ := cache.await(context.Background(), ""); cached {
 		t.Fatal("an empty path took a cache entry")
+	}
+}
+
+// Each attempt is numbered, and the numbers rise. Attaching a file,
+// discarding it and attaching the same one again is two uploads under one
+// path, and the consumer of their progress can only tell the abandoned one
+// from the live one by which number it carries.
+func TestUploadCacheNumbersEachAttempt(t *testing.T) {
+	var cache uploadCache
+	gens := make(chan uint64, 2)
+	run := func(ctx context.Context, _ string, generation uint64) (tg.InputFileClass, error) {
+		gens <- generation
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	cache.start("/tmp/same.png", run)
+	first := <-gens
+	cache.cancel("/tmp/same.png")
+
+	cache.start("/tmp/same.png", run)
+	second := <-gens
+	cache.cancel("/tmp/same.png")
+
+	if first == 0 {
+		t.Error("the first attempt was numbered 0, which is indistinguishable from unnumbered")
+	}
+	if second <= first {
+		t.Fatalf("attempts numbered %d then %d, want the later one higher", first, second)
+	}
+	// The synchronous upload a send falls back to is an attempt too, and
+	// has to sort after both.
+	if third := cache.nextGeneration(); third <= second {
+		t.Fatalf("the fallback upload took %d, want it after %d", third, second)
 	}
 }
