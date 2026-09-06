@@ -1,14 +1,26 @@
 name: Release
 
-# Fully automatic: every push to main bumps the patch version, creates a
-# tag, builds all platforms, and publishes a GitHub release.
-# Put "#minor" or "#major" in the commit message to bump those instead.
-# Pushing a v* tag manually also works (uses that tag as-is).
+# Deliberate releases only. Merging to main no longer publishes anything —
+# a release happens in exactly two ways:
+#   - push a v* tag, which is released as-is;
+#   - run this workflow manually, choosing the bump level (patch by
+#     default), and the version job computes the next tag from the latest
+#     existing one.
+# Every release then updates Formula/tele-tui.rb in Ceesaxp/homebrew-tap,
+# so `brew upgrade` tracks releases with no manual step. The tap push
+# needs the TAP_GITHUB_TOKEN secret (fine-grained PAT, contents: write on
+# homebrew-tap only) — without it the release still publishes and only
+# the tap step fails.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump level'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
@@ -30,7 +42,7 @@ jobs:
 
       - id: ver
         env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          BUMP: ${{ inputs.bump }}
         run: |
           set -e
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -39,13 +51,11 @@ jobs:
             LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1)
             LATEST=${LATEST:-v0.0.0}
             IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
-            if grep -qi '#major' <<< "$COMMIT_MSG"; then
-              MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
-            elif grep -qi '#minor' <<< "$COMMIT_MSG"; then
-              MINOR=$((MINOR+1)); PATCH=0
-            else
-              PATCH=$((PATCH+1))
-            fi
+            case "${BUMP:-patch}" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              *)     PATCH=$((PATCH+1)) ;;
+            esac
             TAG="v${MAJOR}.${MINOR}.${PATCH}"
             if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
               PATCH=$((PATCH+1))
@@ -115,10 +125,76 @@ jobs:
 
       # softprops/action-gh-release creates the tag (pointing at this
       # commit) when it does not exist yet — this is what makes the
-      # whole flow tagless on the pusher's side.
+      # manual-dispatch flow tagless on the pusher's side.
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: ${{ needs.version.outputs.tag }}
           files: packages/*
           generate_release_notes: true
+
+  tap:
+    name: Update Homebrew tap
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Ceesaxp/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      # The formula pins one url + sha256 pair per platform. The sha256s
+      # come from the artifacts this same run built — not re-downloaded
+      # from the release — so the formula describes exactly the bytes that
+      # were published, and a checksum mismatch here means the publish
+      # itself is broken, which is the right moment to find out.
+      #
+      # sed's /url .../{n; s...} form rewrites the sha256 on the line
+      # AFTER each matched url line, so the pairing survives without this
+      # step having to understand Ruby.
+      - name: Rewrite formula
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -e
+          FORMULA=tap/Formula/tele-tui.rb
+          for plat in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            PKG="telegram-cli_${TAG}_${plat}.tar.gz"
+            test -f "packages/${PKG}" || { echo "missing ${PKG}"; exit 1; }
+            SHA=$(sha256sum "packages/${PKG}" | cut -d' ' -f1)
+            sed -i -E \
+              "s|download/v[0-9.]+/telegram-cli_v[0-9.]+_${plat}\.tar\.gz|download/${TAG}/telegram-cli_${TAG}_${plat}.tar.gz|" \
+              "$FORMULA"
+            sed -i -E \
+              "\|telegram-cli_${TAG}_${plat}\.tar\.gz|{n; s|sha256 \"[0-9a-f]{64}\"|sha256 \"${SHA}\"|;}" \
+              "$FORMULA"
+          done
+          # Refuse to push a formula that still names any other version:
+          # a leftover pin means the sed above silently missed a line.
+          if grep -E "download/v[0-9.]+/" "$FORMULA" | grep -v "download/${TAG}/"; then
+            echo "formula still pins another version"; exit 1
+          fi
+          git -C tap diff
+
+      - name: Commit and push
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -e
+          cd tap
+          if git diff --quiet; then
+            echo "formula already at ${TAG}, nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/tele-tui.rb
+          git commit -m "tele-tui ${TAG#v}"
+          git push
