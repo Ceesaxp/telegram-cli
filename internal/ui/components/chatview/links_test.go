@@ -503,9 +503,18 @@ func TestATelegramLinkIsHandedToTheHost(t *testing.T) {
 func TestANonTelegramLinkStillGoesToTheOpener(t *testing.T) {
 	m := linkModel(t)
 	m, _ = press(m, "g", "x")
-	// example.invalid resolves nowhere, so the opener has nothing to open
-	// and the assertion is about which path was taken, not about a browser.
 	m.armed.safeURI, m.armed.uri = "https://example.invalid/ok", "https://example.invalid/ok"
+
+	// Through the seam, never a real process: "which path was taken" is
+	// answered by the fake recording a start, not by a browser opening —
+	// the exact mistake TestAFailedOpenIsReported used to make.
+	prev := startOpener
+	var started *exec.Cmd
+	startOpener = func(cmd *exec.Cmd) error {
+		started = cmd
+		return nil
+	}
+	t.Cleanup(func() { startOpener = prev })
 
 	_, cmd, handled := m.openArmedLink()
 	if !handled {
@@ -518,12 +527,14 @@ func TestANonTelegramLinkStillGoesToTheOpener(t *testing.T) {
 	case TelegramLinkMsg:
 		t.Fatalf("an ordinary web link was intercepted as Telegram navigation: %+v", msg)
 	case MediaPlayMsg:
-		// The opener path: it either opened or said why it could not.
-		if msg.Status != "opened" && msg.Status != "error" {
-			t.Errorf("status = %q, want opened or error", msg.Status)
+		if msg.Status != "opened" {
+			t.Errorf("status = %q, want opened", msg.Status)
 		}
 	default:
 		t.Fatalf("unexpected message %T", msg)
+	}
+	if started == nil {
+		t.Fatal("the opener was never handed the link")
 	}
 }
 
@@ -535,12 +546,26 @@ func TestAnInviteLinkIsNotFollowedInPlace(t *testing.T) {
 	m, _ = press(m, "g", "x")
 	m.armed.safeURI, m.armed.uri = "https://t.me/+AbCdEf123", "https://t.me/+AbCdEf123"
 
+	// Faked, because on macOS the real opener would route a t.me link to
+	// Telegram Desktop — a test that pops a join prompt for a bogus invite
+	// hash is worse than the tab TestAFailedOpenIsReported used to open.
+	prev := startOpener
+	var started *exec.Cmd
+	startOpener = func(cmd *exec.Cmd) error {
+		started = cmd
+		return nil
+	}
+	t.Cleanup(func() { startOpener = prev })
+
 	_, cmd, _ := m.openArmedLink()
 	if cmd == nil {
 		t.Fatal("no command returned")
 	}
 	if msg, ok := cmd().(TelegramLinkMsg); ok {
 		t.Errorf("an invite link was followed in place: %+v", msg)
+	}
+	if started == nil {
+		t.Fatal("the invite link was not handed to the opener either")
 	}
 }
 
