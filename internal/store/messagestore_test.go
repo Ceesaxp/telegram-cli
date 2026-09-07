@@ -156,3 +156,70 @@ func messageIDs(messages []*telegram.Message) []int64 {
 	}
 	return ids
 }
+
+// A refetch of the newest page after a sync gap can carry messages newer
+// than anything cached, older ones that fell in a hole, and copies of what
+// is already there. Merge has to put each where it belongs by ID, report
+// only what was new, and leave a local echo — a negative ID the server has
+// never seen — where it was: at the bottom, after everything confirmed.
+func TestMergePlacesNewMessagesByIDAndKeepsEchoesLast(t *testing.T) {
+	const chatID = int64(1)
+	s := NewMessageStore()
+	for _, id := range []int64{1, 2, 5, -1} {
+		s.Append(chatID, storedMessage(chatID, id))
+	}
+
+	inserted := s.Merge(chatID, []*telegram.Message{
+		storedMessage(chatID, 3),
+		storedMessage(chatID, 5),
+		storedMessage(chatID, 6),
+		storedMessage(chatID, 7),
+	})
+
+	gotInserted := ids(inserted)
+	if want := []int64{3, 6, 7}; !equalIDs(gotInserted, want) {
+		t.Fatalf("inserted = %v, want %v", gotInserted, want)
+	}
+	got := ids(s.Get(chatID))
+	if want := []int64{1, 2, 3, 5, 6, 7, -1}; !equalIDs(got, want) {
+		t.Fatalf("order after merge = %v, want %v", got, want)
+	}
+}
+
+// The server's copy is fresher than ours — an edit or a reaction that
+// happened during the gap is on it — so a message already cached is
+// replaced by the merge, not skipped.
+func TestMergeReplacesTheCachedCopy(t *testing.T) {
+	const chatID = int64(1)
+	s := NewMessageStore()
+	stale := storedMessage(chatID, 4)
+	s.Append(chatID, stale)
+
+	fresh := storedMessage(chatID, 4)
+	if inserted := s.Merge(chatID, []*telegram.Message{fresh}); len(inserted) != 0 {
+		t.Fatalf("a replaced message must not be reported as inserted, got %d", len(inserted))
+	}
+	if got := s.Get(chatID); len(got) != 1 || got[0] != fresh {
+		t.Fatalf("store holds %v, want the fresh copy alone", got)
+	}
+}
+
+func ids(msgs []*telegram.Message) []int64 {
+	out := make([]int64, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+func equalIDs(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

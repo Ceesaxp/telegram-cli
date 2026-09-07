@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
@@ -96,6 +97,65 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 		return nil
 	}
 	return append([]*telegram.Message(nil), toAdd[dropped:]...)
+}
+
+// Merge folds a freshly fetched page into whatever is cached, wherever each
+// message belongs, and returns the ones that were new.
+//
+// [Prepend] is for paging backwards: everything it is handed is older than
+// everything it has. A page fetched to catch up after a sync gap is the
+// opposite shape — mostly newer than the cache, sometimes filling a hole in
+// the middle of it, always overlapping what is already there — so it is
+// placed by ID rather than by which end it arrived at. A message already
+// cached is REPLACED by the server's copy, since an edit or a reaction that
+// happened during the gap is on that copy and not on ours.
+//
+// Local echoes (negative IDs, see [ReplaceMessageId]) stay at the bottom
+// after everything confirmed: their IDs order nothing, and the row belongs
+// under the newest message the server has, which is what the reader sent
+// it after.
+func (s *MessageStore) Merge(chatID int64, msgs []*telegram.Message) []*telegram.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing := s.messages[chatID]
+	index := make(map[int64]int, len(existing))
+	for i, m := range existing {
+		index[m.ID] = i
+	}
+
+	var added []*telegram.Message
+	for _, m := range msgs {
+		if m == nil {
+			continue
+		}
+		if i, ok := index[m.ID]; ok {
+			if i >= 0 {
+				existing[i] = m
+			}
+			continue
+		}
+		index[m.ID] = -1 // seen, but not in existing
+		added = append(added, m)
+	}
+	if len(added) == 0 {
+		s.storeLocked(chatID, existing)
+		return nil
+	}
+
+	confirmed := make([]*telegram.Message, 0, len(existing)+len(added))
+	var echoes []*telegram.Message
+	for _, m := range append(existing, added...) {
+		if m.ID > 0 {
+			confirmed = append(confirmed, m)
+		} else {
+			echoes = append(echoes, m)
+		}
+	}
+	sort.SliceStable(confirmed, func(i, j int) bool { return confirmed[i].ID < confirmed[j].ID })
+
+	s.storeLocked(chatID, append(confirmed, echoes...))
+	return append([]*telegram.Message(nil), added...)
 }
 
 // Get returns all cached messages for a chat.
