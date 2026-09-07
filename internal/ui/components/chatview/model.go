@@ -1711,6 +1711,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, m.noteRead(msg.Message.ID)
 		}
 
+	case telegram.ChatReadOutboxMsg:
+		// The other side read up to here. The mark lives in the chat
+		// store whichever chat it is for — it is what the tick is read
+		// from when the chat is opened — and this is the only place that
+		// reads it, so it is kept here rather than in the chat list. For
+		// the open chat, every own row the receipt covers is redrawn:
+		// rows are cached once drawn, and the cached one still shows a
+		// single tick. Before this the event was emitted and consumed by
+		// nobody, so a reply's tick only flipped on reopening the chat.
+		m.store.Chats.UpdateReadOutbox(msg.ChatId, msg.LastReadOutboxMessageId)
+		if msg.ChatId == m.chatID {
+			for _, own := range m.store.Messages.Get(m.chatID) {
+				if own.ID > 0 && own.ID <= msg.LastReadOutboxMessageId && isOwnMessage(own, m.myUserId) {
+					m.cache.invalidate(own.ID)
+				}
+			}
+		}
+
 	case telegram.ChatActionMsg:
 		// The typing indicator is a row of the thread grid in TUI 2.0, so
 		// the thread is what tracks who is typing. Actions for other chats

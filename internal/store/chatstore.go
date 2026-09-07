@@ -211,6 +211,24 @@ func (s *ChatStore) UpdateReadInbox(chatID int64, unreadCount int32) {
 	}
 }
 
+// UpdateReadOutbox records that the other side has read everything up to
+// maxID — the fact a sent message's tick is drawn from. Only ever forward:
+// receipts can arrive out of order, and an older one must not take a tick
+// back. A no-op for a chat the store does not know; a receipt describes a
+// chat, it does not introduce one.
+func (s *ChatStore) UpdateReadOutbox(chatID int64, maxID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.chats[chatID]
+	if !ok || entry.Chat == nil {
+		return
+	}
+	if maxID > entry.Chat.LastReadOutboxMessageID {
+		entry.Chat.LastReadOutboxMessageID = maxID
+	}
+}
+
 // SetMuted updates a chat's muted flag. It is a no-op if the chat is not
 // yet known to the store.
 func (s *ChatStore) SetMuted(chatID int64, muted bool) {
