@@ -74,6 +74,10 @@ type Model struct {
 	// owns and a text redraw does not erase.
 	mediaTeardown string
 
+	// conn watches connection states for the reconnects worth catching up
+	// after. See resync.go.
+	conn connTracker
+
 	// noticeAt is when the hint bar's transient notice was raised, so the
 	// chrome tick can give the row back after four seconds. Zero means
 	// there is nothing to expire.
@@ -1067,7 +1071,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// than waiting for one of these, because the client demonstrably
 		// works by then and the event timing is not guaranteed.
 		m.topBar.SetConnection(topBarConnState(msg.State))
+		// Back after a drop: the open chat gets a second look, since a
+		// reconnect is exactly where the update stream loses things the
+		// server will not replay. The chat list is left alone — this is
+		// routine on a laptop, and one page request is the right price.
+		if m.conn.observe(msg.State) {
+			return m, m.chatView.CatchUpCmd()
+		}
 		return m, nil
+
+	case telegram.ResyncNeededMsg:
+		// The client has said outright that it cannot replay a gap. See
+		// telegram.ResyncNeededMsg and resync.go.
+		cmds = append(cmds, m.resync(msg.Reason))
 
 	case telegram.ClientErrorMsg:
 		// Terminal means the run loop has exited: nothing will arrive
