@@ -187,6 +187,11 @@ func newClient(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *C
 	gaps := updates.New(updates.Config{
 		Handler:      dispatcher,
 		AccessHasher: c.peers,
+		// Answered from the persisted peer cache rather than gotd's
+		// in-memory default, which starts empty every run and makes
+		// every private message from a not-yet-seen sender cost a full
+		// getDifference. See peerUserHasher.
+		UserAccessHasher: stores.userHasher(),
 		// Nil storage means in-memory: the manager then has no state to
 		// restore, fetches the current one via updates.getState and
 		// starts from there, exactly as before this was persisted.
