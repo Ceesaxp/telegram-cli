@@ -192,6 +192,8 @@ func newClient(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *C
 		// every private message from a not-yet-seen sender cost a full
 		// getDifference. See peerUserHasher.
 		UserAccessHasher: stores.userHasher(),
+		// Onto the standard log, i.e. TELETUI_DEBUG. See gotdLogger.
+		Logger: gotdLogger("updates"),
 		// Nil storage means in-memory: the manager then has no state to
 		// restore, fetches the current one via updates.getState and
 		// starts from there, exactly as before this was persisted.
