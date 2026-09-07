@@ -1,6 +1,23 @@
 # TODO
 
-## Current wave — send-path latency (2026-09-06)
+## Sync-gap wave (2026-09-07) — done, uncommitted branch main
+
+Reported: a reply showed in the chat list but not in the open thread; the sent message kept a single tick. Diagnosis: both panels are fed from one publish call, so the live update never reached the app; gotd v0.161 gates private short updates on a user-hash source the app never provided (empty every run), forcing getDifference per unseen sender, and a "difference too long" drops the message with no callback set. Separately, ChatReadOutboxMsg was emitted and consumed by nobody.
+
+- [x] `peerUserHasher` serves gotd's user-hash check from the persisted peer cache (`internal/telegram/user_hasher.go`); prefix literal pinned by a test through the real peers.Manager
+- [x] `gotdLogger` bridges the update manager's log to the standard log → TELETUI_DEBUG now carries every getDifference and its reason
+- [x] `ResyncNeededMsg` from OnTooLong / OnLoadUserStateFailed → app reloads dialogs (`chatlist.ReloadCmd`) and refetches the open chat's newest page (`chatview.CatchUpCmd`, merged by ID via `MessageStore.Merge`); reconnect refetches the open chat only
+- [x] `ChatReadOutboxMsg` consumed: store mark moves forward, cached own rows invalidated → double tick live
+- [x] `make test` green; gofmt/vet clean (golangci-lint blocked by the pre-existing toolchain mismatch)
+- [ ] Reinstall the binary (`go install ./cmd/teletui`) and run with `TELETUI_DEBUG=/tmp/teletui.log` to catch the next occurrence with gotd's own account of it
+
+## Queued wave — gx follow-ups (2026-09-06) — merged: #75, #76
+
+- [x] **t.me interception in gx** — parse t.me/username[/msg] and t.me/c/id/msg out of openArmedLink, navigate via the openChatAt seam (username resolution through gotd peers), vi-style jump stack with a go-back key; invite/proxy/share links stay with the browser. Worktree branch feat/tme-links off main — merged as #76 (with the five review fixes). (opus)
+- [x] **TestAFailedOpenIsReported is moot** — the test really execs /usr/bin/open, which succeeds for any https URL, so `opened || error` can never fail and a browser tab opens per run. Fix: seam the opener start, test both mappings, audit the package for other real-exec tests. Worktree branch fix/moot-open-test off main — merged as #75. (sonnet)
+- [x] **Theming spec revised** — docs/theming.md updated per docs/theming-review.md (seam decided, decode shape, strict validation, termenv depth fallback, ramp rule, Phase 2 scoped honestly, open questions resolved); both files untracked pending Andrei's read. Phase 1 breakdown ready in the review doc.
+
+## Current wave — send-path latency (2026-09-06) — merged as #73
 
 Four steps run by subagents; 1+2 parallel, 3 then 4 sequential.
 
