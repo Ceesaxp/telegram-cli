@@ -766,19 +766,36 @@ func (c *Client) ReadReactions(chatID int64) error {
 		return fmt.Errorf("read reactions: %w", err)
 	}
 
-	for range maxReadReactionsCalls {
-		affected, err := c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
+	done, err := repeatUntilDone(maxReadReactionsCalls, func() (*tg.MessagesAffectedHistory, error) {
+		return c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
 			Peer: peer,
 		})
-		if err != nil {
-			return fmt.Errorf("read reactions: %w", err)
-		}
-		if affected.Offset <= 0 {
-			c.send(ChatReactionsReadMsg{ChatId: chatID})
-			return nil
-		}
+	})
+	if err != nil {
+		return fmt.Errorf("read reactions: %w", err)
+	}
+	if done {
+		c.send(ChatReactionsReadMsg{ChatId: chatID})
 	}
 	return nil
+}
+
+// repeatUntilDone makes call again while its answer carries a positive
+// offset, which is how the API says a clear that answers
+// messages.affectedHistory has more to do, and makes it at most calls times.
+// It reports whether the server said it was done: stopping at the cap is
+// not an error, and it is not a finished clear either.
+func repeatUntilDone(calls int, call func() (*tg.MessagesAffectedHistory, error)) (bool, error) {
+	for range calls {
+		affected, err := call()
+		if err != nil {
+			return false, err
+		}
+		if affected.Offset <= 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // UnreadMentions lists the IDs of a chat's unread mentions, oldest first,
