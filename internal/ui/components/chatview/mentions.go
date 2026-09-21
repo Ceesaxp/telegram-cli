@@ -261,15 +261,29 @@ func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
 		m.notice = "could not load mentions"
 		return m, nil
 	}
+	if len(msg.ids) == 0 {
+		m.notice = "no unread mentions"
+		return m, m.correctMentionCount()
+	}
 	var fresh []int64
+	unreachable := false
 	for _, id := range msg.ids {
-		if !m.askedMentions.has(m.chatID, id) && !m.unreachableMentions.has(m.chatID, id) {
+		switch {
+		case m.unreachableMentions.has(m.chatID, id):
+			unreachable = true
+		case !m.askedMentions.has(m.chatID, id):
 			fresh = append(fresh, id)
 		}
 	}
 	if len(fresh) == 0 {
+		// The server still lists these, so the count stands: they are
+		// out of a jump's reach, or asked to clear and on their way out,
+		// in which case the clear's own announcement takes them off.
 		m.notice = "no unread mentions"
-		return m, m.correctMentionCount()
+		if unreachable {
+			m.notice = "the unread mentions left are further back than this chat loads"
+		}
+		return m, nil
 	}
 	// Nothing is cleared yet. The jump may not reach the message — its
 	// hunt pages back only so far — and a mention cleared unseen is gone
@@ -350,10 +364,11 @@ func (m Model) mentionsAfter(listed int, full bool) int {
 	return max(listed-1, counted-1, 0)
 }
 
-// correctMentionCount answers a listing with nothing left in it. If the
-// store still counts mentions for the chat, the count is stale — one was
-// cleared on another device, say — and the @ on the row would stay for
-// ever, so it is zeroed.
+// correctMentionCount answers an empty listing. If the store still counts
+// mentions for the chat, the count is stale — one was cleared on another
+// device, say — and the @ on the row would stay for ever, so it is zeroed.
+// A listing that names mentions, even ones g@ skips, is not empty, and the
+// count it backs is left alone.
 //
 // This is a local correction, not a server clear: the server has just
 // said there is nothing to clear. It goes out as the message a finished

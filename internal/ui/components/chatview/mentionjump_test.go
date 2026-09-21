@@ -415,3 +415,40 @@ func TestGAtInASupergroupAsks(t *testing.T) {
 		t.Error("g@ in a supergroup did not ask the server")
 	}
 }
+
+// A listing that names mentions the server still holds is not an empty
+// one, even when this client has set every one of them aside. Zeroing the
+// count then would take the @ off a chat that still has mentions. Here the
+// only one left is out of a jump's reach, and the notice says so.
+func TestAListingOfOnlyAnUnreachableMentionLeavesTheCount(t *testing.T) {
+	m := huntFromHigh(t)
+	setMentionCount(t, m, 1)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{3}})
+	m, _ = huntUntilSettled(t, m, 3)
+
+	m, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{3}})
+	if cmd != nil {
+		t.Error("the count was corrected while the server still lists a mention")
+	}
+	if want := "the unread mentions left are further back than this chat loads"; m.notice != want {
+		t.Errorf("notice = %q, want %q", m.notice, want)
+	}
+}
+
+// The same for mentions this client has asked to clear and the server has
+// not caught up with: they are on their way out, and the clear's own
+// announcement takes them off the count when it lands.
+func TestAListingOfOnlyAskedMentionsLeavesTheCount(t *testing.T) {
+	m := openQuietMentionChat(t)
+	setMentionCount(t, m, 1)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
+	m, _ = landOn(m, 5, 5, 4, 3, 2, 1)
+
+	m, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
+	if cmd != nil {
+		t.Error("the count was corrected while the server still lists a mention")
+	}
+	if m.notice != "no unread mentions" {
+		t.Errorf("notice = %q, want %q", m.notice, "no unread mentions")
+	}
+}
