@@ -445,11 +445,14 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   is a jump in I-17's sense, so `Ctrl+O` returns.
 
   Landing on a mention clears it, voice and video notes included, because
-  the reader chose to go there. Opening a chat at its newest messages
-  clears the mentions on its first page, on the terms that open sends the
-  read receipt — which does not clear them itself — except voice and video
-  notes, which TDLib leaves for playing to clear. `:read-mentions` clears
-  the lot.
+  the reader chose to go there — landing, not setting off. The jump pages
+  back only a few pages, and a mention further back than that is skipped
+  and left unread rather than cleared unseen, which would take it out of
+  the listing for good; the next `g@` goes on past it. Opening a chat at
+  its newest messages clears the mentions on its first page, on the terms
+  that open sends the read receipt — which does not clear them itself —
+  except voice and video notes, which TDLib leaves for playing to clear.
+  `:read-mentions` clears the lot.
 
 - **I-14 — Accepted as they are.** Digits jump folders in the chat list and
   count motions in the chat view: adjacent panels, different meanings,

@@ -319,8 +319,14 @@ type Model struct {
 	mentionsFlushPending bool
 	// askedMentions is every mention this client has asked to clear, chat
 	// by chat. Unlike the owed ones it survives a chat switch; see
-	// mentionLedger.
-	askedMentions mentionLedger
+	// mentionLedger. unreachableMentions are the ones a g@ jump could not
+	// reach, which the next g@ skips.
+	askedMentions       mentionLedger
+	unreachableMentions mentionLedger
+	// mentionTarget is the mention a g@ jump is on its way to. It survives
+	// the reopen of its own chat that makes the jump, and is settled when
+	// the hunt for it finds it (cleared) or gives up (skipped).
+	mentionTarget mentionRef
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -1040,6 +1046,9 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 // backwards; if it is still not found the view settles at the oldest
 // loaded message and a notice is shown in the header.
 func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cmd {
+	if m.mentionTarget.chatID != chatID {
+		m.mentionTarget = mentionRef{}
+	}
 	m.gen++
 	m.store.Messages.Activate(chatID)
 	m.chatID = chatID
@@ -1195,8 +1204,11 @@ func (m *Model) finishHistory() {
 // the reader at the oldest loaded message, which is as close as the hunt
 // got.
 func (m *Model) giveUpOnTarget() {
-	m.targetMsgID = 0
 	m.notice = "message not in loaded history"
+	if m.missMention(m.targetMsgID) {
+		m.notice = "that mention is further back than this chat loads"
+	}
+	m.targetMsgID = 0
 	m.scrollOffset = m.maxScrollOffset()
 }
 
@@ -1778,6 +1790,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// change bubble heights, so the jump is re-applied when
 				// the last of them lands.
 				m.pendingJumpID = m.targetMsgID
+				onOpen = tea.Batch(onOpen, m.landOnMention(m.targetMsgID))
 				m.targetMsgID = 0
 			case m.targetPages < maxTargetPages:
 				// Keep paging backwards for the target, then resolve the

@@ -45,41 +45,61 @@ func TestGThenAtAsksForTheUnreadMentions(t *testing.T) {
 	}
 }
 
-// mentionJump runs what the panel returned for a listing and sorts it into
-// the jump it hands the host and the number of commands that went to the
-// client, which are the clears.
-func mentionJump(t *testing.T, cmd tea.Cmd) (MentionJumpMsg, int) {
-	t.Helper()
-	var (
-		jump   MentionJumpMsg
-		jumps  int
-		clears int
-	)
-	for _, c := range runBatch(t, cmd) {
-		if reachesClient(c) {
-			clears++
-			continue
+// reachesClientAnywhere is reachesClient for a command that may be a
+// batch: it runs every command the batch holds, and reports whether any of
+// them went to the client.
+func reachesClientAnywhere(cmd tea.Cmd) (reached bool) {
+	if cmd == nil {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			reached = true
 		}
-		if got, ok := c().(MentionJumpMsg); ok {
-			jump = got
-			jumps++
+	}()
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if reachesClientAnywhere(c) {
+				return true
+			}
 		}
 	}
-	if jumps != 1 {
-		t.Fatalf("the listing handed the host %d jumps, want 1", jumps)
-	}
-	return jump, clears
+	return false
 }
 
-// The oldest unread mention is where g@ goes. Landing there is the reader
-// choosing to look at it, so it is cleared at once rather than after a
-// window, and the host is handed the jump: the panel reads, the host
-// navigates.
-func TestAListingJumpsToTheOldestMentionAndClearsIt(t *testing.T) {
+// jumpOf reads the jump a listing hands the host. It is the listing's
+// only command: nothing is cleared before the reader has landed.
+func jumpOf(t *testing.T, cmd tea.Cmd) MentionJumpMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("the listing handed the host no jump")
+	}
+	if reachesClient(cmd) {
+		t.Fatal("the listing went to the client before the reader landed anywhere")
+	}
+	jump, ok := cmd().(MentionJumpMsg)
+	if !ok {
+		t.Fatalf("the listing handed the host %T, want a MentionJumpMsg", cmd())
+	}
+	return jump
+}
+
+// landOn is the host's half of a mention jump: it reopens the chat at the
+// mention, and the first page comes back holding the given messages.
+func landOn(m Model, target int64, page ...int64) (Model, tea.Cmd) {
+	m.OpenChatAt(testChatID, "nadia", target)
+	return m.Update(historyPage(m, 0, page...))
+}
+
+// The oldest unread mention is where g@ goes, and the host is handed the
+// jump: the panel reads, the host navigates. Nothing is cleared yet: the
+// jump may not reach the message, and a mention cleared unseen is gone
+// from the listing for good.
+func TestAListingJumpsToTheOldestMention(t *testing.T) {
 	m := openQuietMentionChat(t)
 
 	m, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
-	jump, clears := mentionJump(t, cmd)
+	jump := jumpOf(t, cmd)
 	if jump.ChatId != testChatID || jump.MessageId != 5 {
 		t.Errorf("jumped to chat %d message %d, want chat %d message 5",
 			jump.ChatId, jump.MessageId, testChatID)
@@ -87,11 +107,90 @@ func TestAListingJumpsToTheOldestMentionAndClearsIt(t *testing.T) {
 	if jump.Remaining < 1 {
 		t.Errorf("Remaining = %d with 9 still unread, want at least 1", jump.Remaining)
 	}
-	if clears != 1 {
-		t.Errorf("the jump sent %d clears, want one for the mention it lands on", clears)
+	if m.askedMentions.has(testChatID, 5) {
+		t.Error("the mention was recorded as asked before the reader landed on it")
+	}
+}
+
+// Landing on the mention is the reader looking at it, so it is cleared
+// then, at once rather than after a window, and voice notes too: the
+// reader chose to go there. Once: coming back to it later is not a second
+// arrival.
+func TestLandingOnTheMentionClearsItOnce(t *testing.T) {
+	m := openQuietMentionChat(t)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
+
+	m, cmd := landOn(m, 5, 5, 4, 3, 2, 1)
+	if !reachesClientAnywhere(cmd) {
+		t.Fatal("landing on the mention sent no clear")
 	}
 	if !m.askedMentions.has(testChatID, 5) {
-		t.Error("the mention jumped to was not recorded as asked")
+		t.Error("the mention landed on was not recorded as asked")
+	}
+
+	if _, cmd = landOn(m, 5, 5, 4, 3, 2, 1); reachesClientAnywhere(cmd) {
+		t.Error("coming back to the mention cleared it a second time")
+	}
+}
+
+// huntFromHigh is a chat read to message 100 and open at its newest
+// page, 100 to 96, so that a mention far below that is further back than
+// a jump's hunt walks.
+func huntFromHigh(t *testing.T) Model {
+	t.Helper()
+	m := unreadChat(100, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(historyPage(m, 0, 100, 99, 98, 97, 96))
+	return m
+}
+
+// huntUntilSettled plays the server for a jump's hunt backwards: each
+// page it asks for is the five messages below the oldest loaded, until the
+// panel stops asking. It returns what the last page produced.
+func huntUntilSettled(t *testing.T, m Model, target int64) (Model, tea.Cmd) {
+	t.Helper()
+	m.OpenChatAt(testChatID, "nadia", target)
+	m, cmd := m.Update(historyPage(m, 0, 100, 99, 98, 97, 96))
+	for pages := 0; m.targetMsgID != 0; pages++ {
+		if pages > maxTargetPages+1 {
+			t.Fatalf("the hunt for %d did not stop after %d pages", target, pages)
+		}
+		oldest := m.store.Messages.OldestMessageId(testChatID)
+		m, cmd = m.Update(historyPage(m, oldest, oldest-1, oldest-2, oldest-3, oldest-4, oldest-5))
+	}
+	return m, cmd
+}
+
+// The jump's hunt pages back a few pages, not the whole history, and a
+// mention further back than that cannot be shown. It is not cleared, since
+// nobody saw it, and the notice says why the reader is not looking at it
+// rather than the generic miss.
+func TestAMentionTooFarBackIsLeftUnread(t *testing.T) {
+	m := huntFromHigh(t)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{3, 97}})
+
+	m, cmd := huntUntilSettled(t, m, 3)
+	if reachesClientAnywhere(cmd) {
+		t.Error("a mention the hunt never reached was cleared")
+	}
+	if m.askedMentions.has(testChatID, 3) {
+		t.Error("a mention the hunt never reached was recorded as asked")
+	}
+	if want := "that mention is further back than this chat loads"; m.notice != want {
+		t.Errorf("notice = %q, want %q", m.notice, want)
+	}
+}
+
+// The next g@ does not walk into the same wall: the mention out of reach
+// is skipped for the session, and the reader goes on to the one after.
+func TestTheNextGAtSkipsAMentionOutOfReach(t *testing.T) {
+	m := huntFromHigh(t)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{3, 97}})
+	m, _ = huntUntilSettled(t, m, 3)
+
+	_, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{3, 97}})
+	if jump := jumpOf(t, cmd); jump.MessageId != 97 {
+		t.Errorf("the next g@ jumped to %d, want 97, past the one out of reach", jump.MessageId)
 	}
 }
 
@@ -102,14 +201,11 @@ func TestAListingJumpsToTheOldestMentionAndClearsIt(t *testing.T) {
 func TestAgainGoesToTheMentionAfter(t *testing.T) {
 	m := openQuietMentionChat(t)
 	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
+	m, _ = landOn(m, 5, 5, 4, 3, 2, 1)
 
-	m, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
-	jump, clears := mentionJump(t, cmd)
-	if jump.MessageId != 9 {
+	_, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
+	if jump := jumpOf(t, cmd); jump.MessageId != 9 {
 		t.Errorf("the second g@ jumped to %d, want 9", jump.MessageId)
-	}
-	if clears != 1 {
-		t.Errorf("the second jump sent %d clears, want one, for 9 alone", clears)
 	}
 }
 
@@ -144,7 +240,7 @@ func TestRemainingIsTheLargerOfTheListingAndTheCount(t *testing.T) {
 			setMentionCount(t, m, tc.count)
 
 			_, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: tc.ids})
-			if jump, _ := mentionJump(t, cmd); jump.Remaining != tc.want {
+			if jump := jumpOf(t, cmd); jump.Remaining != tc.want {
 				t.Errorf("Remaining = %d for %v with %d counted, want %d",
 					jump.Remaining, tc.ids, tc.count, tc.want)
 			}
@@ -192,6 +288,7 @@ func TestAnEmptyListingCorrectsAStaleCount(t *testing.T) {
 func TestAListingOfAskedMentionsOnlyIsEmpty(t *testing.T) {
 	m := openQuietMentionChat(t)
 	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
+	m, _ = landOn(m, 5, 5, 4, 3, 2, 1)
 
 	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
 	if m.notice != "no unread mentions" {
@@ -235,35 +332,29 @@ func TestAFailedListingSaysSo(t *testing.T) {
 }
 
 // A mention on screen at open waits out the window, and g@ inside it can
-// land on the same one and clear it at once. The window's clear must not
-// then ask for it a second time.
-func TestAMentionJumpedToInsideTheWindowIsNotAskedForAgain(t *testing.T) {
+// go to the same one. Whichever asks first, the other must not ask again:
+// here the window closes before the reader lands.
+func TestAMentionTheWindowClearedIsNotClearedAgainOnLanding(t *testing.T) {
 	m := unreadChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
-
 	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{4}})
 
-	if _, cmd := m.Update(mentionsFlushMsg{chatID: testChatID}); cmd != nil {
-		t.Fatal("the window asked again for the mention g@ had already cleared")
+	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
+
+	if _, cmd := landOn(m, 4, 5, 4, 3, 2, 1); reachesClientAnywhere(cmd) {
+		t.Fatal("landing asked again for the mention the window had already cleared")
 	}
 }
 
-// Without a client there is nobody to send the clear to, and the jump
-// still goes: it is the host's to make. What must not come back is a
-// command that dereferences the missing client.
-func TestAListingWithNoClientJumpsWithoutAClear(t *testing.T) {
+// Without a client there is nobody to send the clear to. Landing must not
+// hand back a command that dereferences the missing client.
+func TestLandingWithNoClientSendsNoClear(t *testing.T) {
 	m := openQuietMentionChat(t)
 	m.tg = nil
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
 
-	_, cmd := m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5}})
-	if cmd == nil {
-		t.Fatal("no jump without a client")
-	}
-	if reachesClient(cmd) {
-		t.Fatal("the listing handed back a clear with no client to make it")
-	}
-	if jump, ok := cmd().(MentionJumpMsg); !ok || jump.MessageId != 5 {
-		t.Errorf("got %#v, want the jump to 5 on its own", jump)
+	if _, cmd := landOn(m, 5, 5, 4, 3, 2, 1); cmd != nil {
+		t.Fatal("landing handed back a command with no client to make it")
 	}
 }

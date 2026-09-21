@@ -124,8 +124,10 @@ const maxAskedChats = 32
 // chat: two first pages' worth of mentions.
 const maxAskedPerChat = 100
 
-// mentionLedger remembers, chat by chat, the unread mentions this client
-// has already asked the server to clear, so that none is asked for twice.
+// mentionLedger remembers mentions, chat by chat, for the session. There
+// are two: the mentions this client has already asked the server to clear,
+// so that none is asked for twice, and the ones a g@ jump could not reach,
+// so that the next g@ goes past them.
 //
 // It outlives a chat switch on purpose. A clear the server has not answered
 // yet leaves the flags on the page, and a reopen of the same chat brings
@@ -200,7 +202,7 @@ func (m Model) listMentionsCmd() tea.Cmd {
 	}
 }
 
-// MentionJumpMsg is g@ landing: the next unread mention, handed to the
+// MentionJumpMsg is where g@ goes: the next unread mention, handed to the
 // host to go to, the way [TelegramLinkMsg] hands over a link. The panel
 // reads, the host navigates, so every way of opening a chat stays one
 // function and a way back is recorded for ctrl+o.
@@ -226,7 +228,7 @@ func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
 	}
 	var fresh []int64
 	for _, id := range msg.ids {
-		if !m.askedMentions.has(m.chatID, id) {
+		if !m.askedMentions.has(m.chatID, id) && !m.unreachableMentions.has(m.chatID, id) {
 			fresh = append(fresh, id)
 		}
 	}
@@ -234,25 +236,59 @@ func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
 		m.notice = "no unread mentions"
 		return m, m.correctMentionCount()
 	}
+	// Nothing is cleared yet. The jump may not reach the message — its
+	// hunt pages back only so far — and a mention cleared unseen is gone
+	// from the listing for good. landOnMention clears it on arrival.
 	id := fresh[0]
-	m.askedMentions.record(m.chatID, id)
-	chatID, tg := m.chatID, m.tg
+	m.mentionTarget = mentionRef{chatID: m.chatID, id: id}
+	chatID := m.chatID
 	remaining := m.mentionsAfter(len(fresh))
-	jump := func() tea.Msg {
+	return m, func() tea.Msg {
 		return MentionJumpMsg{ChatId: chatID, MessageId: id, Remaining: remaining}
 	}
-	if tg == nil {
-		return m, jump
+}
+
+// mentionRef names one mention: a message in a chat. The zero value is
+// none.
+type mentionRef struct {
+	chatID, id int64
+}
+
+// landOnMention is a jump arriving at message id. If that is the mention
+// g@ went to, it is cleared now, at once rather than through the window:
+// the reader chose to go there, which is also why a voice note is cleared
+// here and not by being on screen.
+func (m *Model) landOnMention(id int64) tea.Cmd {
+	if m.mentionTarget != (mentionRef{chatID: m.chatID, id: id}) {
+		return nil
 	}
-	// At once, not through the window: the reader chose to go there, which
-	// is also why a voice note is cleared here and not by being on screen.
-	read := func() tea.Msg {
-		// Dropped, as the window's clear drops its error: the @ stays,
-		// and the notice on arrival has already said where the reader is.
+	m.mentionTarget = mentionRef{}
+	if m.askedMentions.has(m.chatID, id) {
+		return nil
+	}
+	chatID, tg := m.chatID, m.tg
+	m.askedMentions.record(chatID, id)
+	if tg == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		// Dropped, as the window's clear drops its error.
 		_ = tg.ReadMentions(chatID, []int64{id})
 		return nil
 	}
-	return m, tea.Batch(read, jump)
+}
+
+// missMention is a jump giving up on message id. If that is the mention
+// g@ went to, it is left unread — nobody saw it — and set aside for the
+// session, so the next g@ goes on to the one after instead of into the
+// same wall. It reports whether it was.
+func (m *Model) missMention(id int64) bool {
+	if m.mentionTarget != (mentionRef{chatID: m.chatID, id: id}) {
+		return false
+	}
+	m.mentionTarget = mentionRef{}
+	m.unreachableMentions.record(m.chatID, id)
+	return true
 }
 
 // mentionsAfter is how many unread mentions are left once the one being
