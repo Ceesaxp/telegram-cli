@@ -200,7 +200,7 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 func platformNotifier(goos string, lookPath func(string) (string, error), timeout time.Duration) func(title, body string) error {
 	var (
 		program string
-		send    func(timeout time.Duration, title, body string) error
+		send    func(run runner, title, body string) error
 	)
 	switch goos {
 	case "linux", "freebsd", "openbsd", "netbsd":
@@ -216,13 +216,14 @@ func platformNotifier(goos string, lookPath func(string) (string, error), timeou
 	if _, err := lookPath(program); err != nil {
 		return nil
 	}
-	return func(title, body string) error { return send(timeout, title, body) }
+	run := timed(timeout)
+	return func(title, body string) error { return send(run, title, body) }
 }
 
 // sendLinux posts through notify-send. It is installed, so a failure most
 // likely means a desktop with no notification daemon behind it.
-func sendLinux(timeout time.Duration, title, body string) error {
-	return runHelper(timeout, "notify-send",
+func sendLinux(run runner, title, body string) error {
+	return run("notify-send",
 		"--app-name=Tele-TUI",
 		"--icon=telegram",
 		"--urgency=normal",
@@ -237,12 +238,12 @@ func sendLinux(timeout time.Duration, title, body string) error {
 // notification sequence at all, and for a user who prefers the system's own
 // alert. See terminal.go for why a CLI cannot do better here without
 // shipping an app bundle.
-func sendMacOS(timeout time.Duration, title, body string) error {
+func sendMacOS(run runner, title, body string) error {
 	script := fmt.Sprintf(
 		`display notification %q with title %q`,
 		body, title,
 	)
-	return runHelper(timeout, "osascript", "-e", script)
+	return run("osascript", "-e", script)
 }
 
 // helperTimeout is how long a notifier or a sound player may run before it
@@ -257,6 +258,18 @@ func sendMacOS(timeout time.Duration, title, body string) error {
 // working, and short enough that a wedged one costs an alert rather than
 // the session.
 const helperTimeout = 10 * time.Second
+
+// runner runs a helper program with its arguments and says whether it
+// worked. The notifiers take one, so a test can see the exact arguments a
+// message becomes without running anything.
+type runner func(name string, args ...string) error
+
+// timed is the runner that runs helpers for real, each for at most timeout.
+func timed(timeout time.Duration) runner {
+	return func(name string, args ...string) error {
+		return runHelper(timeout, name, args...)
+	}
+}
 
 // runHelper runs one of the programs this package leans on — a notifier or
 // a sound player — to completion, or kills it after timeout, with anything

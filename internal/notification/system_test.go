@@ -256,7 +256,7 @@ func TestThePlatformNotifierIsTheOneInstalled(t *testing.T) {
 func TestAFailingNotifierPrintsNothing(t *testing.T) {
 	failingPrograms(t, "notify-send")
 
-	if out := stdout(t, func() { sendLinux(helperTimeout, "Ana", "hi") }); out != "" {
+	if out := stdout(t, func() { sendLinux(timed(helperTimeout), "Ana", "hi") }); out != "" {
 		t.Errorf("a failing notify-send wrote %q to the terminal", out)
 	}
 }
