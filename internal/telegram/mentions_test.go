@@ -1,8 +1,11 @@
 package telegram
 
 import (
+	"context"
+	"slices"
 	"testing"
 
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 )
 
@@ -74,6 +77,104 @@ func TestOnlyAnUnopenedIncomingGroupMentionIsUnread(t *testing.T) {
 
 			if got := c.messageFromTG(m); got.UnreadMention {
 				t.Errorf("%s counts as an unread mention", name)
+			}
+		})
+	}
+}
+
+// unreadMentionsInvoker stands in for the server: it knows the basic group
+// 5 and the channel 9, answers messages.getUnreadMentions with answer, and
+// records what it was asked.
+type unreadMentionsInvoker struct {
+	answer tg.MessagesMessagesClass
+	asked  []*tg.MessagesGetUnreadMentionsRequest
+}
+
+func (f *unreadMentionsInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	req, ok := input.(*tg.MessagesGetUnreadMentionsRequest)
+	if !ok {
+		return readHistoryInvoker{}.Invoke(ctx, input, output)
+	}
+	f.asked = append(f.asked, req)
+	output.(*tg.MessagesMessagesBox).Messages = f.answer
+	return nil
+}
+
+// mentionsAt is a list of messages with the given IDs, in the order given.
+func mentionsAt(ids ...int) []tg.MessageClass {
+	out := make([]tg.MessageClass, len(ids))
+	for i, id := range ids {
+		out[i] = &tg.Message{ID: id, PeerID: &tg.PeerChat{ChatID: 5}}
+	}
+	return out
+}
+
+// A jump to the next mention goes to the oldest one first, the way the
+// phone walks them. The server's order for this call is not documented, so
+// the answer is put in order here rather than trusted.
+func TestUnreadMentionsAreOldestFirst(t *testing.T) {
+	inv := &unreadMentionsInvoker{answer: &tg.MessagesMessages{Messages: mentionsAt(30, 10, 20)}}
+	c, _ := viewClient(t, inv)
+
+	got, err := c.UnreadMentions(basicGroupID, 10)
+	if err != nil {
+		t.Fatalf("UnreadMentions: %v", err)
+	}
+
+	if want := []int64{10, 20, 30}; !slices.Equal(got, want) {
+		t.Errorf("UnreadMentions = %v, want %v", got, want)
+	}
+}
+
+// With no offset the call answers the NEWEST mentions, so a chat with more
+// than limit of them would start its walk in the middle. Telegram Desktop
+// asks from message 1 with a negative add_offset instead, which is the
+// oldest page, and for the whole chat rather than one forum topic.
+func TestUnreadMentionsAsksForTheOldestPage(t *testing.T) {
+	inv := &unreadMentionsInvoker{answer: &tg.MessagesMessages{}}
+	c, _ := viewClient(t, inv)
+
+	if _, err := c.UnreadMentions(basicGroupID, 20); err != nil {
+		t.Fatalf("UnreadMentions: %v", err)
+	}
+
+	if len(inv.asked) != 1 {
+		t.Fatalf("asked the server %d times, want once", len(inv.asked))
+	}
+	req := inv.asked[0]
+	if req.OffsetID != 1 || req.AddOffset != -20 || req.Limit != 20 {
+		t.Errorf("asked with offset_id %d, add_offset %d, limit %d; want 1, -20, 20",
+			req.OffsetID, req.AddOffset, req.Limit)
+	}
+	if req.MaxID != 0 || req.MinID != 0 {
+		t.Errorf("asked with max_id %d, min_id %d; want neither", req.MaxID, req.MinID)
+	}
+	if _, ok := req.GetTopMsgID(); ok {
+		t.Error("the list was scoped to a thread; it is for the whole chat")
+	}
+}
+
+// The call answers in whichever messages shape the server picks: a slice
+// for a group with more than a page, the channel form for a supergroup.
+// Each carries the same list, and a "not modified" carries none.
+func TestUnreadMentionsReadsEveryAnswerShape(t *testing.T) {
+	for name, tc := range map[string]struct {
+		answer tg.MessagesMessagesClass
+		want   []int64
+	}{
+		"a slice":          {&tg.MessagesMessagesSlice{Messages: mentionsAt(8, 4)}, []int64{4, 8}},
+		"channel messages": {&tg.MessagesChannelMessages{Messages: mentionsAt(8, 4)}, []int64{4, 8}},
+		"not modified":     {&tg.MessagesMessagesNotModified{}, []int64{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := viewClient(t, &unreadMentionsInvoker{answer: tc.answer})
+
+			got, err := c.UnreadMentions(basicGroupID, 10)
+			if err != nil {
+				t.Fatalf("UnreadMentions: %v", err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("UnreadMentions = %v, want %v", got, tc.want)
 			}
 		})
 	}

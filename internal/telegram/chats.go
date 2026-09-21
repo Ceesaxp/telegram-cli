@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -778,6 +779,42 @@ func (c *Client) ReadReactions(chatID int64) error {
 		}
 	}
 	return nil
+}
+
+// UnreadMentions lists the IDs of a chat's unread mentions, oldest first,
+// at most limit of them.
+func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("unread mentions: %w", err)
+	}
+
+	// Telegram Desktop's recipe for the OLDEST page: from message 1, with
+	// the offset turned back by a whole page. With no offset the call
+	// answers the newest, and a walk would start in the middle of a chat
+	// with more than limit of them. No top message: the whole chat, forum
+	// topics included.
+	res, err := c.api.MessagesGetUnreadMentions(ctx, &tg.MessagesGetUnreadMentionsRequest{
+		Peer:      peer,
+		OffsetID:  1,
+		AddOffset: -limit,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unread mentions: %w", err)
+	}
+
+	messages := messagesFromMessagesClass(res)
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, int64(m.GetID()))
+	}
+	// The API does not say what order this call answers in, and a jump
+	// that walks the mentions has to start at the oldest.
+	slices.Sort(ids)
+	return ids, nil
 }
 
 // peerAsInputChannel extracts an InputChannel from an InputPeer.
