@@ -1170,6 +1170,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatview.TelegramLinkMsg:
 		cmds = append(cmds, m.followTelegramLink(msg))
 
+	case chatview.MentionJumpMsg:
+		// g@ is a jump like a search hit, so ctrl+o comes back from it.
+		// The notice is the app's to show: openChatAt resets the chat
+		// view, and its own notice with it.
+		m.pushJumpTo(msg.ChatId, msg.MessageId)
+		cmds = append(cmds, m.openChatAt(msg.ChatId, msg.MessageId))
+		m.notify(mentionJumpNotice(msg.Remaining))
+
 	case telegramLinkResolvedMsg:
 		cmds = append(cmds, m.openResolvedLink(msg))
 
@@ -1810,6 +1818,16 @@ func (m *Model) openChatAt(chatID int64, targetMsgID int64) tea.Cmd {
 	m.setFocus(PanelChatView)
 
 	return tea.Batch(cmd, m.openRailFor(chatID))
+}
+
+// mentionJumpNotice is what g@ says on arrival: how many unread mentions
+// are left after this one, so the reader knows whether pressing it again
+// goes anywhere.
+func mentionJumpNotice(remaining int) string {
+	if remaining == 0 {
+		return "last mention"
+	}
+	return fmt.Sprintf("mention · %d more", remaining)
 }
 
 func (m *Model) openPrivateChat(userID int64) tea.Cmd {
