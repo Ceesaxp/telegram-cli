@@ -1,0 +1,18 @@
+# A theme using every section the format has. Role names are not checked
+# here: internal/config reads, internal/ui/theme validates.
+
+[theme]
+name    = "every section"
+inherit = "light"
+
+[colors]
+bg   = "#1d2021"
+fg   = "#ebdbb2"
+cyan = "#8ec07c"
+
+[colors256]
+bg = "235"
+fg = "223"
+
+[senders]
+ramp = ["mauve", "cyan"]
