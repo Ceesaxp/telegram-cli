@@ -251,24 +251,23 @@ func TestAFailingNotifierPrintsNothing(t *testing.T) {
 	}
 }
 
-// On a machine with nothing to run, both fallbacks come back to the caller
-// and neither is written from here — the whole of the rule, end to end,
-// through the constructors the app uses.
-func TestWithNothingToRunTheBellsComeBackAndNothingIsPrinted(t *testing.T) {
+// On a machine with nothing to run, the fallback comes back to the caller
+// and nothing is written from here — the whole of the rule, end to end,
+// through the constructors and the call the app uses.
+func TestWithNothingToRunTheBellComesBackAndNothingIsPrinted(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	n := NewNotifier(true, true, MethodSystem)
 	s := NewSoundPlayer(true)
 
-	var notified, played string
+	var alerted string
 	out := stdout(t, func() {
-		notified = n.Notify("Ana", "hi")
-		played = s.Play()
+		alerted = Alert(n, s, "Ana", "hi")
 		n.Close()
 		s.Close()
 	})
 
-	if notified != "\a" || played != "\a" {
-		t.Errorf("Notify = %q, Play = %q; want the bell from each", notified, played)
+	if alerted != "\a" {
+		t.Errorf("Alert = %q, want the bell", alerted)
 	}
 	if out != "" {
 		t.Errorf("%q was written to the terminal", out)

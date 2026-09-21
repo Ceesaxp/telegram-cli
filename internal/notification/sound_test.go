@@ -7,13 +7,17 @@ import (
 )
 
 // soundPlayer builds an enabled player whose player process is p, on a clock
-// that only moves when the test moves it.
-func soundPlayer(p *process) (*SoundPlayer, *time.Time) {
-	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	s := NewSoundPlayer(true)
+// that only moves when the test moves it. play asks it for one message's
+// sound, with the bell on a limiter of its own on the same clock — what
+// Alert does with the notifier's.
+func soundPlayer(p *process) (s *SoundPlayer, clock *time.Time, play func() string) {
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	clock = &now
+	s = NewSoundPlayer(true)
 	s.play = p.play
-	s.now = func() time.Time { return clock }
-	return s, &clock
+	s.now = func() time.Time { return *clock }
+	bells := newBellLimiter(s.now)
+	return s, clock, func() string { return s.playOrRing(bells) }
 }
 
 // A burst of messages used to start a player per message, all at once: the
@@ -21,10 +25,10 @@ func soundPlayer(p *process) (*SoundPlayer, *time.Time) {
 // dropped rather than queued — a sound late is a sound about nothing.
 func TestABurstPlaysOneSound(t *testing.T) {
 	p := newProcess()
-	s, _ := soundPlayer(p)
+	s, _, play := soundPlayer(p)
 
 	for range 50 {
-		s.Play()
+		play()
 	}
 	p.awaitStart(t)
 	p.exit()
@@ -46,12 +50,12 @@ func TestABurstPlaysOneSound(t *testing.T) {
 func TestASoundSoonAfterTheLastIsDropped(t *testing.T) {
 	p := newProcess()
 	p.exit()
-	s, clock := soundPlayer(p)
+	s, clock, play := soundPlayer(p)
 
-	s.Play()
+	play()
 	s.wait()
 	*clock = clock.Add(minSoundInterval - time.Millisecond)
-	s.Play()
+	play()
 	s.Close()
 
 	if runs, _ := p.report(); len(runs) != 1 {
@@ -64,12 +68,12 @@ func TestASoundSoonAfterTheLastIsDropped(t *testing.T) {
 // afplay's Ping runs a second and a half — would overlap the next one.
 func TestASoundStillPlayingDropsTheNext(t *testing.T) {
 	p := newProcess()
-	s, clock := soundPlayer(p)
+	s, clock, play := soundPlayer(p)
 
-	s.Play()
+	play()
 	p.awaitStart(t)
 	*clock = clock.Add(10 * minSoundInterval)
-	s.Play()
+	play()
 	p.exit()
 	s.Close()
 
@@ -84,10 +88,10 @@ func TestASoundStillPlayingDropsTheNext(t *testing.T) {
 func TestAClosedPlayerStartsNothing(t *testing.T) {
 	p := newProcess()
 	p.exit()
-	s, _ := soundPlayer(p)
+	s, _, play := soundPlayer(p)
 
 	s.Close()
-	s.Play()
+	play()
 	s.Close()
 
 	if runs, _ := p.report(); len(runs) != 0 {
@@ -102,8 +106,8 @@ func TestAPlatformWithoutAPlayerHandsBackTheBell(t *testing.T) {
 	s := NewSoundPlayer(true)
 	s.play = platformPlayer("plan9", installed("paplay", "afplay"))
 
-	if got := s.Play(); got != "\a" {
-		t.Errorf("Play = %q, want the bell handed back", got)
+	if got := s.playOrRing(newBellLimiter(time.Now)); got != "\a" {
+		t.Errorf("the player handed back %q, want the bell", got)
 	}
 }
 
@@ -150,12 +154,12 @@ func TestFailingPlayersPrintNothing(t *testing.T) {
 // The bell is the sound, degraded, and is limited the same way: a burst
 // rings once, and the interval after, it rings again.
 func TestTheBellIsLimitedLikeTheSound(t *testing.T) {
-	s, clock := soundPlayer(newProcess())
+	s, clock, play := soundPlayer(newProcess())
 	s.play = nil
 
 	var rang int
 	for range 50 {
-		if s.Play() == "\a" {
+		if play() == "\a" {
 			rang++
 		}
 	}
@@ -164,7 +168,7 @@ func TestTheBellIsLimitedLikeTheSound(t *testing.T) {
 	}
 
 	*clock = clock.Add(minSoundInterval)
-	if got := s.Play(); got != "\a" {
+	if got := play(); got != "\a" {
 		t.Errorf("a message the interval later got %q, want the bell", got)
 	}
 }
@@ -174,12 +178,12 @@ func TestTheBellIsLimitedLikeTheSound(t *testing.T) {
 func TestASoundAfterTheIntervalPlays(t *testing.T) {
 	p := newProcess()
 	p.exit()
-	s, clock := soundPlayer(p)
+	s, clock, play := soundPlayer(p)
 
-	s.Play()
+	play()
 	s.wait()
 	*clock = clock.Add(minSoundInterval)
-	s.Play()
+	play()
 	s.Close()
 
 	if runs, _ := p.report(); len(runs) != 2 {

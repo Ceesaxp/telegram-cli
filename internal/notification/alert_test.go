@@ -9,7 +9,7 @@ import (
 // bothFallBack is a notifier and a player on a machine with neither
 // installed, on one clock that only moves when the test moves it.
 func bothFallBack() (*Notifier, *SoundPlayer, *time.Time) {
-	s, clock := soundPlayer(newProcess())
+	s, clock, _ := soundPlayer(newProcess())
 	s.play = nil
 
 	n := NewNotifier(true, true, MethodSystem)

@@ -123,9 +123,10 @@ func (n *Notifier) Notify(title, body string) string {
 // notification waiting to be posted, if any, and waits for a notifier
 // process that is still running.
 //
-// Nothing needs it at exit: the worker only lives while a process does, and
-// leaving that process behind is what exiting has always done. It is for
-// whoever needs the worker gone before they go on — the tests, today.
+// Nothing in the app calls it, and nothing needs to: the worker only lives
+// while a process does, and leaving that process behind at exit is what
+// exiting has always done. The tests call it, so that no worker outlives
+// the test that started it.
 func (n *Notifier) Close() {
 	n.queue.close()
 }

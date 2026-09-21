@@ -19,9 +19,6 @@ type SoundPlayer struct {
 	// now is the clock the interval is measured on; a field so a test can
 	// hold it still instead of sleeping through a real second.
 	now func() time.Time
-	// bells limits the bell rung where there is no player, on the same
-	// clock.
-	bells *bellLimiter
 
 	mu     sync.Mutex
 	busy   bool
@@ -42,34 +39,26 @@ const minSoundInterval = time.Second
 
 // NewSoundPlayer creates a new sound player.
 func NewSoundPlayer(enabled bool) *SoundPlayer {
-	s := &SoundPlayer{
+	return &SoundPlayer{
 		enabled: enabled,
 		play:    platformPlayer(runtime.GOOS, exec.LookPath),
 		now:     time.Now,
 	}
-	// Through s rather than bound now, so the bell keeps to whatever clock
-	// the player is on.
-	s.bells = newBellLimiter(func() time.Time { return s.now() })
-	return s
 }
 
-// Play plays the notification sound, unless one is already playing or the
-// last started less than minSoundInterval ago. It never waits for the
-// player: the caller is the event loop.
+// playOrRing plays the notification sound, unless one is already playing or
+// the last started less than minSoundInterval ago. It never waits for the
+// player: the caller is the event loop. Alert is how the app reaches it.
 //
-// It returns what the caller must write to the terminal: the bell, where
-// there is no player to run, and "" otherwise. Like Notify's sequence, the
-// caller hands it to tea.Raw rather than this writing it from a goroutine.
+// It returns what the caller must write to the terminal: the bell, rung
+// through bells, where there is no player to run, and "" otherwise. Like
+// Notify's sequence, the caller hands it to tea.Raw rather than this writing
+// it from a goroutine. The limiter is a parameter because it is the
+// notifier's: the terminal has one bell, whichever fallback rings it.
 //
 // A burst of messages used to start a player for each, all at once. The
 // request that finds one playing is dropped rather than queued: the sound
 // is about something having arrived, and the one playing already says so.
-func (s *SoundPlayer) Play() string {
-	return s.playOrRing(s.bells)
-}
-
-// playOrRing is Play with the bell rung through bells, which Alert shares
-// with the notifier.
 func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 	if !s.enabled {
 		return ""
@@ -110,8 +99,10 @@ func (s *SoundPlayer) run() {
 // Close stops the player from starting anything new, and waits for one
 // that is still running.
 //
-// Nothing needs it at exit, for the reason Notifier.Close gives: the
-// goroutine lives only as long as the player does.
+// Nothing in the app calls it, and that is fine for the reason
+// Notifier.Close gives: the goroutine lives only as long as the player
+// does, and exiting leaves that player behind as it always has. The tests
+// call it, so that no player outlives the test that started it.
 func (s *SoundPlayer) Close() {
 	s.mu.Lock()
 	s.closed = true
