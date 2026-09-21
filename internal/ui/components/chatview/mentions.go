@@ -47,8 +47,9 @@ func (m *Model) readMentionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 	return m.noteUnreadMentions(seenMentions(msg.messages))
 }
 
-// seenMentions are the unread mentions among msgs that being seen clears. A voice note or a round video is not heard by being seen: TDLib
-// leaves those for playing to clear, and so does this client.
+// seenMentions are the unread mentions among msgs that being seen clears.
+// A voice note or a round video is not heard by being seen: TDLib leaves
+// those for playing to clear, and so does this client.
 func seenMentions(msgs []*telegram.Message) []int64 {
 	var ids []int64
 	for _, v := range msgs {
@@ -72,10 +73,17 @@ func seenMentions(msgs []*telegram.Message) []int64 {
 // accumulate and N mentions in the window cost one request carrying all
 // of them.
 func (m *Model) noteUnreadMentions(ids []int64) tea.Cmd {
+	var fresh []int64
 	for _, id := range ids {
-		if !m.askedMentions.has(m.chatID, id) && !slices.Contains(m.pendingMentionsRead, id) {
-			m.pendingMentionsRead = append(m.pendingMentionsRead, id)
+		if !m.askedMentions.has(m.chatID, id) &&
+			!slices.Contains(m.pendingMentionsRead, id) && !slices.Contains(fresh, id) {
+			fresh = append(fresh, id)
 		}
+	}
+	if len(fresh) > 0 {
+		// A new slice, never an append into the old one's spare capacity:
+		// the model is a value, and an older copy shares that capacity.
+		m.pendingMentionsRead = slices.Concat(m.pendingMentionsRead, fresh)
 	}
 	if len(m.pendingMentionsRead) == 0 || m.blurred || m.mentionsFlushPending {
 		return nil

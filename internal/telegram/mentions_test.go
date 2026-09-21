@@ -84,6 +84,35 @@ func TestOnlyAnUnopenedIncomingGroupMentionIsUnread(t *testing.T) {
 	}
 }
 
+// A supergroup is a channel underneath, so its messages carry a
+// PeerChannel, like a broadcast channel's posts. What tells them apart is
+// Post, which only a broadcast channel's messages have: a mention in a
+// supergroup is a mention the phone counts.
+func TestAnIncomingSupergroupMentionIsUnread(t *testing.T) {
+	c := &Client{files: newFileRegistry()}
+	m := groupMention()
+	m.PeerID = &tg.PeerChannel{ChannelID: 9}
+
+	if got := c.messageFromTG(m); !got.UnreadMention {
+		t.Error("an unread mention in a supergroup did not say so")
+	}
+}
+
+// A supergroup takes messages from channels as well as from people: its
+// linked channel, a member writing as their own channel, an anonymous
+// admin writing as the group. The sender is then a channel, and it is
+// still not a post: the mention counts.
+func TestAMentionFromAChannelSenderInASupergroupIsUnread(t *testing.T) {
+	c := &Client{files: newFileRegistry()}
+	m := groupMention()
+	m.PeerID = &tg.PeerChannel{ChannelID: 9}
+	m.FromID = &tg.PeerChannel{ChannelID: 12}
+
+	if got := c.messageFromTG(m); !got.UnreadMention {
+		t.Error("a mention from a channel sender in a supergroup did not say so")
+	}
+}
+
 // unreadMentionsInvoker stands in for the server: it knows the basic group
 // 5 and the channel 9, answers messages.getUnreadMentions with answer, and
 // records what it was asked.

@@ -15,9 +15,20 @@ import (
 // command its flush returns, as readreactions_test.go does: the chat view
 // holds a concrete client, and no test here runs the command.
 //
-// The fixture chat is read to its newest message, so a first page owes no
-// read receipt, and it has no unread reactions, so the mentions' window is
-// the only command a first page can produce.
+// The fixture chat is a group, since only a group has mentions: a DM is
+// addressed to the reader already, and a channel's posts name nobody. It
+// is read to its newest message, so a first page owes no read receipt, and
+// it has no unread reactions, so the mentions' window is the only command
+// a first page can produce.
+
+// mentionChat is unreadChat as a basic group.
+func mentionChat(readUpTo int64, unread int32) Model {
+	m := unreadChat(readUpTo, unread)
+	entry, _ := m.store.Chats.Get(testChatID)
+	entry.Chat.Type = telegram.ChatTypeBasicGroup
+	entry.Chat.Title = "the group"
+	return m
+}
 
 // withMentions marks the given messages on a page as unread mentions of
 // the reader, the flag the server sets on each one.
@@ -42,7 +53,7 @@ func owedMentionIDs(m Model) []int64 {
 // page have been seen. They wait out the window, as the read receipt does,
 // and then go in one request.
 func TestOpeningAChatAtItsNewestClearsTheMentionsOnScreen(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 
 	m, cmd := m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
@@ -70,7 +81,7 @@ func TestOpeningAChatAtItsNewestClearsTheMentionsOnScreen(t *testing.T) {
 // by being on screen. TDLib leaves those mentions for playing to clear, and
 // so does this client: the rest of the page is still cleared.
 func TestAVoiceOrVideoNoteMentionIsNotClearedByBeingOnScreen(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 
 	page := withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 3, 2)
@@ -93,7 +104,7 @@ func TestAVoiceOrVideoNoteMentionIsNotClearedByBeingOnScreen(t *testing.T) {
 // and the newest ones are below the fold. The mentions among them have not
 // been seen, and the first page is not the screen.
 func TestOpeningAChatAtAnOlderMessageClearsNoMentions(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChatAt(testChatID, "nadia", 2)
 
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
@@ -107,7 +118,7 @@ func TestOpeningAChatAtAnOlderMessageClearsNoMentions(t *testing.T) {
 // scrolls in from the top, one line at a time, and nothing says which of
 // its mentions the reader stopped on.
 func TestPagingBackwardsClearsNoMentions(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(historyPage(m, 0, 10, 9, 8, 7, 6))
 
@@ -123,7 +134,7 @@ func TestPagingBackwardsClearsNoMentions(t *testing.T) {
 // looked at. The mentions stay owed until focus returns, and then go at
 // once, as the read receipt does.
 func TestOpeningAChatWhileBlurredClearsItsMentionsOnFocus(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m, _ = m.Update(tea.BlurMsg{})
 	m.OpenChat(testChatID, "nadia")
 
@@ -152,7 +163,7 @@ func TestOpeningAChatWhileBlurredClearsItsMentionsOnFocus(t *testing.T) {
 // the reader to the next chat either. The left chat's tick finds nothing
 // to send, and neither does focus.
 func TestPassingThroughAChatLeavesItsMentionsAlone(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
 	if len(m.pendingMentionsRead) == 0 {
@@ -178,7 +189,7 @@ func TestPassingThroughAChatLeavesItsMentionsAlone(t *testing.T) {
 // the flush must not do is hand back a command that dereferences the
 // missing client.
 func TestAMentionsClearWithNoClientIsConsumedWithoutARequest(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.tg = nil
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
@@ -196,7 +207,7 @@ func TestAMentionsClearWithNoClientIsConsumedWithoutARequest(t *testing.T) {
 // receipt, no reactions, no mentions on its first page.
 func openQuietMentionChat(t *testing.T) Model {
 	t.Helper()
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
 	if cmd != nil {
@@ -260,7 +271,7 @@ func TestAMentionInAnotherChatIsNotCleared(t *testing.T) {
 // not ask for again: a second request would clear nothing and cost a pts
 // step.
 func TestAMentionAskedToClearIsNeverOwedAgain(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
 	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
@@ -282,7 +293,7 @@ func TestAMentionAskedToClearIsNeverOwedAgain(t *testing.T) {
 // channel numbers its messages itself, so the same ID in two chats is two
 // messages. Asking about one says nothing about the other.
 func TestAMentionAskedInOneChatIsStillOwedInAnother(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
 	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
@@ -354,7 +365,7 @@ func TestReadAllMentionsAsksTheClient(t *testing.T) {
 // either way, so the caller can say so rather than hand back a command
 // that dereferences nothing.
 func TestReadAllMentionsNeedsAChatAndAClient(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	if m.ReadAllMentionsCmd() != nil {
 		t.Error("a command with no chat open")
 	}
@@ -369,7 +380,7 @@ func TestReadAllMentionsNeedsAChatAndAClient(t *testing.T) {
 // Clearing every mention makes the ones the window still owes redundant:
 // the window closing afterwards must not ask for them again.
 func TestReadAllMentionsDropsTheOwedClears(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
 
@@ -386,7 +397,7 @@ func TestReadAllMentionsDropsTheOwedClears(t *testing.T) {
 // out, whichever chat is open when it lands, and the next open owes them
 // again.
 func TestAFailedClearIsForgotten(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
 	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
@@ -428,7 +439,7 @@ func TestAMentionTheCatchUpBringsInIsCleared(t *testing.T) {
 // owes go now, with the reopen, rather than being dropped as a switch to
 // another chat drops them.
 func TestReopeningTheOpenChatSendsWhatItOwes(t *testing.T) {
-	m := unreadChat(3, 2)
+	m := mentionChat(3, 2)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
 	if m.pendingReadID != 5 || !slices.Equal(owedMentionIDs(m), []int64{4}) {
@@ -445,5 +456,44 @@ func TestReopeningTheOpenChatSendsWhatItOwes(t *testing.T) {
 	if again := len(runBatch(t, m.OpenChatAt(testChatID, "nadia", 4))); owing-again != 2 {
 		t.Errorf("the reopen owing a receipt and a clear sent %d commands more than one owing nothing, want 2",
 			owing-again)
+	}
+}
+
+// The model is a value, and Bubble Tea is free to keep an older copy while
+// a newer one moves on. Owed mentions added to one copy must not show up
+// in another: an append into spare capacity the two share would do exactly
+// that, silently.
+func TestOwedMentionsDoNotLeakBetweenCopies(t *testing.T) {
+	m := openQuietMentionChat(t)
+	for _, id := range []int64{6, 7, 8} {
+		m, _ = m.Update(arrivingMention(id))
+	}
+
+	a, _ := m.Update(arrivingMention(9))
+	b, _ := m.Update(arrivingMention(10))
+
+	if got := owedMentionIDs(a); !slices.Equal(got, []int64{6, 7, 8, 9}) {
+		t.Errorf("the first copy owes %v, want [6 7 8 9]", got)
+	}
+	if got := owedMentionIDs(b); !slices.Equal(got, []int64{6, 7, 8, 10}) {
+		t.Errorf("the second copy owes %v, want [6 7 8 10]", got)
+	}
+}
+
+// The ledger is kept the same way: a copy of it taken earlier does not see
+// what a later copy records.
+func TestTheMentionLedgerDoesNotLeakBetweenCopies(t *testing.T) {
+	var l mentionLedger
+	l.record(5, 1, 2, 3)
+
+	a, b := l, l
+	a.record(5, 4)
+	b.record(5, 6)
+
+	if !a.has(5, 4) || a.has(5, 6) {
+		t.Error("the first copy's asks are not its own")
+	}
+	if !b.has(5, 6) || b.has(5, 4) {
+		t.Error("the second copy's asks are not its own")
 	}
 }

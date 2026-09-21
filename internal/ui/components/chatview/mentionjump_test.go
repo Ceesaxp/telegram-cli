@@ -138,7 +138,7 @@ func TestLandingOnTheMentionClearsItOnce(t *testing.T) {
 // a jump's hunt walks.
 func huntFromHigh(t *testing.T) Model {
 	t.Helper()
-	m := unreadChat(100, 0)
+	m := mentionChat(100, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(historyPage(m, 0, 100, 99, 98, 97, 96))
 	return m
@@ -348,7 +348,7 @@ func TestAFailedListingSaysSo(t *testing.T) {
 // go to the same one. Whichever asks first, the other must not ask again:
 // here the window closes before the reader lands.
 func TestAMentionTheWindowClearedIsNotClearedAgainOnLanding(t *testing.T) {
-	m := unreadChat(5, 0)
+	m := mentionChat(5, 0)
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
 	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{4}})
