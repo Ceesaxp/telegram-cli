@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -11,6 +12,7 @@ func systemNotifier(t *testing.T) (*Notifier, func() (string, string)) {
 	n := NewNotifier(true, true, MethodSystem)
 	done := make(chan [2]string, 1)
 	n.system = func(title, body string) { done <- [2]string{title, body} }
+	t.Cleanup(n.Close)
 
 	return n, func() (string, string) {
 		t.Helper()
@@ -77,6 +79,101 @@ func TestTheSequencePathStillEscapes(t *testing.T) {
 
 	if want := "\x1b]777;notify;Ana;Meet at 6, bring food\x1b\\"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// drain lets the notifier's processes exit and returns once its worker has
+// posted everything it was given. Waiting rather than closing: Close drops
+// whatever is still waiting, which is what these tests are about.
+func drain(n *Notifier, p *process) {
+	p.exit()
+	n.queue.wait()
+}
+
+// A burst — a busy group, or the backlog replayed after a reconnect — used
+// to start a notifier process per message, all at once. One runs at a time
+// now, and everything that arrives meanwhile waits behind it as a single
+// notification that says how many messages it stands for.
+func TestABurstRunsOneNotifierAtATime(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	p := newProcess()
+	n.system = p.notify
+
+	for i := range 50 {
+		n.Notify("Ana", fmt.Sprintf("message %d", i))
+	}
+	p.awaitStart(t)
+	drain(n, p)
+
+	runs, peak := p.report()
+	if peak != 1 {
+		t.Errorf("%d notifier processes ran at once, want 1", peak)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("50 messages started %d notifier processes, want 2 — the first, and one for the rest: %q",
+			len(runs), runs)
+	}
+	if want := [2]string{"Ana", "message 0"}; runs[0] != want {
+		t.Errorf("the first message was posted as %q, want %q", runs[0], want)
+	}
+	if want := [2]string{"tele-tui", "49 new messages"}; runs[1] != want {
+		t.Errorf("the rest were posted as %q, want %q", runs[1], want)
+	}
+}
+
+// Coalescing is for bursts, and must not cost a lone message its promptness:
+// it goes out at once, as itself, without waiting to see whether another
+// follows.
+func TestAnIsolatedMessageIsPostedAtOnce(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	p := newProcess()
+	n.system = p.notify
+
+	n.Notify("Ana", "see you at six")
+	p.awaitStart(t)
+	drain(n, p)
+
+	runs, _ := p.report()
+	if want := [2]string{"Ana", "see you at six"}; len(runs) != 1 || runs[0] != want {
+		t.Errorf("one message was posted as %q, want exactly [%q]", runs, want)
+	}
+}
+
+// A count is for when there is something to count. One message waiting
+// behind another is still one message, and says who it is from.
+func TestOneMessageWaitingKeepsItsOwnWords(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	p := newProcess()
+	n.system = p.notify
+
+	n.Notify("Ana", "see you at six")
+	p.awaitStart(t)
+	n.Notify("Ben", "running late")
+	drain(n, p)
+
+	runs, _ := p.report()
+	if len(runs) != 2 {
+		t.Fatalf("%d notifier processes for 2 messages, want 2: %q", len(runs), runs)
+	}
+	if want := [2]string{"Ben", "running late"}; runs[1] != want {
+		t.Errorf("the message that waited was posted as %q, want %q", runs[1], want)
+	}
+}
+
+// Close is for shutting down, and a process started after it would outlive
+// whatever asked for it.
+func TestAClosedNotifierStartsNothing(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	p := newProcess()
+	p.exit()
+	n.system = p.notify
+
+	n.Close()
+	n.Notify("Ana", "hi")
+	n.Close()
+
+	if runs, _ := p.report(); len(runs) != 0 {
+		t.Errorf("a closed notifier started %q", runs)
 	}
 }
 

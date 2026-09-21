@@ -233,6 +233,12 @@ system notification fires on the wrong machine.
 | Terminal.app | None; falls back to the system |
 | Under tmux or screen | Nothing is sent — whether the sequence gets through depends on configuration that can't be read from inside |
 
+On the system path a burst of messages — a busy group, or the backlog that
+arrives after a reconnect — doesn't become a burst of alerts. One
+notification is posted at a time, and whatever arrives while it is on its
+way goes out next as a single one: "12 new messages". A lone message still
+goes out at once, as itself.
+
 Muted chats never notify. The mute flag is read from your account's notify
 settings, including for chats below the first page of the dialog list — a
 message from one of those holds its notification until the client has been

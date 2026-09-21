@@ -48,6 +48,10 @@ type Notifier struct {
 	// implementation is a process that has already exited by the time
 	// anything could ask.
 	system func(title, body string)
+
+	// queue is what stands between a burst of messages and a burst of
+	// processes.
+	queue *coalescer
 }
 
 // NewNotifier creates a new notification dispatcher.
@@ -59,6 +63,9 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 		terminal:    detectTerminal(),
 	}
 	n.system = platformNotifier(runtime.GOOS)
+	// Through n rather than bound now, so the queue delivers to whatever
+	// the seam holds when it runs.
+	n.queue = newCoalescer(func(title, body string) { n.system(title, body) })
 	return n
 }
 
@@ -73,7 +80,9 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 //
 // The system path has no such problem and is taken here, in the background —
 // notify-send and osascript are processes, and waiting on one would stall the
-// event loop for as long as the desktop takes to answer.
+// event loop for as long as the desktop takes to answer. One of them runs at
+// a time: what arrives meanwhile is folded into a single notification behind
+// it, so a burst of messages costs two processes rather than one each.
 func (n *Notifier) Notify(title, body string) string {
 	if !n.enabled {
 		return ""
@@ -94,8 +103,19 @@ func (n *Notifier) Notify(title, body string) string {
 	// In the background: notify-send and osascript are processes, and
 	// waiting on one would stall the event loop for as long as the desktop
 	// takes to answer.
-	go n.system(title, body)
+	n.queue.post(title, body)
 	return ""
+}
+
+// Close stops the system path from starting anything new, drops the
+// notification waiting to be posted, if any, and waits for a notifier
+// process that is still running.
+//
+// Nothing needs it at exit: the worker only lives while a process does, and
+// leaving that process behind is what exiting has always done. It is for
+// whoever needs the worker gone before they go on — the tests, today.
+func (n *Notifier) Close() {
+	n.queue.close()
 }
 
 // terminalSequence is the escape sequence for this notification, and whether
