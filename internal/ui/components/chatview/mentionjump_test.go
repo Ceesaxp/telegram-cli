@@ -220,20 +220,33 @@ func setMentionCount(t *testing.T, m Model, n int32) {
 	entry.UnreadMentionsCount = n
 }
 
-// How many are left after this one. The listing is capped, so a chat
-// with more mentions than a page says less than the store's count does,
-// and the store's count can be behind the listing too. The larger of the
-// two is the better guess, and none is never less than none.
-func TestRemainingIsTheLargerOfTheListingAndTheCount(t *testing.T) {
+// fullPage is a listing as long as g@ asks for, the oldest mentions from
+// first upwards.
+func fullPage(first int64) []int64 {
+	ids := make([]int64, mentionListLimit)
+	for i := range ids {
+		ids[i] = first + int64(i)
+	}
+	return ids
+}
+
+// How many are left after this one. A listing shorter than g@ asked for
+// is every unread mention there is, so it is the answer whatever the
+// store counts. Only a full one may stop short of the rest, and then the
+// store's count, which knows of the others, is the better guess if it is
+// the larger. None is never less than none.
+func TestRemainingTrustsAShortListingAndTheCountOnlyPastAFullOne(t *testing.T) {
 	for name, tc := range map[string]struct {
 		ids   []int64
 		count int32
 		want  int
 	}{
-		"the count knows of more than the page": {[]int64{5, 9}, 25, 24},
-		"the page knows of more than the count": {[]int64{5, 9, 12}, 1, 2},
-		"the last one":                          {[]int64{5}, 1, 0},
-		"a count already behind":                {[]int64{5}, 0, 0},
+		"a full page, and the count knows of more":        {fullPage(5), 25, 24},
+		"a full page, and the count behind":               {fullPage(5), 3, mentionListLimit - 1},
+		"a short page is all of them, whatever the count": {[]int64{5, 9}, 25, 1},
+		"a short page knows of more than a count behind":  {[]int64{5, 9, 12}, 1, 2},
+		"the last one": {[]int64{5}, 1, 0},
+		"the last one, with the count already behind": {[]int64{5}, 0, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := openQuietMentionChat(t)

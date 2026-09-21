@@ -258,7 +258,7 @@ func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
 	id := fresh[0]
 	m.mentionTarget = mentionRef{chatID: m.chatID, id: id}
 	chatID := m.chatID
-	remaining := m.mentionsAfter(len(fresh))
+	remaining := m.mentionsAfter(len(fresh), len(msg.ids) == mentionListLimit)
 	return m, func() tea.Msg {
 		return MentionJumpMsg{ChatId: chatID, MessageId: id, Remaining: remaining}
 	}
@@ -318,13 +318,14 @@ func (m *Model) missMention(id int64) bool {
 }
 
 // mentionsAfter is how many unread mentions are left once the one being
-// jumped to is cleared, given how many the listing still had. The listing
-// is capped at mentionListLimit, so the store's count knows of more in a
-// busy chat; the count can be behind the listing too. The larger is the
-// better guess.
-func (m Model) mentionsAfter(listed int) int {
+// jumped to is cleared, given how many the listing still had and whether
+// it was full. A listing shorter than mentionListLimit is every unread
+// mention there is. A full one may stop short of the rest, and then the
+// store's count, which knows of them, is the better guess if it is the
+// larger.
+func (m Model) mentionsAfter(listed int, full bool) int {
 	counted := 0
-	if entry, ok := m.store.Chats.Get(m.chatID); ok {
+	if entry, ok := m.store.Chats.Get(m.chatID); ok && full {
 		counted = int(entry.UnreadMentionsCount)
 	}
 	return max(listed-1, counted-1, 0)
