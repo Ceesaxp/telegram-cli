@@ -927,6 +927,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.store.Chats.MarkReactionsRead(msg.ChatId)
 		m.markDirty()
 
+	case telegram.ChatMentionsReadMsg:
+		if msg.All {
+			m.store.Chats.ClearMentions(msg.ChatId)
+		} else {
+			m.store.Chats.MarkMentionsRead(msg.ChatId, len(msg.MessageIds))
+		}
+		m.markDirty()
+
 	case telegram.ChatUpdateMsg:
 		if msg.Chat != nil {
 			// A peer view is partial: merging keeps the unread count, the
