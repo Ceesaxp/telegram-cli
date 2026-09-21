@@ -4,6 +4,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/notification"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
@@ -120,17 +121,10 @@ func (m *Model) releaseAllNotices() tea.Cmd {
 // than as something already sent: this process does not own the terminal,
 // and tea.Raw is what puts bytes in the renderer's buffer instead of racing
 // it mid-frame. So does the bell that stands in for a notifier or a sound
-// player the machine does not have.
+// player the machine does not have — at most once a burst, however many of
+// them fell back to it.
 func (m *Model) postNotice(title, body string) tea.Cmd {
-	bell := m.sound.Play()
-	seq := m.notifier.Notify(title, body)
-	if bell != seq {
-		// Where both fell back, they fell back to the same bell, and
-		// ringing it twice for one message is one alert said twice.
-		seq += bell
-	}
-
-	if seq != "" {
+	if seq := notification.Alert(m.notifier, m.sound, title, body); seq != "" {
 		return tea.Raw(seq)
 	}
 	return nil

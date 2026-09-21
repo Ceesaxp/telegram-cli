@@ -3,6 +3,7 @@ package notification
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 // systemNotifier captures what would reach notify-send or osascript.
@@ -187,6 +188,31 @@ func TestAPlatformWithoutANotifierHandsBackTheBell(t *testing.T) {
 
 	if got := n.Notify("Ana", "hi"); got != "\a" {
 		t.Errorf("Notify = %q, want the bell handed back", got)
+	}
+}
+
+// A burst with no notifier to run used to ring the bell once per message:
+// fifty bells for a busy group. It rings once now, and once more the
+// interval after.
+func TestABurstWithoutANotifierRingsOnce(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	n.system = nil
+	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	n.bells = newBellLimiter(func() time.Time { return clock })
+
+	var rang int
+	for i := range 50 {
+		if n.Notify("Ana", fmt.Sprintf("message %d", i)) == "\a" {
+			rang++
+		}
+	}
+	if rang != 1 {
+		t.Errorf("a burst of 50 rang the bell %d times, want 1", rang)
+	}
+
+	clock = clock.Add(minSoundInterval)
+	if got := n.Notify("Ana", "later"); got != "\a" {
+		t.Errorf("a message the interval later got %q, want the bell", got)
 	}
 }
 

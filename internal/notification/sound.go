@@ -65,6 +65,12 @@ func NewSoundPlayer(enabled bool) *SoundPlayer {
 // request that finds one playing is dropped rather than queued: the sound
 // is about something having arrived, and the one playing already says so.
 func (s *SoundPlayer) Play() string {
+	return s.playOrRing(s.bells)
+}
+
+// playOrRing is Play with the bell rung through bells, which Alert shares
+// with the notifier.
+func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 	if !s.enabled {
 		return ""
 	}
@@ -77,7 +83,7 @@ func (s *SoundPlayer) Play() string {
 	if s.play == nil {
 		// Nothing to run, so the terminal is asked to ring instead — by
 		// the caller, like any other write to it.
-		return s.bells.ring()
+		return bells.ring()
 	}
 
 	now := s.now()

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Delivery methods for [NewNotifier].
@@ -52,6 +53,10 @@ type Notifier struct {
 	// queue is what stands between a burst of messages and a burst of
 	// processes.
 	queue *coalescer
+
+	// bells limits the bell rung where there is no notifier to run, so a
+	// burst rings it once rather than once a message.
+	bells *bellLimiter
 }
 
 // NewNotifier creates a new notification dispatcher.
@@ -61,6 +66,7 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 		showPreview: showPreview,
 		method:      ResolveMethod(method),
 		terminal:    detectTerminal(),
+		bells:       newBellLimiter(time.Now),
 	}
 	n.system = platformNotifier(runtime.GOOS, exec.LookPath)
 	// Through n rather than bound now, so the queue delivers to whatever
@@ -102,8 +108,8 @@ func (n *Notifier) Notify(title, body string) string {
 
 	if n.system == nil {
 		// Nothing to run, so the terminal is asked to ring instead — by
-		// the caller, like any other write to it.
-		return bell
+		// the caller, like any other write to it, and once for a burst.
+		return n.bells.ring()
 	}
 
 	// In the background: notify-send and osascript are processes, and
