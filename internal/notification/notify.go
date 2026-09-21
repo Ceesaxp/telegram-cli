@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -57,6 +58,12 @@ type Notifier struct {
 	// bells limits the bell rung where there is no notifier to run, so a
 	// burst rings it once rather than once a message.
 	bells *bellLimiter
+
+	// failed says the last notifier run failed, and a run that works clears
+	// it: the helper is still tried while the bell stands in, so a daemon
+	// that starts later is noticed. The worker writes it; Notify, on the
+	// event loop, reads it.
+	failed atomic.Bool
 }
 
 // NewNotifier creates a new notification dispatcher.
@@ -71,7 +78,9 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 	n.system = platformNotifier(runtime.GOOS, exec.LookPath)
 	// Through n rather than bound now, so the queue delivers to whatever
 	// the seam holds when it runs.
-	n.queue = newCoalescer(func(title, body string) { _ = n.system(title, body) })
+	n.queue = newCoalescer(func(title, body string) {
+		n.failed.Store(n.system(title, body) != nil)
+	})
 	return n
 }
 
@@ -116,6 +125,14 @@ func (n *Notifier) Notify(title, body string) string {
 	// waiting on one would stall the event loop for as long as the desktop
 	// takes to answer.
 	n.queue.post(title, body)
+
+	if n.failed.Load() {
+		// The last run failed, and whatever made it fail is likely to
+		// fail this one too. The bell stands in, as it does for a
+		// notifier that is not there — from the caller, never from the
+		// worker, which cannot write to the terminal.
+		return n.bells.ring()
+	}
 	return ""
 }
 

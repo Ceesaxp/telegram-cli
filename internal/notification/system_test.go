@@ -1,7 +1,9 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -251,6 +253,63 @@ func TestAFailingNotifierPrintsNothing(t *testing.T) {
 
 	if out := stdout(t, func() { sendLinux("Ana", "hi") }); out != "" {
 		t.Errorf("a failing notify-send wrote %q to the terminal", out)
+	}
+}
+
+// An installed notify-send that fails — ssh to a box with libnotify but no
+// notification daemon or session bus — used to ring the bell from the
+// background: wrong, but the reader's only alert. Swallowing the failure left
+// them with nothing at all. So once a run has failed, the next message hands
+// the bell back to the caller, as a missing notifier does, and within the
+// same limit.
+func TestAFailingNotifierFallsBackToTheBell(t *testing.T) {
+	failingPrograms(t, "notify-send")
+	n := NewNotifier(true, true, MethodSystem)
+	n.system = platformNotifier("linux", exec.LookPath)
+	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	n.bells = newBellLimiter(func() time.Time { return clock })
+	defer n.Close()
+
+	if got := n.Notify("Ana", "one"); got != "" {
+		t.Fatalf("precondition: the first message was handed %q before any run had failed", got)
+	}
+	n.queue.wait()
+
+	if got := n.Notify("Ana", "two"); got != "\a" {
+		t.Errorf("after a failed run the next message was handed %q, want the bell", got)
+	}
+	n.queue.wait()
+	if got := n.Notify("Ana", "three"); got != "" {
+		t.Errorf("inside the bell's limit the one after was handed %q, want nothing", got)
+	}
+}
+
+// The fallback lasts as long as the failure does. The notifier is still tried
+// while the bell stands in, and once a run works — a daemon started since,
+// a session bus that came back — the bell stops.
+func TestANotifierThatWorksAgainStopsTheBell(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	results := []error{errors.New("no daemon"), nil}
+	var runs int
+	n.system = func(string, string) error {
+		err := results[min(runs, len(results)-1)]
+		runs++
+		return err
+	}
+	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	n.bells = newBellLimiter(func() time.Time { return clock })
+	defer n.Close()
+
+	n.Notify("Ana", "one") // fails
+	n.queue.wait()
+	if got := n.Notify("Ana", "two"); got != "\a" { // works
+		t.Fatalf("precondition: after a failed run the next message was handed %q", got)
+	}
+	n.queue.wait()
+
+	clock = clock.Add(minSoundInterval)
+	if got := n.Notify("Ana", "three"); got != "" {
+		t.Errorf("after a run that worked the next message was handed %q, want nothing", got)
 	}
 }
 

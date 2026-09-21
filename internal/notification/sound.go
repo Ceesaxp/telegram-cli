@@ -23,6 +23,7 @@ type SoundPlayer struct {
 	mu     sync.Mutex
 	busy   bool
 	closed bool
+	failed bool      // the last player run failed; one that works clears it
 	last   time.Time // when the last sound started
 	player sync.WaitGroup
 }
@@ -51,7 +52,8 @@ func NewSoundPlayer(enabled bool) *SoundPlayer {
 // player: the caller is the event loop. Alert is how the app reaches it.
 //
 // It returns what the caller must write to the terminal: the bell, rung
-// through bells, where there is no player to run, and "" otherwise. Like
+// through bells, where there is no player to run or the last run failed,
+// and "" otherwise. Like
 // Notify's sequence, the caller hands it to tea.Raw rather than this writing
 // it from a goroutine. The limiter is a parameter because it is the
 // notifier's: the terminal has one bell, whichever fallback rings it.
@@ -76,12 +78,18 @@ func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 	}
 
 	now := s.now()
-	if s.busy || now.Sub(s.last) < minSoundInterval {
-		return ""
+	if !s.busy && now.Sub(s.last) >= minSoundInterval {
+		s.busy, s.last = true, now
+		s.player.Add(1)
+		go s.run()
 	}
-	s.busy, s.last = true, now
-	s.player.Add(1)
-	go s.run()
+
+	if s.failed {
+		// The last player failed, and whatever made it fail is likely
+		// to fail this one too. The bell stands in, as it does for a
+		// player that is not there.
+		return bells.ring()
+	}
 	return ""
 }
 
@@ -89,11 +97,12 @@ func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 // and waiting on it would stall the event loop for as long as it plays.
 func (s *SoundPlayer) run() {
 	defer s.player.Done()
-	_ = s.play()
+	err := s.play()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.busy = false
+	s.failed = err != nil
 }
 
 // Close stops the player from starting anything new, and waits for one

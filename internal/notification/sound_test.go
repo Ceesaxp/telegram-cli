@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"errors"
 	"os/exec"
 	"testing"
 	"time"
@@ -148,6 +149,56 @@ func TestFailingPlayersPrintNothing(t *testing.T) {
 
 	if out := stdout(t, func() { _ = play() }); out != "" {
 		t.Errorf("failing players wrote %q to the terminal", out)
+	}
+}
+
+// Players that are installed but fail — no sound server — leave the reader
+// with no sound and, since the bell no longer rings from the background, no
+// bell either. So once a run has failed, the next message hands the bell
+// back to the caller, within the bell's limit.
+func TestAFailingPlayerFallsBackToTheBell(t *testing.T) {
+	failingPrograms(t, "paplay", "canberra-gtk-play")
+	s, _, play := soundPlayer(newProcess())
+	s.play = platformPlayer("linux", exec.LookPath)
+	defer s.Close()
+
+	if got := play(); got != "" {
+		t.Fatalf("precondition: the first message was handed %q before any run had failed", got)
+	}
+	s.wait()
+
+	if got := play(); got != "\a" {
+		t.Errorf("after a failed run the next message was handed %q, want the bell", got)
+	}
+	if got := play(); got != "" {
+		t.Errorf("inside the bell's limit the one after was handed %q, want nothing", got)
+	}
+}
+
+// And the fallback lasts as long as the failure does: the player is still
+// tried, and once it plays, the bell stops.
+func TestAPlayerThatWorksAgainStopsTheBell(t *testing.T) {
+	s, clock, play := soundPlayer(newProcess())
+	results := []error{errors.New("no sound server"), nil}
+	var runs int
+	s.play = func() error {
+		err := results[min(runs, len(results)-1)]
+		runs++
+		return err
+	}
+	defer s.Close()
+
+	play() // fails
+	s.wait()
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "\a" { // works
+		t.Fatalf("precondition: after a failed run the next message was handed %q", got)
+	}
+	s.wait()
+
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "" {
+		t.Errorf("after a run that worked the next message was handed %q, want nothing", got)
 	}
 }
 
