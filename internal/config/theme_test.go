@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -334,6 +335,41 @@ func TestLoadThemeWarnsWhenAFileShadowsABuiltin(t *testing.T) {
 	// An empty value never named dark, so it has shadowed nothing.
 	if _, _, warnings := LoadTheme("", configDir, defaultDir); len(warnings) != 0 {
 		t.Errorf("an empty ui.theme warned %q, want nothing", warnings)
+	}
+}
+
+// TestLoadThemeNamesOnlyAShadowThatExists: the shadow warning says a file
+// is ignored, so there has to be a file. A themes/ that is itself a file,
+// or a directory that cannot be searched, makes the stat fail with
+// something other than "not found" — which is reason enough for a stem
+// search to stop and say so, but not for a builtin to warn about a file
+// nobody can show exists.
+func TestLoadThemeNamesOnlyAShadowThatExists(t *testing.T) {
+	root := t.TempDir()
+	notADir := filepath.Join(root, "profile")
+	if err := os.MkdirAll(notADir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(notADir, "themes"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, warnings := LoadTheme("dark", notADir, ""); len(warnings) != 0 {
+		t.Errorf("a themes/ that is a file drew %q, want nothing", warnings)
+	}
+
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return // No permission bits to take away, or nobody they stop.
+	}
+	sealed := filepath.Join(root, "sealed")
+	if err := os.MkdirAll(filepath.Join(sealed, "themes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(sealed, "themes"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(sealed, "themes"), 0o700) })
+	if _, _, warnings := LoadTheme("light", sealed, ""); len(warnings) != 0 {
+		t.Errorf("a themes/ that cannot be searched drew %q, want nothing", warnings)
 	}
 }
 

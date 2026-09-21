@@ -202,7 +202,7 @@ func LoadTheme(value, configDir, defaultConfigDir string) (spec *ThemeSpec, buil
 	case ThemeFormBuiltin:
 		// Candidates is nil for an empty value, so this stats only when
 		// the config actually names a builtin.
-		if shadow := findTheme(r.Candidates); shadow != "" {
+		if shadow := findShadow(r.Candidates); shadow != "" {
 			warnings = []string{shadowedTheme(r, shadow)}
 		}
 		return nil, r.Name, warnings
@@ -257,6 +257,19 @@ func missingTheme(r ThemeResolution) string {
 func findTheme(candidates []string) string {
 	for _, path := range candidates {
 		if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+			return path
+		}
+	}
+	return ""
+}
+
+// findShadow is the first candidate that certainly exists. Stricter than
+// [findTheme] on purpose: a search stops at a stat that failed oddly so
+// the reader hears why, but a warning that a file is ignored has to name a
+// file that is there.
+func findShadow(candidates []string) string {
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
