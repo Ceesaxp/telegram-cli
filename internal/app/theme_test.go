@@ -74,6 +74,20 @@ ramp = ["red"]
 		t.Errorf("the thread does not colour senders from the theme's ramp:\n%s",
 			strings.ReplaceAll(view, "\x1b", "ESC"))
 	}
+
+	// And the rail names the same people, so it is handed the same ramp: a
+	// group's member is red there too. Nothing else in the rail is red, so
+	// a rail left on the default ramp draws none.
+	const group = int64(42)
+	s.Chats.Set(&telegram.Chat{ID: group, Type: telegram.ChatTypeSupergroup, Title: "group"})
+	m.rail.SetSize(30, 12)
+	m.rail.SetDataForTest(group, nil, nil, []*telegram.ChatMember{
+		{MemberID: &telegram.MessageSenderUser{UserID: 300}},
+	}, 1)
+	if view := m.rail.View(); !strings.Contains(view, foregroundSeq(m.roles.Red)) {
+		t.Errorf("the rail does not colour members from the theme's ramp:\n%s",
+			strings.ReplaceAll(view, "\x1b", "ESC"))
+	}
 }
 
 // foregroundSeq is the escape a colour renders to as a foreground, built by
