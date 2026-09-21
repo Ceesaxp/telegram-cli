@@ -5,11 +5,13 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // RolesForSpec is the palette for a theme: the builtin named by builtin,
@@ -21,14 +23,53 @@ func RolesForSpec(spec *config.ThemeSpec, builtin string, trueColor bool) (Roles
 	if spec == nil {
 		return r, nil, nil
 	}
-	colors, warnings := tableRoles(spec.Source, "colors", spec.Colors, hexForm)
-	_, w := tableRoles(spec.Source, "colors256", spec.Colors256, xtermForm)
+	hex, warnings := tableRoles(spec.Source, "colors", spec.Colors, hexForm)
+	xterm, w := tableRoles(spec.Source, "colors256", spec.Colors256, xtermForm)
 	warnings = append(warnings, w...)
 	v := reflect.ValueOf(&r).Elem()
-	for i, value := range colors {
-		v.Field(i).SetString(value)
+	for i := range v.NumField() {
+		if value, ok := atDepth(i, hex, xterm, trueColor); ok {
+			v.Field(i).SetString(value)
+		}
 	}
 	return r, nil, warnings
+}
+
+// atDepth is the theme's own value for role i at the terminal's colour
+// depth, or false when it has none and the base's value stands.
+//
+// On truecolour that is the theme's hex. On anything less it is the
+// theme's hand-picked [colors256] value, else its hex quantised, and only
+// then the base's — whose 256 column is hand-picked too, which is why a
+// theme's hex is never quantised over a role the theme did not set.
+func atDepth(i int, hex, xterm map[int]string, trueColor bool) (string, bool) {
+	if trueColor {
+		value, ok := hex[i]
+		return value, ok
+	}
+	if value, ok := xterm[i]; ok {
+		return value, true
+	}
+	if value, ok := hex[i]; ok {
+		return quantise(value)
+	}
+	return "", false
+}
+
+// quantise is a hex colour as the nearest xterm-256 index, by termenv's own
+// conversion: the one lipgloss would make at render time anyway, made here
+// so the result is fixed at load and can be tested. Hand-writing a nearest
+// colour search would only be a second opinion on the same question.
+//
+// False when termenv cannot convert it. A hex that passed isHexColour never
+// fails, but termenv answers junk with a nil colour, and a nil drawn is an
+// unpainted surface; the role keeps its base value instead.
+func quantise(hex string) (string, bool) {
+	c, ok := termenv.ANSI256.Convert(termenv.RGBColor(hex)).(termenv.ANSI256Color)
+	if !ok {
+		return "", false
+	}
+	return strconv.Itoa(int(c)), true
 }
 
 // A colourForm is what the values of one colour table have to look like.

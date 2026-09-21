@@ -273,3 +273,72 @@ func TestAThemeFileIsDrawnOverItsBase(t *testing.T) {
 		t.Errorf("the rest is not light:\n got %+v\nwant %+v", got, base)
 	}
 }
+
+// Colour depth, per role, in the order docs/theming.md gives it. On a
+// truecolour terminal the hex, the theme's or the base's; on any other, the
+// theme's hand-picked [colors256], else its hex quantised, else the base's
+// own hand-picked 256 value.
+func TestEachRoleResolvesToTheTerminalsDepth(t *testing.T) {
+	theme := spec(
+		map[string]string{"bg": "#1d2021", "cyan": "#8ec07c"},
+		map[string]string{"bg": "235", "red": "160"},
+	)
+	tests := []struct {
+		name      string
+		trueColor bool
+		role      func(Roles) lipgloss.Color
+		want      string
+	}{
+		{"truecolour takes the theme's hex", true, func(r Roles) lipgloss.Color { return r.Bg }, "#1d2021"},
+		{"truecolour ignores [colors256]", true, func(r Roles) lipgloss.Color { return r.Red }, string(darkHex.Red)},
+		{"truecolour falls back to the base hex", true, func(r Roles) lipgloss.Color { return r.Fg }, string(darkHex.Fg)},
+		{"256 takes [colors256] over the hex", false, func(r Roles) lipgloss.Color { return r.Bg }, "235"},
+		{"256 takes [colors256] alone", false, func(r Roles) lipgloss.Color { return r.Red }, "160"},
+		{"256 quantises a hex with no [colors256]", false, func(r Roles) lipgloss.Color { return r.Cyan }, "108"},
+		{"256 falls back to the base's hand-picked value", false, func(r Roles) lipgloss.Color { return r.Fg }, string(dark256.Fg)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, warnings := RolesForSpec(theme, config.ThemeDark, tt.trueColor)
+			if string(tt.role(got)) != tt.want {
+				t.Errorf("got %q, want %q", tt.role(got), tt.want)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warned: %q", warnings)
+			}
+		})
+	}
+}
+
+// The builtin 256 column is hand-picked, never generated from the hex, and
+// this is where that stops being a claim: dark's fg is #c9ced4, which
+// termenv quantises to 188, and the table says 252. So a theme that writes
+// dark's own fg hex gets 188 on a 256-colour terminal, while a theme that
+// leaves fg alone keeps the hand-picked 252.
+func TestTheBuiltin256ColumnIsHandPickedNotQuantised(t *testing.T) {
+	if string(darkHex.Fg) != "#c9ced4" || string(dark256.Fg) != "252" {
+		t.Fatalf("precondition: dark fg is %q / %q, want #c9ced4 / 252", darkHex.Fg, dark256.Fg)
+	}
+	if got, ok := quantise("#c9ced4"); !ok || got != "188" {
+		t.Fatalf("termenv quantises #c9ced4 to %q (ok %v); the pin expects 188", got, ok)
+	}
+
+	written, _, _ := RolesForSpec(spec(map[string]string{"fg": "#c9ced4"}, nil), config.ThemeDark, false)
+	if string(written.Fg) != "188" {
+		t.Errorf("a theme writing fg = #c9ced4 got %q on 256 colours, want the quantised 188", written.Fg)
+	}
+	untouched, _, _ := RolesForSpec(spec(map[string]string{"cyan": "#8ec07c"}, nil), config.ThemeDark, false)
+	if string(untouched.Fg) != "252" {
+		t.Errorf("a theme leaving fg alone got %q on 256 colours, want the hand-picked 252", untouched.Fg)
+	}
+}
+
+// termenv answers a colour it cannot parse with nil, and a nil colour draws
+// as nothing. quantise refuses it rather than passing that on.
+func TestQuantiseRefusesWhatTermenvCannotConvert(t *testing.T) {
+	for _, junk := range []string{"", "#", "#zzzzzz", "#12", "nonsense"} {
+		if got, ok := quantise(junk); ok {
+			t.Errorf("quantise(%q) = %q, want a refusal", junk, got)
+		}
+	}
+}
