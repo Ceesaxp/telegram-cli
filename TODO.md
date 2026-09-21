@@ -8,8 +8,10 @@ A theme is a TOML file a reader writes, read once at startup; `dark` and `light`
 - [x] Theme half (`internal/ui/theme/load.go`): the snake_case key map by reflection over `Roles`, pinned so a non-colour field fails loudly; `RolesForSpec` — base inheritance, case folding, warnings for duplicate, unknown and malformed keys, per-role depth (`[colors256]`, else termenv-quantised hex, else the base's hand-picked value; the `#c9ced4` 188-vs-252 divergence pinned)
 - [x] Sender ramp: `SenderColourFrom` over the resolved ramp, `SetSenderRamp` on chatview and rail; the default ramp colours every pinned user as before, allocation-free
 - [x] `app.New` dispatches through `RolesForSpec`; `main` prints `theme.CheckSpec` with `StartupWarnings`, before `app.New`
-- [x] `docs/themes/gruvbox.toml` (writes `[colors256]`) and `nord.toml` (does not); a test loads every shipped theme with zero warnings
+- [x] Nine example themes in `docs/themes/` from vim schemes (tokyonight, gruvbox, dracula, catppuccin-mocha, nord, onedark, kanagawa, rose-pine, everforest); three write `[colors256]`; a test loads every shipped theme with zero warnings
 - [ ] Phase 2, `theme <name>` + `reload-config`: see the remaining palette commands below
+- [ ] Noticed (pre-existing): `internal/app` `TestTheSceneIsNotTheWallClock` fails whenever the UTC wall clock's HH:MM equals one of the golden scene's message times (20:44, 20:47, 20:52, 20:58, 21:01–21:04 UTC), i.e. 22:44–23:04 CEST; it compares against the whole rendered scene, not just the top bar
+- [ ] Noticed (pre-existing): with stdin closed, the setup wizard loops forever on "Invalid API ID" at EOF instead of exiting
 - [ ] Recorded out of scope in `docs/theming.md`: the splash screen's four colour literals, a hint-bar notice for theme warnings, a hand-tuned light theme
 
 ## Notification fan-out wave (2026-09-21) — branch fix/notify-fanout, issue #36

@@ -1,56 +1,55 @@
-# gruvbox — the example theme from docs/theming.md, as shipped.
-#
-# Copy it into place and name it in config.toml:
-#
-#   cp docs/themes/gruvbox.toml ~/.config/tele-tui/themes/
-#   [ui] theme = "gruvbox"
-#
-# This one writes [colors256] for two roles; the rest are quantised from
-# [colors] on a terminal without truecolour. docs/themes/nord.toml writes no
-# [colors256] at all. Every role name and what it paints: docs/theming.md
-# and the palette table in docs/tui-2.0.md.
+# Gruvbox (dark, hard background) for tele-tui.
+# Palette: morhetz/gruvbox — colors/gruvbox.vim (hex and cterm).
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "gruvbox"  in config.toml.
 
 [theme]
-name    = "gruvbox"        # optional; display only. Defaults to file stem.
-inherit = "dark"           # "dark" or "light" (only builtins may be
-                           # inherited; no theme-file chains). Default "dark".
+name    = "gruvbox"
+inherit = "dark"
 
-# Roles omitted here inherit from the base. Values are hex ("#rrggbb" or
-# the "#rgb" shorthand, which lipgloss renders correctly).
 [colors]
 # Surfaces, darkest context first.
-bg        = "#1d2021"      # app background
-panel     = "#282828"      # side panels
-chrome    = "#32302f"      # top bar, hint bar
-sel       = "#3c3836"      # selected chat row
-cur_line  = "#32302f"      # selected message row
-rule      = "#504945"      # panel separators
-rule_soft = "#3c3836"      # in-panel dividers
-border    = "#665c54"      # attachment, code and poll frames
+bg        = "#1d2021"
+panel     = "#282828"
+chrome    = "#32302f"
+sel       = "#3c3836"
+cur_line  = "#32302f"
+rule      = "#504945"
+rule_soft = "#3c3836"
+border    = "#665c54"
 
 # Text ramp, dimmest to brightest.
-ghost  = "#665c54"         # separators and inert glyphs
-faint  = "#7c6f64"         # timestamps and byte counts
-dim    = "#928374"         # secondary copy
-fg     = "#ebdbb2"         # message body
-bright = "#fbf1c7"         # active titles and bold spans
+ghost     = "#665c54"
+faint     = "#7c6f64"
+dim       = "#928374"
+fg        = "#ebdbb2"
+bright    = "#fbf1c7"
 
 # Semantic accents.
-cyan  = "#8ec07c"          # sole focus and key accent
-amber = "#d79921"          # commands, attachments, channels, inline code
-green = "#b8bb26"          # insert mode, online, own messages, sent
-mauve = "#d3869b"          # groups, italics, sender colour
-blue  = "#83a598"          # DMs, mentions, sender colour
-red   = "#fb4934"          # errors, failures, removed diff lines
+cyan      = "#8ec07c"
+amber     = "#d79921"
+green     = "#b8bb26"
+mauve     = "#d3869b"
+blue      = "#83a598"
+red       = "#fb4934"
 
-# Optional. Hand-picked xterm-256 fallbacks, same keys as [colors].
-# Roles absent here are quantised mechanically from the hex.
+# Hand-picked xterm-256 values, from the scheme's own cterm table.
 [colors256]
-bg = "235"
-fg = "223"
-
-# Optional. The deterministic sender-name ramp (FNV-1a over user id).
-# Entries are role names, resolved after [colors] is applied.
-# Default: ["mauve", "cyan", "blue", "amber"] — the compiled-in ramp.
-[senders]
-ramp = ["mauve", "cyan", "blue", "amber"]
+bg        = "234"
+panel     = "235"
+chrome    = "236"
+sel       = "237"
+cur_line  = "236"
+rule      = "239"
+rule_soft = "237"
+border    = "241"
+ghost     = "241"
+faint     = "243"
+dim       = "245"
+fg        = "223"
+bright    = "229"
+cyan      = "108"
+amber     = "172"
+green     = "142"
+mauve     = "175"
+blue      = "109"
+red       = "167"

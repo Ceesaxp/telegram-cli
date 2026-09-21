@@ -1,0 +1,33 @@
+# Catppuccin Mocha for tele-tui.
+# Palette: catppuccin/nvim — lua/catppuccin/palettes/mocha.lua, groups/editor.lua.
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "catppuccin-mocha"  in config.toml.
+
+[theme]
+name    = "catppuccin-mocha"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#1e1e2e"
+panel     = "#181825"
+chrome    = "#11111b"
+sel       = "#45475a"
+cur_line  = "#2a2b3c"
+rule      = "#313244"
+rule_soft = "#2a2b3c"
+border    = "#585b70"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#45475a"
+faint     = "#6c7086"
+dim       = "#a6adc8"
+fg        = "#cdd6f4"
+bright    = "#cdd6f4"
+
+# Semantic accents.
+cyan      = "#89dceb"
+amber     = "#f9e2af"
+green     = "#a6e3a1"
+mauve     = "#cba6f7"
+blue      = "#89b4fa"
+red       = "#f38ba8"

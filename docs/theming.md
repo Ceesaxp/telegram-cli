@@ -388,6 +388,12 @@ while TOML fixtures under `testdata/` are never scanned.
   hands the ramp to the two components; its signature is unchanged. `main`
   prints `config.StartupWarnings` and `theme.CheckSpec` in one loop, before
   `app.New`.
-- **Examples** — `docs/themes/gruvbox.toml` (writes `[colors256]`) and
-  `docs/themes/nord.toml` (does not); a test loads every file there through
-  both halves and requires zero warnings.
+- **Examples** — nine themes in `docs/themes/`, each mapped from a vim
+  colour scheme's own source (named in the file's header) by the same rules:
+  Normal bg/fg for `bg`/`fg`, the sidebar, status line, visual and cursor-line
+  backgrounds for `panel`, `chrome`, `sel` and `cur_line`, NonText → Comment →
+  secondary fg for the text ramp, and the scheme's cyan, yellow, green,
+  purple, blue and red for the accents. Gruvbox, Dracula and Everforest write
+  `[colors256]` from their own cterm tables; the rest quantise. A test loads
+  every file there through both halves and requires zero warnings, and at
+  least one theme of each depth kind.

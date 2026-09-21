@@ -39,8 +39,11 @@ by path, for a value holding a `/` or ending in `.toml`, resolved like every
 other path in `config.toml`. `dark` and `light` always mean the builtins,
 whatever is in `themes/`.
 
-Examples to copy into place are in [`docs/themes/`](themes/): `gruvbox`
-and `nord`. The format — the role names, `[colors256]` for terminals
+Examples to copy into place are in [`docs/themes/`](themes/), drawn from
+popular vim colour schemes: `tokyonight`, `gruvbox`, `dracula`,
+`catppuccin-mocha`, `nord`, `onedark`, `kanagawa`, `rose-pine` and
+`everforest`. Each names the scheme and the source file its palette came
+from. The format — the role names, `[colors256]` for terminals
 without truecolour, the sender-name ramp — is in [Theming](theming.md).
 
 Nothing about a theme stops the client starting. A file that cannot be

@@ -1,0 +1,33 @@
+# Tokyo Night (night) for tele-tui.
+# Palette: folke/tokyonight.nvim — lua/tokyonight/colors/{storm,night}.lua.
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "tokyonight"  in config.toml.
+
+[theme]
+name    = "tokyonight"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#1a1b26"
+panel     = "#16161e"
+chrome    = "#16161e"
+sel       = "#283457"
+cur_line  = "#292e42"
+rule      = "#3b4261"
+rule_soft = "#292e42"
+border    = "#3b4261"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#3b4261"
+faint     = "#565f89"
+dim       = "#737aa2"
+fg        = "#c0caf5"
+bright    = "#c0caf5"
+
+# Semantic accents.
+cyan      = "#7dcfff"
+amber     = "#e0af68"
+green     = "#9ece6a"
+mauve     = "#bb9af7"
+blue      = "#7aa2f7"
+red       = "#f7768e"
