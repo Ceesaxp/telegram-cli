@@ -143,6 +143,17 @@ the unmuted count, with the true total in parentheses when it differs, e.g.
   reaction that arrives while the chat is open is cleared about 300ms
   later. Both follow terminal focus the way read receipts do, and a chat
   you only pass through on the way to another keeps its reactions.
+- **Unread mentions** — a chat where someone mentioned you shows an `@`
+  chip on its row, left of the unread badge. It shows even for a muted
+  chat, and the mention brightens that chat's title too: muting silences a
+  chat, but a mention is the one thing Telegram lets through. `g@` in the
+  chat view jumps to the oldest unread mention and clears it, saying how
+  many are left; press it again for the next, and `ctrl+o` comes back.
+  `:read-mentions` clears every mention in the chat. Opening a chat at its
+  newest messages clears the mentions it shows about 300ms later,
+  following terminal focus like the read receipt, but leaves voice and
+  video notes alone, as the official clients leave them for playing; `g@`
+  onto one clears it.
 - **Exact scroll targeting** — scrolling and jump-to-message use a cached
   per-message line index rather than a rough per-message jump, so the target
   lands on the exact line even as photo art and sender-name lookups change
