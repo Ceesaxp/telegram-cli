@@ -79,12 +79,7 @@ func main() {
 	// -migrate-config (decision I-13). A binding that was refused is a
 	// binding the user will otherwise press and find inert, with the
 	// explanation sitting behind a flag they have no reason to run.
-	//
-	// The theme's role and value warnings join them from theme.CheckSpec:
-	// config read the file but cannot judge colours, and app.New, which
-	// draws the palette, runs after this print.
-	warnings := append(config.StartupWarnings(cfg), theme.CheckSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin())...)
-	for _, warning := range warnings {
+	for _, warning := range startupWarnings(cfg) {
 		fmt.Fprintf(os.Stderr, "config: %s\n", warning)
 	}
 
@@ -249,6 +244,15 @@ func runMigrateConfig(cfg *config.Config) {
 // fatalf reports a fatal startup or shutdown error and exits. It writes to
 // stderr directly because the log package's output is discarded (see main),
 // which would otherwise turn every failure into a silent exit(1).
+// startupWarnings is everything printed before the TUI takes the screen.
+//
+// The theme's role and value warnings join the config's from
+// theme.CheckSpec: config read the file but cannot judge colours, and
+// app.New, which draws the palette, runs after this print.
+func startupWarnings(cfg *config.Config) []string {
+	return append(config.StartupWarnings(cfg), theme.CheckSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin())...)
+}
+
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
