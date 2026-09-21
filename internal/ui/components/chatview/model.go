@@ -1048,11 +1048,12 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cmd {
 	// A reopen of the chat already open — g@ and ctrl+o jump within it —
 	// is not leaving it. What the reader has seen there is still seen, so
-	// what it owes is sent now instead of being dropped with the rest of
-	// the coalescing state below, as a switch to another chat drops it.
-	var owed []tea.Cmd
-	if chatID == m.chatID {
-		owed = []tea.Cmd{m.flushRead(), m.flushMentionsRead(), m.flushReactionsRead()}
+	// what it owes stays owed, and the windows already running send it:
+	// their ticks carry the chat, not the generation. What the reopened
+	// page owes again joins it rather than going out twice. Only a switch
+	// to another chat drops it.
+	if chatID != m.chatID {
+		m.clearCoalescing()
 	}
 	if m.mentionTarget.chatID != chatID {
 		m.mentionTarget = mentionRef{}
@@ -1077,11 +1078,9 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.targetPages = 0
 	m.pendingJumpID = 0
 	m.pendingMeta = nil
-	m.pendingReadID = 0
 	m.metaBusy = false
 	m.typing = nil
 	m.stopTypingAnim()
-	m.clearCoalescing()
 	m.clearSearch()
 	m.cache.clear()
 
@@ -1100,11 +1099,11 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	}
 
 	gen, tg := m.gen, m.tg
-	return tea.Batch(append(owed,
+	return tea.Batch(
 		m.loadHistoryCmd(gen, chatID, 0),
 		m.memberCountCmd(chatID),
 		func() tea.Msg { tg.OpenChat(chatID); return nil },
-	)...)
+	)
 }
 
 // memberCountMsg carries a chat's total membership back.

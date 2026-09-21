@@ -433,29 +433,95 @@ func TestAMentionTheCatchUpBringsInIsCleared(t *testing.T) {
 	}
 }
 
-// g@ inside the window reopens the chat it is in, to jump, and so does
-// ctrl+o within one chat. That is not leaving the chat: what the reader
-// saw at the open is still seen, so the receipt and the mention clear it
-// owes go now, with the reopen, rather than being dropped as a switch to
-// another chat drops them.
-func TestReopeningTheOpenChatSendsWhatItOwes(t *testing.T) {
+// owingChat is a group opened at its newest page, focused, owing all three
+// things an open can owe: a read receipt up to 5, a clear of its unread
+// reactions, and a clear of the mention 4. Each waits in its window.
+func owingChat(t *testing.T) Model {
+	t.Helper()
 	m := mentionChat(3, 2)
+	entry, _ := m.store.Chats.Get(testChatID)
+	entry.UnreadReactionsCount = 1
 	m.OpenChat(testChatID, "nadia")
 	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+	if m.pendingReadID != 5 || !m.pendingReactionsRead ||
+		!slices.Equal(owedMentionIDs(m), []int64{4}) {
+		t.Fatalf("precondition: owes receipt %d, reactions %v, mentions %v; want 5, true, [4]",
+			m.pendingReadID, m.pendingReactionsRead, owedMentionIDs(m))
+	}
+	return m
+}
+
+// g@ inside the window reopens the chat it is in, to jump, and so do
+// ctrl+o within one chat and picking the open chat again. That is not
+// leaving it, so what it owes stays owed and goes out with the windows
+// already running — once. The reopened page owes the receipt and the
+// reactions clear again, because the store has not heard back yet; that
+// must join what is owed, not send it a second time.
+func TestReopeningTheOpenChatSendsWhatItOwesOnce(t *testing.T) {
+	m := owingChat(t)
+
+	m.OpenChat(testChatID, "nadia")
+	m, cmd := m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+	if cmd != nil {
+		t.Fatal("the reopened page scheduled windows of its own on top of the ones running")
+	}
+
+	for name, flush := range map[string]tea.Msg{
+		"receipt":         readFlushMsg{chatID: testChatID},
+		"reactions clear": reactionsFlushMsg{chatID: testChatID},
+		"mention clear":   mentionsFlushMsg{chatID: testChatID},
+	} {
+		var first, second tea.Cmd
+		m, first = m.Update(flush)
+		m, second = m.Update(flush)
+		if first == nil || second != nil {
+			t.Errorf("the %s went out %v then %v after the reopen, want once",
+				name, first != nil, second != nil)
+		}
+	}
+}
+
+// Blurred, nothing goes out until focus returns, and a reopen of the same
+// chat meanwhile — a jump within it — must not lose what is owed.
+func TestReopeningTheOpenChatWhileBlurredKeepsWhatItOwes(t *testing.T) {
+	m := mentionChat(3, 2)
+	m, _ = m.Update(tea.BlurMsg{})
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+
+	m.OpenChatAt(testChatID, "nadia", 4)
 	if m.pendingReadID != 5 || !slices.Equal(owedMentionIDs(m), []int64{4}) {
-		t.Fatalf("precondition: owes receipt %d and mentions %v, want 5 and [4]",
+		t.Fatalf("after the reopen: owes receipt %d and mentions %v, want 5 and [4] kept for focus",
 			m.pendingReadID, owedMentionIDs(m))
 	}
 
-	owing := len(runBatch(t, m.OpenChatAt(testChatID, "nadia", 4)))
-	if !m.askedMentions.has(testChatID, 4) {
-		t.Error("the reopen did not send the mention clear the open owed")
+	m, cmd := m.Update(tea.FocusMsg{})
+	if cmd == nil || m.pendingReadID != 0 || len(owedMentionIDs(m)) != 0 {
+		t.Fatalf("focus: cmd=%v, receipt %d, mentions %v; want both sent",
+			cmd != nil, m.pendingReadID, owedMentionIDs(m))
 	}
-	// The same reopen again, owing nothing now: the difference is what
-	// the first one sent on top of reopening.
-	if again := len(runBatch(t, m.OpenChatAt(testChatID, "nadia", 4))); owing-again != 2 {
-		t.Errorf("the reopen owing a receipt and a clear sent %d commands more than one owing nothing, want 2",
-			owing-again)
+}
+
+// Moving to another chat is leaving: the receipt, the reactions clear and
+// the mention clears the chat owed are dropped, as they always were, and
+// none of its windows sends anything.
+func TestSwitchingChatsDropsEverythingOwed(t *testing.T) {
+	m := owingChat(t)
+
+	m.OpenChat(testChatID+1, "elsewhere")
+
+	if m.pendingReadID != 0 || m.pendingReactionsRead || len(owedMentionIDs(m)) != 0 {
+		t.Fatalf("after the switch: receipt %d, reactions %v, mentions %v; want all dropped",
+			m.pendingReadID, m.pendingReactionsRead, owedMentionIDs(m))
+	}
+	for _, flush := range []tea.Msg{
+		readFlushMsg{chatID: testChatID},
+		reactionsFlushMsg{chatID: testChatID},
+		mentionsFlushMsg{chatID: testChatID},
+	} {
+		if _, cmd := m.Update(flush); cmd != nil {
+			t.Errorf("the left chat's %T sent something after the switch", flush)
+		}
 	}
 }
 
