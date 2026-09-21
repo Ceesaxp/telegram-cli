@@ -319,7 +319,11 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// Colour depth is resolved once, here, from the environment only —
 	// never by querying the terminal, whose reply would arrive as
 	// keystrokes. See theme.SupportsTrueColor.
-	roles := theme.RolesFor(cfg.UI.Theme, theme.SupportsTrueColor())
+	//
+	// The one place the palette is chosen, theme file or builtin. Its
+	// warnings are dropped: config.Load read the file, and main has already
+	// printed what theme.CheckSpec says about it.
+	roles, senderRamp, _ := theme.RolesForSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin(), theme.SupportsTrueColor())
 	m := Model{
 		auth:       auth.New(roles, authorizer),
 		chatList:   chatlist.New(s, tg, roles),
@@ -360,6 +364,10 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// and leave the chat titles sheared.
 	cell.SetEmojiMode(cell.ParseEmojiMode(config.ResolveEmojiWidth(cfg.UI.EmojiWidth)))
 
+	// The ramp is the theme's, like the palette: the thread and the rail
+	// name the same people and have to agree on their colours.
+	m.chatView.SetSenderRamp(senderRamp)
+	m.rail.SetSenderRamp(senderRamp)
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
 	m.chatView.ApplyStorage(cfg.Storage)
