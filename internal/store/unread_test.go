@@ -157,8 +157,8 @@ func TestAMessageThatDoesNotCountStillBecomesThePreview(t *testing.T) {
 // The server's read receipt says two things: how many are still unread,
 // which stays the authority it always was, and how far the reader has read,
 // which the counting above needs. The mark only moves forward — receipts
-// can arrive out of order — and a receipt for an unknown chat invents
-// nothing.
+// can arrive out of order, and an older one changes nothing at all — and a
+// receipt for an unknown chat invents nothing.
 func TestUpdateReadInboxMovesTheReadMarkForwardAndTakesTheCount(t *testing.T) {
 	s := NewChatStore()
 	s.Set(unreadChat())
@@ -175,13 +175,35 @@ func TestUpdateReadInboxMovesTheReadMarkForwardAndTakesTheCount(t *testing.T) {
 	if entry.Chat.LastReadInboxMessageID != 12 {
 		t.Errorf("an older receipt moved the mark back to %d", entry.Chat.LastReadInboxMessageID)
 	}
-	if entry.UnreadCount != 1 {
-		t.Errorf("unread = %d, want the server's 1", entry.UnreadCount)
+	if entry.UnreadCount != 0 {
+		t.Errorf("unread = %d after an older receipt, want 0 kept", entry.UnreadCount)
 	}
 
 	s.UpdateReadInbox(8, 5, 3)
 	if _, ok := s.Get(8); ok {
 		t.Error("a receipt for an unknown chat invented one")
+	}
+}
+
+// Telegram's read mark never goes backwards, so a receipt below the mark
+// this client already holds is stale, and so is the unread count it
+// carries. Taking that count brought back the badge a local read had just
+// cleared. A receipt at the mark is current, and still the authority.
+func TestAReceiptOlderThanTheReadMarkChangesNothing(t *testing.T) {
+	s := NewChatStore()
+	s.Set(unreadChat())
+	s.MarkReadUpTo(7, 13)
+
+	s.UpdateReadInbox(7, 12, 1)
+	entry, _ := s.Get(7)
+	if entry.UnreadCount != 0 || entry.Chat.LastReadInboxMessageID != 13 {
+		t.Errorf("after a receipt for 12 with the mark at 13: unread %d, mark %d; want 0, 13",
+			entry.UnreadCount, entry.Chat.LastReadInboxMessageID)
+	}
+
+	s.UpdateReadInbox(7, 13, 2)
+	if got := unreadCount(t, s, 7); got != 2 {
+		t.Errorf("unread = %d after a receipt at the mark, want the server's 2", got)
 	}
 }
 

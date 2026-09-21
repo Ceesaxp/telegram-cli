@@ -242,12 +242,19 @@ func countsAsUnread(entry *ChatEntry, msg *telegram.Message) bool {
 // UpdateReadInbox applies the server's read receipt for a chat: the unread
 // count it reports, which is authoritative, and the read mark maxID, which
 // [countsAsUnread] needs to tell a late message from a new one.
+//
+// A receipt below the mark already held is ignored outright. Telegram's
+// read mark never goes backwards, so such a receipt is stale, and so is its
+// count — taking it brought back a badge a local read had just cleared.
 func (s *ChatStore) UpdateReadInbox(chatID int64, maxID int64, unreadCount int32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, ok := s.chats[chatID]
 	if !ok {
+		return
+	}
+	if entry.Chat != nil && maxID < entry.Chat.LastReadInboxMessageID {
 		return
 	}
 	entry.UnreadCount = unreadCount
