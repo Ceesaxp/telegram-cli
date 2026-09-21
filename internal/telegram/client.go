@@ -187,6 +187,23 @@ func newClient(cfg *config.Config, authorizer *TUIAuthorizer, noUpdates bool) *C
 	gaps := updates.New(updates.Config{
 		Handler:      dispatcher,
 		AccessHasher: c.peers,
+		// Answered from the persisted peer cache rather than gotd's
+		// in-memory default, which starts empty every run and makes
+		// every private message from a not-yet-seen sender cost a full
+		// getDifference. See peerUserHasher.
+		UserAccessHasher: stores.userHasher(),
+		// Onto the standard log, i.e. TELETUI_DEBUG. See gotdLogger.
+		Logger: gotdLogger("updates"),
+		// Both are the manager admitting it cannot replay what was
+		// missed. Left unset, gotd only logs them — to the logger above,
+		// which is off by default — and the UI carries on showing a
+		// thread the server has moved past. See ResyncNeededMsg.
+		OnTooLong: func() {
+			c.resyncNeeded("difference too long")
+		},
+		OnLoadUserStateFailed: func() {
+			c.resyncNeeded("no stored update state, starting from the present")
+		},
 		// Nil storage means in-memory: the manager then has no state to
 		// restore, fetches the current one via updates.getState and
 		// starts from there, exactly as before this was persisted.
@@ -498,6 +515,14 @@ func (c *Client) send(msg tea.Msg) {
 	if send != nil {
 		send(msg)
 	}
+}
+
+// resyncNeeded tells the UI the update stream has a hole the server will
+// not fill. Logged as well, since it is the one line that explains a
+// message the thread never showed.
+func (c *Client) resyncNeeded(reason string) {
+	log.Printf("updates: resync needed: %s", reason)
+	c.send(ResyncNeededMsg{Reason: reason})
 }
 
 // notify forwards a warning or error to the bubbletea program, buffering

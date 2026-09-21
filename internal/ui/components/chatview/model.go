@@ -2,6 +2,7 @@ package chatview
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -983,6 +984,11 @@ type historyLoadedMsg struct {
 	fromID   int64
 	messages []*telegram.Message
 	err      error
+
+	// catchUp marks the newest page fetched AGAIN, to find out what a sync
+	// gap swallowed. It is merged rather than prepended, and its overlap
+	// with the cache means nothing — see applyCatchUp.
+	catchUp bool
 }
 
 // metaWork is the trailing meta pipeline still owed for a page: the photo
@@ -1044,6 +1050,85 @@ func (m *Model) loadHistoryCmd(gen int, chatID int64, fromMsgId int64) tea.Cmd {
 		}
 		return historyLoadedMsg{gen: gen, chatID: chatID, fromID: fromMsgId, messages: msgs}
 	}
+}
+
+// CatchUpCmd refetches the open chat's newest page, so that whatever the
+// update stream failed to deliver — a "difference too long" from the
+// server, updates lost across a reconnect — ends up in the thread anyway.
+//
+// The thread otherwise trusts the update stream completely: a message it
+// never saw stays missing until the chat is reopened, while the chat list
+// goes on showing it as the last thing said. This is the belt to that
+// trust's braces, and it costs one page request.
+//
+// Nil while the first page is still loading (that page IS the newest one),
+// with no chat open, or with no client to ask.
+func (m *Model) CatchUpCmd() tea.Cmd {
+	if m.chatID == 0 || m.loading || m.tg == nil {
+		return nil
+	}
+	gen, chatID, tg := m.gen, m.chatID, m.tg
+	return func() tea.Msg {
+		msgs, err := tg.GetChatHistory(chatID, 0, 0, 50)
+		return historyLoadedMsg{gen: gen, chatID: chatID, catchUp: true, messages: msgs, err: err}
+	}
+}
+
+// applyCatchUp folds a refetched newest page into the thread.
+//
+// Unlike a page fetched by paging backwards, an overlap with the cache is
+// the expected case rather than the end of history, and a failure is not
+// worth a notice: the thread is no worse off than before it asked. What
+// was new gets the same trailing meta work as any page — senders, photos —
+// and the same read receipt a live arrival would have earned, since the
+// reader is looking at it now.
+func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		log.Printf("chatview: catch-up fetch for chat %d: %s", msg.chatID, msg.err)
+		return m, nil
+	}
+	// Oldest first, like the cache: Merge reports what was new in the
+	// order given, and the meta work below reads "newest" off the end.
+	page := make([]*telegram.Message, len(msg.messages))
+	for i, v := range msg.messages {
+		page[len(msg.messages)-1-i] = v
+	}
+	inserted := m.store.Messages.Merge(m.chatID, page)
+	for _, v := range page {
+		if v != nil {
+			m.cache.invalidate(v.ID) // the server's copy replaced ours
+		}
+	}
+	if len(inserted) == 0 {
+		return m, nil
+	}
+	m.resolveUnreadDivider()
+
+	var cmds []tea.Cmd
+	newest := inserted[len(inserted)-1].ID
+	if m.blurred {
+		if newest > m.pendingReadID {
+			m.pendingReadID = newest
+		}
+	} else {
+		cmds = append(cmds, m.noteRead(newest))
+	}
+
+	if !m.metaBusy {
+		priority, trailing := senderTargets(inserted, m.store, senderPriorityWindow)
+		work := metaWork{
+			photos:  m.photoPrefetchTargets(inserted),
+			senders: trailing,
+		}
+		if len(priority) > 0 {
+			m.metaBusy = true
+			cmds = append(cmds, m.fetchSendersCmd(m.gen, m.chatID, priority, work))
+		} else if cmd := m.nextMetaCmd(work); cmd != nil {
+			m.metaBusy = true
+			cmds = append(cmds, cmd)
+		}
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // senderTargets splits the unknown senders of a page into the ones worth
@@ -1502,6 +1587,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.gen != m.gen || msg.chatID != m.chatID {
 			return m, nil
 		}
+		if msg.catchUp {
+			return m.applyCatchUp(msg)
+		}
 		if msg.err != nil {
 			m.loading = false
 			m.loadStatus = ""
@@ -1621,6 +1709,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// cumulative, so a burst of arrivals costs one call carrying
 			// the highest ID rather than one call each (issue #46).
 			return m, m.noteRead(msg.Message.ID)
+		}
+
+	case telegram.ChatReadOutboxMsg:
+		// The other side read up to here. The mark lives in the chat
+		// store whichever chat it is for — it is what the tick is read
+		// from when the chat is opened — and this is the only place that
+		// reads it, so it is kept here rather than in the chat list. For
+		// the open chat, every own row the receipt covers is redrawn:
+		// rows are cached once drawn, and the cached one still shows a
+		// single tick. Before this the event was emitted and consumed by
+		// nobody, so a reply's tick only flipped on reopening the chat.
+		m.store.Chats.UpdateReadOutbox(msg.ChatId, msg.LastReadOutboxMessageId)
+		if msg.ChatId == m.chatID {
+			for _, own := range m.store.Messages.Get(m.chatID) {
+				if own.ID > 0 && own.ID <= msg.LastReadOutboxMessageId && isOwnMessage(own, m.myUserId) {
+					m.cache.invalidate(own.ID)
+				}
+			}
 		}
 
 	case telegram.ChatActionMsg:

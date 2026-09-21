@@ -73,6 +73,16 @@ type ChatFoldersMsg struct {
 	Folders []*ChatFolder
 }
 
+// ResyncNeededMsg reports that the update stream has a hole the server
+// will not fill: updates.getDifference answered "too long" (everything
+// pending was discarded and the sync point moved past it), or the stored
+// sync state could not be loaded and this run started from the present.
+// Whatever was on screen before it may now be stale, and only a refetch
+// can say what was missed.
+type ResyncNeededMsg struct {
+	Reason string
+}
+
 // ClientErrorMsg reports that the Telegram client itself failed, as
 // opposed to a single RPC. Terminal is true when the run loop has exited
 // for good, meaning nothing will arrive until the app reconnects — the

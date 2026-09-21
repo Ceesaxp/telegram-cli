@@ -1037,6 +1037,18 @@ func (m *Model) setFolders(folders []*telegram.ChatFolder) {
 	m.refreshList()
 }
 
+// ReloadCmd fetches the dialog list again from the top, the way Init
+// does, plus the active folder's own dialogs. For after a sync gap the
+// server would not replay: every preview, unread count and read mark on
+// screen may be stale, and the dialog list is the one request that
+// refreshes all of them at once. Nil without a client.
+func (m Model) ReloadCmd() tea.Cmd {
+	if m.tg == nil {
+		return nil
+	}
+	return tea.Batch(m.loadChatsCmd(), m.FolderLoadCmd())
+}
+
 // FolderLoadCmd fetches include/pin dialogs for the active folder that
 // are not already in the store. The folder's own peer list is the
 // membership source — not a recency slice of getDialogs. Nil client
