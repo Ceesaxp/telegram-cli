@@ -173,6 +173,31 @@ func TestReadReactionsRepeatsUntilTheServerIsDone(t *testing.T) {
 	}
 }
 
+// A server that never says it is done must not be called in a tight loop
+// until the timeout: that is the pattern Telegram answers with FLOOD_WAIT.
+// The walk stops at the cap, without an error, and without claiming a
+// clear the server never confirmed: the count stays, and the next open
+// asks again.
+func TestReadReactionsStopsAtTheCap(t *testing.T) {
+	never := make([]int, 3*maxReadReactionsCalls)
+	for i := range never {
+		never[i] = 1
+	}
+	inv := &readReactionsInvoker{offsets: never}
+	c, got := viewClient(t, inv)
+
+	if err := c.ReadReactions(basicGroupID); err != nil {
+		t.Fatalf("ReadReactions: %v, want a quiet stop", err)
+	}
+
+	if len(inv.asked) != maxReadReactionsCalls {
+		t.Fatalf("asked the server %d times, want the cap of %d", len(inv.asked), maxReadReactionsCalls)
+	}
+	if len(*got) != 0 {
+		t.Errorf("a clear the server never finished published %#v", *got)
+	}
+}
+
 // A clear the server refused did not happen.
 func TestReadReactionsAnnouncesNothingWhenTheClearFails(t *testing.T) {
 	c, got := viewClient(t, &readReactionsInvoker{readErr: errors.New("no connection")})
