@@ -75,6 +75,20 @@ func (m Model) commandRegistry() []Command {
 			},
 		},
 		{
+			Name:        "read-mentions",
+			Arg:         ArgNone,
+			Description: "clear every unread mention in this chat",
+			// Guarded on the chat view's chat rather than the chat list's
+			// active one: that is the chat the clear goes to, and a jump
+			// opens a chat without the list hearing of it.
+			Run: func(m Model, _ string) (Model, tea.Cmd, string) {
+				if m.chatView.ChatId() == 0 {
+					return m, nil, "no chat open"
+				}
+				return m, m.chatView.ReadAllMentionsCmd(), "mentions cleared"
+			},
+		},
+		{
 			Name:        "search",
 			Arg:         ArgOptional,
 			Placeholder: "<query>",
