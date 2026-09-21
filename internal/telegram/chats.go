@@ -336,6 +336,7 @@ func (c *Client) chatsFromDialogParts(dialogs []tg.DialogClass, messages []tg.Me
 		chat.Pinned = d.Pinned
 		chat.UnreadCount = int32(d.UnreadCount)
 		chat.UnreadReactionsCount = int32(d.UnreadReactionsCount)
+		chat.UnreadMentionsCount = int32(d.UnreadMentionsCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
 		chat.LastReadOutboxMessageID = int64(d.ReadOutboxMaxID)
 		chat.Muted = mutedFromNotifySettings(d.NotifySettings, now)
