@@ -421,3 +421,29 @@ func TestAMentionTheCatchUpBringsInIsCleared(t *testing.T) {
 			got, m.mentionsFlushPending)
 	}
 }
+
+// g@ inside the window reopens the chat it is in, to jump, and so does
+// ctrl+o within one chat. That is not leaving the chat: what the reader
+// saw at the open is still seen, so the receipt and the mention clear it
+// owes go now, with the reopen, rather than being dropped as a switch to
+// another chat drops them.
+func TestReopeningTheOpenChatSendsWhatItOwes(t *testing.T) {
+	m := unreadChat(3, 2)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+	if m.pendingReadID != 5 || !slices.Equal(owedMentionIDs(m), []int64{4}) {
+		t.Fatalf("precondition: owes receipt %d and mentions %v, want 5 and [4]",
+			m.pendingReadID, owedMentionIDs(m))
+	}
+
+	owing := len(runBatch(t, m.OpenChatAt(testChatID, "nadia", 4)))
+	if !m.askedMentions.has(testChatID, 4) {
+		t.Error("the reopen did not send the mention clear the open owed")
+	}
+	// The same reopen again, owing nothing now: the difference is what
+	// the first one sent on top of reopening.
+	if again := len(runBatch(t, m.OpenChatAt(testChatID, "nadia", 4))); owing-again != 2 {
+		t.Errorf("the reopen owing a receipt and a clear sent %d commands more than one owing nothing, want 2",
+			owing-again)
+	}
+}

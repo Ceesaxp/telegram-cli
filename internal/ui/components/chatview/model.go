@@ -1046,6 +1046,14 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 // backwards; if it is still not found the view settles at the oldest
 // loaded message and a notice is shown in the header.
 func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cmd {
+	// A reopen of the chat already open — g@ and ctrl+o jump within it —
+	// is not leaving it. What the reader has seen there is still seen, so
+	// what it owes is sent now instead of being dropped with the rest of
+	// the coalescing state below, as a switch to another chat drops it.
+	var owed []tea.Cmd
+	if chatID == m.chatID {
+		owed = []tea.Cmd{m.flushRead(), m.flushMentionsRead(), m.flushReactionsRead()}
+	}
 	if m.mentionTarget.chatID != chatID {
 		m.mentionTarget = mentionRef{}
 	}
@@ -1092,11 +1100,11 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	}
 
 	gen, tg := m.gen, m.tg
-	return tea.Batch(
+	return tea.Batch(append(owed,
 		m.loadHistoryCmd(gen, chatID, 0),
 		m.memberCountCmd(chatID),
 		func() tea.Msg { tg.OpenChat(chatID); return nil },
-	)
+	)...)
 }
 
 // memberCountMsg carries a chat's total membership back.
