@@ -7,10 +7,12 @@ import (
 
 // notifier builds one with the terminal support forced, so the tests are
 // about the decision and not about whatever terminal happens to be running
-// them.
+// them. The platform notifier is a stand-in for the same reason — and so a
+// run of the suite does not post real notifications to the desktop.
 func notifier(method string, support TerminalSupport) *Notifier {
 	n := NewNotifier(true, true, method)
 	n.terminal = support
+	n.system = func(string, string) {}
 	return n
 }
 
