@@ -153,6 +153,189 @@ func TestResolveThemeNameReadsEmptyAsDark(t *testing.T) {
 	}
 }
 
+// --- the loader: resolve, search, read -------------------------------------
+
+// themeDirs makes a config directory and a default config directory, each
+// with an empty themes/ inside.
+func themeDirs(t *testing.T) (configDir, defaultDir string) {
+	t.Helper()
+	root := t.TempDir()
+	configDir = filepath.Join(root, "profile")
+	defaultDir = filepath.Join(root, "xdg", "tele-tui")
+	for _, dir := range []string{configDir, defaultDir} {
+		if err := os.MkdirAll(filepath.Join(dir, "themes"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return configDir, defaultDir
+}
+
+// putTheme writes themes/<name>.toml under dir and returns its path.
+func putTheme(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "themes", name+".toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestLoadThemeFindsAStemNextToTheConfig: the common case, and the whole
+// point — `theme = "gruvbox"` reads themes/gruvbox.toml.
+func TestLoadThemeFindsAStemNextToTheConfig(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	path := putTheme(t, configDir, "gruvbox", "[theme]\ninherit = \"light\"\n[colors]\nbg = \"#1d2021\"\n")
+	putTheme(t, defaultDir, "gruvbox", "[colors]\nbg = \"#000000\"\n")
+
+	spec, builtin, warnings := LoadTheme("Gruvbox", configDir, defaultDir)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none", warnings)
+	}
+	if spec == nil {
+		t.Fatal("LoadTheme returned no spec for a theme file that exists")
+	}
+	if spec.Name != "gruvbox" || spec.Source != path || spec.Colors["bg"] != "#1d2021" {
+		t.Errorf("spec = %+v, want gruvbox read from %s, the config dir's copy", spec, path)
+	}
+	if builtin != ThemeLight {
+		t.Errorf("builtin = %q, want the theme's base, light", builtin)
+	}
+}
+
+// TestLoadThemeFallsBackToTheDefaultDirectory: under
+// TELETUI_CONFIG=~/work.toml the config dir has no themes of its own, and
+// the shared collection in the default directory is what the reader meant.
+func TestLoadThemeFallsBackToTheDefaultDirectory(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	path := putTheme(t, defaultDir, "nord", "[colors]\nbg = \"#2e3440\"\n")
+
+	spec, builtin, warnings := LoadTheme("nord", configDir, defaultDir)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none", warnings)
+	}
+	if spec == nil || spec.Source != path {
+		t.Fatalf("spec = %+v, want nord read from %s", spec, path)
+	}
+	if builtin != ThemeDark {
+		t.Errorf("builtin = %q, want the default base, dark", builtin)
+	}
+}
+
+// TestLoadThemeWarnsAboutAStemItCannotFind: `theme = "drak"` used to be
+// dark in silence, which is how a typo stays in a config for a year. Now it
+// is dark and a line saying what was looked for, and where.
+func TestLoadThemeWarnsAboutAStemItCannotFind(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+
+	spec, builtin, warnings := LoadTheme("drak", configDir, defaultDir)
+	if spec != nil || builtin != ThemeDark {
+		t.Errorf("LoadTheme = %+v, %q; want no spec and dark", spec, builtin)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %q, want exactly one", warnings)
+	}
+	for _, want := range []string{`"drak"`, filepath.Join(configDir, "themes"), filepath.Join(defaultDir, "themes")} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning = %q, want it to name %s", warnings[0], want)
+		}
+	}
+}
+
+// TestLoadThemeFallsBackToDarkWhenTheFileFails: a file that was found but
+// could not be used at all names no base of its own, so the floor is dark,
+// whatever it might have said about inherit.
+func TestLoadThemeFallsBackToDarkWhenTheFileFails(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	putTheme(t, configDir, "broken", "[theme]\ninherit = \"light\"\n[colors]\nbg = #000\n")
+
+	spec, builtin, warnings := LoadTheme("broken", configDir, defaultDir)
+	if spec != nil || builtin != ThemeDark {
+		t.Errorf("LoadTheme = %+v, %q; want no spec and dark", spec, builtin)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "line 4") {
+		t.Errorf("warnings = %q, want the reader's one, with its position", warnings)
+	}
+}
+
+// TestLoadThemeTakesABuiltinQuietly: "dark" and "light" are unchanged from
+// before theme files existed — no file read, nothing said.
+func TestLoadThemeTakesABuiltinQuietly(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	for _, value := range []string{"dark", "Light", ""} {
+		spec, builtin, warnings := LoadTheme(value, configDir, defaultDir)
+		want := strings.ToLower(value)
+		if want == "" {
+			want = ThemeDark
+		}
+		if spec != nil || builtin != want || len(warnings) != 0 {
+			t.Errorf("LoadTheme(%q) = %+v, %q, %q; want no spec, %s, no warnings",
+				value, spec, builtin, warnings, want)
+		}
+	}
+}
+
+// TestLoadThemeReadsAPathOutright: the path form reaches a file the name
+// form cannot — including themes/light.toml, which "light" never will. It
+// is relative to the working directory, like every path in config.toml.
+func TestLoadThemeReadsAPathOutright(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	putTheme(t, configDir, "light", "[colors]\nbg = \"#fafafa\"\n")
+	t.Chdir(configDir)
+
+	spec, builtin, warnings := LoadTheme("./themes/light.toml", configDir, defaultDir)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none", warnings)
+	}
+	if spec == nil || spec.Colors["bg"] != "#fafafa" {
+		t.Fatalf("spec = %+v, want themes/light.toml's colours", spec)
+	}
+	if spec.Name != "./themes/light.toml" || spec.Source != "./themes/light.toml" || builtin != ThemeDark {
+		t.Errorf("spec = %+v, builtin %q; want the path as name and source, base dark", spec, builtin)
+	}
+}
+
+// TestLoadThemeRefusesAnOddName: a rejected stem is never searched for, and
+// the warning says what a name may hold and how to name a file instead.
+func TestLoadThemeRefusesAnOddName(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+
+	spec, builtin, warnings := LoadTheme("..", configDir, defaultDir)
+	if spec != nil || builtin != ThemeDark {
+		t.Errorf("LoadTheme = %+v, %q; want no spec and dark", spec, builtin)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `".."`) || !strings.Contains(warnings[0], ".toml") {
+		t.Errorf("warnings = %q, want one naming the value and the path form", warnings)
+	}
+}
+
+// TestLoadThemeWarnsWhenAFileShadowsABuiltin: builtin names win, because
+// the builtins are the floor every failure lands on and the only thing
+// inherit can name — a fallback a user file can redefine is no fallback. A
+// reader who dropped in themes/dark.toml expecting it to win is told it did
+// not, and how to reach it.
+func TestLoadThemeWarnsWhenAFileShadowsABuiltin(t *testing.T) {
+	configDir, defaultDir := themeDirs(t)
+	shadow := putTheme(t, defaultDir, "dark", "[colors]\nbg = \"#000000\"\n")
+
+	spec, builtin, warnings := LoadTheme("dark", configDir, defaultDir)
+	if spec != nil || builtin != ThemeDark {
+		t.Errorf("LoadTheme = %+v, %q; want the builtin, not the file", spec, builtin)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %q, want exactly one", warnings)
+	}
+	for _, want := range []string{shadow, "ignored", `theme = "` + shadow + `"`} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning = %q, want it to contain %s", warnings[0], want)
+		}
+	}
+
+	// An empty value never named dark, so it has shadowed nothing.
+	if _, _, warnings := LoadTheme("", configDir, defaultDir); len(warnings) != 0 {
+		t.Errorf("an empty ui.theme warned %q, want nothing", warnings)
+	}
+}
+
 // --- the theme file reader -------------------------------------------------
 
 // TestReadThemeFileReadsEverySection: the transport shape T2 converts from.

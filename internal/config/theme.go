@@ -159,6 +159,86 @@ type ThemeSpec struct {
 	Ramp []string
 }
 
+// LoadTheme is the theme loader's config half: it resolves a ui.theme
+// value, finds and reads the file it names, and says what went wrong, all
+// without failing. The result is either a spec, whose base builtin is also
+// returned, or no spec and the builtin to draw with — dark whenever a file
+// was meant and could not be used, because dark is the floor every theme
+// failure lands on.
+//
+// The directories are parameters rather than looked up here, so a caller
+// (and every test) decides which themes/ directories exist — reading
+// $XDG_CONFIG_HOME in here would make every test depend on what the
+// developer keeps in ~/.config. Validating the spec against the role names
+// is internal/ui/theme's job, not this one's.
+func LoadTheme(value, configDir, defaultConfigDir string) (spec *ThemeSpec, builtin string, warnings []string) {
+	r := ResolveThemeName(value, configDir, defaultConfigDir)
+	var path string
+	switch r.Form {
+	case ThemeFormBuiltin:
+		// Candidates is nil for an empty value, so this stats only when
+		// the config actually names a builtin.
+		if shadow := findTheme(r.Candidates); shadow != "" {
+			warnings = []string{shadowedTheme(r, shadow)}
+		}
+		return nil, r.Name, warnings
+	case ThemeFormInvalid:
+		return nil, ThemeDark, []string{invalidTheme(r)}
+	case ThemeFormPath:
+		path = r.Path
+	case ThemeFormStem:
+		if path = findTheme(r.Candidates); path == "" {
+			return nil, ThemeDark, []string{missingTheme(r)}
+		}
+	}
+	spec, warnings = readThemeFile(path)
+	if spec == nil {
+		return nil, ThemeDark, warnings
+	}
+	spec.Name = r.Name
+	return spec, spec.Inherit, warnings
+}
+
+// shadowedTheme is the warning for a themes/dark.toml or light.toml that a
+// builtin name will never reach. Builtin names win: the builtins are the
+// fallback of every failure and the only thing inherit can name, and a
+// fallback a user file can redefine is not a fallback. The path form does
+// reach the file, so the warning spells it out.
+func shadowedTheme(r ThemeResolution, shadow string) string {
+	return fmt.Sprintf("%s is ignored: ui.theme %q always means the builtin; "+
+		"to use the file instead, set theme = %q", shadow, r.Name, shadow)
+}
+
+// invalidTheme is the warning for a value that is not a plain name and not
+// shaped like a path either.
+func invalidTheme(r ThemeResolution) string {
+	return fmt.Sprintf(`ui.theme %q is not a theme name — a name is letters, digits, "-", "_" and ".", `+
+		"and a file is named by a path or a .toml suffix; using %s", r.Name, ThemeDark)
+}
+
+// missingTheme is the warning for a stem found in none of its directories.
+// It names the builtins too: the likeliest cause is a typo of one of them.
+func missingTheme(r ThemeResolution) string {
+	dirs := make([]string, len(r.Candidates))
+	for i, candidate := range r.Candidates {
+		dirs[i] = filepath.Dir(candidate)
+	}
+	return fmt.Sprintf("ui.theme %q is not %s, %s, or a theme in %s; using %s",
+		r.Name, ThemeDark, ThemeLight, strings.Join(dirs, " or "), ThemeDark)
+}
+
+// findTheme is the first candidate that is there. "There" includes a
+// candidate that cannot be stat'd for any reason but its absence: the
+// reader's warning about it is more use than searching on past it.
+func findTheme(candidates []string) string {
+	for _, path := range candidates {
+		if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+			return path
+		}
+	}
+	return ""
+}
+
 // maxThemeFileSize caps what is read as a theme. A complete theme is a
 // couple of kilobytes; anything near this is not a theme.
 const maxThemeFileSize = 64 << 10
