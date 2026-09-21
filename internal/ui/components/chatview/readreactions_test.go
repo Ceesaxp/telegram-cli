@@ -125,6 +125,24 @@ func TestOpeningAChatWhileBlurredClearsItsReactionsOnFocus(t *testing.T) {
 	}
 }
 
+// Without a client there is nobody to send the clear to. The owed clear is
+// consumed all the same, as the read flush consumes its receipt, so the
+// state machine behaves the same with and without one; what it must not
+// do is hand back a command that dereferences the missing client.
+func TestAClearWithNoClientIsConsumedWithoutARequest(t *testing.T) {
+	m := openQuietChat(t)
+	m.tg = nil
+	m, _ = m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
+
+	m, cmd := m.Update(reactionsFlushMsg{chatID: testChatID})
+	if cmd != nil {
+		t.Fatal("the flush handed back a request with no client to make it")
+	}
+	if m.pendingReactionsRead {
+		t.Fatal("the owed clear was left owed")
+	}
+}
+
 // A reaction in a chat that is not open has not been seen. The chat list
 // keeps its count, and opening that chat is what clears it.
 func TestAReactionInAnotherChatClearsNothing(t *testing.T) {

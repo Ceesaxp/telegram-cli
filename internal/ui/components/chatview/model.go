@@ -962,7 +962,12 @@ func (m *Model) flushReactionsRead() tea.Cmd {
 		return nil
 	}
 	m.pendingReactionsRead = false
+	// Consumed before the client is checked, as flushRead does, so the
+	// owed clear behaves the same with and without one.
 	chatID, tg := m.chatID, m.tg
+	if tg == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		// Dropped, as the background receipt's error is: a clear that
 		// failed leaves the count standing, and the next open asks again.
