@@ -211,6 +211,7 @@ func sortInt64s(ids []int64) {
 func (m *Model) clearCoalescing() {
 	m.pendingReadID = 0
 	m.pendingRefetch = nil
+	m.pendingReactionsRead = false
 	m.readFlushPending = false
 	m.refetchFlushPending = false
 	m.reactionsFlushPending = false

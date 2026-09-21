@@ -1040,7 +1040,6 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.pendingJumpID = 0
 	m.pendingMeta = nil
 	m.pendingReadID = 0
-	m.pendingReactionsRead = false
 	m.metaBusy = false
 	m.typing = nil
 	m.stopTypingAnim()
