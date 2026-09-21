@@ -254,8 +254,11 @@ you can't:
 - the notifier or player is installed but its last run failed — over ssh
   to a machine with no notification daemon or session bus, say, or with no
   sound server — or hung and was killed after ten seconds. It is still
-  tried, and once it works again the bell stops. The first message after
-  it starts failing gets nothing; the bell starts with the next.
+  tried, and once it works again the bell stops. The bell only starts once
+  the failure is known: a helper that fails at once costs the one message
+  that found out, but one that hangs keeps every message silent until the
+  timeout names it a failure, up to ten seconds. The bell starts with the
+  next message after that.
 
 The bell rings at most once a second, however many of these apply at once.
 `sound = false` turns off the sound and its bell, not the notification's:
