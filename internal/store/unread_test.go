@@ -261,6 +261,22 @@ func TestMarkReadUpToShortOfTheLastMessageKeepsTheCount(t *testing.T) {
 	}
 }
 
+// "The newest message" is the newest the entry has seen, not the one on
+// show. A replay out of order puts 12 back in the preview after 13 arrived;
+// reading to 12 then is reading short of 13, and must not clear its badge.
+func TestMarkReadUpToThePreviewShortOfTheNewestKeepsTheCount(t *testing.T) {
+	s := NewChatStore()
+	s.Set(unreadChat())
+	s.UpdateLastMessage(7, &telegram.Message{ID: 13, ChatID: 7})
+	s.UpdateLastMessage(7, &telegram.Message{ID: 12, ChatID: 7})
+
+	s.MarkReadUpTo(7, 12)
+
+	if got := unreadCount(t, s, 7); got != 3 {
+		t.Errorf("unread = %d after reading to the preview (12) with 13 newer, want 3 left alone", got)
+	}
+}
+
 // Marking an older message read — the reader scrolled back — does not
 // un-read the newer ones the mark already covers.
 func TestMarkReadUpToNeverMovesTheMarkBack(t *testing.T) {

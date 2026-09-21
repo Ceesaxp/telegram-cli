@@ -265,7 +265,7 @@ func (s *ChatStore) UpdateReadInbox(chatID int64, maxID int64, unreadCount int32
 //
 // The server does not reliably echo this session's own reads back, so
 // without it the chat the reader is looking at kept its badge. Reading as
-// far as the newest message leaves nothing unread; reading less leaves an
+// far as the newest message seen leaves nothing unread; reading less leaves an
 // unknown remainder, so the count is left for the next dialog reload to
 // correct. A no-op for a chat the store does not know.
 func (s *ChatStore) MarkReadUpTo(chatID int64, maxID int64) {
@@ -277,7 +277,7 @@ func (s *ChatStore) MarkReadUpTo(chatID int64, maxID int64) {
 		return
 	}
 	entry.advanceReadInbox(maxID)
-	if entry.LastMessage == nil || maxID >= entry.LastMessage.ID {
+	if maxID >= entry.newestMessageID {
 		entry.UnreadCount = 0
 	}
 }
