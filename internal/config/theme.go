@@ -280,26 +280,13 @@ func findShadow(candidates []string) string {
 // couple of kilobytes; anything near this is not a theme.
 const maxThemeFileSize = 64 << 10
 
-// themeFile is the decode shape of a theme file, and the shape is the
-// point. [colors] and [colors256] are map[string]any, not map[string]string:
-// with the latter, `bg = 235` — an xterm index written the way everybody
-// writes one — fails the WHOLE file under go-toml v2. inherit and ramp are
-// any for the same reason. Everything is coerced afterwards, one value at a
-// time, so a bad value costs that value and nothing else.
-type themeFile struct {
-	Theme struct {
-		Inherit any `toml:"inherit"`
-	} `toml:"theme"`
-	Colors    map[string]any `toml:"colors"`
-	Colors256 map[string]any `toml:"colors256"`
-	Senders   struct {
-		Ramp any `toml:"ramp"`
-	} `toml:"senders"`
-}
+// themeSections are the tables a theme file may have.
+var themeSections = []string{"theme", "colors", "colors256", "senders"}
 
 // readThemeFile reads one theme file into a spec. It never fails: a file
 // that cannot be used at all is a nil spec and one warning, and the caller
-// falls back to dark; anything less costs only the values concerned.
+// falls back to dark; anything less costs only the section or the value
+// concerned.
 //
 // The file is stat'd before it is opened. Opening a fifo — or /dev/stdin
 // under a terminal — blocks until something writes to it, which at startup
@@ -325,33 +312,106 @@ func readThemeFile(path string) (*ThemeSpec, []string) {
 	return decodeThemeFile(path, data)
 }
 
-// decodeThemeFile turns a theme file's bytes into a spec, coercing each
-// value on its own. Only a file that is not TOML at all fails whole.
+// decodeThemeFile turns a theme file's bytes into a spec. Only a file that
+// is not TOML at all fails whole; past that, a section of the wrong shape
+// costs that section and a bad value costs that value.
+//
+// The document decodes as map[string]any and is checked by hand, all the
+// way down. Any typed shape would hand go-toml the checking, and go-toml
+// fails the whole file over one mismatch: `bg = 235` into a string map,
+// `senders = ["mauve"]` into a struct — and says so in Go's type names.
 func decodeThemeFile(source string, data []byte) (*ThemeSpec, []string) {
-	var raw themeFile
-	if err := toml.Unmarshal(data, &raw); err != nil {
+	var doc map[string]any
+	if err := toml.Unmarshal(data, &doc); err != nil {
 		return nil, []string{fmt.Sprintf("theme file %s: %s; using %s",
 			source, tomlFailure(err), ThemeDark)}
 	}
+	sections, misshapen, warnings := themeTables(source, doc)
 	spec := &ThemeSpec{Source: source}
-	var warnings, w []string
-	spec.Inherit, w = themeInherit(source, raw.Theme.Inherit)
+	var w []string
+	spec.Inherit, w = themeInherit(source, foldedKey(sections["theme"], "inherit"))
 	warnings = append(warnings, w...)
-	spec.Colors, w = coerceColors(source, "colors", raw.Colors)
+	spec.Colors, w = coerceColors(source, "colors", sections["colors"])
 	warnings = append(warnings, w...)
-	spec.Colors256, w = coerceColors(source, "colors256", raw.Colors256)
+	spec.Colors256, w = coerceColors(source, "colors256", sections["colors256"])
 	warnings = append(warnings, w...)
-	spec.Ramp, w = coerceRamp(source, raw.Senders.Ramp)
+	ramp := foldedKey(sections["senders"], "ramp")
+	spec.Ramp, w = coerceRamp(source, ramp)
 	warnings = append(warnings, w...)
 	// A theme with nothing in it is its base, which is well defined and
 	// almost certainly not what its author meant. Judged on what was
-	// written, not on what survived coercion: a dropped value has already
-	// had its warning.
-	if len(raw.Colors) == 0 && len(raw.Colors256) == 0 && raw.Senders.Ramp == nil {
+	// written, not on what survived: a dropped value, or a section of the
+	// wrong shape, has already had its warning.
+	wroteColours := len(sections["colors"]) > 0 || len(sections["colors256"]) > 0 || ramp != nil ||
+		misshapen["colors"] || misshapen["colors256"] || misshapen["senders"]
+	if !wroteColours {
 		warnings = append(warnings, fmt.Sprintf(
 			"theme file %s defines no colours, so it is %s unchanged", source, spec.Inherit))
 	}
 	return spec, warnings
+}
+
+// themeTables picks the sections out of a decoded theme file, by folded
+// name. A section that is not a table — `senders = ["mauve"]`,
+// `[[colors]]` — is warned about, left out and reported as misshapen, so it
+// costs itself and nothing else.
+func themeTables(source string, doc map[string]any) (sections map[string]map[string]any, misshapen map[string]bool, warnings []string) {
+	sections = make(map[string]map[string]any, len(themeSections))
+	misshapen = make(map[string]bool)
+	claimedBy := make(map[string]string, len(themeSections))
+	for _, key := range slices.Sorted(maps.Keys(doc)) {
+		name := strings.ToLower(key)
+		if !slices.Contains(themeSections, name) {
+			warnings = append(warnings, strayKey(source, key))
+			continue
+		}
+		// The first spelling claims the section even when it is refused
+		// below, as the first of two keys claims a role.
+		if first, taken := claimedBy[name]; taken {
+			warnings = append(warnings, fmt.Sprintf(
+				"theme file %s: [%s] and [%s] are the same section; [%s] is ignored",
+				source, first, key, key))
+			continue
+		}
+		claimedBy[name] = key
+		table, ok := doc[key].(map[string]any)
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf(
+				"theme file %s: %s should be a table, like [%s], not %s; ignored",
+				source, name, name, tomlKind(doc[key])))
+			misshapen[name] = true
+			continue
+		}
+		sections[name] = table
+	}
+	return sections, misshapen, warnings
+}
+
+// sectionOf is the section a key belongs under, for the keys a theme
+// author is likeliest to write above the first table.
+var sectionOf = map[string]string{"inherit": "theme", "name": "theme", "ramp": "senders"}
+
+// strayKey is the warning for a top-level key that is not a section. It is
+// ignored rather than guessed at, but the warning says where it belongs
+// when that is knowable.
+func strayKey(source, key string) string {
+	if section, ok := sectionOf[strings.ToLower(key)]; ok {
+		return fmt.Sprintf("theme file %s: %q belongs under [%s]; ignored", source, key, section)
+	}
+	return fmt.Sprintf("theme file %s: %q is not a section — a theme has [%s]; ignored",
+		source, key, strings.Join(themeSections, "], ["))
+}
+
+// foldedKey is the value of name in table, matched in any case — the way
+// role keys are, and the way go-toml matched these names against struct
+// fields before the file was decoded by hand.
+func foldedKey(table map[string]any, name string) any {
+	for _, key := range slices.Sorted(maps.Keys(table)) {
+		if strings.ToLower(key) == name {
+			return table[key]
+		}
+	}
+	return nil
 }
 
 // unreadableTheme is the warning for a theme file the OS would not give us.

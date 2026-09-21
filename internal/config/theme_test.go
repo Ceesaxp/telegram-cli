@@ -850,3 +850,134 @@ func TestReadThemeFileWarnsAboutAFileThatIsNotThere(t *testing.T) {
 		t.Errorf("warnings = %q, want one naming the file and why", warnings)
 	}
 }
+
+// --- the shape of the file --------------------------------------------------
+
+// TestReadThemeFileCostsOnlyASectionOfTheWrongType: a section written as
+// something other than a table — `senders = ["mauve"]` for `[senders]`,
+// `[[colors]]` for `[colors]` — is one slip, and costs that section. It
+// used to cost the file, every valid colour with it, in a warning quoting
+// Go's own type names at somebody who writes TOML.
+func TestReadThemeFileCostsOnlyASectionOfTheWrongType(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, section string
+		keep                func(*ThemeSpec) string
+		want                string
+	}{
+		{"senders as a list", "senders = [\"mauve\"]\n[colors]\nbg = \"#1d2021\"\n", "senders",
+			func(s *ThemeSpec) string { return s.Colors["bg"] }, "#1d2021"},
+		{"theme as a number", "theme = 5\n[colors]\nbg = \"#1d2021\"\n", "theme",
+			func(s *ThemeSpec) string { return s.Colors["bg"] }, "#1d2021"},
+		{"colors as a number", "colors = 5\n[colors256]\nbg = 235\n", "colors",
+			func(s *ThemeSpec) string { return s.Colors256["bg"] }, "235"},
+		{"colors as a list", "colors = [1, 2]\n[colors256]\nbg = 235\n", "colors",
+			func(s *ThemeSpec) string { return s.Colors256["bg"] }, "235"},
+		{"colors as an array of tables", "[[colors]]\nbg = \"#000000\"\n\n[colors256]\nbg = 235\n", "colors",
+			func(s *ThemeSpec) string { return s.Colors256["bg"] }, "235"},
+		{"colors256 as a string", "colors256 = \"235\"\n[colors]\nbg = \"#1d2021\"\n", "colors256",
+			func(s *ThemeSpec) string { return s.Colors["bg"] }, "#1d2021"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTheme(t, tc.body)
+			got, warnings := readThemeFile(path)
+			if got == nil {
+				t.Fatalf("readThemeFile returned no spec; warnings %q", warnings)
+			}
+			if v := tc.keep(got); v != tc.want {
+				t.Errorf("the valid colour is %q, want %q kept: %+v", v, tc.want, got)
+			}
+			if got.Inherit != ThemeDark {
+				t.Errorf("Inherit = %q, want dark", got.Inherit)
+			}
+			if len(warnings) != 1 {
+				t.Fatalf("warnings = %q, want exactly one", warnings)
+			}
+			w := warnings[0]
+			if !strings.Contains(w, path) || !strings.Contains(w, "["+tc.section+"]") || !strings.Contains(w, "table") {
+				t.Errorf("warning = %q, want it to name the file and say %s should be a table, like [%s]",
+					w, tc.section, tc.section)
+			}
+			for _, goism := range []string{"struct", "interface", "config.", "map["} {
+				if strings.Contains(w, goism) {
+					t.Errorf("warning = %q, which talks Go (%q) at a theme author", w, goism)
+				}
+			}
+		})
+	}
+}
+
+// TestReadThemeFileSaysOnceWhatAMisshapenSectionCost: a file whose only
+// colours are in a section of the wrong shape has one thing wrong with it,
+// and the warning about that shape is the one to give. "Defines no colours"
+// on top would be a second report of the same slip, and not quite true:
+// colours were written, just not where they can be read.
+func TestReadThemeFileSaysOnceWhatAMisshapenSectionCost(t *testing.T) {
+	for _, body := range []string{
+		"colors = 5\n",
+		"[[colors]]\nbg = \"#000000\"\n",
+		"senders = [\"mauve\"]\n",
+	} {
+		got, warnings := readThemeFile(writeTheme(t, body))
+		if got == nil || len(warnings) != 1 || !strings.Contains(warnings[0], "should be a table") {
+			t.Errorf("readThemeFile(%q) = %+v, %q; want a spec and only the shape warning", body, got, warnings)
+		}
+	}
+}
+
+// TestReadThemeFileFoldsTheCaseOfSectionNames: role keys fold to lower case,
+// so section names and the keys of [theme] and [senders] do too — `[Colors]`
+// is [colors] and `Inherit` is inherit, as they were when go-toml matched
+// them against struct fields.
+func TestReadThemeFileFoldsTheCaseOfSectionNames(t *testing.T) {
+	path := writeTheme(t, "[THEME]\nInherit = \"light\"\n\n[Colors]\nbg = \"#1d2021\"\n\n[Senders]\nRAMP = [\"cyan\"]\n")
+	got, warnings := readThemeFile(path)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none", warnings)
+	}
+	if got == nil || got.Inherit != ThemeLight || got.Colors["bg"] != "#1d2021" || !reflect.DeepEqual(got.Ramp, []string{"cyan"}) {
+		t.Errorf("readThemeFile = %+v, want light, bg and the cyan ramp read through any case", got)
+	}
+}
+
+// TestReadThemeFileWarnsAboutASectionWrittenTwiceInTwoCases: [colors] and
+// [Colors] are one section written twice, which TOML cannot catch because
+// to TOML they are two. The rule is the one for two keys that fold to one
+// role: the first in sorted order is used, every run, and the other is
+// named as ignored.
+func TestReadThemeFileWarnsAboutASectionWrittenTwiceInTwoCases(t *testing.T) {
+	path := writeTheme(t, "[colors]\nbg = \"#111111\"\n\n[Colors]\nfg = \"#222222\"\n")
+	got, warnings := readThemeFile(path)
+	if got == nil {
+		t.Fatalf("readThemeFile returned no spec; warnings %q", warnings)
+	}
+	if want := map[string]string{"fg": "#222222"}; !reflect.DeepEqual(got.Colors, want) {
+		t.Errorf("Colors = %q, want %q: [Colors] sorts first", got.Colors, want)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], path) ||
+		!strings.Contains(warnings[0], "[Colors]") || !strings.Contains(warnings[0], "[colors] is ignored") {
+		t.Errorf("warnings = %q, want one naming both spellings and the one ignored", warnings)
+	}
+}
+
+// TestReadThemeFileWarnsAboutAKeyOutsideEverySection: `inherit = "light"`
+// above the first table is the natural slip for somebody who has not met
+// [theme] yet, and it used to be ignored in silence. It is still ignored —
+// guessing which section was meant is how a file comes to mean two things —
+// but now it says where it belongs.
+func TestReadThemeFileWarnsAboutAKeyOutsideEverySection(t *testing.T) {
+	for _, tc := range []struct{ key, line, want string }{
+		{"inherit", "inherit = \"light\"", "belongs under [theme]"},
+		{"ramp", "ramp = [\"cyan\"]", "belongs under [senders]"},
+		{"bg", "bg = \"#000000\"", "not a section"},
+	} {
+		path := writeTheme(t, tc.line+"\n\n[colors]\nfg = \"#ebdbb2\"\n")
+		got, warnings := readThemeFile(path)
+		if got == nil || got.Inherit != ThemeDark || got.Colors["fg"] != "#ebdbb2" || got.Ramp != nil {
+			t.Errorf("%s: readThemeFile = %+v, want [colors] read and the stray key ignored", tc.key, got)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], path) ||
+			!strings.Contains(warnings[0], tc.key) || !strings.Contains(warnings[0], tc.want) {
+			t.Errorf("%s: warnings = %q, want one saying it %s", tc.key, warnings, tc.want)
+		}
+	}
+}
