@@ -1,5 +1,17 @@
 # TODO
 
+## Theming Phase 1 wave (2026-09-21) — branch feat/theme-files, issue #74
+
+A theme is a TOML file a reader writes, read once at startup; `dark` and `light` stay built in as the zero-config palette, the only bases, and the fallback. Spec: `docs/theming.md`; breakdown: `docs/theming-review.md`.
+
+- [x] Config half (`internal/config/theme.go`): `ResolveThemeName` (builtin, path or stem; builtins win over a shadowing file), `LoadTheme` (stat guard, 64 KiB cap, `map[string]any` decode, value-by-value coercion); resolved in `config.Load`, its warnings through a still-pure `StartupWarnings`
+- [x] Theme half (`internal/ui/theme/load.go`): the snake_case key map by reflection over `Roles`, pinned so a non-colour field fails loudly; `RolesForSpec` — base inheritance, case folding, warnings for duplicate, unknown and malformed keys, per-role depth (`[colors256]`, else termenv-quantised hex, else the base's hand-picked value; the `#c9ced4` 188-vs-252 divergence pinned)
+- [x] Sender ramp: `SenderColourFrom` over the resolved ramp, `SetSenderRamp` on chatview and rail; the default ramp colours every pinned user as before, allocation-free
+- [x] `app.New` dispatches through `RolesForSpec`; `main` prints `theme.CheckSpec` with `StartupWarnings`, before `app.New`
+- [x] `docs/themes/gruvbox.toml` (writes `[colors256]`) and `nord.toml` (does not); a test loads every shipped theme with zero warnings
+- [ ] Phase 2, `theme <name>` + `reload-config`: see the remaining palette commands below
+- [ ] Recorded out of scope in `docs/theming.md`: the splash screen's four colour literals, a hint-bar notice for theme warnings, a hand-tuned light theme
+
 ## Notification fan-out wave (2026-09-21) — branch fix/notify-fanout, issue #36
 
 - [x] One system notifier at a time; a burst coalesces into one waiting notification ("N new messages"); posting never blocks the update loop
@@ -854,17 +866,22 @@ the primary checkout stays free for fixes against a working client.
         the history call just hardcodes zero. The work is not the RPC, it is
         parsing what somebody types as a date and landing the scroll on a
         message the line index has never loaded.
-      - `theme <name>` — **mostly wired.** `theme.RolesFor(name, trueColor)`
-        is the single entry point, thirteen components take `SetRoles`, and
-        `ui.theme` is already a config key. Two gaps: there are only two
-        palettes in the binary, and nothing calls `SetRoles` after startup.
-        Decide first whether a theme is a name compiled in or a TOML file a
-        reader writes — that is the whole size of the item.
+      - `theme <name>` — **theming Phase 2** (`docs/theming.md`). Decided:
+        a theme is a TOML file a reader writes, and Phase 1, theme files
+        read at startup, has shipped; `theme.RolesForSpec` is the single
+        entry point. What is missing is pushing a new palette into a
+        running client, and it is not a setter call: only composer,
+        attach, reactionpicker, rail and the message renderer have a
+        `SetRoles` (most were removed on purpose), five components bake
+        derived styles in their constructors (chatlist, auth, composer's
+        textarea, contacts, search), the thread's render cache holds styled
+        lines, and the sender ramp goes to the thread and the rail through
+        `SetSenderRamp`. Either restore a uniform `SetRoles` or rebuild the
+        component tree — that choice is the item.
       - `reload-config` — **do it with `theme`, not before it.** A reload has
-        to re-derive roles and push them through the same thirteen
-        components, which is the wiring `theme <name>` needs anyway. Its own
-        share is D8's confirmation when the composer holds a draft or a
-        staged attachment.
+        to re-derive roles and push them through every component, which is
+        the wiring `theme <name>` needs anyway. Its own share is D8's
+        confirmation when the composer holds a draft or a staged attachment.
 
       They are absent from the registry rather than stubbed: an entry that
       cannot run teaches a command that does not exist.

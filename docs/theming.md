@@ -1,11 +1,15 @@
 # Theme configuration — spec
 
-Status: **proposal** (not implemented), revised 2026-09-06 after the
-architectural review in `docs/theming-review.md` — the review's findings
-(G1–G12, Q3) are folded in below. Companion to the design note at
-`TODO.md` ("theme `<name>` — mostly wired") and the palette record in
-`docs/tui-2.0.md`. This document decides the question that note left open:
+Status: **Phase 1 implemented** (2026-09-21, issue #74); **Phase 2 is still
+a proposal**. Revised 2026-09-06 after the architectural review in
+`docs/theming-review.md` — the review's findings (G1–G12, Q3) are folded in
+below, and the spec stays normative for what was built: where the code and
+this page disagree, one of them is a bug. "As built" at the end says where
+each part lives. Companion to the palette record in `docs/tui-2.0.md`. This
+document decides the question the old `TODO.md` design note left open:
 whether a theme is a name compiled in or a TOML file a reader writes.
+
+Example themes to copy into place: [`docs/themes/`](themes/).
 
 ## Decision
 
@@ -21,7 +25,7 @@ working, (b) a user theme needs a complete, known-good base to inherit
 from, and (c) the hand-picked 256-colour tables cannot be conjured from a
 user's hex values (see "Colour depth" below).
 
-## What exists today (summary)
+## What existed before Phase 1 (summary)
 
 - `internal/ui/theme/roles.go` — `Roles`, 19 semantic `lipgloss.Color`
   fields; parallel hex and 256 tables for dark; light is a mechanical
@@ -174,6 +178,9 @@ Strict where cheap, forgiving where it matters:
   exists to prevent. Accepted: `#rrggbb` and `#rgb` in `[colors]`; the
   decimal range 0–255 in `[colors256]` (termenv emits an out-of-range
   index verbatim, so the range check is not optional).
+- Two keys in one table that fold to the same role (`Cyan` and `cyan`) →
+  warning, and the first in sorted order is used — every run, whatever
+  order the map decoded in.
 - Unknown `inherit` value → warning, `dark`.
 - `[senders].ramp` naming an unknown role → warning, default ramp.
 - Empty `ramp` → warning, default ramp. (One-element ramps are legal:
@@ -215,20 +222,21 @@ just asserted-about.
 
 Phased, matching the `TODO.md` design notes:
 
-**Phase 1 — startup only.** `config.Load()` → `ResolveTheme` →
-`theme.RolesFor` grows a lookup through the theme file loader. Components
-receive `Roles` at construction exactly as today. `theme <name>` and
+**Phase 1 — startup only. Implemented.** `config.Load()` → `LoadTheme` →
+`theme.RolesForSpec`, called once in `app.New` in place of `RolesFor`.
+Components receive `Roles` at construction exactly as before. `theme <name>` and
 `reload-config` remain unregistered. This phase is the whole spec's
 must-have; it already delivers "a TOML file a reader writes".
 
-**Phase 2 — `theme <name>` + `reload-config`, together** (the TODO is
-explicit that they share their wiring). Requirements recorded there and in
-`docs/tui-2.0.md`:
+**Phase 2 — `theme <name>` + `reload-config`, together. Proposal, not
+built.** (The TODO is explicit that they share their wiring.) Requirements
+recorded there and in `docs/tui-2.0.md`:
 
-- Re-derive `Roles` and push through every component. Note: the TODO line
-  claiming "thirteen components take `SetRoles`" is stale — most setters
-  were deliberately removed; only composer, attach, reactionpicker, rail
-  and the message renderer still have one. Phase 2 either restores a
+- Re-derive `Roles` and push through every component. Only composer,
+  attach, reactionpicker, rail and the message renderer still have a
+  `SetRoles` — most setters were deliberately removed (an older TODO line
+  claimed thirteen) — and the sender ramp now needs pushing too:
+  `SetSenderRamp` on the thread and the rail. Phase 2 either restores a
   uniform `SetRoles` across components or rebuilds the component tree;
   that choice is Phase 2's to make, not this spec's.
 - Invalidate the thread grid's cache of rendered (already-styled) lines —
@@ -276,7 +284,9 @@ Phase 2 is scoped honestly; Phase 1 is unaffected.
   Loader unit tests (inheritance, bad values, quantisation, ramp
   resolution) are new and cheap. Add one fixture theme under `testdata/`.
 - **`StartupWarnings`** (`internal/config/config.go`) is the reporting
-  channel; it exists and is currently keymap-only.
+  channel. It carries the config half's warnings (resolution, reading,
+  decoding); the role, value and ramp warnings come from
+  `theme.CheckSpec`, which `main` prints in the same loop.
 - **Sender ramp**: `SenderColour` currently hashes into a fixed
   `[Mauve, Cyan, Blue, Amber]`. **The ramp must never become a field on
   `Roles`**: `MarkerRoles` sets every field to a `lipgloss.Color` by
@@ -291,6 +301,8 @@ Phase 2 is scoped honestly; Phase 1 is unaffected.
   load time so the hot path stays allocation-free, is ~30 lines. Either do
   that in Phase 1 or cut `[senders]` from Phase 1 entirely and ship it
   with Phase 2 — both defensible; splitting the difference is not.
+  **Done in Phase 1**, the cheap route: `SenderColourFrom` plus
+  `SetSenderRamp` on the two components.
 
 ## Out of scope (recorded, not forgotten)
 
@@ -349,3 +361,33 @@ pasted there even commented-out; and the colour-literal guard matches
 `lipgloss.Color("…")` call expressions in test files too, so loader tests
 express expectations as plain strings (`string(got.Cyan) != "#8ec07c"`),
 while TOML fixtures under `testdata/` are never scanned.
+
+## As built (Phase 1)
+
+- **Config half** — `internal/config/theme.go`. `ResolveThemeName` is the
+  pure name → builtin | path | stem resolution; `LoadTheme(value,
+  configDir, defaultConfigDir)` stats, reads and decodes into a
+  `ThemeSpec{Name, Source, Inherit, Colors, Colors256, Ramp}` and never
+  fails. `config.Load` calls it and keeps the result on unexported fields,
+  read through `Config.ThemeSpec()` (nil for a builtin) and
+  `Config.ThemeBuiltin()` (the base); `StartupWarnings` appends its
+  warnings and stays pure.
+- **Theme half** — `internal/ui/theme/load.go`.
+  `RolesForSpec(spec, builtin, trueColor) (Roles, []lipgloss.Color,
+  []string)` is the palette, the resolved sender ramp and the warnings;
+  a nil spec is the builtin alone. `CheckSpec(spec, builtin)` is the same
+  warnings without the palette. The snake_case key map is built by
+  reflection over `Roles` and pinned by a test that fails if a field is
+  ever anything but a `lipgloss.Color`.
+- **Sender ramp** — `theme.SenderColourFrom(id, ramp, roles)` hashes into
+  the resolved ramp with the unchanged FNV-1a hash (an empty ramp is the
+  default one); `SetSenderRamp` on `chatview` and `rail`. `SenderColour`
+  is still the default ramp and colours every user as before.
+- **Wiring** — `app.New` calls `RolesForSpec(cfg.ThemeSpec(),
+  cfg.ThemeBuiltin(), SupportsTrueColor())`, the single dispatch point, and
+  hands the ramp to the two components; its signature is unchanged. `main`
+  prints `config.StartupWarnings` and `theme.CheckSpec` in one loop, before
+  `app.New`.
+- **Examples** — `docs/themes/gruvbox.toml` (writes `[colors256]`) and
+  `docs/themes/nord.toml` (does not); a test loads every file there through
+  both halves and requires zero warnings.
