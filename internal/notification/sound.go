@@ -42,7 +42,7 @@ const minSoundInterval = time.Second
 func NewSoundPlayer(enabled bool) *SoundPlayer {
 	return &SoundPlayer{
 		enabled: enabled,
-		play:    platformPlayer(runtime.GOOS, exec.LookPath),
+		play:    platformPlayer(runtime.GOOS, exec.LookPath, helperTimeout),
 		now:     time.Now,
 	}
 }
@@ -53,10 +53,10 @@ func NewSoundPlayer(enabled bool) *SoundPlayer {
 //
 // It returns what the caller must write to the terminal: the bell, rung
 // through bells, where there is no player to run or the last run failed,
-// and "" otherwise. Like
-// Notify's sequence, the caller hands it to tea.Raw rather than this writing
-// it from a goroutine. The limiter is a parameter because it is the
-// notifier's: the terminal has one bell, whichever fallback rings it.
+// and "" otherwise. Like Notify's sequence, the caller hands it to tea.Raw
+// rather than this writing it from a goroutine. The limiter is a parameter
+// because it is the notifier's: the terminal has one bell, whichever
+// fallback rings it.
 //
 // A burst of messages used to start a player for each, all at once. The
 // request that finds one playing is dropped rather than queued: the sound
@@ -106,7 +106,8 @@ func (s *SoundPlayer) run() {
 }
 
 // Close stops the player from starting anything new, and waits for one
-// that is still running.
+// that is still running — at most about helperTimeout for each player it
+// tries, after which that player is killed.
 //
 // Nothing in the app calls it, and that is fine for the reason
 // Notifier.Close gives: the goroutine lives only as long as the player
@@ -143,7 +144,7 @@ var soundPlayers = map[string][][]string{
 // Whether there is one is looked up here, once, rather than found out by
 // running it: by then the process is in the background, where the only
 // fallback left is to print — to a terminal this process does not own.
-func platformPlayer(goos string, lookPath func(string) (string, error)) func() error {
+func platformPlayer(goos string, lookPath func(string) (string, error), timeout time.Duration) func() error {
 	var installed [][]string
 	for _, player := range soundPlayers[goos] {
 		if _, err := lookPath(player[0]); err == nil {
@@ -153,16 +154,16 @@ func platformPlayer(goos string, lookPath func(string) (string, error)) func() e
 	if len(installed) == 0 {
 		return nil
 	}
-	return func() error { return playFirst(installed) }
+	return func() error { return playFirst(timeout, installed) }
 }
 
 // playFirst runs each player in turn until one succeeds, one at a time, and
 // returns the last one's error if none does — installed, but no sound server
 // to play through.
-func playFirst(players [][]string) error {
+func playFirst(timeout time.Duration, players [][]string) error {
 	var err error
 	for _, player := range players {
-		if err = runHelper(player[0], player[1:]...); err == nil {
+		if err = runHelper(timeout, player[0], player[1:]...); err == nil {
 			return nil
 		}
 	}

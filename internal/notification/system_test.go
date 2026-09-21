@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -189,7 +190,7 @@ func TestAClosedNotifierStartsNothing(t *testing.T) {
 // the background, it landed wherever the renderer happened to be mid-frame.
 func TestAPlatformWithoutANotifierHandsBackTheBell(t *testing.T) {
 	n := NewNotifier(true, true, MethodSystem)
-	n.system = platformNotifier("plan9", installed("notify-send", "osascript"))
+	n.system = platformNotifier("plan9", installed("notify-send", "osascript"), helperTimeout)
 
 	if got := n.Notify("Ana", "hi"); got != "\a" {
 		t.Errorf("Notify = %q, want the bell handed back", got)
@@ -237,7 +238,7 @@ func TestThePlatformNotifierIsTheOneInstalled(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := platformNotifier(tt.goos, installed(tt.installed...)) != nil
+		got := platformNotifier(tt.goos, installed(tt.installed...), helperTimeout) != nil
 		if got != tt.want {
 			t.Errorf("on %s with %q installed, a notifier: %v, want %v",
 				tt.goos, tt.installed, got, tt.want)
@@ -251,7 +252,7 @@ func TestThePlatformNotifierIsTheOneInstalled(t *testing.T) {
 func TestAFailingNotifierPrintsNothing(t *testing.T) {
 	failingPrograms(t, "notify-send")
 
-	if out := stdout(t, func() { sendLinux("Ana", "hi") }); out != "" {
+	if out := stdout(t, func() { sendLinux(helperTimeout, "Ana", "hi") }); out != "" {
 		t.Errorf("a failing notify-send wrote %q to the terminal", out)
 	}
 }
@@ -265,7 +266,7 @@ func TestAFailingNotifierPrintsNothing(t *testing.T) {
 func TestAFailingNotifierFallsBackToTheBell(t *testing.T) {
 	failingPrograms(t, "notify-send")
 	n := NewNotifier(true, true, MethodSystem)
-	n.system = platformNotifier("linux", exec.LookPath)
+	n.system = platformNotifier("linux", exec.LookPath, helperTimeout)
 	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	n.bells = newBellLimiter(func() time.Time { return clock })
 	defer n.Close()
@@ -282,6 +283,36 @@ func TestAFailingNotifierFallsBackToTheBell(t *testing.T) {
 	if got := n.Notify("Ana", "three"); got != "" {
 		t.Errorf("inside the bell's limit the one after was handed %q, want nothing", got)
 	}
+}
+
+// A notifier that never exits — a frozen notification daemon — used to hold
+// the one-at-a-time bound for the rest of the session: every later message
+// folded into the one waiting behind it, forever, and Close never returned.
+// It is killed after a timeout now, the next notification goes out, and the
+// timeout counts as a failure, so the bell stands in.
+func TestAHungNotifierIsKilledNotWaitedFor(t *testing.T) {
+	hangingPrograms(t, "notify-send")
+	n := NewNotifier(true, true, MethodSystem)
+	send := platformNotifier("linux", exec.LookPath, 50*time.Millisecond)
+	var runs atomic.Int32
+	n.system = func(title, body string) error {
+		runs.Add(1)
+		return send(title, body)
+	}
+	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	n.bells = newBellLimiter(func() time.Time { return clock })
+
+	n.Notify("Ana", "one")
+	n.Notify("Ana", "two")
+	within(t, "the worker is still waiting on a hung notify-send", n.queue.wait)
+
+	if got := runs.Load(); got != 2 {
+		t.Errorf("two messages started %d notifier runs, want 2: the second never got past the first", got)
+	}
+	if got := n.Notify("Ana", "three"); got != "\a" {
+		t.Errorf("after a run that timed out the next message was handed %q, want the bell", got)
+	}
+	within(t, "Close is still waiting on a hung notify-send", n.Close)
 }
 
 // The fallback lasts as long as the failure does. The notifier is still tried

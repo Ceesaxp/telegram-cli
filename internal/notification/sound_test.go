@@ -3,6 +3,7 @@ package notification
 import (
 	"errors"
 	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -105,7 +106,7 @@ func TestAClosedPlayerStartsNothing(t *testing.T) {
 // landed wherever the renderer happened to be mid-frame.
 func TestAPlatformWithoutAPlayerHandsBackTheBell(t *testing.T) {
 	s := NewSoundPlayer(true)
-	s.play = platformPlayer("plan9", installed("paplay", "afplay"))
+	s.play = platformPlayer("plan9", installed("paplay", "afplay"), helperTimeout)
 
 	if got := s.playOrRing(newBellLimiter(time.Now)); got != "\a" {
 		t.Errorf("the player handed back %q, want the bell", got)
@@ -129,7 +130,7 @@ func TestThePlatformPlayerIsTheOneInstalled(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := platformPlayer(tt.goos, installed(tt.installed...)) != nil
+		got := platformPlayer(tt.goos, installed(tt.installed...), helperTimeout) != nil
 		if got != tt.want {
 			t.Errorf("on %s with %q installed, a player: %v, want %v",
 				tt.goos, tt.installed, got, tt.want)
@@ -142,7 +143,7 @@ func TestThePlatformPlayerIsTheOneInstalled(t *testing.T) {
 // of them used to ring the bell there, mid-frame.
 func TestFailingPlayersPrintNothing(t *testing.T) {
 	failingPrograms(t, "paplay", "canberra-gtk-play")
-	play := platformPlayer("linux", exec.LookPath)
+	play := platformPlayer("linux", exec.LookPath, helperTimeout)
 	if play == nil {
 		t.Fatal("precondition: the stand-in players were not found")
 	}
@@ -159,7 +160,7 @@ func TestFailingPlayersPrintNothing(t *testing.T) {
 func TestAFailingPlayerFallsBackToTheBell(t *testing.T) {
 	failingPrograms(t, "paplay", "canberra-gtk-play")
 	s, _, play := soundPlayer(newProcess())
-	s.play = platformPlayer("linux", exec.LookPath)
+	s.play = platformPlayer("linux", exec.LookPath, helperTimeout)
 	defer s.Close()
 
 	if got := play(); got != "" {
@@ -172,6 +173,34 @@ func TestAFailingPlayerFallsBackToTheBell(t *testing.T) {
 	}
 	if got := play(); got != "" {
 		t.Errorf("inside the bell's limit the one after was handed %q, want nothing", got)
+	}
+}
+
+// A player that never exits — paplay on a wedged sound server, afplay on a
+// Bluetooth output that went away — used to keep every later sound out for
+// the rest of the session, and Close waiting forever. It is killed after a
+// timeout now, the next sound is tried, and the timeout counts as a
+// failure, so the bell stands in.
+func TestAHungPlayerIsKilledNotWaitedFor(t *testing.T) {
+	hangingPrograms(t, "paplay")
+	s, clock, play := soundPlayer(newProcess())
+	player := platformPlayer("linux", exec.LookPath, 50*time.Millisecond)
+	var runs atomic.Int32
+	s.play = func() error {
+		runs.Add(1)
+		return player()
+	}
+
+	play()
+	within(t, "the player is still waiting on a hung paplay", s.wait)
+
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "\a" {
+		t.Errorf("after a run that timed out the next message was handed %q, want the bell", got)
+	}
+	within(t, "Close is still waiting on a hung paplay", s.Close)
+	if got := runs.Load(); got != 2 {
+		t.Errorf("two sounds an interval apart started %d player runs, want 2", got)
 	}
 }
 

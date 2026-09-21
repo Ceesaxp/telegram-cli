@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -75,7 +76,7 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 		terminal:    detectTerminal(),
 		bells:       newBellLimiter(time.Now),
 	}
-	n.system = platformNotifier(runtime.GOOS, exec.LookPath)
+	n.system = platformNotifier(runtime.GOOS, exec.LookPath, helperTimeout)
 	// Through n rather than bound now, so the queue delivers to whatever
 	// the seam holds when it runs.
 	n.queue = newCoalescer(func(title, body string) {
@@ -138,7 +139,8 @@ func (n *Notifier) Notify(title, body string) string {
 
 // Close stops the system path from starting anything new, drops the
 // notification waiting to be posted, if any, and waits for a notifier
-// process that is still running.
+// process that is still running — at most about helperTimeout, after which
+// that process is killed.
 //
 // Nothing in the app calls it, and nothing needs to: the worker only lives
 // while a process does, and leaving that process behind at exit is what
@@ -190,10 +192,10 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 // Whether there is one is looked up here, once, rather than found out by
 // running it: by then the process is in the background, where the only
 // fallback left is to print — to a terminal this process does not own.
-func platformNotifier(goos string, lookPath func(string) (string, error)) func(title, body string) error {
+func platformNotifier(goos string, lookPath func(string) (string, error), timeout time.Duration) func(title, body string) error {
 	var (
 		program string
-		send    func(title, body string) error
+		send    func(timeout time.Duration, title, body string) error
 	)
 	switch goos {
 	case "linux":
@@ -207,13 +209,13 @@ func platformNotifier(goos string, lookPath func(string) (string, error)) func(t
 	if _, err := lookPath(program); err != nil {
 		return nil
 	}
-	return send
+	return func(title, body string) error { return send(timeout, title, body) }
 }
 
 // sendLinux posts through notify-send. It is installed, so a failure most
 // likely means a desktop with no notification daemon behind it.
-func sendLinux(title, body string) error {
-	return runHelper("notify-send",
+func sendLinux(timeout time.Duration, title, body string) error {
+	return runHelper(timeout, "notify-send",
 		"--app-name=Tele-TUI",
 		"--icon=telegram",
 		"--urgency=normal",
@@ -228,16 +230,39 @@ func sendLinux(title, body string) error {
 // notification sequence at all, and for a user who prefers the system's own
 // alert. See terminal.go for why a CLI cannot do better here without
 // shipping an app bundle.
-func sendMacOS(title, body string) error {
+func sendMacOS(timeout time.Duration, title, body string) error {
 	script := fmt.Sprintf(
 		`display notification %q with title %q`,
 		body, title,
 	)
-	return runHelper("osascript", "-e", script)
+	return runHelper(timeout, "osascript", "-e", script)
 }
 
+// helperTimeout is how long a notifier or a sound player may run before it
+// is killed.
+//
+// With one helper at a time, a helper that never exits — paplay on a wedged
+// sound server, afplay on a Bluetooth output that went away, notify-send on
+// a frozen daemon — would otherwise hold the bound for the rest of the
+// session: every later notification folded into the one waiting, every
+// later sound dropped. The helpers answer in well under a second and the
+// sounds last a second or two, so ten seconds is far past any of them
+// working, and short enough that a wedged one costs an alert rather than
+// the session.
+const helperTimeout = 10 * time.Second
+
+// helperWaitDelay is how long a killed helper is given to be gone before
+// Wait stops waiting for it anyway.
+const helperWaitDelay = time.Second
+
 // runHelper runs one of the programs this package leans on — a notifier or
-// a sound player — to completion, and says whether it worked.
-func runHelper(name string, args ...string) error {
-	return exec.Command(name, args...).Run()
+// a sound player — to completion, or kills it after timeout, and says
+// whether it worked. A helper that was killed did not.
+func runHelper(timeout time.Duration, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = helperWaitDelay
+	return cmd.Run()
 }

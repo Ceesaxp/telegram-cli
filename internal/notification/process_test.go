@@ -93,18 +93,52 @@ func installed(names ...string) func(string) (string, error) {
 // notification daemon behind it, a paplay with no sound server.
 func failingPrograms(t *testing.T, names ...string) {
 	t.Helper()
+	standIns(t, "exit 1", names...)
+}
+
+// hangingPrograms puts programs with these names first on the PATH, each of
+// which does not exit on its own — a paplay stuck on a wedged sound server,
+// a notify-send waiting on a frozen daemon.
+func hangingPrograms(t *testing.T, names ...string) {
+	t.Helper()
+	// exec, so that killing the program kills the sleep and not just the
+	// shell that started it; by its full path, because the PATH is the
+	// stand-ins' directory alone.
+	standIns(t, "exec /bin/sleep 60", names...)
+}
+
+// standIns puts shell scripts with these names, each running body, first
+// and alone on the PATH.
+func standIns(t *testing.T, body string, names ...string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-ins are shell scripts")
 	}
 
 	dir := t.TempDir()
 	for _, name := range names {
-		script := []byte("#!/bin/sh\nexit 1\n")
+		script := []byte("#!/bin/sh\n" + body + "\n")
 		if err := os.WriteFile(filepath.Join(dir, name), script, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("PATH", dir)
+}
+
+// within runs f and fails the test if it has not returned in a few
+// seconds. It only turns a hang into a failure; nothing is measured.
+func within(t *testing.T, hung string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal(hung)
+	}
 }
 
 // stdout is everything written to standard output while f runs — which is
