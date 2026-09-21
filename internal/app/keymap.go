@@ -297,6 +297,7 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "t", Desc: "Open the discussion under a channel post"},
 			{Keys: bound(cv.MarkRead), Desc: "Mark this chat read without moving"},
 			{Keys: "gx", Desc: "Follow a link — again to cycle, enter to open"},
+			{Keys: "g@", Desc: "Jump to the next unread mention — again for the one after"},
 			{Keys: "ctrl+o", Desc: "Back to where the last jump came from"},
 			{Keys: "x", Desc: "Reveal spoilers in the selected message"},
 			{Keys: bound(k.compose), Desc: "Compose a message"},
