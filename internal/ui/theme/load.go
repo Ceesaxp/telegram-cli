@@ -142,10 +142,13 @@ func tableRoles(source, table string, raw map[string]string, form colourForm) (m
 				"theme file %s: %s.%s is not a role; ignored", source, table, key))
 			continue
 		}
+		// The first key claims the role even when its value is refused
+		// below: the second is a duplicate either way, and one rule is
+		// easier to predict than a fallback between spellings.
 		if first, taken := claimedBy[i]; taken {
 			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: %s.%s and %s.%s are the same role; using %s.%s",
-				source, table, first, table, key, table, first))
+				"theme file %s: %s.%s and %s.%s are the same role; %s.%s is ignored",
+				source, table, first, table, key, table, key))
 			continue
 		}
 		claimedBy[i] = key

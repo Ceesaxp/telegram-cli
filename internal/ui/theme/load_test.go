@@ -152,10 +152,31 @@ func TestTwoKeysForOneRoleWarnAndTheFirstWins(t *testing.T) {
 		if len(warnings) != 2 {
 			t.Fatalf("got %d warnings, want one for each key that lost: %q", len(warnings), warnings)
 		}
-		for _, w := range warnings {
-			if !strings.Contains(w, "themes/test.toml") || !strings.Contains(w, "CYAN") {
-				t.Errorf("warning does not name the file and the key that won: %q", w)
+		for i, loser := range []string{"Cyan", "cyan"} {
+			w := warnings[i]
+			if !strings.Contains(w, "themes/test.toml") || !strings.Contains(w, "colors.CYAN") ||
+				!strings.Contains(w, "colors."+loser+" is ignored") {
+				t.Errorf("warning does not name the file, the key that won, and %s as ignored: %q", loser, w)
 			}
+		}
+	}
+}
+
+// Which key wins is decided before its value is checked, so a malformed
+// first key still claims the role: its value is refused, the role inherits,
+// and the warning about the second key does not claim the first was used.
+func TestAMalformedFirstKeyStillClaimsItsRole(t *testing.T) {
+	got, _, warnings := RolesForSpec(spec(map[string]string{"CYAN": "#12", "cyan": "#8ec07c"}, nil),
+		config.ThemeDark, true)
+	if got.Cyan != darkHex.Cyan {
+		t.Errorf("cyan is %q, want dark's: the first key claimed it and was malformed", got.Cyan)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("want a warning for each key, got %q", warnings)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "using colors.CYAN") {
+			t.Errorf("the warning says a refused value was used: %q", w)
 		}
 	}
 }
