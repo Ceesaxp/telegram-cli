@@ -15,6 +15,13 @@ type ChatEntry struct {
 	Pinned      bool
 	Order       int64
 
+	// UnreadReactionsCount is how many of the reader's messages carry a
+	// reaction they have not seen. Like UnreadCount it comes from the
+	// dialog and is kept live from there; unlike it, nothing draws it —
+	// the chat view reads it to decide whether opening the chat has
+	// reactions to clear.
+	UnreadReactionsCount int32
+
 	// Unresolved marks an entry this store INVENTED to hold a message for
 	// a chat nobody had described yet — see [ChatStore.UpdateLastMessage].
 	// It has an id and nothing else: no name, no type, no mute flag.
@@ -80,6 +87,7 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 	entry.Chat = chat
 	entry.Unresolved = false
 	entry.UnreadCount = chat.UnreadCount
+	entry.UnreadReactionsCount = chat.UnreadReactionsCount
 	entry.Pinned = chat.Pinned
 
 	if chat.LastMessage != nil {
@@ -288,6 +296,34 @@ func (s *ChatStore) MarkReadUpTo(chatID int64, maxID int64) {
 func (e *ChatEntry) advanceReadInbox(maxID int64) {
 	if e.Chat != nil && maxID > e.Chat.LastReadInboxMessageID {
 		e.Chat.LastReadInboxMessageID = maxID
+	}
+}
+
+// AddUnreadReaction records that somebody reacted to one of the reader's
+// messages in a chat and the reader has not seen it.
+//
+// The update behind it says a reaction is unread, not how many messages
+// carry one, so the count this keeps is only good for "some or none". That
+// is all the chat view asks of it. A no-op for a chat the store does not
+// know: a reaction describes a chat, it does not introduce one.
+func (s *ChatStore) AddUnreadReaction(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.chats[chatID]; ok {
+		entry.UnreadReactionsCount++
+	}
+}
+
+// MarkReactionsRead records that this client has just cleared a chat's
+// unread reactions. The clear covers the whole chat, so nothing is left.
+// A no-op for a chat the store does not know.
+func (s *ChatStore) MarkReactionsRead(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.chats[chatID]; ok {
+		entry.UnreadReactionsCount = 0
 	}
 }
 

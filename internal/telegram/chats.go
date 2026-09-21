@@ -335,6 +335,7 @@ func (c *Client) chatsFromDialogParts(dialogs []tg.DialogClass, messages []tg.Me
 		}
 		chat.Pinned = d.Pinned
 		chat.UnreadCount = int32(d.UnreadCount)
+		chat.UnreadReactionsCount = int32(d.UnreadReactionsCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
 		chat.LastReadOutboxMessageID = int64(d.ReadOutboxMaxID)
 		chat.Muted = mutedFromNotifySettings(d.NotifySettings, now)
@@ -734,6 +735,47 @@ func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 		return fmt.Errorf("read history: %w", err)
 	}
 	c.send(ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: maxID})
+	return nil
+}
+
+// maxReadReactionsCalls bounds how many times ReadReactions repeats the
+// call for one chat. The API says to repeat while the answer carries a
+// positive offset, and says nothing that stops a server from carrying one
+// for ever; a loop with only the operation's timeout to end it would hit
+// the server as fast as it answers, which is what FLOOD_WAIT is for. Ten
+// calls is far more than a chat's unread reactions should need, and
+// small enough that a stuck walk costs little.
+const maxReadReactionsCalls = 10
+
+// ReadReactions clears a chat's unread reactions, and on success announces
+// it with [ChatReactionsReadMsg], for the reason [ViewMessages] announces a
+// read. It is the whole chat, not a thread: no top message is given.
+//
+// A positive offset in the server's answer means the call has to be made
+// again, which is all the API documents about it. The call is repeated up
+// to maxReadReactionsCalls times. Only an answer that says it is done is
+// announced: stopping at the cap is not an error, but it is not a clear the
+// server confirmed either, so the count stays and the next open asks again.
+func (c *Client) ReadReactions(chatID int64) error {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("read reactions: %w", err)
+	}
+
+	for range maxReadReactionsCalls {
+		affected, err := c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
+			Peer: peer,
+		})
+		if err != nil {
+			return fmt.Errorf("read reactions: %w", err)
+		}
+		if affected.Offset <= 0 {
+			c.send(ChatReactionsReadMsg{ChatId: chatID})
+			return nil
+		}
+	}
 	return nil
 }
 

@@ -16,12 +16,15 @@ import (
 // FLOOD_WAIT, and the failure was silent because every one of those results
 // was discarded.
 //
-// Both are now accumulated and flushed on a short tick. The shape was
-// already here for read receipts: the blurred path kept only the maximum
-// message ID and sent one call on refocus, because a read receipt is
-// cumulative. This applies the same reasoning to the focused path, and the
-// batching Telegram's own list-taking RPCs were always willing to accept to
-// the refetches.
+// All three are now accumulated and flushed on a short tick each: read
+// receipts, refetches and clears of the chat's unread reactions. The shape
+// was already here for read receipts: the blurred path kept only the
+// maximum message ID and sent one call on refocus, because a read receipt
+// is cumulative. This applies the same reasoning to the focused path, and
+// the batching Telegram's own list-taking RPCs were always willing to
+// accept to the refetches. A reactions clear covers the whole chat, so a
+// burst needs only one, and the clear an open owes waits in the same
+// window, so a chat the reader only passes through is not cleared.
 //
 // See issue #46.
 
@@ -41,6 +44,12 @@ type readFlushMsg struct {
 // refetchFlushMsg flushes the pending refetches, and carries its chat for
 // the same reason.
 type refetchFlushMsg struct {
+	chatID int64
+}
+
+// reactionsFlushMsg flushes an owed clear of the open chat's unread
+// reactions, and carries its chat for the same reason.
+type reactionsFlushMsg struct {
 	chatID int64
 }
 
@@ -96,6 +105,29 @@ func (m *Model) flushRead() tea.Cmd {
 		_ = tg.ViewMessages(chatID, []int64{msgID})
 		return nil
 	}
+}
+
+// noteUnreadReaction records that the open chat owes a clear of its unread
+// reactions, and schedules the flush if one is not already pending.
+// Blurred, it only records: FocusMsg sends the clear. It is how both an
+// open with reactions to clear and a reaction arriving in the open chat
+// ask for one, so a chat left inside the window is never cleared.
+//
+// A popular message collects reactions in bursts, and the clear covers the
+// whole chat, so N reactions in the window cost one messages.readReactions.
+// It has a tick of its own rather than riding the read receipt's: the
+// receipt's flush is built around the ID it carries, and a clear carries
+// none.
+func (m *Model) noteUnreadReaction() tea.Cmd {
+	m.pendingReactionsRead = true
+	if m.blurred || m.reactionsFlushPending {
+		return nil
+	}
+	m.reactionsFlushPending = true
+	chatID := m.chatID
+	return tea.Tick(coalesceWindow, func(time.Time) tea.Msg {
+		return reactionsFlushMsg{chatID: chatID}
+	})
 }
 
 // noteRefetch records that a message needs fetching again — it was edited,
@@ -183,6 +215,8 @@ func sortInt64s(ids []int64) {
 func (m *Model) clearCoalescing() {
 	m.pendingReadID = 0
 	m.pendingRefetch = nil
+	m.pendingReactionsRead = false
 	m.readFlushPending = false
 	m.refetchFlushPending = false
+	m.reactionsFlushPending = false
 }

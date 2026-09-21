@@ -135,7 +135,14 @@ the unmuted count, with the true total in parentheses when it differs, e.g.
   terminal is unfocused, the read receipt is sent when focus returns. This
   needs terminal focus-reporting support — in tmux, add `set -g
   focus-events on` to `~/.tmux.conf`, or receipts won't update while inside
-  a session.
+  a session. Opening a chat at its newest messages marks it read up to the
+  newest one, so it stops showing as unread on your other devices; opening
+  it at an older message (a search hit, a `t.me` link, a reply jump) does
+  not. Opening a chat at any message also clears its unread reactions (the
+  heart your phone shows when someone reacts to your message), and a
+  reaction that arrives while the chat is open is cleared about 300ms
+  later. Both follow terminal focus the way read receipts do, and a chat
+  you only pass through on the way to another keeps its reactions.
 - **Exact scroll targeting** — scrolling and jump-to-message use a cached
   per-message line index rather than a rough per-message jump, so the target
   lands on the exact line even as photo art and sender-name lookups change

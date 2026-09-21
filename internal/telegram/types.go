@@ -34,6 +34,12 @@ type Chat struct {
 	LastReadInboxMessageID  int64
 	LastReadOutboxMessageID int64
 
+	// UnreadReactionsCount is how many of the reader's messages carry a
+	// reaction they have not seen: the heart the phone shows on a chat. It
+	// is a counter of its own, apart from UnreadCount, and only a dialog
+	// carries it.
+	UnreadReactionsCount int32
+
 	// Pinned and Order define chat list ordering: pinned first,
 	// then by Order descending (unix time of the last message).
 	Pinned bool

@@ -301,6 +301,14 @@ type Model struct {
 	pendingRefetch      map[int64]struct{}
 	readFlushPending    bool
 	refetchFlushPending bool
+	// pendingReactionsRead is a clear of the open chat's unread reactions
+	// that is owed but not sent: the chat was opened while blurred, or a
+	// reaction arrived and its window is still open. FocusMsg or the
+	// window's tick sends it. It belongs to the open chat, so opening
+	// another drops it. reactionsFlushPending says that tick is scheduled;
+	// see coalesce.go.
+	pendingReactionsRead  bool
+	reactionsFlushPending bool
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -840,6 +848,138 @@ func (m *Model) ScrollByLines(n int) {
 // drives ScrollByLines and would otherwise never trigger a lazy load.
 func (m *Model) LazyMediaCmd() tea.Cmd { return m.lazyPhotoCmd() }
 
+// noteSeen records that everything up to id is on screen in the open chat,
+// and is what every automatic read receipt goes through.
+//
+// It only claims the message was read when the terminal actually has
+// focus; otherwise it remembers the newest ID and FocusMsg catches up.
+// Focused, the receipt is accumulated and flushed on a tick: a receipt is
+// cumulative, so a burst costs one call carrying the highest ID rather than
+// one call each (issue #46).
+func (m *Model) noteSeen(id int64) tea.Cmd {
+	if m.blurred {
+		if id > m.pendingReadID {
+			m.pendingReadID = id
+		}
+		return nil
+	}
+	return m.noteRead(id)
+}
+
+// catchUpRead sends the receipt noteSeen held while the terminal was in
+// the background. It goes at once rather than on a tick: whatever piled up
+// is already one receipt, carrying the highest ID.
+func (m *Model) catchUpRead() tea.Cmd {
+	if m.chatID == 0 || m.pendingReadID == 0 {
+		return nil
+	}
+	chatID, msgID := m.chatID, m.pendingReadID
+	m.pendingReadID = 0
+	tg := m.tg
+	return func() tea.Msg {
+		tg.ViewMessages(chatID, []int64{msgID})
+		return nil
+	}
+}
+
+// readOnOpen marks a chat read up to the newest message on its first page.
+// Opening a chat is always deliberate here, so a chat opened at its newest
+// messages has been read. Without this, a chat read in this client stayed
+// unread on the reader's phone until something arrived while it was open.
+//
+// Only the first page, and only when there was no target: an older page is
+// the reader scrolling back, and a chat opened at a search hit, a link or a
+// reply jump has its newest messages below the fold, unseen.
+//
+// A chat already read that far is left alone. Every receipt is an RPC and a
+// pts step, and every pts step here also costs a getDifference. A chat the
+// store does not describe is read anyway, since nothing says it was.
+//
+// The unread divider is not touched. It was placed from the marker as it
+// stood in OpenChatAt, not from the store this receipt moves.
+func (m *Model) readOnOpen(msg historyLoadedMsg) tea.Cmd {
+	if msg.fromID != 0 || m.targetMsgID != 0 {
+		return nil
+	}
+	// The mark counts incoming messages only, so it is compared with the
+	// newest of those: the reader's own answer on top is not something to
+	// read, and comparing against it sent a receipt for every chat they had
+	// answered.
+	if entry, ok := m.store.Chats.Get(m.chatID); ok && entry.Chat != nil &&
+		newestServerID(msg.messages, isIncoming) <= entry.Chat.LastReadInboxMessageID &&
+		entry.UnreadCount == 0 {
+		return nil
+	}
+	return m.noteSeen(newestServerID(msg.messages, anyMessage))
+}
+
+// newestServerID is the highest ID on a page among the messages keep
+// accepts. A non-positive ID is a local echo's placeholder rather than a
+// message the server knows, and reading up to it would read nothing, so it
+// never wins.
+func newestServerID(msgs []*telegram.Message, keep func(*telegram.Message) bool) int64 {
+	var newest int64
+	for _, msg := range msgs {
+		if msg.ID > newest && keep(msg) {
+			newest = msg.ID
+		}
+	}
+	return newest
+}
+
+func anyMessage(*telegram.Message) bool     { return true }
+func isIncoming(msg *telegram.Message) bool { return !msg.IsOutgoing }
+
+// readReactionsOnOpen clears the chat's unread reactions when its first
+// page lands: the heart the phone shows when somebody reacted to one of the
+// reader's messages. Without it the heart stayed however long the reader
+// spent in the chat here.
+//
+// Unlike the read receipt it goes for every open, including one at an
+// older message. The reactions are on the reader's own messages anywhere in
+// the history, not at the bottom, so what counts is that the chat was
+// opened, not what is on screen. A page fetched by scrolling back is not an
+// open. A chat with nothing to clear costs nothing: the store's count,
+// from the dialog and kept live by the chat list, says whether to ask.
+//
+// It waits out the same window as a reaction arriving in the open chat,
+// rather than going with the first page. J and K open every chat they pass
+// through, and a chat left inside the window was not read: the switch
+// drops the owed clear, as it drops the read receipt, instead of spending
+// a request on a heart nobody looked at.
+func (m *Model) readReactionsOnOpen(msg historyLoadedMsg) tea.Cmd {
+	if msg.fromID != 0 {
+		return nil
+	}
+	if entry, ok := m.store.Chats.Get(m.chatID); !ok || entry.UnreadReactionsCount <= 0 {
+		return nil
+	}
+	return m.noteUnreadReaction()
+}
+
+// flushReactionsRead sends the owed clear, unless the terminal is in the
+// background: a chat opened there has not been looked at, and FocusMsg
+// sends it instead, as it does the read receipt. Otherwise it is reached
+// from the window's tick (noteUnreadReaction).
+func (m *Model) flushReactionsRead() tea.Cmd {
+	if !m.pendingReactionsRead || m.blurred {
+		return nil
+	}
+	m.pendingReactionsRead = false
+	// Consumed before the client is checked, as flushRead does, so the
+	// owed clear behaves the same with and without one.
+	chatID, tg := m.chatID, m.tg
+	if tg == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		// Dropped, as the background receipt's error is: a clear that
+		// failed leaves the count standing, and the next open asks again.
+		_ = tg.ReadReactions(chatID)
+		return nil
+	}
+}
+
 // MarkReadCmd marks the open chat read up to its newest loaded message,
 // without moving the scroll position — the point of an explicit mark-read is
 // to clear the badge while you keep reading where you are.
@@ -1104,15 +1244,7 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.resolveUnreadDivider()
 
-	var cmds []tea.Cmd
-	newest := inserted[len(inserted)-1].ID
-	if m.blurred {
-		if newest > m.pendingReadID {
-			m.pendingReadID = newest
-		}
-	} else {
-		cmds = append(cmds, m.noteRead(newest))
-	}
+	cmds := []tea.Cmd{m.noteSeen(inserted[len(inserted)-1].ID)}
 
 	if !m.metaBusy {
 		priority, trailing := senderTargets(inserted, m.store, senderPriorityWindow)
@@ -1614,6 +1746,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
+		// What opening the chat owes. Worked out before the hunt below,
+		// which clears the target once it is found, and handed on by every
+		// return from here, the hunt's own included.
+		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg))
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1630,7 +1766,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.targetPages++
 				m.loadStatus = "Searching for message..."
 				if oldest := m.store.Messages.OldestMessageId(m.chatID); oldest != 0 {
-					return m, m.loadHistoryCmd(m.gen, m.chatID, oldest)
+					return m, tea.Batch(onOpen, m.loadHistoryCmd(m.gen, m.chatID, oldest))
 				}
 				fallthrough
 			default:
@@ -1656,15 +1792,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if len(priority) > 0 {
 			m.metaBusy = true
-			return m, m.fetchSendersCmd(m.gen, m.chatID, priority, work)
+			return m, tea.Batch(onOpen, m.fetchSendersCmd(m.gen, m.chatID, priority, work))
 		}
 		if cmd := m.nextMetaCmd(work); cmd != nil {
 			m.metaBusy = true
-			return m, cmd
+			return m, tea.Batch(onOpen, cmd)
 		}
 		m.metaBusy = false
 		m.settleJump()
-		return m, nil
+		return m, onOpen
 
 	case sendersFetchedMsg:
 		if msg.gen != m.gen || msg.chatID != m.chatID {
@@ -1697,19 +1833,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			m.cache.invalidate(msg.Message.ID)
 
-			// Only claim the message was read when the terminal actually
-			// has focus; otherwise remember it and catch up on FocusMsg.
-			if m.blurred {
-				if msg.Message.ID > m.pendingReadID {
-					m.pendingReadID = msg.Message.ID
-				}
-				return m, nil
-			}
-			// Focused: accumulate too, and flush on a tick. A receipt is
-			// cumulative, so a burst of arrivals costs one call carrying
-			// the highest ID rather than one call each (issue #46).
-			return m, m.noteRead(msg.Message.ID)
+			return m, m.noteSeen(msg.Message.ID)
 		}
+
+	case telegram.ChatUnreadReactionsMsg:
+		// A reaction in the chat being read has been seen, as an arriving
+		// message has. The message is the evidence, not the store's count:
+		// the chat list raises that from this same message, and which
+		// panel sees it first is not something to rely on. Other chats'
+		// reactions are the chat list's to count.
+		if msg.ChatId == m.chatID {
+			return m, m.noteUnreadReaction()
+		}
+
+	case reactionsFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		m.reactionsFlushPending = false
+		return m, m.flushReactionsRead()
 
 	case telegram.ChatReadOutboxMsg:
 		// The other side read up to here. The mark lives in the chat
@@ -1758,15 +1900,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		m.blurred = false
-		if m.chatID != 0 && m.pendingReadID != 0 {
-			chatID, msgID := m.chatID, m.pendingReadID
-			m.pendingReadID = 0
-			tg := m.tg
-			return m, func() tea.Msg {
-				tg.ViewMessages(chatID, []int64{msgID})
-				return nil
-			}
-		}
+		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead())
 
 	case tea.BlurMsg:
 		m.blurred = true

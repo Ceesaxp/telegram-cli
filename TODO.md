@@ -1,5 +1,26 @@
 # TODO
 
+## Read-on-open wave (2026-09-21) — branch fix/read-on-open
+
+Reported: a chat read in tele-tui stayed unread on the phone. Diagnosis: the first page of a chat never sent a read receipt — only arrivals in the open chat and `m` did, since the first scaffold. Unread reactions (the phone's heart) were never read or cleared at all.
+
+- [x] Opening a chat at its newest messages marks it read (focus-aware, coalesced, dropped on a quick switch); target opens, older pages, and chats with nothing incoming to read send nothing
+- [x] Unread reactions: the dialog's count is carried, an unread recent reaction raises it live, any open and any reaction in the open chat clears it via `messages.readReactions` through its own 300ms window; the batch walk is capped at 10 calls
+- [ ] Deferred: a deleted unread message leaves the count above zero, so each open of that chat re-sends a receipt until the next dialog reload (same root as the unread wave's deletion item)
+- [ ] Deferred: a reaction raised while a clear is in flight can be zeroed by that clear's announcement and then dropped by a switch inside the window; only a reload recovers it
+- [ ] Unverified against the live server: whether a readHistory/readReactions with nothing to read still costs a pts step; what `channels.readHistory` does for an unjoined public channel opened from a `t.me` link (errors are dropped)
+
+## Next — unread @-mentions (designed 2026-09-21, not started)
+
+Proposal: `g@` in the chat view jumps to the oldest unread mention (pushes the jump stack, `ctrl+o` back) and clears it; repeat cycles; `:read-mentions` clears all; the chat list shows an `@` beside the unread badge. Open with Andrei: the key, and whether the chat list gets a next-chat-with-mentions key like `u`.
+
+Facts (researched; sources in the session's research report — core.telegram.org/api/mentions, tdlib MessagesManager.cpp, tdesktop api_unread_things.cpp):
+- `readHistory` does NOT clear mentions. A mention clears per message via `messages.readMessageContents` (`channels.readMessageContents` for supergroups) — TDLib does this in `view_messages` for every viewed message with an unread mention, so read-on-open should also clear mentions on the first page. Bulk: `messages.readMentions` (returns affectedHistory).
+- Voice and video notes are excluded from clear-on-view; they clear when played.
+- Count: `dialog.unread_mentions_count` snapshot; no MTProto update carries it. Derive live: incoming, non-DM, non-broadcast message with `mentioned` && `media_unread`.
+- Listing oldest-first (tdesktop): `messages.getUnreadMentions` with `offset_id=1, add_offset=-limit, limit=10`; next pages `offset_id=maxLoaded, add_offset=-(limit+1), limit=100`.
+- Forums: omit `top_msg_id` and both calls work forum-wide; message IDs are shared, so a jump needs no topic support.
+
 ## Unread-count wave (2026-09-21) — branch fix/unread-count, stacked on fix/sync-gap
 
 Reported: a new message showed in the chat list without an unread badge. Diagnosis: since the TDLib port nothing counted arrivals — MTProto sends no per-message count — so a badge appeared only on a dialog reload. This client's own reads never cleared the badge locally either.
