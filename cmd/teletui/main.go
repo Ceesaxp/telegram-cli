@@ -16,6 +16,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/version"
 )
 
@@ -78,7 +79,12 @@ func main() {
 	// -migrate-config (decision I-13). A binding that was refused is a
 	// binding the user will otherwise press and find inert, with the
 	// explanation sitting behind a flag they have no reason to run.
-	for _, warning := range config.StartupWarnings(cfg) {
+	//
+	// The theme's role and value warnings join them from theme.CheckSpec:
+	// config read the file but cannot judge colours, and app.New, which
+	// draws the palette, runs after this print.
+	warnings := append(config.StartupWarnings(cfg), theme.CheckSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin())...)
+	for _, warning := range warnings {
 		fmt.Fprintf(os.Stderr, "config: %s\n", warning)
 	}
 

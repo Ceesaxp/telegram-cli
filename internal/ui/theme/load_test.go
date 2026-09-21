@@ -426,3 +426,27 @@ func TestABadRampWarnsAndIsTheDefault(t *testing.T) {
 		})
 	}
 }
+
+// main prints its warnings before the app builds a palette, so it needs the
+// theme's warnings without the palette: CheckSpec. They are the ones
+// RolesForSpec gives at either depth, because a broken table is broken on
+// any terminal.
+func TestCheckSpecWarnsWhatRolesForSpecWould(t *testing.T) {
+	broken := withRamp(spec(
+		map[string]string{"bg": "#12", "Cyan": "#8ec07c", "cyan": "#000000", "accent": "#ffffff"},
+		map[string]string{"fg": "300", "backgrnd": "235"},
+	), "mauve", "pink")
+
+	got := CheckSpec(broken, config.ThemeDark)
+	if len(got) != 6 {
+		t.Fatalf("CheckSpec gave %d warnings, want 6: %q", len(got), got)
+	}
+	for _, trueColor := range []bool{true, false} {
+		if _, _, want := RolesForSpec(broken, config.ThemeDark, trueColor); !slices.Equal(got, want) {
+			t.Errorf("truecolour %v: RolesForSpec warns\n%q\nCheckSpec\n%q", trueColor, want, got)
+		}
+	}
+	if w := CheckSpec(nil, config.ThemeDark); len(w) != 0 {
+		t.Errorf("no spec warned: %q", w)
+	}
+}

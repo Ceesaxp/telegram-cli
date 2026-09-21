@@ -69,6 +69,15 @@ func senderRamp(source string, names []string, r Roles) ([]lipgloss.Color, []str
 	return ramp, nil
 }
 
+// CheckSpec is what [RolesForSpec] would warn about the spec, without a
+// palette to keep. main prints startup warnings before the app is built and
+// the palette with it, so this is how a theme's warnings reach the same
+// print as the config's rather than arriving after it, into the void.
+func CheckSpec(spec *config.ThemeSpec, builtin string) []string {
+	_, _, warnings := RolesForSpec(spec, builtin, true)
+	return warnings
+}
+
 // atDepth is the theme's own value for role i at the terminal's colour
 // depth, or false when it has none and the base's value stands.
 //
