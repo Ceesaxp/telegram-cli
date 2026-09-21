@@ -59,8 +59,8 @@ func viewClient(t *testing.T, inv tg.Invoker) (*Client, *[]tea.Msg) {
 
 // Marking a chat read tells the chat list at once, rather than waiting for
 // the server's receipt, which for this session's own read does not
-// reliably come back. It is published here so every caller — the chat
-// view, the REST and MCP servers — gets it without having to remember.
+// reliably come back. It is published from the client so every in-process
+// caller gets it without having to remember.
 func TestViewMessagesAnnouncesTheRead(t *testing.T) {
 	for name, chatID := range map[string]int64{
 		"a basic group": basicGroupID,
@@ -76,7 +76,7 @@ func TestViewMessagesAnnouncesTheRead(t *testing.T) {
 			if len(*got) != 1 {
 				t.Fatalf("published %d messages, want 1: %#v", len(*got), *got)
 			}
-			want := ChatMarkedReadMsg{ChatId: chatID, MaxID: 7}
+			want := ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: 7}
 			if (*got)[0] != want {
 				t.Errorf("published %#v, want %#v", (*got)[0], want)
 			}

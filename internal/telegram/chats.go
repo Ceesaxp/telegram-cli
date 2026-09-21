@@ -690,8 +690,10 @@ func (c *Client) OpenChat(chatID int64) error {
 // ViewMessages marks messages as read, and on success announces it with
 // [ChatMarkedReadMsg]. The server's own receipt for this session's read does
 // not reliably come back, so without the announcement the chat being read
-// kept its unread badge. It is sent from here, not from a caller, so the
-// chat view and the REST and MCP servers all get it.
+// kept its unread badge. It is sent from the client, not from a caller, so
+// every in-process caller gets it without having to remember. The REST and
+// MCP servers are separate binaries that register no message sink, so there
+// it goes nowhere.
 func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -721,7 +723,7 @@ func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 		}); err != nil {
 			return fmt.Errorf("read channel history: %w", err)
 		}
-		c.send(ChatMarkedReadMsg{ChatId: chatID, MaxID: maxID})
+		c.send(ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: maxID})
 		return nil
 	}
 
@@ -731,7 +733,7 @@ func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 	}); err != nil {
 		return fmt.Errorf("read history: %w", err)
 	}
-	c.send(ChatMarkedReadMsg{ChatId: chatID, MaxID: maxID})
+	c.send(ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: maxID})
 	return nil
 }
 

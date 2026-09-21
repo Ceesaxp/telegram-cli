@@ -210,8 +210,8 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 // MTProto does not send a fresh count with every message the way TDLib did,
 // so the client counts arrivals itself. Only a message from the other side
 // that is newer than anything the entry has seen counts: the same message
-// can arrive twice (a replay, a catch-up after a gap), and one at or below
-// the read mark was read before it got here. A local echo has no server ID
+// can arrive twice (a getDifference replay), and one at or below the read
+// mark was read before it got here. A local echo has no server ID
 // and is never marked read, so it never counts either.
 func countsAsUnread(entry *ChatEntry, msg *telegram.Message) bool {
 	if msg == nil || msg.IsOutgoing || msg.ID <= 0 {

@@ -54,9 +54,8 @@ func TestAnOutgoingMessageDoesNotCountAsUnread(t *testing.T) {
 	}
 }
 
-// The same message can arrive twice — a getDifference replay, a catch-up
-// after a gap — and an older one can arrive late. Neither is news, so
-// neither may count again.
+// The same message can arrive twice — a getDifference replay — and an
+// older one can arrive late. Neither is news, so neither may count again.
 func TestARedeliveredMessageDoesNotCountTwice(t *testing.T) {
 	for name, id := range map[string]int64{"the same message": 12, "an older one": 11} {
 		t.Run(name, func(t *testing.T) {

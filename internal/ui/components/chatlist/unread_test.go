@@ -47,7 +47,7 @@ func TestReadingTheChatClearsTheBadge(t *testing.T) {
 		LastMessage: &telegram.Message{ID: 5, ChatID: 1, Date: 1700000000},
 	})
 
-	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 1, MaxID: 5})
+	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 1, MaxMessageId: 5})
 
 	if got := badgeOf(t, m, 1); got != "" {
 		t.Errorf("badge = %q after reading up to the last message, want none", got)
@@ -81,7 +81,7 @@ func TestNextUnreadSkipsAChatReadSinceTheDialog(t *testing.T) {
 		ID: 2, Title: "Bob", Type: telegram.ChatTypePrivate, Order: 1,
 		UnreadCount: 3, LastMessage: &telegram.Message{ID: 9, ChatID: 2},
 	})
-	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 2, MaxID: 9})
+	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 2, MaxMessageId: 9})
 	if got := badgeOf(t, m, 2); got != "" {
 		t.Fatalf("precondition: the read left a badge %q", got)
 	}
