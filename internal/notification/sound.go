@@ -15,7 +15,7 @@ type SoundPlayer struct {
 	// finished. A field so a test can count what reaches it: the real
 	// implementation is a process, gone before anything could ask. Nil
 	// where there is no player installed.
-	play func()
+	play func() error
 	// now is the clock the interval is measured on; a field so a test can
 	// hold it still instead of sleeping through a real second.
 	now func() time.Time
@@ -89,7 +89,7 @@ func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 // and waiting on it would stall the event loop for as long as it plays.
 func (s *SoundPlayer) run() {
 	defer s.player.Done()
-	s.play()
+	_ = s.play()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,7 +134,7 @@ var soundPlayers = map[string][][]string{
 // Whether there is one is looked up here, once, rather than found out by
 // running it: by then the process is in the background, where the only
 // fallback left is to print — to a terminal this process does not own.
-func platformPlayer(goos string, lookPath func(string) (string, error)) func() {
+func platformPlayer(goos string, lookPath func(string) (string, error)) func() error {
 	var installed [][]string
 	for _, player := range soundPlayers[goos] {
 		if _, err := lookPath(player[0]); err == nil {
@@ -144,17 +144,18 @@ func platformPlayer(goos string, lookPath func(string) (string, error)) func() {
 	if len(installed) == 0 {
 		return nil
 	}
-	return func() { playFirst(installed) }
+	return func() error { return playFirst(installed) }
 }
 
-// playFirst runs each player in turn until one succeeds, one at a time. If
-// none does — installed, but no sound server to play through — nothing is
-// said: the bell was the old answer to that, and the background is no place
-// to ring it.
-func playFirst(players [][]string) {
+// playFirst runs each player in turn until one succeeds, one at a time, and
+// returns the last one's error if none does — installed, but no sound server
+// to play through.
+func playFirst(players [][]string) error {
+	var err error
 	for _, player := range players {
-		if exec.Command(player[0], player[1:]...).Run() == nil {
-			return
+		if err = runHelper(player[0], player[1:]...); err == nil {
+			return nil
 		}
 	}
+	return err
 }

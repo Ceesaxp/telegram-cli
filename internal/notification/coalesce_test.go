@@ -7,7 +7,7 @@ import "testing"
 // already quit is an alert about nothing the reader can open.
 func TestStoppingDropsWhatIsWaiting(t *testing.T) {
 	p := newProcess()
-	c := newCoalescer(p.notify)
+	c := newCoalescer(func(title, body string) { _ = p.notify(title, body) })
 
 	c.post("Ana", "see you at six")
 	p.awaitStart(t)

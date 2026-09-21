@@ -12,7 +12,7 @@ import (
 func notifier(method string, support TerminalSupport) *Notifier {
 	n := NewNotifier(true, true, method)
 	n.terminal = support
-	n.system = func(string, string) {}
+	n.system = func(string, string) error { return nil }
 	return n
 }
 

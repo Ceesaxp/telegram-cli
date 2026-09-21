@@ -35,10 +35,16 @@ func newProcess() *process {
 }
 
 // notify is the process as the notifier's system seam sees it.
-func (p *process) notify(title, body string) { p.run(title, body) }
+func (p *process) notify(title, body string) error {
+	p.run(title, body)
+	return nil
+}
 
 // play is the process as the sound player's seam sees it.
-func (p *process) play() { p.run("", "") }
+func (p *process) play() error {
+	p.run("", "")
+	return nil
+}
 
 func (p *process) run(title, body string) {
 	p.mu.Lock()

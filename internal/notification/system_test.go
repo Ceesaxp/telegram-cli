@@ -12,7 +12,10 @@ func systemNotifier(t *testing.T) (*Notifier, func() (string, string)) {
 
 	n := NewNotifier(true, true, MethodSystem)
 	done := make(chan [2]string, 1)
-	n.system = func(title, body string) { done <- [2]string{title, body} }
+	n.system = func(title, body string) error {
+		done <- [2]string{title, body}
+		return nil
+	}
 	t.Cleanup(n.Close)
 
 	return n, func() (string, string) {
@@ -281,7 +284,10 @@ func TestOnlyOnePathDelivers(t *testing.T) {
 	n.terminal = TerminalTitleAndBody
 
 	delivered := make(chan struct{}, 1)
-	n.system = func(string, string) { delivered <- struct{}{} }
+	n.system = func(string, string) error {
+		delivered <- struct{}{}
+		return nil
+	}
 
 	if seq := n.Notify("Ana", "hi"); seq == "" {
 		t.Fatal("the terminal path produced no sequence")

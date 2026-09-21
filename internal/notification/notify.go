@@ -48,7 +48,7 @@ type Notifier struct {
 	// the whole point of the split in terminal.go, and the real
 	// implementation is a process that has already exited by the time
 	// anything could ask. Nil where there is no notifier installed.
-	system func(title, body string)
+	system func(title, body string) error
 
 	// queue is what stands between a burst of messages and a burst of
 	// processes.
@@ -71,7 +71,7 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 	n.system = platformNotifier(runtime.GOOS, exec.LookPath)
 	// Through n rather than bound now, so the queue delivers to whatever
 	// the seam holds when it runs.
-	n.queue = newCoalescer(func(title, body string) { n.system(title, body) })
+	n.queue = newCoalescer(func(title, body string) { _ = n.system(title, body) })
 	return n
 }
 
@@ -173,10 +173,10 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 // Whether there is one is looked up here, once, rather than found out by
 // running it: by then the process is in the background, where the only
 // fallback left is to print — to a terminal this process does not own.
-func platformNotifier(goos string, lookPath func(string) (string, error)) func(title, body string) {
+func platformNotifier(goos string, lookPath func(string) (string, error)) func(title, body string) error {
 	var (
 		program string
-		send    func(title, body string)
+		send    func(title, body string) error
 	)
 	switch goos {
 	case "linux":
@@ -193,19 +193,16 @@ func platformNotifier(goos string, lookPath func(string) (string, error)) func(t
 	return send
 }
 
-// sendLinux posts through notify-send. A failure is not reported: it is
-// installed, so the likeliest cause is a desktop with no notification
-// daemon, and there is nothing this side could do about that from the
-// background.
-func sendLinux(title, body string) {
-	cmd := exec.Command("notify-send",
+// sendLinux posts through notify-send. It is installed, so a failure most
+// likely means a desktop with no notification daemon behind it.
+func sendLinux(title, body string) error {
+	return runHelper("notify-send",
 		"--app-name=Tele-TUI",
 		"--icon=telegram",
 		"--urgency=normal",
 		title,
 		body,
 	)
-	cmd.Run()
 }
 
 // sendMacOS is the path that posts as Script Editor.
@@ -214,11 +211,16 @@ func sendLinux(title, body string) {
 // notification sequence at all, and for a user who prefers the system's own
 // alert. See terminal.go for why a CLI cannot do better here without
 // shipping an app bundle.
-func sendMacOS(title, body string) {
+func sendMacOS(title, body string) error {
 	script := fmt.Sprintf(
 		`display notification %q with title %q`,
 		body, title,
 	)
-	cmd := exec.Command("osascript", "-e", script)
-	cmd.Run()
+	return runHelper("osascript", "-e", script)
+}
+
+// runHelper runs one of the programs this package leans on — a notifier or
+// a sound player — to completion, and says whether it worked.
+func runHelper(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
 }

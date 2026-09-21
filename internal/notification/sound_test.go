@@ -146,7 +146,7 @@ func TestFailingPlayersPrintNothing(t *testing.T) {
 		t.Fatal("precondition: the stand-in players were not found")
 	}
 
-	if out := stdout(t, play); out != "" {
+	if out := stdout(t, func() { _ = play() }); out != "" {
 		t.Errorf("failing players wrote %q to the terminal", out)
 	}
 }
