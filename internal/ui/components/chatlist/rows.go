@@ -18,7 +18,7 @@ import (
 //	col  1      type sigil             (indent)
 //	col  2      space                  (indent)
 //	cols 3..    title                  preview
-//	right       relative time (5)      unread badge, right-aligned
+//	right       relative time (5)      @ chip and unread badge, right-aligned
 //	last        blank                  blank
 //
 // The time sits in a FIXED five-cell field rather than being right-aligned
@@ -77,7 +77,9 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	switch {
 	case selected:
 		titleColour = r.Bright
-	case item.Badge != "" && !item.Muted:
+	// A mention lifts the title even in a muted chat: it is the one thing
+	// muting does not silence, as the @ chip says below.
+	case (item.Badge != "" && !item.Muted) || item.Mention:
 		titleColour = r.Fg
 	}
 
@@ -87,13 +89,13 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 		lipgloss.NewStyle().Foreground(titleColour).Render(cell.Fit(title, textW)) +
 		lipgloss.NewStyle().Foreground(r.Faint).Render(cell.Fit(item.Meta, rowTimeW))
 
-	// --- line two: indent, preview, badge ---------------------------
-	badge := m.renderBadge(item)
-	badgeW := cell.Width(badge)
+	// --- line two: indent, preview, trail ---------------------------
+	trail := m.renderTrail(item)
+	trailW := cell.Width(trail)
 
-	previewW := textW + rowTimeW - badgeW
-	if badgeW > 0 {
-		previewW-- // at least one cell between the preview and the badge
+	previewW := textW + rowTimeW - trailW
+	if trailW > 0 {
+		previewW-- // at least one cell between the preview and the trail
 	}
 	if previewW < 0 {
 		previewW = 0
@@ -107,8 +109,8 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	// no row in particular, which is exactly how a two-line row loses its
 	// selection.
 	line2 := barStyle.Render(bar) + strings.Repeat(" ", rowTextCol-1) + preview
-	if badgeW > 0 {
-		line2 += " " + badge
+	if trailW > 0 {
+		line2 += " " + trail
 	}
 
 	// Only the selected row paints. Panel is the column's surface and the
@@ -121,6 +123,28 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 		}
 	}
 	return []string{cell.Fit(line1, width), cell.Fit(line2, width)}
+}
+
+// renderTrail is what sits right of the preview on row two: the chips that
+// say the chat is waiting for the reader, the @ first and then the unread
+// badge, a cell apart. The preview gives way to it.
+func (m Model) renderTrail(item widgets.ListItem) string {
+	chips := make([]string, 0, 2)
+	if item.Mention {
+		chips = append(chips, m.renderMention())
+	}
+	if badge := m.renderBadge(item); badge != "" {
+		chips = append(chips, badge)
+	}
+	return strings.Join(chips, " ")
+}
+
+// renderMention draws the @ chip for a chat with an unread mention of the
+// reader. It is always in the unmuted badge's colours: muting a chat
+// silences it, but a mention is the one thing Telegram lets through, so
+// the chip says so even on a row that is otherwise subdued.
+func (m Model) renderMention() string {
+	return m.badgeStyle(false).Render("@")
 }
 
 // renderBadge draws the unread chip.
@@ -136,11 +160,16 @@ func (m Model) renderBadge(item widgets.ListItem) string {
 	if item.Badge == "" {
 		return ""
 	}
-	style := lipgloss.NewStyle().Background(m.roles.Cyan).Foreground(m.roles.Bg)
-	if item.Muted {
-		style = lipgloss.NewStyle().Background(m.roles.Sel).Foreground(m.roles.Dim)
+	return m.badgeStyle(item.Muted).Render(item.Badge)
+}
+
+// badgeStyle is the chip's colouring: cyan for a chat that will interrupt
+// you, subdued for one you have muted.
+func (m Model) badgeStyle(muted bool) lipgloss.Style {
+	if muted {
+		return lipgloss.NewStyle().Background(m.roles.Sel).Foreground(m.roles.Dim)
 	}
-	return style.Render(item.Badge)
+	return lipgloss.NewStyle().Background(m.roles.Cyan).Foreground(m.roles.Bg)
 }
 
 // renderFilterHeader is the chat list's first row: an amber slash, the live

@@ -216,7 +216,9 @@ func (m *Model) clearCoalescing() {
 	m.pendingReadID = 0
 	m.pendingRefetch = nil
 	m.pendingReactionsRead = false
+	m.pendingMentionsRead = nil
 	m.readFlushPending = false
 	m.refetchFlushPending = false
 	m.reactionsFlushPending = false
+	m.mentionsFlushPending = false
 }

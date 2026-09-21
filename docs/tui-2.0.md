@@ -145,9 +145,12 @@ The chat list is 38 columns at normal width, panel background, and contains:
   [divergence 22](#22-a-selection-is-marked-down-its-whole-height)).
 - Sigils: @ DM (blue), # group or supergroup (mauve), ! channel (amber), and
   ~ saved messages (green).
-- Selected titles are bright; unread/unmuted titles are fg; other titles use
-  #98a1a9. Muted chats include the literal dim word muted after the truncated
-  title and use a subdued badge. Unread counts retain the existing 999+ cap.
+- Selected titles are bright; unread/unmuted titles are fg, and so is the
+  title of a chat with an unread mention even when it is muted; other titles
+  use #98a1a9. Muted chats include the literal dim word muted after the
+  truncated title and use a subdued badge. An unread mention adds an @ chip
+  left of the unread badge, in the unmuted badge's colours whatever the mute.
+  Unread counts retain the existing 999+ cap.
 - A one-row local footer with the j/k, g/G, and unread hints.
 
 The bottom hint bar replaces the existing status/help composition. It has

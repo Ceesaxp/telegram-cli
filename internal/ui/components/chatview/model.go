@@ -193,9 +193,9 @@ type Model struct {
 	downloadDir string
 
 	// pendingG is a g waiting for its suffix. g is a PREFIX now (gg to the
-	// top, gx to follow a link), which is what vim does with it — bare g
-	// does nothing there either. home is still the one-key route to the
-	// top, so nothing became unreachable.
+	// top, gx to follow a link, g@ to the next unread mention), which is
+	// what vim does with it — bare g does nothing there either. home is
+	// still the one-key route to the top, so nothing became unreachable.
 	pendingG bool
 	// armed is the link cursor: see links.go.
 	armed armedLink
@@ -309,6 +309,25 @@ type Model struct {
 	// see coalesce.go.
 	pendingReactionsRead  bool
 	reactionsFlushPending bool
+	// pendingMentionsRead are the open chat's unread mentions that the
+	// reader has seen and this client has not yet asked to clear: they
+	// were on the first page of an open at the newest messages, or they
+	// arrived while the chat was open. The window's tick or FocusMsg sends
+	// them, and opening another chat drops them. mentionsFlushPending says
+	// that tick is scheduled; see mentions.go.
+	pendingMentionsRead  []int64
+	mentionsFlushPending bool
+	// askedMentions is every mention this client has asked to clear, chat
+	// by chat. Unlike the owed ones it survives a chat switch; see
+	// mentionLedger. unreachableMentions are the ones a g@ jump could not
+	// reach, which the next g@ skips.
+	askedMentions       mentionLedger
+	unreachableMentions mentionLedger
+	// mentionTarget is the mention a g@ jump is on its way to. It survives
+	// the reopen of its own chat that makes the jump, and is settled when
+	// the hunt for it finds it (cleared) or gives up (skipped), or dropped
+	// when the history fails to load.
+	mentionTarget mentionRef
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -1028,6 +1047,18 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 // backwards; if it is still not found the view settles at the oldest
 // loaded message and a notice is shown in the header.
 func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cmd {
+	// A reopen of the chat already open — g@ and ctrl+o jump within it —
+	// is not leaving it. What the reader has seen there is still seen, so
+	// what it owes stays owed, and the windows already running send it:
+	// their ticks carry the chat, not the generation. What the reopened
+	// page owes again joins it rather than going out twice. Only a switch
+	// to another chat drops it.
+	if chatID != m.chatID {
+		m.clearCoalescing()
+	}
+	if m.mentionTarget.chatID != chatID {
+		m.mentionTarget = mentionRef{}
+	}
 	m.gen++
 	m.store.Messages.Activate(chatID)
 	m.chatID = chatID
@@ -1048,11 +1079,9 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.targetPages = 0
 	m.pendingJumpID = 0
 	m.pendingMeta = nil
-	m.pendingReadID = 0
 	m.metaBusy = false
 	m.typing = nil
 	m.stopTypingAnim()
-	m.clearCoalescing()
 	m.clearSearch()
 	m.cache.clear()
 
@@ -1175,10 +1204,20 @@ func (m *Model) finishHistory() {
 	m.historyEnd = true
 	m.loadStatus = ""
 	if m.targetMsgID != 0 {
-		m.targetMsgID = 0
-		m.notice = "message not in loaded history"
-		m.scrollOffset = m.maxScrollOffset()
+		m.giveUpOnTarget()
 	}
+}
+
+// giveUpOnTarget stops looking for the jump target, says so, and leaves
+// the reader at the oldest loaded message, which is as close as the hunt
+// got.
+func (m *Model) giveUpOnTarget() {
+	m.notice = "message not in loaded history"
+	if m.missMention(m.targetMsgID) {
+		m.notice = "that mention is further back than this chat loads"
+	}
+	m.targetMsgID = 0
+	m.scrollOffset = m.maxScrollOffset()
 }
 
 func (m *Model) loadHistoryCmd(gen int, chatID int64, fromMsgId int64) tea.Cmd {
@@ -1220,8 +1259,8 @@ func (m *Model) CatchUpCmd() tea.Cmd {
 // the expected case rather than the end of history, and a failure is not
 // worth a notice: the thread is no worse off than before it asked. What
 // was new gets the same trailing meta work as any page — senders, photos —
-// and the same read receipt a live arrival would have earned, since the
-// reader is looking at it now.
+// and the same read receipt and mention clears a live arrival would have
+// earned, since the reader is looking at it now.
 func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		log.Printf("chatview: catch-up fetch for chat %d: %s", msg.chatID, msg.err)
@@ -1244,7 +1283,10 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.resolveUnreadDivider()
 
-	cmds := []tea.Cmd{m.noteSeen(inserted[len(inserted)-1].ID)}
+	cmds := []tea.Cmd{
+		m.noteSeen(inserted[len(inserted)-1].ID),
+		m.noteUnreadMentions(seenMentions(inserted)),
+	}
 
 	if !m.metaBusy {
 		priority, trailing := senderTargets(inserted, m.store, senderPriorityWindow)
@@ -1727,6 +1769,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.loadStatus = ""
 			m.targetMsgID = 0
 			m.pendingJumpID = 0
+			// The jump has ended without finding its mention or giving up
+			// on it; see mentionTarget.
+			m.mentionTarget = mentionRef{}
 			m.notice = "could not load messages"
 			return m, nil
 		}
@@ -1749,7 +1794,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// What opening the chat owes. Worked out before the hunt below,
 		// which clears the target once it is found, and handed on by every
 		// return from here, the hunt's own included.
-		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg))
+		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg), m.readMentionsOnOpen(msg))
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1759,6 +1804,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// change bubble heights, so the jump is re-applied when
 				// the last of them lands.
 				m.pendingJumpID = m.targetMsgID
+				onOpen = tea.Batch(onOpen, m.landOnMention(m.targetMsgID))
 				m.targetMsgID = 0
 			case m.targetPages < maxTargetPages:
 				// Keep paging backwards for the target, then resolve the
@@ -1770,9 +1816,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				fallthrough
 			default:
-				m.targetMsgID = 0
-				m.notice = "message not in loaded history"
-				m.scrollOffset = m.maxScrollOffset()
+				m.giveUpOnTarget()
 			}
 		}
 
@@ -1828,12 +1872,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case searchResultsMsg:
 		return m.handleSearchResults(msg)
 
+	case mentionsListedMsg:
+		return m.handleMentionsListed(msg)
+
 	case telegram.NewMessageMsg:
 		if msg.Message.ChatID == m.chatID {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			m.cache.invalidate(msg.Message.ID)
 
-			return m, m.noteSeen(msg.Message.ID)
+			// A mention arriving in the open chat has been seen, on the
+			// terms the message counts as read by noteSeen.
+			return m, tea.Batch(
+				m.noteSeen(msg.Message.ID),
+				m.noteUnreadMentions(seenMentions([]*telegram.Message{msg.Message})),
+			)
 		}
 
 	case telegram.ChatUnreadReactionsMsg:
@@ -1852,6 +1904,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.reactionsFlushPending = false
 		return m, m.flushReactionsRead()
+
+	case mentionsClearFailedMsg:
+		// Whichever chat is open: the ledger is kept chat by chat.
+		m.askedMentions.forget(msg.chatID, msg.ids...)
+		return m, nil
+
+	case mentionsFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		m.mentionsFlushPending = false
+		return m, m.flushMentionsRead()
 
 	case telegram.ChatReadOutboxMsg:
 		// The other side read up to here. The mark lives in the chat
@@ -1900,7 +1964,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		m.blurred = false
-		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead())
+		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead(), m.flushMentionsRead())
 
 	case tea.BlurMsg:
 		m.blurred = true
@@ -2037,6 +2101,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			kp = keys.NewPress(msg)
 		case "x":
 			return m.armNextLink()
+		case "@":
+			return m.nextMention()
 		default:
 			// Not a suffix this prefix has. The g is dropped and the key
 			// goes on to do its own job rather than being swallowed — the

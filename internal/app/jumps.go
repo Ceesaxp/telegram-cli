@@ -7,7 +7,8 @@ import (
 // The jump list, in vi's sense of the word.
 //
 // A jump is a move that teleports: following a t.me link into another chat,
-// landing on a search hit, opening the discussion under a channel post.
+// landing on a search hit, opening the discussion under a channel post,
+// going to an unread mention with g@.
 // What they have in common is that the reader arrives somewhere they did
 // not scroll to, and nothing on screen remembers where they came from —
 // which is exactly the hole ctrl+o fills in vi.

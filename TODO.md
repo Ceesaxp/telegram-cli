@@ -10,9 +10,20 @@ Reported: a chat read in tele-tui stayed unread on the phone. Diagnosis: the fir
 - [ ] Deferred: a reaction raised while a clear is in flight can be zeroed by that clear's announcement and then dropped by a switch inside the window; only a reload recovers it
 - [ ] Unverified against the live server: whether a readHistory/readReactions with nothing to read still costs a pts step; what `channels.readHistory` does for an unjoined public channel opened from a `t.me` link (errors are dropped)
 
-## Next — unread @-mentions (designed 2026-09-21, not started)
+## Mentions wave (2026-09-21) — branch feat/mentions
 
-Proposal: `g@` in the chat view jumps to the oldest unread mention (pushes the jump stack, `ctrl+o` back) and clears it; repeat cycles; `:read-mentions` clears all; the chat list shows an `@` beside the unread badge. Open with Andrei: the key, and whether the chat list gets a next-chat-with-mentions key like `u`.
+Andrei chose `g@`; no chat-list next-mention key in v1 (the `@` chip shows where it would be worth it).
+
+- [x] Data layer: `Message.UnreadMention` (TDLib's rule), dialog `unread_mentions_count`, live increment under `countsAsUnread`, `UnreadMentions` (oldest first), `ReadMentions`, `ReadAllMentions` (capped, reports done)
+- [x] Chat list: `@` chip left of the badge in the unmuted style; a mention brightens a muted chat's title
+- [x] Clear on view: mentions on the first page of an open-at-newest, arrivals and catch-up in the open chat, coalesced 300ms, focus-aware; voice/video notes excluded; a bounded per-chat ledger so no ID is asked twice, and a failed clear is forgotten
+- [x] `g@` clears on ARRIVAL only; a mention beyond the hunt (`maxTargetPages`) is skipped for the session and left unread; `:read-mentions` reports its own outcome; neither asks in a DM or a channel
+- [x] A same-chat reopen keeps what it owes instead of dropping or double-sending it
+- [ ] Deferred: load the page AROUND an old target (offset_id=target, add_offset=-25) so `g@` reaches any mention — needs the chat view to hold a gap in its history
+- [ ] Deferred: playing a voice/video note does not clear its mention (nothing calls `ReadMentions` on play)
+- [ ] Deferred: `updateReadMessagesContents` / `updateChannelReadMessagesContents` from other devices are not handled, so a mention cleared elsewhere stays counted until a dialog reload
+- [ ] Deferred: service messages never carry `UnreadMention` (unverified whether the server ever flags one)
+- [ ] Deferred: chatview has no client seam — tests prove "a command reached the client" by recovering a nil-client panic, and cannot tell which RPC
 
 Facts (researched; sources in the session's research report — core.telegram.org/api/mentions, tdlib MessagesManager.cpp, tdesktop api_unread_things.cpp):
 - `readHistory` does NOT clear mentions. A mention clears per message via `messages.readMessageContents` (`channels.readMessageContents` for supergroups) — TDLib does this in `view_messages` for every viewed message with an unread mention, so read-on-open should also clear mentions on the first page. Bulk: `messages.readMentions` (returns affectedHistory).

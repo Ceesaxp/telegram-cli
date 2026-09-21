@@ -927,6 +927,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.store.Chats.MarkReactionsRead(msg.ChatId)
 		m.markDirty()
 
+	case telegram.ChatMentionsReadMsg:
+		if msg.All {
+			m.store.Chats.ClearMentions(msg.ChatId)
+		} else {
+			m.store.Chats.MarkMentionsRead(msg.ChatId, len(msg.MessageIds))
+		}
+		m.markDirty()
+
 	case telegram.ChatUpdateMsg:
 		if msg.Chat != nil {
 			// A peer view is partial: merging keeps the unread count, the
@@ -1266,6 +1274,9 @@ func (m *Model) refreshList() {
 			MetaAt:   metaAt,
 			Online:   online,
 			Muted:    entry.Chat.Muted,
+			// Drawn apart from the badge: a mention can sit below the
+			// read mark, so a chat can have one with nothing unread.
+			Mention: entry.UnreadMentionsCount > 0,
 		})
 	}
 

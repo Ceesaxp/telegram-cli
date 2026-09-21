@@ -134,6 +134,7 @@ newline chord.
 | `p` | Pin / unpin | |
 | `f` | Forward the cursored message to another chat | *new*, see I-13 — the one removed field that came back |
 | `gx` | Follow a link in the cursored message — arms, cycles, `Enter` opens | *new*, see I-16 |
+| `g@` | Jump to the next unread mention, oldest first — again for the one after | *new*, see I-18 |
 | `t` | Open the discussion under a channel post | |
 | `m` | Mark this chat read without moving | *moved* from `M`, see I-10 |
 | `x` | Reveal / hide spoilers | |
@@ -433,6 +434,26 @@ Numbered I-n to keep them apart from TUI 2.0's 1–13.
   Opening a chat from the LIST is not one, because the list is still on
   screen holding the cursor the reader left; making `Ctrl+O` a chat history
   as well would give one key two jobs.
+
+- **I-18 — `g@` goes to the next unread mention, and seeing one clears it.**
+  The `@` on a chat's row needed a way to the messages behind it, and the
+  `g` family of I-16 has room: `g@` joins `gg` and `gx`. Unlike `gx` it
+  jumps rather than arms. Arming exists because a link's text can lie about
+  where it goes; a mention is a message in the reader's own chat, so there
+  is no destination to read first and nothing to phish with. It walks the
+  mentions oldest first, as the official clients' `@` button does, and it
+  is a jump in I-17's sense, so `Ctrl+O` returns.
+
+  Landing on a mention clears it, voice and video notes included, because
+  the reader chose to go there — landing, not setting off. The jump pages
+  back only a few pages, and a mention further back than that is skipped
+  and left unread rather than cleared unseen, which would take it out of
+  the listing for good; the next `g@` goes on past it, and when only
+  those are left it says so and the `@` stays on the row. Opening a chat
+  at its newest messages clears the mentions on its first page, on the
+  terms that open sends the read receipt — which does not clear them
+  itself — except voice and video notes, which TDLib leaves for playing to
+  clear. `:read-mentions` clears the lot.
 
 - **I-14 — Accepted as they are.** Digits jump folders in the chat list and
   count motions in the chat view: adjacent panels, different meanings,

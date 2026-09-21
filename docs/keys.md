@@ -140,7 +140,8 @@ the shipped defaults.
 | `t` | Open the discussion under a channel post — jumps to the linked group at the post's own copy, where the comments hang off it |
 | `m` | Mark this chat read without moving the scroll or the unread divider (`keys.mark_read`) |
 | `gx` | Follow a link in the selected message — vim's own spelling for "open the URL under the cursor". The first press arms the first link and shows **where it actually goes**, which is the point: a link's visible text and its destination are allowed to differ. Press again to cycle (it wraps), `Enter` opens it, `Esc` drops it. A link whose scheme this client will not open is still armed and says so, rather than being skipped as though the key were broken. A link back into Telegram — `t.me/name`, `t.me/name/123`, `t.me/c/<id>/<id>` — is followed **inside this client** instead of in a browser, and `Ctrl+O` comes back. Invite links (`t.me/+hash`, `t.me/joinchat/…`) still go to the browser on purpose: following one *joins* a chat, which is a decision rather than a move |
-| `Ctrl+O` | Go back to where the last **jump** left from — vim's own jumplist key. A jump is a move that teleports: following a `t.me` link into another chat, landing on a search hit, opening a channel post's discussion. Opening a chat from the chat list is deliberately *not* a jump — the list is still there, holding the cursor you left. The list holds 32 positions; with none held, the key says so |
+| `g@` | Jump to the next unread mention in this chat, **oldest first**; landing on it clears it. Press again for the one after. It jumps rather than arms: the destination is a message in the chat you are reading. `Ctrl+O` comes back. The hint bar says how many remain. A mention further back than the jump pages is not cleared, since you never saw it: the header says so, it stays unread, and the next `g@` goes on past it; when only such mentions are left, `g@` says so and the chat keeps its `@`. In a DM or a broadcast channel, which have no mentions, it says so and asks the server nothing |
+| `Ctrl+O` | Go back to where the last **jump** left from — vim's own jumplist key. A jump is a move that teleports: following a `t.me` link into another chat, landing on a search hit, opening a channel post's discussion, going to an unread mention with `g@`. Opening a chat from the chat list is deliberately *not* a jump — the list is still there, holding the cursor you left. The list holds 32 positions; with none held, the key says so |
 | `x` | Reveal spoilers in the selected message (press again to hide them) |
 | `i` | Compose a message |
 | click | Focus the panel **and** move the cursor to the clicked message — a click on a day divider or the header moves nothing |
@@ -326,6 +327,7 @@ Commands available now:
 | Command | Action |
 |---|---|
 | `:mark-read` | Mark the open chat read, keeping your scroll position |
+| `:read-mentions` | Clear every unread mention in the open group. It says "mentions cleared" once the server has finished, "could not clear mentions" if it did not, and "no mentions in this chat" in a DM or a broadcast channel, which have none |
 | `:search <query>` | Open the cross-chat search, pre-filled |
 | `:keymap` | Open the help overlay |
 | `:quit` | Quit |

@@ -22,6 +22,13 @@ type ChatEntry struct {
 	// reactions to clear.
 	UnreadReactionsCount int32
 
+	// UnreadMentionsCount is how many messages in the chat name the reader
+	// and have not been opened: the @ on the chat's row. It comes from the
+	// dialog, and after that this client keeps it live itself, since no
+	// update carries it — up for each arriving mention, down for each one
+	// this client clears.
+	UnreadMentionsCount int32
+
 	// Unresolved marks an entry this store INVENTED to hold a message for
 	// a chat nobody had described yet — see [ChatStore.UpdateLastMessage].
 	// It has an id and nothing else: no name, no type, no mute flag.
@@ -88,6 +95,7 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 	entry.Unresolved = false
 	entry.UnreadCount = chat.UnreadCount
 	entry.UnreadReactionsCount = chat.UnreadReactionsCount
+	entry.UnreadMentionsCount = chat.UnreadMentionsCount
 	entry.Pinned = chat.Pinned
 
 	if chat.LastMessage != nil {
@@ -202,7 +210,8 @@ func (s *ChatStore) Get(chatID int64) (*ChatEntry, bool) {
 }
 
 // UpdateLastMessage updates a chat's last message and sort order, and counts
-// the message as unread when it is news — see [countsAsUnread].
+// the message as unread when it is news — see [countsAsUnread] — and as an
+// unread mention when it is news that names the reader.
 func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -221,6 +230,10 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 
 	if countsAsUnread(entry, msg) {
 		entry.UnreadCount++
+		// Under the same guard, so a replayed mention cannot count twice.
+		if msg.UnreadMention {
+			entry.UnreadMentionsCount++
+		}
 	}
 	entry.sawMessage(msg)
 	entry.LastMessage = msg
@@ -324,6 +337,33 @@ func (s *ChatStore) MarkReactionsRead(chatID int64) {
 
 	if entry, ok := s.chats[chatID]; ok {
 		entry.UnreadReactionsCount = 0
+	}
+}
+
+// MarkMentionsRead records that this client has just cleared n of a chat's
+// unread mentions.
+//
+// The count is the dialog's plus this client's own arithmetic, so it can be
+// behind the server: a mention cleared on another device is still counted
+// here. Clearing more than are counted therefore leaves none, not a
+// negative number. A no-op for a chat the store does not know.
+func (s *ChatStore) MarkMentionsRead(chatID int64, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.chats[chatID]; ok {
+		entry.UnreadMentionsCount = max(0, entry.UnreadMentionsCount-int32(n))
+	}
+}
+
+// ClearMentions records that this client has just cleared every unread
+// mention in a chat. A no-op for a chat the store does not know.
+func (s *ChatStore) ClearMentions(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.chats[chatID]; ok {
+		entry.UnreadMentionsCount = 0
 	}
 }
 

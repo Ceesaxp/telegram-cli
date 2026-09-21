@@ -40,6 +40,12 @@ type Chat struct {
 	// carries it.
 	UnreadReactionsCount int32
 
+	// UnreadMentionsCount is how many messages in the chat name the reader
+	// and have not been opened: the @ the phone shows. Like the reactions
+	// it is a counter of its own, only a dialog carries it, and only a
+	// group ever has any.
+	UnreadMentionsCount int32
+
 	// Pinned and Order define chat list ordering: pinned first,
 	// then by Order descending (unix time of the last message).
 	Pinned bool
@@ -86,6 +92,11 @@ type Message struct {
 	// "pinned" to something already pinned, and the reader has to open the
 	// rail to find out what it did.
 	IsPinned bool
+
+	// UnreadMention is whether this message names the reader and they have
+	// not opened it yet: one of the @ marks the phone counts on a chat. Only
+	// a group's messages carry it; a DM or a channel post never does.
+	UnreadMention bool
 
 	ReplyToMessageID int64
 
@@ -811,6 +822,7 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 		IsOutgoing:    m.Out,
 		IsChannelPost: m.Post,
 		IsPinned:      m.Pinned,
+		UnreadMention: isUnreadMention(m),
 	}
 
 	if from, ok := m.GetFromID(); ok {
@@ -859,6 +871,18 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 
 	msg.Content = &MessageText{Text: caption}
 	return msg
+}
+
+// isUnreadMention is TDLib's rule for a message the chat counts as an
+// unread @: incoming, naming the reader, with its contents still unread,
+// and in a group. The server sets the flags on a DM or a channel post too,
+// but neither is counted there, so neither is here.
+func isUnreadMention(m *tg.Message) bool {
+	if m.Out || !m.Mentioned || !m.MediaUnread || m.Post {
+		return false
+	}
+	_, dm := m.PeerID.(*tg.PeerUser)
+	return !dm
 }
 
 // messageFromTGService converts a service message to the domain Message.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -336,6 +337,7 @@ func (c *Client) chatsFromDialogParts(dialogs []tg.DialogClass, messages []tg.Me
 		chat.Pinned = d.Pinned
 		chat.UnreadCount = int32(d.UnreadCount)
 		chat.UnreadReactionsCount = int32(d.UnreadReactionsCount)
+		chat.UnreadMentionsCount = int32(d.UnreadMentionsCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
 		chat.LastReadOutboxMessageID = int64(d.ReadOutboxMaxID)
 		chat.Muted = mutedFromNotifySettings(d.NotifySettings, now)
@@ -764,19 +766,155 @@ func (c *Client) ReadReactions(chatID int64) error {
 		return fmt.Errorf("read reactions: %w", err)
 	}
 
-	for range maxReadReactionsCalls {
-		affected, err := c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
+	done, err := repeatUntilDone(maxReadReactionsCalls, func() (*tg.MessagesAffectedHistory, error) {
+		return c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
 			Peer: peer,
 		})
-		if err != nil {
-			return fmt.Errorf("read reactions: %w", err)
-		}
-		if affected.Offset <= 0 {
-			c.send(ChatReactionsReadMsg{ChatId: chatID})
-			return nil
-		}
+	})
+	if err != nil {
+		return fmt.Errorf("read reactions: %w", err)
+	}
+	if done {
+		c.send(ChatReactionsReadMsg{ChatId: chatID})
 	}
 	return nil
+}
+
+// repeatUntilDone makes call again while its answer carries a positive
+// offset, which is how the API says a clear that answers
+// messages.affectedHistory has more to do, and makes it at most calls times.
+// It reports whether the server said it was done: stopping at the cap is
+// not an error, and it is not a finished clear either.
+func repeatUntilDone(calls int, call func() (*tg.MessagesAffectedHistory, error)) (bool, error) {
+	for range calls {
+		affected, err := call()
+		if err != nil {
+			return false, err
+		}
+		if affected.Offset <= 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// UnreadMentions lists the IDs of a chat's unread mentions, oldest first,
+// at most limit of them.
+func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("unread mentions: %w", err)
+	}
+
+	// Telegram Desktop's recipe for the OLDEST page: from message 1, with
+	// the offset turned back by a whole page. With no offset the call
+	// answers the newest, and a walk would start in the middle of a chat
+	// with more than limit of them. No top message: the whole chat, forum
+	// topics included.
+	res, err := c.api.MessagesGetUnreadMentions(ctx, &tg.MessagesGetUnreadMentionsRequest{
+		Peer:      peer,
+		OffsetID:  1,
+		AddOffset: -limit,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unread mentions: %w", err)
+	}
+
+	messages := messagesFromMessagesClass(res)
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, int64(m.GetID()))
+	}
+	// The API does not say what order this call answers in, and a jump
+	// that walks the mentions has to start at the oldest.
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// ReadMentions clears the given unread mentions in a chat, and on success
+// announces it with [ChatMentionsReadMsg], for the reason [ViewMessages]
+// announces a read. A mention is cleared by reading its message's
+// contents; reading the history does not do it.
+//
+// A channel's message IDs are its own numbering, so a supergroup takes the
+// call that names the channel; every other chat takes the one with bare
+// IDs.
+func (c *Client) ReadMentions(chatID int64, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	if constant.TDLibPeerID(chatID).IsChannel() {
+		peer, err := c.inputPeer(ctx, chatID)
+		if err != nil {
+			return fmt.Errorf("read mentions: %w", err)
+		}
+		inputChannel, ok := peerAsInputChannel(peer)
+		if !ok {
+			return fmt.Errorf("read mentions: peer %d is not a channel", chatID)
+		}
+		if _, err := c.api.ChannelsReadMessageContents(ctx, &tg.ChannelsReadMessageContentsRequest{
+			Channel: inputChannel,
+			ID:      int64sToInts(messageIDs),
+		}); err != nil {
+			return fmt.Errorf("read channel mentions: %w", err)
+		}
+		c.send(ChatMentionsReadMsg{ChatId: chatID, MessageIds: messageIDs})
+		return nil
+	}
+
+	if _, err := c.api.MessagesReadMessageContents(ctx, int64sToInts(messageIDs)); err != nil {
+		return fmt.Errorf("read mentions: %w", err)
+	}
+	c.send(ChatMentionsReadMsg{ChatId: chatID, MessageIds: messageIDs})
+	return nil
+}
+
+// maxReadMentionsCalls bounds how many times ReadAllMentions repeats the
+// call for one chat, for the reason maxReadReactionsCalls gives: the API
+// says to repeat while the answer carries a positive offset, and nothing
+// stops a server from carrying one for ever.
+const maxReadMentionsCalls = 10
+
+// ReadAllMentions clears every unread mention in a chat, and on success
+// announces it with [ChatMentionsReadMsg] with All set, for the reason
+// [ViewMessages] announces a read. It is the whole chat, forum topics
+// included: no top message is given.
+//
+// The call is repeated while the answer carries a positive offset, up to
+// maxReadMentionsCalls times, the way [ReadReactions] repeats its own. Only
+// an answer that says it is done is announced; stopping at the cap leaves
+// the count for the next reload to correct.
+//
+// done reports whether the server said it had finished. Stopping at the cap
+// is not an error, and it is not done either, so a caller that has to say
+// whether the mentions are gone reads done rather than inferring it from a
+// nil error.
+func (c *Client) ReadAllMentions(chatID int64) (done bool, err error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return false, fmt.Errorf("read all mentions: %w", err)
+	}
+
+	done, err = repeatUntilDone(maxReadMentionsCalls, func() (*tg.MessagesAffectedHistory, error) {
+		return c.api.MessagesReadMentions(ctx, &tg.MessagesReadMentionsRequest{
+			Peer: peer,
+		})
+	})
+	if err != nil {
+		return false, fmt.Errorf("read all mentions: %w", err)
+	}
+	if done {
+		c.send(ChatMentionsReadMsg{ChatId: chatID, All: true})
+	}
+	return done, nil
 }
 
 // peerAsInputChannel extracts an InputChannel from an InputPeer.

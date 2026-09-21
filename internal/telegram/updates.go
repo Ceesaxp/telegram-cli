@@ -82,6 +82,17 @@ type ChatReactionsReadMsg struct {
 	ChatId int64
 }
 
+// ChatMentionsReadMsg is sent when this client has cleared unread mentions
+// in a chat: the ones in MessageIds, or every one when All is set. No
+// MTProto update carries a chat's mention count, so the chat list keeps it
+// live from this and from arriving messages, and has nothing else to go
+// on.
+type ChatMentionsReadMsg struct {
+	ChatId     int64
+	MessageIds []int64
+	All        bool
+}
+
 // ChatReadOutboxMsg is sent when the read outbox state changes.
 type ChatReadOutboxMsg struct {
 	ChatId                  int64
