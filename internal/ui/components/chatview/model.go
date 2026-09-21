@@ -309,6 +309,14 @@ type Model struct {
 	// see coalesce.go.
 	pendingReactionsRead  bool
 	reactionsFlushPending bool
+	// pendingMentionsRead are the open chat's unread mentions that the
+	// reader has seen and this client has not yet asked to clear: they
+	// were on the first page of an open at the newest messages, or they
+	// arrived while the chat was open. The window's tick or FocusMsg sends
+	// them, and opening another chat drops them. mentionsFlushPending says
+	// that tick is scheduled; see mentions.go.
+	pendingMentionsRead  []int64
+	mentionsFlushPending bool
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -1749,7 +1757,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// What opening the chat owes. Worked out before the hunt below,
 		// which clears the target once it is found, and handed on by every
 		// return from here, the hunt's own included.
-		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg))
+		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg), m.readMentionsOnOpen(msg))
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1853,6 +1861,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.reactionsFlushPending = false
 		return m, m.flushReactionsRead()
 
+	case mentionsFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		m.mentionsFlushPending = false
+		return m, m.flushMentionsRead()
+
 	case telegram.ChatReadOutboxMsg:
 		// The other side read up to here. The mark lives in the chat
 		// store whichever chat it is for — it is what the tick is read
@@ -1900,7 +1915,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		m.blurred = false
-		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead())
+		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead(), m.flushMentionsRead())
 
 	case tea.BlurMsg:
 		m.blurred = true
