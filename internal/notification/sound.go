@@ -19,6 +19,9 @@ type SoundPlayer struct {
 	// now is the clock the interval is measured on; a field so a test can
 	// hold it still instead of sleeping through a real second.
 	now func() time.Time
+	// bells limits the bell rung where there is no player, on the same
+	// clock.
+	bells *bellLimiter
 
 	mu     sync.Mutex
 	busy   bool
@@ -39,11 +42,15 @@ const minSoundInterval = time.Second
 
 // NewSoundPlayer creates a new sound player.
 func NewSoundPlayer(enabled bool) *SoundPlayer {
-	return &SoundPlayer{
+	s := &SoundPlayer{
 		enabled: enabled,
 		play:    platformPlayer(runtime.GOOS, exec.LookPath),
 		now:     time.Now,
 	}
+	// Through s rather than bound now, so the bell keeps to whatever clock
+	// the player is on.
+	s.bells = newBellLimiter(func() time.Time { return s.now() })
+	return s
 }
 
 // Play plays the notification sound, unless one is already playing or the
@@ -64,17 +71,20 @@ func (s *SoundPlayer) Play() string {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
-	if s.closed || s.busy || now.Sub(s.last) < minSoundInterval {
+	if s.closed {
 		return ""
 	}
-	s.last = now
 	if s.play == nil {
 		// Nothing to run, so the terminal is asked to ring instead — by
 		// the caller, like any other write to it.
-		return bell
+		return s.bells.ring()
 	}
-	s.busy = true
+
+	now := s.now()
+	if s.busy || now.Sub(s.last) < minSoundInterval {
+		return ""
+	}
+	s.busy, s.last = true, now
 	s.player.Add(1)
 	go s.run()
 	return ""
