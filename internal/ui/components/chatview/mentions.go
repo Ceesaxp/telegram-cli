@@ -24,6 +24,13 @@ type mentionsFlushMsg struct {
 	chatID int64
 }
 
+// mentionsClearFailedMsg is a clear of the given mentions that the server
+// refused.
+type mentionsClearFailedMsg struct {
+	chatID int64
+	ids    []int64
+}
+
 // readMentionsOnOpen owes a clear for the mentions on the first page of an
 // open at the newest messages. That open reads them, on the terms
 // readOnOpen marks the chat read up to its newest message, and under its
@@ -107,12 +114,7 @@ func (m *Model) flushMentionsRead() tea.Cmd {
 	if tg == nil {
 		return nil
 	}
-	return func() tea.Msg {
-		// Dropped, as the background receipt's error is: a clear that
-		// failed leaves the @ standing, which is what it said before.
-		_ = tg.ReadMentions(chatID, ids)
-		return nil
-	}
+	return clearMentionsCmd(tg, chatID, ids)
 }
 
 // maxAskedChats bounds how many chats a mentionLedger remembers. The
@@ -174,6 +176,20 @@ func (l *mentionLedger) record(chatID int64, ids ...int64) {
 	entry.ids = entry.ids[max(0, len(entry.ids)-maxAskedPerChat):]
 	chats = append(chats, entry)
 	l.chats = chats[max(0, len(chats)-maxAskedChats):]
+}
+
+// forget takes ids out of what the ledger remembers for chatID.
+func (l *mentionLedger) forget(chatID int64, ids ...int64) {
+	chats := make([]askedChat, 0, len(l.chats))
+	for _, c := range l.chats {
+		if c.chatID == chatID {
+			c.ids = slices.DeleteFunc(slices.Clone(c.ids), func(id int64) bool {
+				return slices.Contains(ids, id)
+			})
+		}
+		chats = append(chats, c)
+	}
+	l.chats = chats
 }
 
 // mentionListLimit is how many unread mentions g@ asks for at a time. It
@@ -271,9 +287,19 @@ func (m *Model) landOnMention(id int64) tea.Cmd {
 	if tg == nil {
 		return nil
 	}
+	return clearMentionsCmd(tg, chatID, []int64{id})
+}
+
+// clearMentionsCmd asks the server to clear ids in chatID. The asks are
+// recorded before it runs, so a refusal comes back as
+// mentionsClearFailedMsg to take them out again: left in, the mentions
+// would never be asked for again, and g@ would call the chat empty while
+// the server still has them.
+func clearMentionsCmd(tg *telegram.Client, chatID int64, ids []int64) tea.Cmd {
 	return func() tea.Msg {
-		// Dropped, as the window's clear drops its error.
-		_ = tg.ReadMentions(chatID, []int64{id})
+		if err := tg.ReadMentions(chatID, ids); err != nil {
+			return mentionsClearFailedMsg{chatID: chatID, ids: ids}
+		}
 		return nil
 	}
 }

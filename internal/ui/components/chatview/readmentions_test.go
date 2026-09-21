@@ -379,3 +379,27 @@ func TestReadAllMentionsDropsTheOwedClears(t *testing.T) {
 		t.Fatal("the window asked for a mention the full clear already covered")
 	}
 }
+
+// A clear the server refused did not happen. Left in the ledger, the
+// mention would never be asked for again, and g@ would call a chat with an
+// @ on the server empty and zero the count. The failure takes the IDs back
+// out, whichever chat is open when it lands, and the next open owes them
+// again.
+func TestAFailedClearIsForgotten(t *testing.T) {
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
+	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
+	m.OpenChat(testChatID+1, "elsewhere")
+
+	m, _ = m.Update(mentionsClearFailedMsg{chatID: testChatID, ids: []int64{2, 4}})
+	if m.askedMentions.has(testChatID, 2) || m.askedMentions.has(testChatID, 4) {
+		t.Fatal("the failed clear is still recorded as asked")
+	}
+
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
+	if got := owedMentionIDs(m); !slices.Equal(got, []int64{2, 4}) {
+		t.Fatalf("the next open owes %v, want the mentions whose clear failed, [2 4]", got)
+	}
+}

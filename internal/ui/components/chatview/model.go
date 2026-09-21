@@ -1891,6 +1891,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.reactionsFlushPending = false
 		return m, m.flushReactionsRead()
 
+	case mentionsClearFailedMsg:
+		// Whichever chat is open: the ledger is kept chat by chat.
+		m.askedMentions.forget(msg.chatID, msg.ids...)
+		return m, nil
+
 	case mentionsFlushMsg:
 		if msg.chatID != m.chatID {
 			return m, nil
