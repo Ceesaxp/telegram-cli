@@ -482,8 +482,8 @@ func coerceColors(source, table string, raw map[string]any) (map[string]string, 
 			out[key] = strconv.FormatInt(v, 10)
 		default:
 			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: %s.%s is %s, not a string or an integer; it inherits instead",
-				source, table, key, tomlKind(v)))
+				"theme file %s: %s is %s, not a string or an integer; it inherits instead",
+				source, DottedKey(table, key), tomlKind(v)))
 		}
 	}
 	return out, warnings
@@ -509,6 +509,20 @@ func coerceRamp(source string, v any) ([]string, []string) {
 		out[i] = fmt.Sprint(entry)
 	}
 	return out, nil
+}
+
+// DottedKey names a key of a theme file's table the way TOML writes it:
+// colors.bg, or colors."…" quoted when the key is not a bare key. A theme
+// file is somebody else's text, and a key can be anything — quoted, one
+// made of escape sequences reads as the escapes rather than doing what a
+// terminal would do with them, and a plain one still reads as typed.
+func DottedKey(table, key string) string {
+	if key == "" || strings.ContainsFunc(key, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+	}) {
+		return table + "." + strconv.Quote(key)
+	}
+	return table + "." + key
 }
 
 // tomlKind names a decoded TOML value the way a theme author would.

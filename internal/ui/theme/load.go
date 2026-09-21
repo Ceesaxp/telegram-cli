@@ -138,8 +138,10 @@ func tableRoles(source, table string, raw map[string]string, form colourForm) (m
 	for _, key := range slices.Sorted(maps.Keys(raw)) {
 		i, ok := roleKeys[strings.ToLower(key)]
 		if !ok {
+			// The key is quoted unless it is bare: it is the theme
+			// author's text, and it may be escape sequences.
 			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: %s.%s is not a role; ignored", source, table, key))
+				"theme file %s: %s is not a role; ignored", source, config.DottedKey(table, key)))
 			continue
 		}
 		// The first key claims the role even when its value is refused
@@ -147,15 +149,15 @@ func tableRoles(source, table string, raw map[string]string, form colourForm) (m
 		// easier to predict than a fallback between spellings.
 		if first, taken := claimedBy[i]; taken {
 			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: %s.%s and %s.%s are the same role; %s.%s is ignored",
-				source, table, first, table, key, table, key))
+				"theme file %s: %s and %s are the same role; %s is ignored",
+				source, config.DottedKey(table, first), config.DottedKey(table, key), config.DottedKey(table, key)))
 			continue
 		}
 		claimedBy[i] = key
 		if !form.valid(raw[key]) {
 			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: %s.%s = %q is not %s; ignored",
-				source, table, key, raw[key], form.what))
+				"theme file %s: %s = %q is not %s; ignored",
+				source, config.DottedKey(table, key), raw[key], form.what))
 			continue
 		}
 		out[i] = raw[key]

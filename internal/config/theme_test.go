@@ -906,6 +906,38 @@ func TestReadThemeFileCostsOnlyASectionOfTheWrongType(t *testing.T) {
 	}
 }
 
+// TestDottedKeyQuotesOnlyAKeyThatNeedsIt: a warning names a key the way
+// TOML writes one — bare when it can be, quoted when it cannot — so
+// colors.bg reads as it was typed and a key made of escape sequences reads
+// as the escapes, not as what a terminal would do with them.
+func TestDottedKeyQuotesOnlyAKeyThatNeedsIt(t *testing.T) {
+	for key, want := range map[string]string{
+		"bg":             "colors.bg",
+		"cur_line":       "colors.cur_line",
+		"CYAN":           "colors.CYAN",
+		"base-16":        "colors.base-16",
+		"\x1b]0;pwned\a": `colors."\x1b]0;pwned\a"`,
+		"CYAN\x1b[31m":   `colors."CYAN\x1b[31m"`,
+		"two words":      `colors."two words"`,
+		"":               `colors.""`,
+		"тёмный":         `colors."тёмный"`,
+		"a.b":            `colors."a.b"`,
+	} {
+		if got := DottedKey("colors", key); got != want {
+			t.Errorf("DottedKey(colors, %q) = %s, want %s", key, got, want)
+		}
+	}
+}
+
+// TestReadThemeFileQuotesAHostileKey: the value warning quotes the key.
+func TestReadThemeFileQuotesAHostileKey(t *testing.T) {
+	path := writeTheme(t, "[colors]\n\"\\u001b[2J\" = 1.5\n")
+	_, warnings := readThemeFile(path)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `colors."\x1b[2J"`) || strings.ContainsRune(warnings[0], 0x1b) {
+		t.Errorf("warnings = %q, want the key quoted, with no raw escape", warnings)
+	}
+}
+
 // TestReadThemeFileSaysOnceWhatAMisshapenSectionCost: a file whose only
 // colours are in a section of the wrong shape has one thing wrong with it,
 // and the warning about that shape is the one to give. "Defines no colours"

@@ -450,6 +450,27 @@ func TestABadRampWarnsAndIsTheDefault(t *testing.T) {
 	}
 }
 
+// A theme file is somebody else's text, and its keys come back in the
+// warnings: one that is not a bare TOML key is quoted there, so escape
+// sequences read as escapes instead of reaching the terminal as themselves.
+// A plain key still reads as it was typed.
+func TestAWarningQuotesAKeyThatIsNotBare(t *testing.T) {
+	warnings := CheckSpec(spec(map[string]string{
+		"\x1b]0;pwned\a": "#000000",
+		"bgg":            "#000000",
+	}, map[string]string{"FG\x1b[31m": "250", "fg": "250"}), config.ThemeDark)
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{`colors."\x1b]0;pwned\a" is not a role`, "colors.bgg is not a role",
+		`colors256."FG\x1b[31m" is not a role`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings %q do not contain %s", warnings, want)
+		}
+	}
+	if strings.ContainsRune(joined, 0x1b) || strings.ContainsRune(joined, 0x07) {
+		t.Errorf("a warning carries a raw control character: %q", warnings)
+	}
+}
+
 // The two halves of the loader agree about a ramp entry that is not a role
 // name: a 5 in the file is the default ramp and one warning, the same as a
 // "pink" — not a shorter ramp that moves everybody's colour anyway.
