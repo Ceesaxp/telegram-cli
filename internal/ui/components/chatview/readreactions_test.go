@@ -272,16 +272,14 @@ func TestAReactionInTheOpenChatIsClearedAfterTheWindow(t *testing.T) {
 	m := openQuietChat(t)
 
 	m, cmd := m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
-	if cmd == nil {
-		t.Fatal("a reaction in the open chat scheduled no clear")
-	}
-	// The command is the window: it waits it out and comes back as the
-	// flush for this chat.
-	flush := cmd()
-	if flush != (reactionsFlushMsg{chatID: testChatID}) {
-		t.Fatalf("the reaction's command produced %#v, want the flush for this chat", flush)
+	if cmd == nil || !m.reactionsFlushPending || !m.pendingReactionsRead {
+		t.Fatalf("after the reaction: cmd=%v, window scheduled=%v, clear owed=%v; want the clear owed and its window scheduled",
+			cmd != nil, m.reactionsFlushPending, m.pendingReactionsRead)
 	}
 
+	// The window closing, delivered by hand as coalesce_test.go delivers
+	// the receipt's: waiting out a real tick would only slow the suite.
+	flush := reactionsFlushMsg{chatID: testChatID}
 	m, cmd = m.Update(flush)
 	if cmd == nil {
 		t.Fatal("the flush sent no clear")
