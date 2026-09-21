@@ -299,6 +299,115 @@ func TestReadMentionsAnnouncesNothingWhenTheClearFails(t *testing.T) {
 	}
 }
 
+// readAllMentionsInvoker stands in for the server: it knows the basic group
+// 5 and the channel 9, answers messages.readMentions with readErr or with
+// the offsets queued in offsets, and records what it was asked.
+type readAllMentionsInvoker struct {
+	readErr error
+	offsets []int
+	asked   []*tg.MessagesReadMentionsRequest
+}
+
+func (f *readAllMentionsInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	req, ok := input.(*tg.MessagesReadMentionsRequest)
+	if !ok {
+		return readHistoryInvoker{}.Invoke(ctx, input, output)
+	}
+	f.asked = append(f.asked, req)
+	if f.readErr != nil {
+		return f.readErr
+	}
+	affected := output.(*tg.MessagesAffectedHistory)
+	affected.Pts, affected.PtsCount = 1, 1
+	if len(f.offsets) > 0 {
+		affected.Offset, f.offsets = f.offsets[0], f.offsets[1:]
+	}
+	return nil
+}
+
+// Clearing every mention in a chat tells the chat list at once, and says
+// it was all of them: the list does not know which messages they were.
+func TestReadAllMentionsAnnouncesTheClear(t *testing.T) {
+	for name, chatID := range map[string]int64{
+		"a basic group": basicGroupID,
+		"a channel":     channelChatID(9),
+	} {
+		t.Run(name, func(t *testing.T) {
+			inv := &readAllMentionsInvoker{}
+			c, got := viewClient(t, inv)
+
+			if err := c.ReadAllMentions(chatID); err != nil {
+				t.Fatalf("ReadAllMentions: %v", err)
+			}
+
+			if len(inv.asked) != 1 {
+				t.Fatalf("asked the server %d times, want once", len(inv.asked))
+			}
+			if _, ok := inv.asked[0].GetTopMsgID(); ok {
+				t.Error("the clear was scoped to a thread; it is for the whole chat")
+			}
+			want := ChatMentionsReadMsg{ChatId: chatID, All: true}
+			if len(*got) != 1 || !reflect.DeepEqual((*got)[0], want) {
+				t.Errorf("published %#v, want %#v", *got, want)
+			}
+		})
+	}
+}
+
+// messages.readMentions answers the way messages.readReactions does: a
+// positive offset means it stopped partway and wants the call made again.
+// Taking the first answer as the end left the older mentions unread.
+func TestReadAllMentionsRepeatsUntilTheServerIsDone(t *testing.T) {
+	inv := &readAllMentionsInvoker{offsets: []int{40, 10, 0}}
+	c, got := viewClient(t, inv)
+
+	if err := c.ReadAllMentions(basicGroupID); err != nil {
+		t.Fatalf("ReadAllMentions: %v", err)
+	}
+
+	if len(inv.asked) != 3 {
+		t.Fatalf("asked the server %d times, want 3: once per batch", len(inv.asked))
+	}
+	if len(*got) != 1 {
+		t.Errorf("published %#v, want one announcement for the whole clear", *got)
+	}
+}
+
+// A server that never says it is done must not be called in a tight loop
+// until the timeout. The walk stops at the cap, without an error, and
+// without claiming a clear the server never confirmed: the @ stays.
+func TestReadAllMentionsStopsAtTheCap(t *testing.T) {
+	never := make([]int, 3*maxReadMentionsCalls)
+	for i := range never {
+		never[i] = 1
+	}
+	inv := &readAllMentionsInvoker{offsets: never}
+	c, got := viewClient(t, inv)
+
+	if err := c.ReadAllMentions(basicGroupID); err != nil {
+		t.Fatalf("ReadAllMentions: %v, want a quiet stop", err)
+	}
+
+	if len(inv.asked) != maxReadMentionsCalls {
+		t.Fatalf("asked the server %d times, want the cap of %d", len(inv.asked), maxReadMentionsCalls)
+	}
+	if len(*got) != 0 {
+		t.Errorf("a clear the server never finished published %#v", *got)
+	}
+}
+
+// A clear the server refused did not happen.
+func TestReadAllMentionsAnnouncesNothingWhenTheClearFails(t *testing.T) {
+	c, got := viewClient(t, &readAllMentionsInvoker{readErr: errors.New("no connection")})
+
+	if err := c.ReadAllMentions(basicGroupID); err == nil {
+		t.Fatal("ReadAllMentions reported success for a failed clear")
+	}
+	if len(*got) != 0 {
+		t.Errorf("a failed clear published %#v", *got)
+	}
+}
+
 // Nothing to clear is not a clear, and not a call either.
 func TestReadMentionsDoesNothingWithoutAMessage(t *testing.T) {
 	for name, chatID := range map[string]int64{

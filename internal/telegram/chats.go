@@ -875,6 +875,43 @@ func (c *Client) ReadMentions(chatID int64, messageIDs []int64) error {
 	return nil
 }
 
+// maxReadMentionsCalls bounds how many times ReadAllMentions repeats the
+// call for one chat, for the reason maxReadReactionsCalls gives: the API
+// says to repeat while the answer carries a positive offset, and nothing
+// stops a server from carrying one for ever.
+const maxReadMentionsCalls = 10
+
+// ReadAllMentions clears every unread mention in a chat, and on success
+// announces it with [ChatMentionsReadMsg] with All set, for the reason
+// [ViewMessages] announces a read. It is the whole chat, forum topics
+// included: no top message is given.
+//
+// The call is repeated while the answer carries a positive offset, up to
+// maxReadMentionsCalls times, the way [ReadReactions] repeats its own. Only
+// an answer that says it is done is announced; stopping at the cap leaves
+// the count for the next reload to correct.
+func (c *Client) ReadAllMentions(chatID int64) error {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("read all mentions: %w", err)
+	}
+
+	done, err := repeatUntilDone(maxReadMentionsCalls, func() (*tg.MessagesAffectedHistory, error) {
+		return c.api.MessagesReadMentions(ctx, &tg.MessagesReadMentionsRequest{
+			Peer: peer,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("read all mentions: %w", err)
+	}
+	if done {
+		c.send(ChatMentionsReadMsg{ChatId: chatID, All: true})
+	}
+	return nil
+}
+
 // peerAsInputChannel extracts an InputChannel from an InputPeer.
 func peerAsInputChannel(peer tg.InputPeerClass) (tg.InputChannelClass, bool) {
 	switch p := peer.(type) {
