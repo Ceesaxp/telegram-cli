@@ -213,6 +213,16 @@ type mentionsListedMsg struct {
 	err    error
 }
 
+// nextMention is g@: ask which mentions are still unread, where there can
+// be any.
+func (m Model) nextMention() (Model, tea.Cmd) {
+	if !m.CanHaveMentions() {
+		m.notice = "no mentions in this chat"
+		return m, nil
+	}
+	return m, m.listMentionsCmd()
+}
+
 // listMentionsCmd is g@'s question: which mentions in the open chat are
 // still unread. Nil with no chat open or no client to ask.
 func (m Model) listMentionsCmd() tea.Cmd {
@@ -359,14 +369,35 @@ func (m Model) correctMentionCount() tea.Cmd {
 	}
 }
 
+// CanHaveMentions reports whether the open chat is a kind that has
+// mentions at all: a basic group or a supergroup. A DM is addressed to the
+// reader already, and a broadcast channel's posts name nobody, so asking
+// either about mentions is a request whose answer is always none.
+//
+// A supergroup and a broadcast channel are both a channel on the wire; the
+// client tells them apart by the channel's broadcast flag when it builds
+// the chat (see telegram's chatFromChannel), which is what Type carries.
+func (m Model) CanHaveMentions() bool {
+	entry, ok := m.store.Chats.Get(m.chatID)
+	if !ok || entry.Chat == nil {
+		return false
+	}
+	switch entry.Chat.Type {
+	case telegram.ChatTypeBasicGroup, telegram.ChatTypeSupergroup:
+		return true
+	}
+	return false
+}
+
 // ReadAllMentionsCmd clears every unread mention in the open chat, for
 // :read-mentions. Like MarkReadCmd it does not wait for focus or for the
-// window: it was asked for.
+// window: it was asked for. When the request returns it reports so with
+// [ReadAllMentionsDoneMsg].
 //
-// Nil with no chat open or no client to ask, so a caller can treat nil as
-// nothing to do.
+// Nil with no chat open, no client to ask, or a chat that cannot have
+// mentions, so a caller can treat nil as nothing sent.
 func (m *Model) ReadAllMentionsCmd() tea.Cmd {
-	if m.chatID == 0 || m.tg == nil {
+	if m.chatID == 0 || m.tg == nil || !m.CanHaveMentions() {
 		return nil
 	}
 	// The owed clears are now redundant: this covers them. Dropping them
@@ -375,10 +406,21 @@ func (m *Model) ReadAllMentionsCmd() tea.Cmd {
 
 	chatID, tg := m.chatID, m.tg
 	return func() tea.Msg {
-		// Dropped, as MarkReadCmd drops its receipt's. A clear that
-		// finished is announced by the client, and the chat list zeroes
-		// the @ from that.
+		// The error says nothing the announcement does not: see
+		// ReadAllMentionsDoneMsg.
 		_ = tg.ReadAllMentions(chatID)
-		return nil
+		return ReadAllMentionsDoneMsg{ChatId: chatID}
 	}
+}
+
+// ReadAllMentionsDoneMsg is :read-mentions' request returning. It does not
+// say whether the clear finished, because the request cannot: it returns
+// no error when it stops at the client's cap of repeats, as well as when
+// the server says it is done. What does say is the client's
+// telegram.ChatMentionsReadMsg with All set, which it announces only for a
+// finished clear, and before the request returns — so a host that has not
+// seen that announcement by the time this arrives knows the clear did not
+// finish.
+type ReadAllMentionsDoneMsg struct {
+	ChatId int64
 }

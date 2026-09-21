@@ -371,3 +371,47 @@ func TestLandingWithNoClientSendsNoClear(t *testing.T) {
 		t.Fatal("landing handed back a command with no client to make it")
 	}
 }
+
+// asChat retypes the fixture chat in the store.
+func asChat(t *testing.T, m Model, kind telegram.ChatType) {
+	t.Helper()
+	entry, ok := m.store.Chats.Get(testChatID)
+	if !ok || entry.Chat == nil {
+		t.Fatal("the fixture chat is not in the store")
+	}
+	entry.Chat.Type = kind
+}
+
+// Only a group has mentions: a DM is addressed to the reader already, and
+// a broadcast channel's posts name nobody. g@ there asks the server
+// nothing and says why, rather than spending a request on an answer that
+// is always none.
+func TestGAtWhereThereCanBeNoMentionsSaysSo(t *testing.T) {
+	for name, kind := range map[string]telegram.ChatType{
+		"a DM":      telegram.ChatTypePrivate,
+		"a channel": telegram.ChatTypeChannel,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := openQuietMentionChat(t)
+			asChat(t, m, kind)
+
+			m, cmd := press(m, "g", "@")
+			if cmd != nil {
+				t.Error("g@ asked the server anyway")
+			}
+			if want := "no mentions in this chat"; m.notice != want {
+				t.Errorf("notice = %q, want %q", m.notice, want)
+			}
+		})
+	}
+}
+
+// A supergroup has mentions as a basic group does.
+func TestGAtInASupergroupAsks(t *testing.T) {
+	m := openQuietMentionChat(t)
+	asChat(t, m, telegram.ChatTypeSupergroup)
+
+	if _, cmd := press(m, "g", "@"); cmd == nil || !reachesClient(cmd) {
+		t.Error("g@ in a supergroup did not ask the server")
+	}
+}

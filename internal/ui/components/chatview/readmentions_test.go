@@ -497,3 +497,19 @@ func TestTheMentionLedgerDoesNotLeakBetweenCopies(t *testing.T) {
 		t.Error("the second copy's asks are not its own")
 	}
 }
+
+// :read-mentions sends nothing where there can be no mentions, for g@'s
+// reason.
+func TestReadAllMentionsSendsNothingWhereThereCanBeNone(t *testing.T) {
+	m := openQuietMentionChat(t)
+	entry, _ := m.store.Chats.Get(testChatID)
+	for _, kind := range []telegram.ChatType{telegram.ChatTypePrivate, telegram.ChatTypeChannel} {
+		entry.Chat.Type = kind
+		if m.CanHaveMentions() {
+			t.Errorf("a chat of type %v says it can have mentions", kind)
+		}
+		if m.ReadAllMentionsCmd() != nil {
+			t.Errorf("a chat of type %v was asked to clear its mentions", kind)
+		}
+	}
+}

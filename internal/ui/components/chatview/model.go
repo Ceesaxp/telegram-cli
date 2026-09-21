@@ -2099,7 +2099,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case "x":
 			return m.armNextLink()
 		case "@":
-			return m, m.listMentionsCmd()
+			return m.nextMention()
 		default:
 			// Not a suffix this prefix has. The g is dropped and the key
 			// goes on to do its own job rather than being swallowed — the
