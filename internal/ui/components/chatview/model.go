@@ -1251,8 +1251,8 @@ func (m *Model) CatchUpCmd() tea.Cmd {
 // the expected case rather than the end of history, and a failure is not
 // worth a notice: the thread is no worse off than before it asked. What
 // was new gets the same trailing meta work as any page — senders, photos —
-// and the same read receipt a live arrival would have earned, since the
-// reader is looking at it now.
+// and the same read receipt and mention clears a live arrival would have
+// earned, since the reader is looking at it now.
 func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		log.Printf("chatview: catch-up fetch for chat %d: %s", msg.chatID, msg.err)
@@ -1275,7 +1275,10 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.resolveUnreadDivider()
 
-	cmds := []tea.Cmd{m.noteSeen(inserted[len(inserted)-1].ID)}
+	cmds := []tea.Cmd{
+		m.noteSeen(inserted[len(inserted)-1].ID),
+		m.noteUnreadMentions(seenMentions(inserted)),
+	}
 
 	if !m.metaBusy {
 		priority, trailing := senderTargets(inserted, m.store, senderPriorityWindow)

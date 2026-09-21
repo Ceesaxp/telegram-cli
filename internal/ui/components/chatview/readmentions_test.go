@@ -403,3 +403,21 @@ func TestAFailedClearIsForgotten(t *testing.T) {
 		t.Fatalf("the next open owes %v, want the mentions whose clear failed, [2 4]", got)
 	}
 }
+
+// A reconnect's catch-up fetches the newest page again and puts in what
+// the gap swallowed. Those messages land in the open chat the way an
+// arrival does, and a mention among them has been seen the way an
+// arriving one has. What was already in the thread is not new, and owes
+// nothing it did not owe before.
+func TestAMentionTheCatchUpBringsInIsCleared(t *testing.T) {
+	m := openQuietMentionChat(t)
+
+	page := withMentions(historyPage(m, 0, 7, 6, 5, 4, 3), 7, 4)
+	page.catchUp = true
+	m, _ = m.Update(page)
+
+	if got := owedMentionIDs(m); !slices.Equal(got, []int64{7}) || !m.mentionsFlushPending {
+		t.Fatalf("after the catch-up: owed %v, window scheduled=%v; want [7], the new one, and the window",
+			got, m.mentionsFlushPending)
+	}
+}
