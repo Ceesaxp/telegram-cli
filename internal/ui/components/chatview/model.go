@@ -325,7 +325,8 @@ type Model struct {
 	unreachableMentions mentionLedger
 	// mentionTarget is the mention a g@ jump is on its way to. It survives
 	// the reopen of its own chat that makes the jump, and is settled when
-	// the hunt for it finds it (cleared) or gives up (skipped).
+	// the hunt for it finds it (cleared) or gives up (skipped), or dropped
+	// when the history fails to load.
 	mentionTarget mentionRef
 
 	// In-chat search (ctrl+f). searchActive means the input line under
@@ -1768,6 +1769,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.loadStatus = ""
 			m.targetMsgID = 0
 			m.pendingJumpID = 0
+			// The jump has ended without finding its mention or giving up
+			// on it; see mentionTarget.
+			m.mentionTarget = mentionRef{}
 			m.notice = "could not load messages"
 			return m, nil
 		}

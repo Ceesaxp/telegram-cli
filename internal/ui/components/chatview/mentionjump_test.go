@@ -452,3 +452,21 @@ func TestAListingOfOnlyAskedMentionsLeavesTheCount(t *testing.T) {
 		t.Errorf("notice = %q, want %q", m.notice, "no unread mentions")
 	}
 }
+
+// A jump whose history failed to load has ended: it neither found the
+// mention nor gave up on it. The mention it was going to is forgotten, so
+// a later move that happens to land on that message — a search hit, a
+// link — is not taken for g@ arriving and does not clear it.
+func TestAFailedLoadForgetsTheMentionBeingJumpedTo(t *testing.T) {
+	m := openQuietMentionChat(t)
+	m, _ = m.Update(mentionsListedMsg{chatID: testChatID, ids: []int64{5, 9}})
+	m.OpenChatAt(testChatID, "nadia", 5)
+
+	m, _ = m.Update(historyLoadedMsg{gen: m.gen, chatID: testChatID, err: errors.New("no connection")})
+	if m.mentionTarget != (mentionRef{}) {
+		t.Errorf("the failed jump still holds its mention target %+v", m.mentionTarget)
+	}
+	if _, cmd := landOn(m, 5, 5, 4, 3, 2, 1); reachesClientAnywhere(cmd) {
+		t.Error("a later landing on the message was taken for the failed jump and cleared it")
+	}
+}
