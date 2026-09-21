@@ -130,6 +130,7 @@ func TestDefaultConfigComposeEditing(t *testing.T) {
 // default is false (see UIConfig.ParseMarkdown).
 func TestExampleConfigKeysMatchDefaults(t *testing.T) {
 	t.Setenv("TELETUI_CONFIG", "../../config.example.toml")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("loading config.example.toml: %v", err)

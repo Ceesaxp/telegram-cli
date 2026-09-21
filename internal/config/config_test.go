@@ -139,6 +139,7 @@ reply = "R"
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {

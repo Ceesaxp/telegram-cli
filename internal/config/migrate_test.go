@@ -248,6 +248,7 @@ search = "?"
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	if got := ConfigPath(); got != path {
 		t.Fatalf("ConfigPath() = %q, want %q", got, path)
@@ -704,6 +705,7 @@ func TestMigrateDoesNotAbsolutizePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
@@ -744,6 +746,7 @@ func TestMigrateFillsPathsPortably(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
@@ -929,6 +932,7 @@ func TestMigrateThroughASymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	t.Setenv("TELETUI_CONFIG", link)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
@@ -1102,6 +1106,7 @@ func TestMigrateFillsSendDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
@@ -1139,6 +1144,7 @@ func TestMigrateKeepsConfiguredSendDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
