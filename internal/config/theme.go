@@ -159,6 +159,29 @@ type ThemeSpec struct {
 	Ramp []string
 }
 
+// ThemeSpec is the theme file [Load] read for ui.theme, or nil when the
+// palette is a builtin — named, or fallen back to — and [Config.ThemeBuiltin]
+// says which.
+func (c *Config) ThemeSpec() *ThemeSpec {
+	return c.themeSpec
+}
+
+// ThemeBuiltin is the builtin palette underneath the theme, [ThemeDark] or
+// [ThemeLight]: the whole palette when [Config.ThemeSpec] is nil, and the
+// spec's base when it is not.
+//
+// A Config that [Load] did not build — a test's &Config{}, say — has read
+// no file, so it gets the builtin its ui.theme names, and dark otherwise.
+func (c *Config) ThemeBuiltin() string {
+	if c.themeBuiltin != "" {
+		return c.themeBuiltin
+	}
+	if r := ResolveThemeName(c.UI.Theme, "", ""); r.Form == ThemeFormBuiltin {
+		return r.Name
+	}
+	return ThemeDark
+}
+
 // LoadTheme is the theme loader's config half: it resolves a ui.theme
 // value, finds and reads the file it names, and says what went wrong, all
 // without failing. The result is either a spec, whose base builtin is also
@@ -169,8 +192,9 @@ type ThemeSpec struct {
 // The directories are parameters rather than looked up here, so a caller
 // (and every test) decides which themes/ directories exist — reading
 // $XDG_CONFIG_HOME in here would make every test depend on what the
-// developer keeps in ~/.config. Validating the spec against the role names
-// is internal/ui/theme's job, not this one's.
+// developer keeps in ~/.config. [Load] passes the loaded config's directory
+// and the default one. Validating the spec against the role names is
+// internal/ui/theme's job, not this one's.
 func LoadTheme(value, configDir, defaultConfigDir string) (spec *ThemeSpec, builtin string, warnings []string) {
 	r := ResolveThemeName(value, configDir, defaultConfigDir)
 	var path string

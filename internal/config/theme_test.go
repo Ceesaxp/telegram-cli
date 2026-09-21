@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -333,6 +334,190 @@ func TestLoadThemeWarnsWhenAFileShadowsABuiltin(t *testing.T) {
 	// An empty value never named dark, so it has shadowed nothing.
 	if _, _, warnings := LoadTheme("", configDir, defaultDir); len(warnings) != 0 {
 		t.Errorf("an empty ui.theme warned %q, want nothing", warnings)
+	}
+}
+
+// --- wired into Load --------------------------------------------------------
+
+// loadWithTheme writes a config naming theme into configDir, points both
+// TELETUI_CONFIG and $XDG_CONFIG_HOME at temporary directories — so nothing
+// the developer keeps in ~/.config can leak in — and loads it.
+func loadWithTheme(t *testing.T, configDir, xdgHome, theme string) *Config {
+	t.Helper()
+	path := filepath.Join(configDir, "work.toml")
+	body := "[ui]\ntheme = " + strconv.Quote(theme) + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return cfg
+}
+
+// xdgDirs is themeDirs laid out the way Load finds them: a profile
+// directory for TELETUI_CONFIG, and $XDG_CONFIG_HOME/tele-tui.
+func xdgDirs(t *testing.T) (configDir, defaultDir, xdgHome string) {
+	t.Helper()
+	configDir, defaultDir = themeDirs(t)
+	return configDir, defaultDir, filepath.Dir(defaultDir)
+}
+
+// TestLoadReadsAThemeNextToTheConfig: Load resolves ui.theme against the
+// directory of the config it read.
+func TestLoadReadsAThemeNextToTheConfig(t *testing.T) {
+	configDir, _, xdgHome := xdgDirs(t)
+	path := putTheme(t, configDir, "gruvbox", "[theme]\ninherit = \"light\"\n[colors]\nbg = \"#1d2021\"\n")
+
+	cfg := loadWithTheme(t, configDir, xdgHome, "gruvbox")
+	spec := cfg.ThemeSpec()
+	if spec == nil || spec.Source != path || spec.Colors["bg"] != "#1d2021" {
+		t.Fatalf("ThemeSpec() = %+v, want gruvbox from %s", spec, path)
+	}
+	if got := cfg.ThemeBuiltin(); got != ThemeLight {
+		t.Errorf("ThemeBuiltin() = %q, want the theme's base, light", got)
+	}
+}
+
+// TestLoadFindsAThemeInTheDefaultDirectory: the second search directory is
+// $XDG_CONFIG_HOME/tele-tui, whichever config was loaded.
+func TestLoadFindsAThemeInTheDefaultDirectory(t *testing.T) {
+	configDir, defaultDir, xdgHome := xdgDirs(t)
+	path := putTheme(t, defaultDir, "nord", "[colors]\nbg = \"#2e3440\"\n")
+
+	cfg := loadWithTheme(t, configDir, xdgHome, "nord")
+	if spec := cfg.ThemeSpec(); spec == nil || spec.Source != path {
+		t.Fatalf("ThemeSpec() = %+v, want nord from %s", spec, path)
+	}
+	if got := cfg.ThemeBuiltin(); got != ThemeDark {
+		t.Errorf("ThemeBuiltin() = %q, want dark", got)
+	}
+}
+
+// TestStartupWarningsCarryTheThemeWarnings: StartupWarnings is how a theme
+// problem reaches the reader, and it stays a pure function of the Config —
+// the loading happened in Load, and the warnings rode along.
+func TestStartupWarningsCarryTheThemeWarnings(t *testing.T) {
+	configDir, _, xdgHome := xdgDirs(t)
+
+	cfg := loadWithTheme(t, configDir, xdgHome, "drak")
+	if cfg.ThemeSpec() != nil || cfg.ThemeBuiltin() != ThemeDark {
+		t.Errorf("ThemeSpec() = %+v, ThemeBuiltin() = %q; want the builtin dark", cfg.ThemeSpec(), cfg.ThemeBuiltin())
+	}
+	got := StartupWarnings(cfg)
+	if len(got) != 1 || !strings.Contains(got[0], `"drak"`) {
+		t.Errorf("StartupWarnings = %q, want the one about drak", got)
+	}
+}
+
+// TestLoadMatchesTheBuiltinsInAnyCase is the regression the issue opened
+// with: `theme = "Light"` loaded, and the app drew dark.
+func TestLoadMatchesTheBuiltinsInAnyCase(t *testing.T) {
+	configDir, _, xdgHome := xdgDirs(t)
+
+	cfg := loadWithTheme(t, configDir, xdgHome, "Light")
+	if cfg.ThemeSpec() != nil || cfg.ThemeBuiltin() != ThemeLight {
+		t.Errorf("ThemeSpec() = %+v, ThemeBuiltin() = %q; want the builtin light", cfg.ThemeSpec(), cfg.ThemeBuiltin())
+	}
+	if got := StartupWarnings(cfg); len(got) != 0 {
+		t.Errorf("StartupWarnings = %q, want nothing for a builtin", got)
+	}
+}
+
+// TestThemeBuiltinAnswersForAConfigLoadDidNotBuild: plenty of callers
+// build a Config by hand — every app test starts from &config.Config{} —
+// and the accessor has to give them a palette, not an empty string. It
+// answers the way the builtin match does, which is all such a Config can
+// ask for: nothing was read.
+func TestThemeBuiltinAnswersForAConfigLoadDidNotBuild(t *testing.T) {
+	for value, want := range map[string]string{
+		"":        ThemeDark,
+		"dark":    ThemeDark,
+		" Light ": ThemeLight,
+		"gruvbox": ThemeDark,
+	} {
+		cfg := &Config{UI: UIConfig{Theme: value}}
+		if got := cfg.ThemeBuiltin(); got != want {
+			t.Errorf("ThemeBuiltin() with ui.theme %q = %q, want %q", value, got, want)
+		}
+		if cfg.ThemeSpec() != nil {
+			t.Errorf("ThemeSpec() with ui.theme %q = %+v, want nil: nothing was read", value, cfg.ThemeSpec())
+		}
+	}
+}
+
+// TestLoadWithNoConfigFileIsDarkAndQuiet: a first run has no config file
+// and nothing to resolve; the default "dark" is the builtin, unremarked.
+func TestLoadWithNoConfigFileIsDarkAndQuiet(t *testing.T) {
+	_, _, xdgHome := xdgDirs(t)
+	t.Setenv("TELETUI_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ThemeSpec() != nil || cfg.ThemeBuiltin() != ThemeDark {
+		t.Errorf("ThemeSpec() = %+v, ThemeBuiltin() = %q; want the builtin dark", cfg.ThemeSpec(), cfg.ThemeBuiltin())
+	}
+	if got := StartupWarnings(cfg); len(got) != 0 {
+		t.Errorf("StartupWarnings = %q, want nothing", got)
+	}
+}
+
+// TestSaveLeavesTheLoadedThemeBehind: the resolved theme rides on the
+// Config in unexported fields, which go-toml neither reads nor writes. A
+// config saved after loading a theme is the config, byte for byte — the
+// theme's colours do not leak into it, and saving it again changes nothing.
+func TestSaveLeavesTheLoadedThemeBehind(t *testing.T) {
+	configDir, _, xdgHome := xdgDirs(t)
+	putTheme(t, configDir, "gruvbox", "[colors]\nbg = \"#1d2021\"\n")
+	cfg := loadWithTheme(t, configDir, xdgHome, "gruvbox")
+	if cfg.ThemeSpec() == nil {
+		t.Fatal("the theme did not load, so this test proves nothing")
+	}
+
+	bare := *cfg
+	bare.themeSpec, bare.themeBuiltin, bare.themeWarnings = nil, "", nil
+	withTheme, err := marshalConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := marshalConfig(&bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(withTheme) != string(without) {
+		t.Errorf("the loaded theme changed what Save writes:\n%s\nwant:\n%s", withTheme, without)
+	}
+	if strings.Contains(string(withTheme), "#1d2021") || !strings.Contains(string(withTheme), "gruvbox") {
+		t.Errorf("saved config = %s, want ui.theme and none of the theme's colours", withTheme)
+	}
+
+	// And through the disk: save, load that, save again.
+	first := filepath.Join(configDir, "first.toml")
+	if err := SaveTo(first, cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TELETUI_CONFIG", first)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(reloaded.ThemeSpec(), cfg.ThemeSpec()) {
+		t.Errorf("reloaded ThemeSpec() = %+v, want %+v", reloaded.ThemeSpec(), cfg.ThemeSpec())
+	}
+	second := filepath.Join(configDir, "second.toml")
+	if err := SaveTo(second, reloaded); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := os.ReadFile(first)
+	b, _ := os.ReadFile(second)
+	if string(a) != string(b) {
+		t.Errorf("save, load, save is not byte-identical:\n%s\nthen:\n%s", a, b)
 	}
 }
 

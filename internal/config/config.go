@@ -18,6 +18,14 @@ type Config struct {
 	Media         MediaConfig        `toml:"media"`
 	Notifications NotificationConfig `toml:"notifications"`
 	Keys          KeyConfig          `toml:"keys"`
+
+	// The theme [Load] resolved from UI.Theme, and what it had to say
+	// about it. Unexported, so go-toml neither reads nor writes them and
+	// Save round-trips the file exactly as before. Read them through
+	// [Config.ThemeSpec], [Config.ThemeBuiltin] and [StartupWarnings].
+	themeSpec     *ThemeSpec
+	themeBuiltin  string
+	themeWarnings []string
 }
 
 type TelegramConfig struct {
@@ -613,13 +621,16 @@ func ResolveQuitKey(configured string) (key string, refused bool) {
 	return normalized, false
 }
 
-// StartupWarnings is everything about the [keys] table worth telling the
-// user before the TUI takes the screen: a refused quit binding, and
-// bindings that cannot all work.
+// StartupWarnings is everything worth telling the user before the TUI takes
+// the screen: a refused quit binding, bindings that cannot all work, and a
+// theme that could not be used as written.
 //
 // At startup, not only under -migrate-config (decision I-13). A warning
 // somebody sees only if they happen to run a migration is a warning about a
 // client they are already using with the broken binding in it.
+//
+// It stays a pure function of the Config: the theme was loaded by [Load],
+// and its warnings were kept on the Config for this.
 func StartupWarnings(cfg *Config) []string {
 	if cfg == nil {
 		return nil
@@ -631,7 +642,8 @@ func StartupWarnings(cfg *Config) []string {
 				"key, so a bare printable would be untypable in a message; using %s",
 			NormalizeKey(cfg.Keys.Quit), key))
 	}
-	return append(out, DetectKeyCollisions(cfg)...)
+	out = append(out, DetectKeyCollisions(cfg)...)
+	return append(out, cfg.themeWarnings...)
 }
 
 func Load() (*Config, error) {
@@ -658,6 +670,11 @@ func Load() (*Config, error) {
 	for i, dir := range cfg.Storage.SendDirs {
 		cfg.Storage.SendDirs[i] = expandPath(dir)
 	}
+
+	// Here rather than in app.New: main prints StartupWarnings before the
+	// app is built, so a theme resolved any later would warn into the void.
+	cfg.themeSpec, cfg.themeBuiltin, cfg.themeWarnings = LoadTheme(
+		cfg.UI.Theme, filepath.Dir(configPath), filepath.Dir(defaultConfigPath()))
 
 	return cfg, nil
 }
