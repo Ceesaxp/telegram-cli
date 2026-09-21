@@ -1187,10 +1187,17 @@ func (m *Model) finishHistory() {
 	m.historyEnd = true
 	m.loadStatus = ""
 	if m.targetMsgID != 0 {
-		m.targetMsgID = 0
-		m.notice = "message not in loaded history"
-		m.scrollOffset = m.maxScrollOffset()
+		m.giveUpOnTarget()
 	}
+}
+
+// giveUpOnTarget stops looking for the jump target, says so, and leaves
+// the reader at the oldest loaded message, which is as close as the hunt
+// got.
+func (m *Model) giveUpOnTarget() {
+	m.targetMsgID = 0
+	m.notice = "message not in loaded history"
+	m.scrollOffset = m.maxScrollOffset()
 }
 
 func (m *Model) loadHistoryCmd(gen int, chatID int64, fromMsgId int64) tea.Cmd {
@@ -1782,9 +1789,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				fallthrough
 			default:
-				m.targetMsgID = 0
-				m.notice = "message not in loaded history"
-				m.scrollOffset = m.maxScrollOffset()
+				m.giveUpOnTarget()
 			}
 		}
 
