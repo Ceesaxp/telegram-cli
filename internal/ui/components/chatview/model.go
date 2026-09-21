@@ -877,26 +877,34 @@ func (m *Model) readOnOpen(msg historyLoadedMsg) tea.Cmd {
 	if msg.fromID != 0 || m.targetMsgID != 0 {
 		return nil
 	}
-	newest := newestServerID(msg.messages)
+	// The mark counts incoming messages only, so it is compared with the
+	// newest of those: the reader's own answer on top is not something to
+	// read, and comparing against it sent a receipt for every chat they had
+	// answered.
 	if entry, ok := m.store.Chats.Get(m.chatID); ok && entry.Chat != nil &&
-		newest <= entry.Chat.LastReadInboxMessageID && entry.UnreadCount == 0 {
+		newestServerID(msg.messages, isIncoming) <= entry.Chat.LastReadInboxMessageID &&
+		entry.UnreadCount == 0 {
 		return nil
 	}
-	return m.noteSeen(newest)
+	return m.noteSeen(newestServerID(msg.messages, anyMessage))
 }
 
-// newestServerID is the highest message ID on a page. A non-positive ID is
-// a local echo's placeholder rather than a message the server knows, and
-// reading up to it would read nothing, so it never wins.
-func newestServerID(msgs []*telegram.Message) int64 {
+// newestServerID is the highest ID on a page among the messages keep
+// accepts. A non-positive ID is a local echo's placeholder rather than a
+// message the server knows, and reading up to it would read nothing, so it
+// never wins.
+func newestServerID(msgs []*telegram.Message, keep func(*telegram.Message) bool) int64 {
 	var newest int64
 	for _, msg := range msgs {
-		if msg.ID > newest {
+		if msg.ID > newest && keep(msg) {
 			newest = msg.ID
 		}
 	}
 	return newest
 }
+
+func anyMessage(*telegram.Message) bool     { return true }
+func isIncoming(msg *telegram.Message) bool { return !msg.IsOutgoing }
 
 // MarkReadCmd marks the open chat read up to its newest loaded message,
 // without moving the scroll position — the point of an explicit mark-read is

@@ -144,6 +144,26 @@ func TestOpeningAReadChatSendsNoReceipt(t *testing.T) {
 	}
 }
 
+// The read mark counts incoming messages only, so a chat where the reader
+// wrote last has its newest message above the mark with nothing to read.
+// Comparing the mark against that message sent a receipt on every first
+// open of every chat the reader had answered.
+func TestOpeningAChatTheReaderAnsweredSendsNoReceipt(t *testing.T) {
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+
+	page := historyPage(m, 0, 5, 4, 3, 2, 1)
+	own := textMessage(6, 100, "my answer")
+	own.IsOutgoing = true
+	page.messages = append([]*telegram.Message{own}, page.messages...)
+
+	m, _ = m.Update(page)
+	if m.readFlushPending || m.pendingReadID != 0 {
+		t.Fatalf("a chat whose newest message is the reader's own scheduled a receipt: flush pending=%v, pendingReadID=%d",
+			m.readFlushPending, m.pendingReadID)
+	}
+}
+
 // The read mark alone does not prove there is nothing to read. When the
 // count still says unread, the receipt goes out: skipping it would leave
 // the badge on the phone that this whole feature exists to clear.
