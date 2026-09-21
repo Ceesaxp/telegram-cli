@@ -249,7 +249,8 @@ type MentionJumpMsg struct {
 }
 
 // handleMentionsListed is g@'s answer arriving: go to the oldest unread
-// mention this client has not already asked to clear.
+// mention this client has neither asked to clear already nor found out of
+// a jump's reach.
 func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
 	// The chat, not the generation: a g@ jump reopens the same chat, and
 	// the answer to a second g@ pressed meanwhile is still about it.
