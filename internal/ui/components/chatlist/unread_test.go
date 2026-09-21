@@ -71,6 +71,66 @@ func TestAMessageCoveredByAReceiptRaisesNoBadge(t *testing.T) {
 	}
 }
 
+// unreadFolderModel is a list showing a folder of unread chats, holding
+// Ana (1) above Bob (2), each with one unread message, 9. The cursor is on
+// Ana and nothing is open.
+func unreadFolderModel(t *testing.T) Model {
+	t.Helper()
+	m := newLoadedModel(t, "Ana", "Bob")
+	for id, name := range map[int64]string{1: "Ana", 2: "Bob"} {
+		m.store.Chats.Set(&telegram.Chat{
+			ID: id, Title: name, Type: telegram.ChatTypePrivate, Order: 3 - id,
+			UnreadCount: 1, LastMessage: &telegram.Message{ID: 9, ChatID: id},
+		})
+	}
+	m.SetFolderForTest(&telegram.ChatFolder{
+		ID: 5, Title: "Unread", Contacts: true, NonContacts: true, ExcludeRead: true,
+	})
+	if got := listTitles(m); len(got) != 2 {
+		t.Fatalf("precondition: the folder shows %q, want both chats", got)
+	}
+	return m
+}
+
+// Opening a chat in a folder of unread chats reads it, and the row used to
+// vanish a moment later with the cursor sliding onto another chat. Telegram
+// keeps the open chat in such a folder until the reader leaves it.
+func TestAnUnreadFolderKeepsTheOpenChatOnceRead(t *testing.T) {
+	m := unreadFolderModel(t)
+	if id, ok := m.OpenCursor(); !ok || id != 1 {
+		t.Fatalf("precondition: opened (%d, %v), want Ana", id, ok)
+	}
+
+	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 1, MaxMessageId: 9})
+	m.View()
+
+	if got := listTitles(m); len(got) != 2 || got[0] != "Ana" {
+		t.Errorf("the folder shows %q after reading the open chat, want Ana kept", got)
+	}
+	if got := m.CursorChatId(); got != 1 {
+		t.Errorf("the cursor slid to %d, want it on the open chat", got)
+	}
+}
+
+// And once the reader moves on, the chat they read is no longer unread and
+// no longer open, so it leaves the folder — without waiting for some other
+// update to redraw the list.
+func TestAnUnreadFolderDropsTheReadChatOnceAnotherIsOpened(t *testing.T) {
+	m := unreadFolderModel(t)
+	m.OpenCursor()
+	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 1, MaxMessageId: 9})
+	m.View()
+
+	if id, ok := m.SelectDelta(1); !ok || id != 2 {
+		t.Fatalf("precondition: opened (%d, %v), want Bob", id, ok)
+	}
+	m.View()
+
+	if got := listTitles(m); len(got) != 1 || got[0] != "Bob" {
+		t.Errorf("the folder shows %q after moving on to Bob, want [Bob]", got)
+	}
+}
+
 // u goes to the chats that show a badge. It read the dialog's snapshot
 // instead, so a chat whose unread messages all arrived live was a badge u
 // could not reach.
