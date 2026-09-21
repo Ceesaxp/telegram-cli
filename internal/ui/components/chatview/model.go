@@ -1841,7 +1841,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			m.cache.invalidate(msg.Message.ID)
 
-			return m, m.noteSeen(msg.Message.ID)
+			// A mention arriving in the open chat has been seen, on the
+			// terms the message counts as read by noteSeen.
+			return m, tea.Batch(
+				m.noteSeen(msg.Message.ID),
+				m.noteUnreadMentions(seenMentions([]*telegram.Message{msg.Message})),
+			)
 		}
 
 	case telegram.ChatUnreadReactionsMsg:

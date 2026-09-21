@@ -191,3 +191,65 @@ func TestAMentionsClearWithNoClientIsConsumedWithoutARequest(t *testing.T) {
 		t.Fatalf("owed mentions %v, want them consumed", got)
 	}
 }
+
+// openQuietMentionChat is a chat open, loaded and owing nothing: no
+// receipt, no reactions, no mentions on its first page.
+func openQuietMentionChat(t *testing.T) Model {
+	t.Helper()
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if cmd != nil {
+		t.Fatal("the fixture's open owed something already")
+	}
+	return m
+}
+
+// arrivingMention is message id arriving in the open chat, naming the
+// reader.
+func arrivingMention(id int64) telegram.NewMessageMsg {
+	msg := textMessage(id, 200, "@reader look")
+	msg.UnreadMention = true
+	return telegram.NewMessageMsg{Message: msg}
+}
+
+// A mention that arrives in the chat the reader is looking at has been
+// seen, the way the message itself has been read. The @ on the phone
+// should not outlast the time spent in the chat here.
+func TestAMentionArrivingInTheOpenChatIsCleared(t *testing.T) {
+	m := openQuietMentionChat(t)
+
+	m, _ = m.Update(arrivingMention(6))
+	if got := owedMentionIDs(m); !slices.Equal(got, []int64{6}) || !m.mentionsFlushPending {
+		t.Fatalf("after the arrival: owed %v, window scheduled=%v; want [6] and the window",
+			got, m.mentionsFlushPending)
+	}
+	if _, cmd := m.Update(mentionsFlushMsg{chatID: testChatID}); cmd == nil {
+		t.Fatal("the flush sent no clear for the mention that arrived")
+	}
+}
+
+// A voice note that names the reader has arrived, not been heard.
+func TestAVoiceNoteMentionArrivingIsNotCleared(t *testing.T) {
+	m := openQuietMentionChat(t)
+	arrival := arrivingMention(6)
+	arrival.Message.Content = &telegram.MessageVoiceNote{VoiceNote: &telegram.VoiceNote{Duration: 3}}
+
+	m, _ = m.Update(arrival)
+	if got := owedMentionIDs(m); len(got) != 0 {
+		t.Fatalf("owed %v after a voice note arrived, want nothing", got)
+	}
+}
+
+// A mention in another chat has not been seen. The chat list counts it,
+// and that chat's own open is what clears it.
+func TestAMentionInAnotherChatIsNotCleared(t *testing.T) {
+	m := openQuietMentionChat(t)
+	arrival := arrivingMention(6)
+	arrival.Message.ChatID = testChatID + 1
+
+	m, _ = m.Update(arrival)
+	if got := owedMentionIDs(m); len(got) != 0 {
+		t.Fatalf("owed %v after a mention in another chat, want nothing", got)
+	}
+}
