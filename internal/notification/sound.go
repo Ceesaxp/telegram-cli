@@ -128,6 +128,10 @@ func (s *SoundPlayer) wait() {
 
 // soundPlayers are the commands that play the notification sound on each
 // platform, in the order they are tried.
+//
+// The BSDs get canberra-gtk-play alone. It finds the sound through the
+// desktop's sound theme, where paplay needs a path, and the freedesktop
+// sounds live under /usr/local or /usr/pkg there rather than /usr/share.
 var soundPlayers = map[string][][]string{
 	"linux": {
 		{"paplay", "/usr/share/sounds/freedesktop/stereo/message.oga"},
@@ -136,6 +140,9 @@ var soundPlayers = map[string][][]string{
 	"darwin": {
 		{"afplay", "/System/Library/Sounds/Ping.aiff"},
 	},
+	"freebsd": {{"canberra-gtk-play", "-i", "message-new-instant"}},
+	"openbsd": {{"canberra-gtk-play", "-i", "message-new-instant"}},
+	"netbsd":  {{"canberra-gtk-play", "-i", "message-new-instant"}},
 }
 
 // platformPlayer is the platform's sound player on goos: a function that

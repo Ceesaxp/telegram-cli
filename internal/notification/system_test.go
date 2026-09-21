@@ -235,6 +235,10 @@ func TestThePlatformNotifierIsTheOneInstalled(t *testing.T) {
 		{"linux", nil, false},
 		{"darwin", []string{"osascript"}, true},
 		{"darwin", nil, false},
+		{"freebsd", []string{"notify-send"}, true},
+		{"openbsd", []string{"notify-send"}, true},
+		{"netbsd", []string{"notify-send"}, true},
+		{"freebsd", nil, false},
 	}
 
 	for _, tt := range tests {

@@ -127,6 +127,10 @@ func TestThePlatformPlayerIsTheOneInstalled(t *testing.T) {
 		{"linux", nil, false},
 		{"darwin", []string{"afplay"}, true},
 		{"darwin", nil, false},
+		{"freebsd", []string{"canberra-gtk-play"}, true},
+		{"openbsd", []string{"canberra-gtk-play"}, true},
+		{"netbsd", []string{"canberra-gtk-play"}, true},
+		{"freebsd", nil, false},
 	}
 
 	for _, tt := range tests {

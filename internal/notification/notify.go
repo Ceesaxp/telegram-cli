@@ -198,7 +198,9 @@ func platformNotifier(goos string, lookPath func(string) (string, error), timeou
 		send    func(timeout time.Duration, title, body string) error
 	)
 	switch goos {
-	case "linux":
+	case "linux", "freebsd", "openbsd", "netbsd":
+		// The BSDs run the same desktops, and libnotify's notify-send
+		// with them.
 		program, send = "notify-send", sendLinux
 	case "darwin":
 		program, send = "osascript", sendMacOS
