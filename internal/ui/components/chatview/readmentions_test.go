@@ -253,3 +253,85 @@ func TestAMentionInAnotherChatIsNotCleared(t *testing.T) {
 		t.Fatalf("owed %v after a mention in another chat, want nothing", got)
 	}
 }
+
+// A clear the server has not answered yet leaves the flags on the page, and
+// a reopen of the same chat — g@ reopens it to jump, and so does ctrl+o —
+// brings the same page back. What this client has asked for once it does
+// not ask for again: a second request would clear nothing and cost a pts
+// step.
+func TestAMentionAskedToClearIsNeverOwedAgain(t *testing.T) {
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
+	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
+
+	m.OpenChat(testChatID, "nadia")
+	m, cmd := m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4, 2))
+	if got := owedMentionIDs(m); len(got) != 0 || cmd != nil {
+		t.Fatalf("the reopen owes %v (cmd=%v), want nothing: both were asked already",
+			got, cmd != nil)
+	}
+
+	m, _ = m.Update(arrivingMention(4))
+	if got := owedMentionIDs(m); len(got) != 0 {
+		t.Fatalf("a replayed arrival owes %v, want nothing", got)
+	}
+}
+
+// Message IDs outside a channel are the account's own numbering, but a
+// channel numbers its messages itself, so the same ID in two chats is two
+// messages. Asking about one says nothing about the other.
+func TestAMentionAskedInOneChatIsStillOwedInAnother(t *testing.T) {
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+	m, _ = m.Update(mentionsFlushMsg{chatID: testChatID})
+
+	const other = testChatID + 1
+	m.OpenChat(other, "elsewhere")
+	page := withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4)
+	page.chatID = other
+	m, _ = m.Update(page)
+	if got := owedMentionIDs(m); !slices.Equal(got, []int64{4}) {
+		t.Fatalf("the other chat owes %v, want its own message 4", got)
+	}
+}
+
+// The ledger lives as long as the session, so it is bounded. It forgets
+// the chat it heard about least recently: the reason it outlives a switch
+// is a jump back into the chat, and a chat the reader has not been near in
+// a while is not where they are jumping.
+func TestTheMentionLedgerForgetsTheChatAskedAboutLeastRecently(t *testing.T) {
+	var l mentionLedger
+	for chat := int64(1); chat <= maxAskedChats; chat++ {
+		l.record(chat, 7)
+	}
+	// Chat 1 is asked about again, which leaves chat 2 the stalest.
+	l.record(1, 8)
+	l.record(maxAskedChats+1, 7)
+
+	if l.has(2, 7) {
+		t.Error("the stalest chat is still remembered past the cap")
+	}
+	for _, chat := range []int64{1, 3, maxAskedChats + 1} {
+		if !l.has(chat, 7) {
+			t.Errorf("chat %d was forgotten, want only the stalest one gone", chat)
+		}
+	}
+}
+
+// Within a chat it forgets the oldest ask first. A clear asked for that
+// long ago has been answered one way or the other.
+func TestTheMentionLedgerForgetsAChatsOldestAsks(t *testing.T) {
+	var l mentionLedger
+	for id := int64(1); id <= maxAskedPerChat+1; id++ {
+		l.record(5, id)
+	}
+
+	if l.has(5, 1) {
+		t.Error("the oldest ask is still remembered past the cap")
+	}
+	if !l.has(5, 2) || !l.has(5, maxAskedPerChat+1) {
+		t.Error("the ledger forgot more than the oldest ask")
+	}
+}

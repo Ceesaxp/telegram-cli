@@ -317,6 +317,10 @@ type Model struct {
 	// that tick is scheduled; see mentions.go.
 	pendingMentionsRead  []int64
 	mentionsFlushPending bool
+	// askedMentions is every mention this client has asked to clear, chat
+	// by chat. Unlike the owed ones it survives a chat switch; see
+	// mentionLedger.
+	askedMentions mentionLedger
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
