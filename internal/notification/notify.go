@@ -122,12 +122,17 @@ func (n *Notifier) Notify(title, body string) string {
 		return n.bells.ring()
 	}
 
+	// Read before posting, not after: the post can start a run that
+	// finishes, and rewrites the flag, before a later read. Read first, it
+	// says what the runs that finished before this message found.
+	failing := n.failed.Load()
+
 	// In the background: notify-send and osascript are processes, and
 	// waiting on one would stall the event loop for as long as the desktop
 	// takes to answer.
 	n.queue.post(title, body)
 
-	if n.failed.Load() {
+	if failing {
 		// The last run failed, and whatever made it fail is likely to
 		// fail this one too. The bell stands in, as it does for a
 		// notifier that is not there — from the caller, never from the
