@@ -54,6 +54,23 @@ func TestReadingTheChatClearsTheBadge(t *testing.T) {
 	}
 }
 
+// The server's receipt carries how far the reader has read, and the list
+// has to hand that on: read on another device, then the message that read
+// covered arrives late. It is not news, and it raises no badge.
+func TestAMessageCoveredByAReceiptRaisesNoBadge(t *testing.T) {
+	m := newLoadedModel(t, "Ana")
+	m, _ = m.Update(telegram.ChatReadInboxMsg{ChatId: 1, LastReadInboxMessageId: 20})
+
+	m, _ = m.Update(telegram.ChatLastMessageMsg{
+		ChatId:      1,
+		LastMessage: &telegram.Message{ID: 18, ChatID: 1, Date: 1700000000},
+	})
+
+	if got := badgeOf(t, m, 1); got != "" {
+		t.Errorf("badge = %q for a message the receipt had already covered, want none", got)
+	}
+}
+
 // u goes to the chats that show a badge. It read the dialog's snapshot
 // instead, so a chat whose unread messages all arrived live was a badge u
 // could not reach.

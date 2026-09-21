@@ -247,3 +247,18 @@ func TestMarkReadUpToAnUnknownChatDoesNothing(t *testing.T) {
 		t.Error("marking an unknown chat read invented it")
 	}
 }
+
+// A chat known only from a peer lookup has no last message, yet a receipt
+// can still give it an unread count. Reading it leaves nothing unread —
+// there is no newer message the read could have fallen short of.
+func TestMarkReadUpToAChatWithNoLastMessageClearsTheCount(t *testing.T) {
+	s := NewChatStore()
+	s.Merge(peerChat())
+	s.UpdateReadInbox(7, 2, 3)
+
+	s.MarkReadUpTo(7, 5)
+
+	if got := unreadCount(t, s, 7); got != 0 {
+		t.Errorf("unread = %d after reading a chat with no last message, want 0", got)
+	}
+}
