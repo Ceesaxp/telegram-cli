@@ -71,6 +71,22 @@ func TestARedeliveredMessageDoesNotCountTwice(t *testing.T) {
 	}
 }
 
+// A replay does not keep to order. 13, then 12, then 13 again is one new
+// message, but 12 takes over the preview, and counting against the preview
+// made the second 13 look new.
+func TestAReplayOutOfOrderCountsEachMessageOnce(t *testing.T) {
+	s := NewChatStore()
+	s.Set(unreadChat())
+
+	for _, id := range []int64{13, 12, 13} {
+		s.UpdateLastMessage(7, &telegram.Message{ID: id, ChatID: 7})
+	}
+
+	if got := unreadCount(t, s, 7); got != 3 {
+		t.Errorf("unread = %d after 13, 12, 13, want 3: one new message", got)
+	}
+}
+
 // A message the reader has already read is not unread, however late it
 // turns up. A replay can deliver the read mark before the messages it
 // covers — read on another device, then the gap filled in.

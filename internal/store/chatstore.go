@@ -34,6 +34,20 @@ type ChatEntry struct {
 	// they cannot disagree, and so the second one to need it does not
 	// make the call again.
 	MemberCount int32
+
+	// newestMessageID is the highest message ID this entry has been shown,
+	// and it only moves forward. It is not LastMessage.ID: a replay out of
+	// order puts an older message on show, and counting against that made
+	// the newer one, arriving again, look new. See [countsAsUnread].
+	newestMessageID int64
+}
+
+// sawMessage moves the entry's newest message ID forward to msg's, if msg is
+// newer.
+func (e *ChatEntry) sawMessage(msg *telegram.Message) {
+	if msg != nil && msg.ID > e.newestMessageID {
+		e.newestMessageID = msg.ID
+	}
 }
 
 // ChatStore is a thread-safe in-memory cache of chats.
@@ -70,6 +84,7 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 
 	if chat.LastMessage != nil {
 		entry.LastMessage = chat.LastMessage
+		entry.sawMessage(chat.LastMessage)
 	}
 	if chat.Order != 0 {
 		entry.Order = chat.Order
@@ -199,6 +214,7 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 	if countsAsUnread(entry, msg) {
 		entry.UnreadCount++
 	}
+	entry.sawMessage(msg)
 	entry.LastMessage = msg
 	if msg != nil {
 		entry.Order = int64(msg.Date)
@@ -217,7 +233,7 @@ func countsAsUnread(entry *ChatEntry, msg *telegram.Message) bool {
 	if msg == nil || msg.IsOutgoing || msg.ID <= 0 {
 		return false
 	}
-	if entry.LastMessage != nil && msg.ID <= entry.LastMessage.ID {
+	if msg.ID <= entry.newestMessageID {
 		return false
 	}
 	return entry.Chat == nil || msg.ID > entry.Chat.LastReadInboxMessageID
