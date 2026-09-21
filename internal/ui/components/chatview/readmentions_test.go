@@ -335,3 +335,47 @@ func TestTheMentionLedgerForgetsAChatsOldestAsks(t *testing.T) {
 		t.Error("the ledger forgot more than the oldest ask")
 	}
 }
+
+// :read-mentions clears every mention in the chat at once, asked for
+// explicitly, so it does not wait for focus or a window.
+func TestReadAllMentionsAsksTheClient(t *testing.T) {
+	m := openQuietMentionChat(t)
+
+	cmd := m.ReadAllMentionsCmd()
+	if cmd == nil {
+		t.Fatal("no command with a chat open")
+	}
+	if !reachesClient(cmd) {
+		t.Fatal("the command did not ask the client to clear the mentions")
+	}
+}
+
+// Nothing open is nothing to clear, and no client is nobody to ask. Nil
+// either way, so the caller can say so rather than hand back a command
+// that dereferences nothing.
+func TestReadAllMentionsNeedsAChatAndAClient(t *testing.T) {
+	m := unreadChat(5, 0)
+	if m.ReadAllMentionsCmd() != nil {
+		t.Error("a command with no chat open")
+	}
+
+	m = openQuietMentionChat(t)
+	m.tg = nil
+	if m.ReadAllMentionsCmd() != nil {
+		t.Error("a command with no client")
+	}
+}
+
+// Clearing every mention makes the ones the window still owes redundant:
+// the window closing afterwards must not ask for them again.
+func TestReadAllMentionsDropsTheOwedClears(t *testing.T) {
+	m := unreadChat(5, 0)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(withMentions(historyPage(m, 0, 5, 4, 3, 2, 1), 4))
+
+	m.ReadAllMentionsCmd()
+
+	if _, cmd := m.Update(mentionsFlushMsg{chatID: testChatID}); cmd != nil {
+		t.Fatal("the window asked for a mention the full clear already covered")
+	}
+}

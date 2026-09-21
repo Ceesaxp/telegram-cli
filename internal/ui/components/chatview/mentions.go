@@ -287,3 +287,27 @@ func (m Model) correctMentionCount() tea.Cmd {
 		return telegram.ChatMentionsReadMsg{ChatId: chatID, All: true}
 	}
 }
+
+// ReadAllMentionsCmd clears every unread mention in the open chat, for
+// :read-mentions. Like MarkReadCmd it does not wait for focus or for the
+// window: it was asked for.
+//
+// Nil with no chat open or no client to ask, so a caller can treat nil as
+// nothing to do.
+func (m *Model) ReadAllMentionsCmd() tea.Cmd {
+	if m.chatID == 0 || m.tg == nil {
+		return nil
+	}
+	// The owed clears are now redundant: this covers them. Dropping them
+	// stops the window asking for them again afterwards.
+	m.pendingMentionsRead = nil
+
+	chatID, tg := m.chatID, m.tg
+	return func() tea.Msg {
+		// Dropped, as MarkReadCmd drops its receipt's. A clear that
+		// finished is announced by the client, and the chat list zeroes
+		// the @ from that.
+		_ = tg.ReadAllMentions(chatID)
+		return nil
+	}
+}
