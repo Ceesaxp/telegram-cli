@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -175,6 +177,147 @@ func TestUnreadMentionsReadsEveryAnswerShape(t *testing.T) {
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("UnreadMentions = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// readContentsInvoker stands in for the server: it knows the basic group 5
+// and the channel 9, answers both kinds of readMessageContents with readErr
+// or with success, and records what it was asked.
+type readContentsInvoker struct {
+	readErr  error
+	messages []*tg.MessagesReadMessageContentsRequest
+	channels []*tg.ChannelsReadMessageContentsRequest
+}
+
+func (f *readContentsInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	switch req := input.(type) {
+	case *tg.MessagesReadMessageContentsRequest:
+		f.messages = append(f.messages, req)
+		if f.readErr != nil {
+			return f.readErr
+		}
+		affected := output.(*tg.MessagesAffectedMessages)
+		affected.Pts, affected.PtsCount = 1, 1
+		return nil
+	case *tg.ChannelsReadMessageContentsRequest:
+		f.channels = append(f.channels, req)
+		if f.readErr != nil {
+			return f.readErr
+		}
+		output.(*tg.BoolBox).Bool = &tg.BoolTrue{}
+		return nil
+	default:
+		return readHistoryInvoker{}.Invoke(ctx, input, output)
+	}
+}
+
+// A mention is cleared by reading the message's contents, and Telegram has
+// two calls for it: one that takes bare message IDs, which are the
+// account's own numbering and only mean something outside a channel, and
+// one that names the channel whose numbering they are in.
+func TestReadMentionsUsesTheChannelCallOnlyForAChannel(t *testing.T) {
+	t.Run("a basic group", func(t *testing.T) {
+		inv := &readContentsInvoker{}
+		c, _ := viewClient(t, inv)
+
+		if err := c.ReadMentions(basicGroupID, []int64{3, 7}); err != nil {
+			t.Fatalf("ReadMentions: %v", err)
+		}
+
+		if len(inv.messages) != 1 || len(inv.channels) != 0 {
+			t.Fatalf("made %d messages and %d channel calls, want one messages call",
+				len(inv.messages), len(inv.channels))
+		}
+		if got := inv.messages[0].ID; !slices.Equal(got, []int{3, 7}) {
+			t.Errorf("cleared %v, want [3 7]", got)
+		}
+	})
+
+	t.Run("a channel", func(t *testing.T) {
+		inv := &readContentsInvoker{}
+		c, _ := viewClient(t, inv)
+
+		if err := c.ReadMentions(channelChatID(9), []int64{3, 7}); err != nil {
+			t.Fatalf("ReadMentions: %v", err)
+		}
+
+		if len(inv.channels) != 1 || len(inv.messages) != 0 {
+			t.Fatalf("made %d channel and %d messages calls, want one channel call",
+				len(inv.channels), len(inv.messages))
+		}
+		req := inv.channels[0]
+		if ch, ok := req.Channel.(*tg.InputChannel); !ok || ch.ChannelID != 9 {
+			t.Errorf("cleared in %#v, want the channel 9", req.Channel)
+		}
+		if !slices.Equal(req.ID, []int{3, 7}) {
+			t.Errorf("cleared %v, want [3 7]", req.ID)
+		}
+	})
+}
+
+// Clearing mentions tells the chat list at once, the way a read does: no
+// update carries the count, so without it the @ would stay until the next
+// dialog reload.
+func TestReadMentionsAnnouncesTheClear(t *testing.T) {
+	for name, chatID := range map[string]int64{
+		"a basic group": basicGroupID,
+		"a channel":     channelChatID(9),
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, got := viewClient(t, &readContentsInvoker{})
+
+			if err := c.ReadMentions(chatID, []int64{3, 7}); err != nil {
+				t.Fatalf("ReadMentions: %v", err)
+			}
+
+			want := ChatMentionsReadMsg{ChatId: chatID, MessageIds: []int64{3, 7}}
+			if len(*got) != 1 || !reflect.DeepEqual((*got)[0], want) {
+				t.Errorf("published %#v, want %#v", *got, want)
+			}
+		})
+	}
+}
+
+// A clear the server refused did not happen, and the @ has to say so.
+func TestReadMentionsAnnouncesNothingWhenTheClearFails(t *testing.T) {
+	for name, chatID := range map[string]int64{
+		"a basic group": basicGroupID,
+		"a channel":     channelChatID(9),
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, got := viewClient(t, &readContentsInvoker{readErr: errors.New("no connection")})
+
+			if err := c.ReadMentions(chatID, []int64{7}); err == nil {
+				t.Fatal("ReadMentions reported success for a failed clear")
+			}
+			if len(*got) != 0 {
+				t.Errorf("a failed clear published %#v", *got)
+			}
+		})
+	}
+}
+
+// Nothing to clear is not a clear, and not a call either.
+func TestReadMentionsDoesNothingWithoutAMessage(t *testing.T) {
+	for name, chatID := range map[string]int64{
+		"a basic group": basicGroupID,
+		"a channel":     channelChatID(9),
+	} {
+		t.Run(name, func(t *testing.T) {
+			inv := &readContentsInvoker{}
+			c, got := viewClient(t, inv)
+
+			if err := c.ReadMentions(chatID, nil); err != nil {
+				t.Fatalf("ReadMentions: %v", err)
+			}
+
+			if len(inv.messages)+len(inv.channels) != 0 {
+				t.Errorf("clearing nothing asked the server %d times", len(inv.messages)+len(inv.channels))
+			}
+			if len(*got) != 0 {
+				t.Errorf("clearing nothing published %#v", *got)
 			}
 		})
 	}

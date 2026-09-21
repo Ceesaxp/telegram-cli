@@ -817,6 +817,47 @@ func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
 	return ids, nil
 }
 
+// ReadMentions clears the given unread mentions in a chat, and on success
+// announces it with [ChatMentionsReadMsg], for the reason [ViewMessages]
+// announces a read. A mention is cleared by reading its message's
+// contents; reading the history does not do it.
+//
+// A channel's message IDs are its own numbering, so a supergroup takes the
+// call that names the channel; every other chat takes the one with bare
+// IDs.
+func (c *Client) ReadMentions(chatID int64, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	if constant.TDLibPeerID(chatID).IsChannel() {
+		peer, err := c.inputPeer(ctx, chatID)
+		if err != nil {
+			return fmt.Errorf("read mentions: %w", err)
+		}
+		inputChannel, ok := peerAsInputChannel(peer)
+		if !ok {
+			return fmt.Errorf("read mentions: peer %d is not a channel", chatID)
+		}
+		if _, err := c.api.ChannelsReadMessageContents(ctx, &tg.ChannelsReadMessageContentsRequest{
+			Channel: inputChannel,
+			ID:      int64sToInts(messageIDs),
+		}); err != nil {
+			return fmt.Errorf("read channel mentions: %w", err)
+		}
+		c.send(ChatMentionsReadMsg{ChatId: chatID, MessageIds: messageIDs})
+		return nil
+	}
+
+	if _, err := c.api.MessagesReadMessageContents(ctx, int64sToInts(messageIDs)); err != nil {
+		return fmt.Errorf("read mentions: %w", err)
+	}
+	c.send(ChatMentionsReadMsg{ChatId: chatID, MessageIds: messageIDs})
+	return nil
+}
+
 // peerAsInputChannel extracts an InputChannel from an InputPeer.
 func peerAsInputChannel(peer tg.InputPeerClass) (tg.InputChannelClass, bool) {
 	switch p := peer.(type) {
