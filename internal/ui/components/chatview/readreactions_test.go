@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // Opening a chat also clears its unread reactions: the heart the phone
@@ -123,6 +125,43 @@ func TestOpeningAChatWhileBlurredClearsItsReactionsOnFocus(t *testing.T) {
 	}
 }
 
+// A reaction in a chat that is not open has not been seen. The chat list
+// keeps its count, and opening that chat is what clears it.
+func TestAReactionInAnotherChatClearsNothing(t *testing.T) {
+	m := openQuietChat(t)
+
+	m, cmd := m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID + 1})
+	if cmd != nil {
+		t.Fatal("a reaction in another chat scheduled something")
+	}
+	if _, cmd = m.Update(tea.FocusMsg{}); cmd != nil {
+		t.Fatal("a reaction in another chat left a clear owed to this one")
+	}
+}
+
+// A window still open when the reader moves on belongs to the chat they
+// left. Its tick must not flush the next chat's clear early, and it must
+// not keep the next chat from opening a window of its own.
+func TestAClearsWindowDoesNotOutliveItsChat(t *testing.T) {
+	m := openQuietChat(t)
+	m, _ = m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
+
+	const next = testChatID + 1
+	m.OpenChat(next, "elsewhere")
+	m, cmd := m.Update(telegram.ChatUnreadReactionsMsg{ChatId: next})
+	if cmd == nil {
+		t.Fatal("the next chat's reaction scheduled no clear: the left chat's window is still holding the flag")
+	}
+
+	m, cmd = m.Update(reactionsFlushMsg{chatID: testChatID})
+	if cmd != nil {
+		t.Fatal("the left chat's tick flushed the next chat's clear")
+	}
+	if _, cmd = m.Update(reactionsFlushMsg{chatID: next}); cmd == nil {
+		t.Fatal("the next chat's own tick sent no clear")
+	}
+}
+
 // The owed clear belongs to the chat that was opened. Moving on before
 // focus returns means that chat was never looked at, and the clear must not
 // follow the reader to the next one either.
@@ -149,5 +188,94 @@ func TestPagingBackwardsSendsNoClear(t *testing.T) {
 	m.loading = true
 	if _, cmd := m.Update(historyPage(m, 6, 5, 4, 3, 2, 1)); cmd != nil {
 		t.Fatal("an older page sent the clear again")
+	}
+}
+
+// openQuietChat is a chat that is open, loaded and owes nothing: read to
+// its newest message, and with no unread reactions as far as the store
+// knows. A reaction that arrives now is the only evidence there is one,
+// which is the point: the chat list raises the count from the same
+// message, and which panel sees it first is not something to lean on.
+func openQuietChat(t *testing.T) Model {
+	t.Helper()
+	m := reactedChat(0)
+	m.OpenChat(testChatID, "nadia")
+	m, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if cmd != nil {
+		t.Fatal("the fixture's open owed something already")
+	}
+	return m
+}
+
+// A reaction to the reader's message in the chat they are reading has
+// been seen, the way an arriving message has. The heart on the phone
+// should not outlast the time the reader spends in the chat here.
+func TestAReactionInTheOpenChatIsClearedAfterTheWindow(t *testing.T) {
+	m := openQuietChat(t)
+
+	m, cmd := m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
+	if cmd == nil {
+		t.Fatal("a reaction in the open chat scheduled no clear")
+	}
+	// The command is the window: it waits it out and comes back as the
+	// flush for this chat.
+	flush := cmd()
+	if flush != (reactionsFlushMsg{chatID: testChatID}) {
+		t.Fatalf("the reaction's command produced %#v, want the flush for this chat", flush)
+	}
+
+	m, cmd = m.Update(flush)
+	if cmd == nil {
+		t.Fatal("the flush sent no clear")
+	}
+	if _, cmd = m.Update(flush); cmd != nil {
+		t.Fatal("a second flush sent a second clear for one reaction")
+	}
+}
+
+// A popular message collects reactions in bursts, and the clear covers the
+// whole chat, so a burst inside the window costs one request, not one
+// per reaction.
+func TestABurstOfReactionsIsOneClear(t *testing.T) {
+	m := openQuietChat(t)
+
+	var scheduled int
+	for range 3 {
+		var cmd tea.Cmd
+		m, cmd = m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
+		if cmd != nil {
+			scheduled++
+		}
+	}
+	if scheduled != 1 {
+		t.Fatalf("%d flushes scheduled for a burst of three, want 1", scheduled)
+	}
+
+	m, cmd := m.Update(reactionsFlushMsg{chatID: testChatID})
+	if cmd == nil {
+		t.Fatal("the flush sent no clear")
+	}
+	if _, cmd = m.Update(reactionsFlushMsg{chatID: testChatID}); cmd != nil {
+		t.Fatal("the burst cost a second clear")
+	}
+}
+
+// With the terminal in the background the reader has not seen the
+// reaction, however long the chat sits open. The clear waits for focus.
+func TestAReactionWhileBlurredIsClearedOnFocus(t *testing.T) {
+	m := openQuietChat(t)
+	m, _ = m.Update(tea.BlurMsg{})
+
+	m, cmd := m.Update(telegram.ChatUnreadReactionsMsg{ChatId: testChatID})
+	if cmd != nil {
+		t.Fatal("a reaction while blurred scheduled something")
+	}
+
+	m, cmd = m.Update(tea.FocusMsg{})
+	if cmd == nil {
+		t.Fatal("regaining focus sent no clear for the reaction that came in meanwhile")
+	}
+	if _, cmd = m.Update(tea.FocusMsg{}); cmd != nil {
+		t.Fatal("focus sent the clear a second time")
 	}
 }

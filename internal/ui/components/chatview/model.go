@@ -302,10 +302,13 @@ type Model struct {
 	readFlushPending    bool
 	refetchFlushPending bool
 	// pendingReactionsRead is a clear of the open chat's unread reactions
-	// that is owed but not sent: the chat was opened while blurred, and
-	// FocusMsg sends it. It belongs to the open chat, so opening another
-	// drops it.
-	pendingReactionsRead bool
+	// that is owed but not sent: the chat was opened while blurred, or a
+	// reaction arrived and its window is still open. FocusMsg or the
+	// window's tick sends it. It belongs to the open chat, so opening
+	// another drops it. reactionsFlushPending says that tick is scheduled;
+	// see coalesce.go.
+	pendingReactionsRead  bool
+	reactionsFlushPending bool
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -951,8 +954,9 @@ func (m *Model) readReactionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 
 // flushReactionsRead sends the owed clear, unless the terminal is in the
 // background: a chat opened there has not been looked at, and FocusMsg
-// sends it instead, as it does the read receipt. There is nothing to
-// coalesce, since a chat is opened once.
+// sends it instead, as it does the read receipt. The open sends at once,
+// since a chat is opened once; reactions arriving in the open chat come
+// here through a coalescing tick instead (noteUnreadReaction).
 func (m *Model) flushReactionsRead() tea.Cmd {
 	if !m.pendingReactionsRead || m.blurred {
 		return nil
@@ -1823,6 +1827,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 			return m, m.noteSeen(msg.Message.ID)
 		}
+
+	case telegram.ChatUnreadReactionsMsg:
+		// A reaction in the chat being read has been seen, as an arriving
+		// message has. The message is the evidence, not the store's count:
+		// the chat list raises that from this same message, and which
+		// panel sees it first is not something to rely on. Other chats'
+		// reactions are the chat list's to count.
+		if msg.ChatId == m.chatID {
+			return m, m.noteUnreadReaction()
+		}
+
+	case reactionsFlushMsg:
+		if msg.chatID != m.chatID {
+			return m, nil
+		}
+		m.reactionsFlushPending = false
+		return m, m.flushReactionsRead()
 
 	case telegram.ChatReadOutboxMsg:
 		// The other side read up to here. The mark lives in the chat
