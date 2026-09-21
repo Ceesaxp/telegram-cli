@@ -193,9 +193,9 @@ type Model struct {
 	downloadDir string
 
 	// pendingG is a g waiting for its suffix. g is a PREFIX now (gg to the
-	// top, gx to follow a link), which is what vim does with it — bare g
-	// does nothing there either. home is still the one-key route to the
-	// top, so nothing became unreachable.
+	// top, gx to follow a link, g@ to the next unread mention), which is
+	// what vim does with it — bare g does nothing there either. home is
+	// still the one-key route to the top, so nothing became unreachable.
 	pendingG bool
 	// armed is the link cursor: see links.go.
 	armed armedLink
@@ -1840,6 +1840,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case searchResultsMsg:
 		return m.handleSearchResults(msg)
 
+	case mentionsListedMsg:
+		return m.handleMentionsListed(msg)
+
 	case telegram.NewMessageMsg:
 		if msg.Message.ChatID == m.chatID {
 			m.store.Messages.Append(m.chatID, msg.Message)
@@ -2061,6 +2064,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			kp = keys.NewPress(msg)
 		case "x":
 			return m.armNextLink()
+		case "@":
+			return m, m.listMentionsCmd()
 		default:
 			// Not a suffix this prefix has. The g is dropped and the key
 			// goes on to do its own job rather than being swallowed — the

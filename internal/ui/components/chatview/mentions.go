@@ -25,13 +25,14 @@ type mentionsFlushMsg struct {
 }
 
 // readMentionsOnOpen owes a clear for the mentions on the first page of an
-// open at the newest messages: those are on screen, so they have been
-// seen. The condition is readOnOpen's, for its reason — an older page is
-// the reader scrolling back, and a chat opened at a search hit, a link or a
-// reply jump has its newest messages below the fold.
+// open at the newest messages. That open reads them, on the terms
+// readOnOpen marks the chat read up to its newest message, and under its
+// condition for its reason: an older page is the reader scrolling back,
+// and a chat opened at a search hit, a link or a reply jump has its newest
+// messages below the fold.
 //
 // The page is the evidence, not the store's count. The message flags say
-// which mentions are on screen, and the count can be stale either way.
+// which mentions the open showed, and the count can be stale either way.
 func (m *Model) readMentionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 	if msg.fromID != 0 || m.targetMsgID != 0 {
 		return nil
@@ -39,8 +40,7 @@ func (m *Model) readMentionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 	return m.noteUnreadMentions(seenMentions(msg.messages))
 }
 
-// seenMentions are the unread mentions among msgs that being on screen
-// clears. A voice note or a round video is not heard by being seen: TDLib
+// seenMentions are the unread mentions among msgs that being seen clears. A voice note or a round video is not heard by being seen: TDLib
 // leaves those for playing to clear, and so does this client.
 func seenMentions(msgs []*telegram.Message) []int64 {
 	var ids []int64
@@ -87,12 +87,22 @@ func (m *Model) flushMentionsRead() tea.Cmd {
 	if len(m.pendingMentionsRead) == 0 || m.blurred {
 		return nil
 	}
-	ids := m.pendingMentionsRead
+	chatID, tg := m.chatID, m.tg
+	// Asked for again only if nothing has asked meanwhile: g@ inside the
+	// window clears the mention it lands on at once.
+	ids := make([]int64, 0, len(m.pendingMentionsRead))
+	for _, id := range m.pendingMentionsRead {
+		if !m.askedMentions.has(chatID, id) {
+			ids = append(ids, id)
+		}
+	}
 	m.pendingMentionsRead = nil
+	if len(ids) == 0 {
+		return nil
+	}
 	sortInt64s(ids)
 	// Consumed and recorded before the client is checked, as flushRead
 	// does, so the owed clears behave the same with and without one.
-	chatID, tg := m.chatID, m.tg
 	m.askedMentions.record(chatID, ids...)
 	if tg == nil {
 		return nil
@@ -162,4 +172,118 @@ func (l *mentionLedger) record(chatID int64, ids ...int64) {
 	entry.ids = entry.ids[max(0, len(entry.ids)-maxAskedPerChat):]
 	chats = append(chats, entry)
 	l.chats = chats[max(0, len(chats)-maxAskedChats):]
+}
+
+// mentionListLimit is how many unread mentions g@ asks for at a time. It
+// takes the oldest of them, so a page is only there to say how many more
+// there are.
+const mentionListLimit = 10
+
+// mentionsListedMsg is the answer to g@: the open chat's unread mentions,
+// oldest first, or the error that stopped the server saying.
+type mentionsListedMsg struct {
+	chatID int64
+	ids    []int64
+	err    error
+}
+
+// listMentionsCmd is g@'s question: which mentions in the open chat are
+// still unread. Nil with no chat open or no client to ask.
+func (m Model) listMentionsCmd() tea.Cmd {
+	if m.chatID == 0 || m.tg == nil {
+		return nil
+	}
+	chatID, tg := m.chatID, m.tg
+	return func() tea.Msg {
+		ids, err := tg.UnreadMentions(chatID, mentionListLimit)
+		return mentionsListedMsg{chatID: chatID, ids: ids, err: err}
+	}
+}
+
+// MentionJumpMsg is g@ landing: the next unread mention, handed to the
+// host to go to, the way [TelegramLinkMsg] hands over a link. The panel
+// reads, the host navigates, so every way of opening a chat stays one
+// function and a way back is recorded for ctrl+o.
+type MentionJumpMsg struct {
+	ChatId    int64
+	MessageId int64
+	// Remaining is how many more unread mentions there are after this
+	// one, for the notice the host shows on arrival.
+	Remaining int
+}
+
+// handleMentionsListed is g@'s answer arriving: go to the oldest unread
+// mention this client has not already asked to clear.
+func (m Model) handleMentionsListed(msg mentionsListedMsg) (Model, tea.Cmd) {
+	// The chat, not the generation: a g@ jump reopens the same chat, and
+	// the answer to a second g@ pressed meanwhile is still about it.
+	if msg.chatID != m.chatID {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.notice = "could not load mentions"
+		return m, nil
+	}
+	var fresh []int64
+	for _, id := range msg.ids {
+		if !m.askedMentions.has(m.chatID, id) {
+			fresh = append(fresh, id)
+		}
+	}
+	if len(fresh) == 0 {
+		m.notice = "no unread mentions"
+		return m, m.correctMentionCount()
+	}
+	id := fresh[0]
+	m.askedMentions.record(m.chatID, id)
+	chatID, tg := m.chatID, m.tg
+	remaining := m.mentionsAfter(len(fresh))
+	jump := func() tea.Msg {
+		return MentionJumpMsg{ChatId: chatID, MessageId: id, Remaining: remaining}
+	}
+	if tg == nil {
+		return m, jump
+	}
+	// At once, not through the window: the reader chose to go there, which
+	// is also why a voice note is cleared here and not by being on screen.
+	read := func() tea.Msg {
+		// Dropped, as the window's clear drops its error: the @ stays,
+		// and the notice on arrival has already said where the reader is.
+		_ = tg.ReadMentions(chatID, []int64{id})
+		return nil
+	}
+	return m, tea.Batch(read, jump)
+}
+
+// mentionsAfter is how many unread mentions are left once the one being
+// jumped to is cleared, given how many the listing still had. The listing
+// is capped at mentionListLimit, so the store's count knows of more in a
+// busy chat; the count can be behind the listing too. The larger is the
+// better guess.
+func (m Model) mentionsAfter(listed int) int {
+	counted := 0
+	if entry, ok := m.store.Chats.Get(m.chatID); ok {
+		counted = int(entry.UnreadMentionsCount)
+	}
+	return max(listed-1, counted-1, 0)
+}
+
+// correctMentionCount answers a listing with nothing left in it. If the
+// store still counts mentions for the chat, the count is stale — one was
+// cleared on another device, say — and the @ on the row would stay for
+// ever, so it is zeroed.
+//
+// This is a local correction, not a server clear: the server has just
+// said there is nothing to clear. It goes out as the message a finished
+// ReadAllMentions announces because that is what the chat list already
+// zeroes a count from, and nothing else needs to know the difference.
+func (m Model) correctMentionCount() tea.Cmd {
+	entry, ok := m.store.Chats.Get(m.chatID)
+	if !ok || entry.UnreadMentionsCount <= 0 {
+		return nil
+	}
+	chatID := m.chatID
+	return func() tea.Msg {
+		return telegram.ChatMentionsReadMsg{ChatId: chatID, All: true}
+	}
 }
