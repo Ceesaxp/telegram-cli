@@ -56,6 +56,15 @@ type ChatReadInboxMsg struct {
 	UnreadCount            int32
 }
 
+// ChatMarkedReadMsg is sent when this client has marked a chat read up to
+// MaxID. It is the local half of [ChatReadInboxMsg]: the server's receipt
+// for a read made by this session does not reliably come back, and without
+// this the chat being read kept its unread badge.
+type ChatMarkedReadMsg struct {
+	ChatId int64
+	MaxID  int64
+}
+
 // ChatReadOutboxMsg is sent when the read outbox state changes.
 type ChatReadOutboxMsg struct {
 	ChatId                  int64

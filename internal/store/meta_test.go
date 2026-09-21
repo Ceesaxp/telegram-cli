@@ -85,7 +85,7 @@ func TestTotalUnreadSumsEveryChat(t *testing.T) {
 	}
 
 	// A chat that has been read stops counting.
-	s.UpdateReadInbox(4, 0)
+	s.UpdateReadInbox(4, 0, 0)
 	if got := s.TotalUnread(); got != 6 {
 		t.Errorf("after reading the loud one, total unread = %d, want 6", got)
 	}

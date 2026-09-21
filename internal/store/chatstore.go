@@ -178,7 +178,8 @@ func (s *ChatStore) Get(chatID int64) (*ChatEntry, bool) {
 	return entry, ok
 }
 
-// UpdateLastMessage updates a chat's last message and sort order.
+// UpdateLastMessage updates a chat's last message and sort order, and counts
+// the message as unread when it is news — see [countsAsUnread].
 func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,19 +196,75 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 		s.chats[chatID] = entry
 	}
 
+	if countsAsUnread(entry, msg) {
+		entry.UnreadCount++
+	}
 	entry.LastMessage = msg
 	if msg != nil {
 		entry.Order = int64(msg.Date)
 	}
 }
 
-// UpdateReadInbox updates the unread count for a chat.
-func (s *ChatStore) UpdateReadInbox(chatID int64, unreadCount int32) {
+// countsAsUnread says whether msg adds one to entry's unread count.
+//
+// MTProto does not send a fresh count with every message the way TDLib did,
+// so the client counts arrivals itself. Only a message from the other side
+// that is newer than anything the entry has seen counts: the same message
+// can arrive twice (a replay, a catch-up after a gap), and one at or below
+// the read mark was read before it got here. A local echo has no server ID
+// and is never marked read, so it never counts either.
+func countsAsUnread(entry *ChatEntry, msg *telegram.Message) bool {
+	if msg == nil || msg.IsOutgoing || msg.ID <= 0 {
+		return false
+	}
+	if entry.LastMessage != nil && msg.ID <= entry.LastMessage.ID {
+		return false
+	}
+	return entry.Chat == nil || msg.ID > entry.Chat.LastReadInboxMessageID
+}
+
+// UpdateReadInbox applies the server's read receipt for a chat: the unread
+// count it reports, which is authoritative, and the read mark maxID, which
+// [countsAsUnread] needs to tell a late message from a new one.
+func (s *ChatStore) UpdateReadInbox(chatID int64, maxID int64, unreadCount int32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if entry, ok := s.chats[chatID]; ok {
-		entry.UnreadCount = unreadCount
+	entry, ok := s.chats[chatID]
+	if !ok {
+		return
+	}
+	entry.UnreadCount = unreadCount
+	entry.advanceReadInbox(maxID)
+}
+
+// MarkReadUpTo records that this client has just read a chat up to maxID.
+//
+// The server does not reliably echo this session's own reads back, so
+// without it the chat the reader is looking at kept its badge. Reading as
+// far as the newest message leaves nothing unread; reading less leaves an
+// unknown remainder, so the count is left for the next dialog reload to
+// correct. A no-op for a chat the store does not know.
+func (s *ChatStore) MarkReadUpTo(chatID int64, maxID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.chats[chatID]
+	if !ok {
+		return
+	}
+	entry.advanceReadInbox(maxID)
+	if entry.LastMessage == nil || maxID >= entry.LastMessage.ID {
+		entry.UnreadCount = 0
+	}
+}
+
+// advanceReadInbox moves the read mark forward to maxID, never back: reads
+// and receipts can arrive out of order, and an older one must not make read
+// messages count again.
+func (e *ChatEntry) advanceReadInbox(maxID int64) {
+	if e.Chat != nil && maxID > e.Chat.LastReadInboxMessageID {
+		e.Chat.LastReadInboxMessageID = maxID
 	}
 }
 

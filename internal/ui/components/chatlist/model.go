@@ -898,7 +898,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.markDirty()
 
 	case telegram.ChatReadInboxMsg:
-		m.store.Chats.UpdateReadInbox(msg.ChatId, msg.UnreadCount)
+		m.store.Chats.UpdateReadInbox(msg.ChatId, msg.LastReadInboxMessageId, msg.UnreadCount)
+		m.markDirty()
+
+	case telegram.ChatMarkedReadMsg:
+		m.store.Chats.MarkReadUpTo(msg.ChatId, msg.MaxID)
 		m.markDirty()
 
 	case telegram.ChatUpdateMsg:
