@@ -1,0 +1,17 @@
+# A fixture theme for the loader tests: two accents moved over the light
+# palette, one of them in the 256-colour table too, and a ramp of its own.
+# Read through internal/config exactly as a user's theme would be.
+
+[theme]
+name    = "over light"
+inherit = "light"
+
+[colors]
+cyan = "#8ec07c"
+Red  = "#fb4934"
+
+[colors256]
+cyan = "108"
+
+[senders]
+ramp = ["cyan", "red"]

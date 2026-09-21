@@ -2,8 +2,10 @@ package theme
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -66,5 +68,208 @@ func TestAFieldThatIsNotAColourIsNotAKey(t *testing.T) {
 	}
 	if len(keys) != 1 {
 		t.Errorf("got keys %v, want only fg", keys)
+	}
+}
+
+// spec builds a theme spec the way internal/config hands one over: never-nil
+// tables, keys as written.
+func spec(colors, colors256 map[string]string) *config.ThemeSpec {
+	if colors == nil {
+		colors = map[string]string{}
+	}
+	if colors256 == nil {
+		colors256 = map[string]string{}
+	}
+	return &config.ThemeSpec{
+		Name: "test", Source: "themes/test.toml", Inherit: config.ThemeDark,
+		Colors: colors, Colors256: colors256,
+	}
+}
+
+// A theme names the roles it changes; every other role is its base's.
+func TestASpecChangesOnlyTheRolesItNames(t *testing.T) {
+	got, _, warnings := RolesForSpec(spec(map[string]string{"cyan": "#8ec07c"}, nil),
+		config.ThemeDark, true)
+
+	if string(got.Cyan) != "#8ec07c" {
+		t.Errorf("cyan is %q, want the theme's #8ec07c", got.Cyan)
+	}
+	base := DarkRoles(true)
+	got.Cyan = base.Cyan
+	if got != base {
+		t.Errorf("roles the theme does not name moved off the dark base:\n got %+v\nwant %+v", got, base)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("a clean theme warned: %q", warnings)
+	}
+}
+
+// inherit = "light" is drawn over the light palette, not dark with a few
+// roles moved.
+func TestASpecOverLightStartsFromLight(t *testing.T) {
+	got, _, _ := RolesForSpec(spec(map[string]string{"cyan": "#8ec07c"}, nil),
+		config.ThemeLight, true)
+
+	base := LightRoles(true)
+	got.Cyan = base.Cyan
+	if got != base {
+		t.Errorf("a theme inheriting light is not light underneath:\n got %+v\nwant %+v", got, base)
+	}
+}
+
+// Keys fold to lower case: Cyan and CYAN are cyan, as a reader writing
+// the key from the field name would expect.
+func TestKeysIgnoreCase(t *testing.T) {
+	got, _, warnings := RolesForSpec(spec(map[string]string{
+		"Cyan": "#8ec07c", "CUR_LINE": "#32302f",
+	}, nil), config.ThemeDark, true)
+
+	if string(got.Cyan) != "#8ec07c" {
+		t.Errorf("Cyan did not set cyan: got %q", got.Cyan)
+	}
+	if string(got.CurLine) != "#32302f" {
+		t.Errorf("CUR_LINE did not set cur_line: got %q", got.CurLine)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("a key in another case warned: %q", warnings)
+	}
+}
+
+// Two keys that fold to one role are a mistake worth a warning, and which
+// one wins must not depend on map order: the first in sorted order, every
+// run.
+func TestTwoKeysForOneRoleWarnAndTheFirstWins(t *testing.T) {
+	for range 20 {
+		got, _, warnings := RolesForSpec(spec(map[string]string{
+			"cyan": "#222222", "Cyan": "#111111", "CYAN": "#333333",
+		}, nil), config.ThemeDark, true)
+
+		if string(got.Cyan) != "#333333" {
+			t.Fatalf("cyan is %q, want %q from CYAN, the first key in sorted order",
+				got.Cyan, "#333333")
+		}
+		if len(warnings) != 2 {
+			t.Fatalf("got %d warnings, want one for each key that lost: %q", len(warnings), warnings)
+		}
+		for _, w := range warnings {
+			if !strings.Contains(w, "themes/test.toml") || !strings.Contains(w, "CYAN") {
+				t.Errorf("warning does not name the file and the key that won: %q", w)
+			}
+		}
+	}
+}
+
+// A key that is no role — a typo, or a role from a newer build — is
+// ignored with a warning rather than failing the theme.
+func TestAnUnknownKeyWarnsAndIsIgnored(t *testing.T) {
+	got, _, warnings := RolesForSpec(spec(map[string]string{
+		"cyan": "#8ec07c", "accent": "#ff0000",
+	}, map[string]string{"backgrnd": "235"}), config.ThemeDark, true)
+
+	if string(got.Cyan) != "#8ec07c" {
+		t.Errorf("an unknown key cost a known one: cyan is %q", got.Cyan)
+	}
+	want := []string{"colors.accent", "colors256.backgrnd"}
+	if len(warnings) != len(want) {
+		t.Fatalf("got %d warnings, want %d: %q", len(warnings), len(want), warnings)
+	}
+	for i, key := range want {
+		if !strings.Contains(warnings[i], "themes/test.toml") || !strings.Contains(warnings[i], key) {
+			t.Errorf("warning %d does not name the file and %s: %q", i, key, warnings[i])
+		}
+	}
+}
+
+// A value lipgloss cannot draw renders as no colour at all — for bg, an
+// unpainted surface — so [colors] is checked strictly at load: #rrggbb or
+// #rgb, and anything else is warned about and inherits.
+func TestAMalformedHexWarnsAndInherits(t *testing.T) {
+	base := DarkRoles(true)
+	for _, value := range []string{
+		"", "8ec07c", "#8ec07", "#8ec07c0", "#12", "#ggg", "#8ec07g", "235", " #8ec07c", "red",
+	} {
+		t.Run(value, func(t *testing.T) {
+			got, _, warnings := RolesForSpec(spec(map[string]string{"bg": value}, nil),
+				config.ThemeDark, true)
+
+			if got.Bg != base.Bg {
+				t.Errorf("bg = %q became %q; want it to inherit dark's", value, got.Bg)
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0], "colors.bg") ||
+				!strings.Contains(warnings[0], "themes/test.toml") {
+				t.Errorf("want one warning naming the file and colors.bg, got %q", warnings)
+			}
+		})
+	}
+}
+
+// Both hex forms lipgloss draws are accepted, in either case.
+func TestBothHexFormsAreColours(t *testing.T) {
+	for _, value := range []string{"#8ec07c", "#8EC07C", "#abc", "#ABC"} {
+		got, _, warnings := RolesForSpec(spec(map[string]string{"bg": value}, nil),
+			config.ThemeDark, true)
+		if string(got.Bg) != value || len(warnings) != 0 {
+			t.Errorf("bg = %q gave %q with warnings %q; want it as written, no warning",
+				value, got.Bg, warnings)
+		}
+	}
+}
+
+// [colors256] is the decimal range 0–255 and nothing else: termenv writes an
+// index past 255 into the escape sequence as it is.
+func TestAMalformedXtermValueWarnsAndInherits(t *testing.T) {
+	base := DarkRoles(false)
+	for _, value := range []string{"", "256", "1000", "-1", "+7", "0x10", " 7", "#1d2021", "seven"} {
+		t.Run(value, func(t *testing.T) {
+			got, _, warnings := RolesForSpec(spec(nil, map[string]string{"bg": value}),
+				config.ThemeDark, false)
+
+			if got.Bg != base.Bg {
+				t.Errorf("colors256 bg = %q became %q; want dark's own", value, got.Bg)
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0], "colors256.bg") ||
+				!strings.Contains(warnings[0], "themes/test.toml") {
+				t.Errorf("want one warning naming the file and colors256.bg, got %q", warnings)
+			}
+		})
+	}
+}
+
+// No spec is the builtin alone: the path every config that names no theme
+// file takes, so it must be exactly what RolesFor always gave.
+func TestNoSpecIsTheBuiltin(t *testing.T) {
+	for _, builtin := range []string{config.ThemeDark, config.ThemeLight} {
+		for _, trueColor := range []bool{true, false} {
+			got, _, warnings := RolesForSpec(nil, builtin, trueColor)
+			if got != RolesFor(builtin, trueColor) || len(warnings) != 0 {
+				t.Errorf("%s (truecolour %v) with no spec is not the builtin, or warned: %q",
+					builtin, trueColor, warnings)
+			}
+		}
+	}
+}
+
+// The fixture goes through the config half first, as a user's theme does,
+// so the two halves are tested meeting and not only apart.
+func TestAThemeFileIsDrawnOverItsBase(t *testing.T) {
+	spec, builtin, warnings := config.LoadTheme("testdata/over-light.toml", "", "")
+	if spec == nil || len(warnings) != 0 {
+		t.Fatalf("the fixture did not load cleanly: spec %v, warnings %q", spec, warnings)
+	}
+	if builtin != config.ThemeLight {
+		t.Fatalf("the fixture's base is %q, want light", builtin)
+	}
+
+	got, _, warnings := RolesForSpec(spec, builtin, true)
+	if len(warnings) != 0 {
+		t.Errorf("the fixture warned: %q", warnings)
+	}
+	if string(got.Cyan) != "#8ec07c" || string(got.Red) != "#fb4934" {
+		t.Errorf("cyan %q and red %q, want the fixture's #8ec07c and #fb4934", got.Cyan, got.Red)
+	}
+	base := LightRoles(true)
+	got.Cyan, got.Red = base.Cyan, base.Red
+	if got != base {
+		t.Errorf("the rest is not light:\n got %+v\nwant %+v", got, base)
 	}
 }
