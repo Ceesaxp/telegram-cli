@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -91,6 +92,80 @@ func TestAClosedPlayerStartsNothing(t *testing.T) {
 
 	if runs, _ := p.report(); len(runs) != 0 {
 		t.Errorf("a closed player started %d players", len(runs))
+	}
+}
+
+// Where there is no player to run, the bell stands in for the sound, and it
+// goes back to the caller for tea.Raw. Printed from the background, it
+// landed wherever the renderer happened to be mid-frame.
+func TestAPlatformWithoutAPlayerHandsBackTheBell(t *testing.T) {
+	s := NewSoundPlayer(true)
+	s.play = platformPlayer("plan9", installed("paplay", "afplay"))
+
+	if got := s.Play(); got != "\a" {
+		t.Errorf("Play = %q, want the bell handed back", got)
+	}
+}
+
+// Whether there is a player is decided up front, by looking, for the reason
+// the notifier's is: found out by running it, the only fallback left is to
+// print.
+func TestThePlatformPlayerIsTheOneInstalled(t *testing.T) {
+	tests := []struct {
+		goos      string
+		installed []string
+		want      bool
+	}{
+		{"linux", []string{"paplay"}, true},
+		{"linux", []string{"canberra-gtk-play"}, true},
+		{"linux", nil, false},
+		{"darwin", []string{"afplay"}, true},
+		{"darwin", nil, false},
+	}
+
+	for _, tt := range tests {
+		got := platformPlayer(tt.goos, installed(tt.installed...)) != nil
+		if got != tt.want {
+			t.Errorf("on %s with %q installed, a player: %v, want %v",
+				tt.goos, tt.installed, got, tt.want)
+		}
+	}
+}
+
+// Players that are installed but fail — no sound server — are found out in
+// the background, which has no business writing to the terminal. The last
+// of them used to ring the bell there, mid-frame.
+func TestFailingPlayersPrintNothing(t *testing.T) {
+	failingPrograms(t, "paplay", "canberra-gtk-play")
+	play := platformPlayer("linux", exec.LookPath)
+	if play == nil {
+		t.Fatal("precondition: the stand-in players were not found")
+	}
+
+	if out := stdout(t, play); out != "" {
+		t.Errorf("failing players wrote %q to the terminal", out)
+	}
+}
+
+// The bell is the sound, degraded, and is limited the same way: a burst
+// rings once, and the interval after, it rings again.
+func TestTheBellIsLimitedLikeTheSound(t *testing.T) {
+	s, clock := soundPlayer(newProcess())
+	s.play = nil
+
+	var rang int
+	for range 50 {
+		if s.Play() == "\a" {
+			rang++
+		}
+	}
+	if rang != 1 {
+		t.Errorf("a burst of 50 rang the bell %d times, want 1", rang)
+	}
+
+	*clock = clock.Add(minSoundInterval)
+	if got := s.Play(); got != "\a" {
+		t.Errorf("a message the interval later got %q, want the bell", got)
 	}
 }
 

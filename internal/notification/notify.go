@@ -46,7 +46,7 @@ type Notifier struct {
 	// whether this path gets the text or an OSC-escaped version of it is
 	// the whole point of the split in terminal.go, and the real
 	// implementation is a process that has already exited by the time
-	// anything could ask.
+	// anything could ask. Nil where there is no notifier installed.
 	system func(title, body string)
 
 	// queue is what stands between a burst of messages and a burst of
@@ -62,7 +62,7 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 		method:      ResolveMethod(method),
 		terminal:    detectTerminal(),
 	}
-	n.system = platformNotifier(runtime.GOOS)
+	n.system = platformNotifier(runtime.GOOS, exec.LookPath)
 	// Through n rather than bound now, so the queue delivers to whatever
 	// the seam holds when it runs.
 	n.queue = newCoalescer(func(title, body string) { n.system(title, body) })
@@ -98,6 +98,12 @@ func (n *Notifier) Notify(title, body string) string {
 
 	if seq, ok := n.terminalSequence(title, body); ok {
 		return seq
+	}
+
+	if n.system == nil {
+		// Nothing to run, so the terminal is asked to ring instead — by
+		// the caller, like any other write to it.
+		return bell
 	}
 
 	// In the background: notify-send and osascript are processes, and
@@ -155,20 +161,36 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 
 // platformNotifier is the platform's own notifier on goos: a function that
 // posts one notification and returns once the process it runs has exited.
-func platformNotifier(goos string) func(title, body string) {
+// It is nil where there is none to run.
+//
+// Whether there is one is looked up here, once, rather than found out by
+// running it: by then the process is in the background, where the only
+// fallback left is to print — to a terminal this process does not own.
+func platformNotifier(goos string, lookPath func(string) (string, error)) func(title, body string) {
+	var (
+		program string
+		send    func(title, body string)
+	)
 	switch goos {
 	case "linux":
-		return sendLinux
+		program, send = "notify-send", sendLinux
 	case "darwin":
-		return sendMacOS
+		program, send = "osascript", sendMacOS
 	default:
-		// Unsupported platform.
-		return func(string, string) {}
+		return nil
 	}
+
+	if _, err := lookPath(program); err != nil {
+		return nil
+	}
+	return send
 }
 
+// sendLinux posts through notify-send. A failure is not reported: it is
+// installed, so the likeliest cause is a desktop with no notification
+// daemon, and there is nothing this side could do about that from the
+// background.
 func sendLinux(title, body string) {
-	// Try notify-send first.
 	cmd := exec.Command("notify-send",
 		"--app-name=Tele-TUI",
 		"--icon=telegram",
@@ -176,10 +198,7 @@ func sendLinux(title, body string) {
 		title,
 		body,
 	)
-	if err := cmd.Run(); err != nil {
-		// Fallback: terminal bell.
-		fmt.Print("\a")
-	}
+	cmd.Run()
 }
 
 // sendMacOS is the path that posts as Script Editor.

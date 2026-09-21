@@ -42,6 +42,11 @@ const (
 	//
 	//	ESC ] 9 ; BODY ST
 	osc9 = "\x1b]9;%s\x1b\\"
+
+	// bell is the fallback where there is no notifier or sound player to
+	// run. It is as much a write to the terminal as the two above, so it
+	// goes back to the caller for the same reason they do.
+	bell = "\a"
 )
 
 // TerminalSupport is what a terminal will accept.

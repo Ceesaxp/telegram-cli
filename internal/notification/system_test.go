@@ -177,6 +177,78 @@ func TestAClosedNotifierStartsNothing(t *testing.T) {
 	}
 }
 
+// Where there is no notifier to run, the fallback is the terminal bell — and
+// the bell is a byte for the terminal, which this process does not own. It
+// goes back to the caller for tea.Raw like any other sequence: printed from
+// the background, it landed wherever the renderer happened to be mid-frame.
+func TestAPlatformWithoutANotifierHandsBackTheBell(t *testing.T) {
+	n := NewNotifier(true, true, MethodSystem)
+	n.system = platformNotifier("plan9", installed("notify-send", "osascript"))
+
+	if got := n.Notify("Ana", "hi"); got != "\a" {
+		t.Errorf("Notify = %q, want the bell handed back", got)
+	}
+}
+
+// Whether there is a notifier is decided up front, by looking. A missing
+// notify-send used to be found out by running it, in the background, where
+// the only fallback left was to print.
+func TestThePlatformNotifierIsTheOneInstalled(t *testing.T) {
+	tests := []struct {
+		goos      string
+		installed []string
+		want      bool
+	}{
+		{"linux", []string{"notify-send"}, true},
+		{"linux", nil, false},
+		{"darwin", []string{"osascript"}, true},
+		{"darwin", nil, false},
+	}
+
+	for _, tt := range tests {
+		got := platformNotifier(tt.goos, installed(tt.installed...)) != nil
+		if got != tt.want {
+			t.Errorf("on %s with %q installed, a notifier: %v, want %v",
+				tt.goos, tt.installed, got, tt.want)
+		}
+	}
+}
+
+// A notify-send that is installed but fails — no notification daemon — is
+// found out in the background, and the background has no business writing
+// to the terminal. It used to ring the bell there, mid-frame.
+func TestAFailingNotifierPrintsNothing(t *testing.T) {
+	failingPrograms(t, "notify-send")
+
+	if out := stdout(t, func() { sendLinux("Ana", "hi") }); out != "" {
+		t.Errorf("a failing notify-send wrote %q to the terminal", out)
+	}
+}
+
+// On a machine with nothing to run, both fallbacks come back to the caller
+// and neither is written from here — the whole of the rule, end to end,
+// through the constructors the app uses.
+func TestWithNothingToRunTheBellsComeBackAndNothingIsPrinted(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	n := NewNotifier(true, true, MethodSystem)
+	s := NewSoundPlayer(true)
+
+	var notified, played string
+	out := stdout(t, func() {
+		notified = n.Notify("Ana", "hi")
+		played = s.Play()
+		n.Close()
+		s.Close()
+	})
+
+	if notified != "\a" || played != "\a" {
+		t.Errorf("Notify = %q, Play = %q; want the bell from each", notified, played)
+	}
+	if out != "" {
+		t.Errorf("%q was written to the terminal", out)
+	}
+}
+
 // A notifier that goes to the terminal must not ALSO hand the text to the
 // system: one message, one alert.
 func TestOnlyOnePathDelivers(t *testing.T) {

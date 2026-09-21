@@ -1,7 +1,6 @@
 package notification
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -14,7 +13,8 @@ type SoundPlayer struct {
 
 	// play runs the platform's player once and returns when it has
 	// finished. A field so a test can count what reaches it: the real
-	// implementation is a process, gone before anything could ask.
+	// implementation is a process, gone before anything could ask. Nil
+	// where there is no player installed.
 	play func()
 	// now is the clock the interval is measured on; a field so a test can
 	// hold it still instead of sleeping through a real second.
@@ -41,7 +41,7 @@ const minSoundInterval = time.Second
 func NewSoundPlayer(enabled bool) *SoundPlayer {
 	return &SoundPlayer{
 		enabled: enabled,
-		play:    platformPlayer(runtime.GOOS),
+		play:    platformPlayer(runtime.GOOS, exec.LookPath),
 		now:     time.Now,
 	}
 }
@@ -50,23 +50,34 @@ func NewSoundPlayer(enabled bool) *SoundPlayer {
 // last started less than minSoundInterval ago. It never waits for the
 // player: the caller is the event loop.
 //
+// It returns what the caller must write to the terminal: the bell, where
+// there is no player to run, and "" otherwise. Like Notify's sequence, the
+// caller hands it to tea.Raw rather than this writing it from a goroutine.
+//
 // A burst of messages used to start a player for each, all at once. The
 // request that finds one playing is dropped rather than queued: the sound
 // is about something having arrived, and the one playing already says so.
-func (s *SoundPlayer) Play() {
+func (s *SoundPlayer) Play() string {
 	if !s.enabled {
-		return
+		return ""
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	if s.closed || s.busy || now.Sub(s.last) < minSoundInterval {
-		return
+		return ""
 	}
-	s.busy, s.last = true, now
+	s.last = now
+	if s.play == nil {
+		// Nothing to run, so the terminal is asked to ring instead — by
+		// the caller, like any other write to it.
+		return bell
+	}
+	s.busy = true
 	s.player.Add(1)
 	go s.run()
+	return ""
 }
 
 // run plays the sound once, in the background: the player is a process,
@@ -98,33 +109,45 @@ func (s *SoundPlayer) wait() {
 	s.player.Wait()
 }
 
-// platformPlayer is the platform's sound player on goos: a function that
-// plays the notification sound once.
-func platformPlayer(goos string) func() {
-	switch goos {
-	case "linux":
-		return playLinux
-	case "darwin":
-		return playMacOS
-	default:
-		return func() { fmt.Print("\a") }
-	}
+// soundPlayers are the commands that play the notification sound on each
+// platform, in the order they are tried.
+var soundPlayers = map[string][][]string{
+	"linux": {
+		{"paplay", "/usr/share/sounds/freedesktop/stereo/message.oga"},
+		{"canberra-gtk-play", "-i", "message-new-instant"},
+	},
+	"darwin": {
+		{"afplay", "/System/Library/Sounds/Ping.aiff"},
+	},
 }
 
-func playLinux() {
-	// Try paplay with system sound.
-	cmd := exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/message.oga")
-	if err := cmd.Run(); err != nil {
-		// Fallback: canberra-gtk-play.
-		cmd = exec.Command("canberra-gtk-play", "-i", "message-new-instant")
-		if err := cmd.Run(); err != nil {
-			// Last resort: terminal bell.
-			fmt.Print("\a")
+// platformPlayer is the platform's sound player on goos: a function that
+// plays the notification sound once, and nil where there is none to run.
+//
+// Whether there is one is looked up here, once, rather than found out by
+// running it: by then the process is in the background, where the only
+// fallback left is to print — to a terminal this process does not own.
+func platformPlayer(goos string, lookPath func(string) (string, error)) func() {
+	var installed [][]string
+	for _, player := range soundPlayers[goos] {
+		if _, err := lookPath(player[0]); err == nil {
+			installed = append(installed, player)
 		}
 	}
+	if len(installed) == 0 {
+		return nil
+	}
+	return func() { playFirst(installed) }
 }
 
-func playMacOS() {
-	cmd := exec.Command("afplay", "/System/Library/Sounds/Ping.aiff")
-	cmd.Run()
+// playFirst runs each player in turn until one succeeds, one at a time. If
+// none does — installed, but no sound server to play through — nothing is
+// said: the bell was the old answer to that, and the background is no place
+// to ring it.
+func playFirst(players [][]string) {
+	for _, player := range players {
+		if exec.Command(player[0], player[1:]...).Run() == nil {
+			return
+		}
+	}
 }

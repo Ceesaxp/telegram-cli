@@ -113,15 +113,24 @@ func (m *Model) releaseAllNotices() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// postNotice hands one notification to the terminal or the system.
+// postNotice hands one notification to the terminal or the system, and
+// plays the sound.
 //
 // A terminal-posted notification comes back as a sequence to write rather
 // than as something already sent: this process does not own the terminal,
 // and tea.Raw is what puts bytes in the renderer's buffer instead of racing
-// it mid-frame.
+// it mid-frame. So does the bell that stands in for a notifier or a sound
+// player the machine does not have.
 func (m *Model) postNotice(title, body string) tea.Cmd {
-	m.sound.Play()
-	if seq := m.notifier.Notify(title, body); seq != "" {
+	bell := m.sound.Play()
+	seq := m.notifier.Notify(title, body)
+	if bell != seq {
+		// Where both fell back, they fell back to the same bell, and
+		// ringing it twice for one message is one alert said twice.
+		seq += bell
+	}
+
+	if seq != "" {
 		return tea.Raw(seq)
 	}
 	return nil

@@ -1,6 +1,11 @@
 package notification
 
 import (
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -63,6 +68,61 @@ func (p *process) awaitStart(t *testing.T) {
 
 // exit lets every run finish: the one in flight, and any started later.
 func (p *process) exit() { close(p.release) }
+
+// installed stands in for exec.LookPath on a machine with exactly these
+// programs on its PATH.
+func installed(names ...string) func(string) (string, error) {
+	return func(name string) (string, error) {
+		for _, n := range names {
+			if n == name {
+				return "/usr/bin/" + name, nil
+			}
+		}
+		return "", exec.ErrNotFound
+	}
+}
+
+// failingPrograms puts programs with these names first on the PATH, each of
+// which exits non-zero without doing anything — a notify-send with no
+// notification daemon behind it, a paplay with no sound server.
+func failingPrograms(t *testing.T, names ...string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-ins are shell scripts")
+	}
+
+	dir := t.TempDir()
+	for _, name := range names {
+		script := []byte("#!/bin/sh\nexit 1\n")
+		if err := os.WriteFile(filepath.Join(dir, name), script, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
+// stdout is everything written to standard output while f runs — which is
+// the terminal, and not this package's to write to.
+func stdout(t *testing.T, f func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	f()
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
 
 // report is every run so far, in order, and the most that ran at once.
 func (p *process) report() ([][2]string, int) {
