@@ -1,0 +1,44 @@
+# nord — the Nord palette (nordtheme.com), nord0 to nord15.
+#
+# Copy it into place and name it in config.toml:
+#
+#   cp docs/themes/nord.toml ~/.config/tele-tui/themes/
+#   [ui] theme = "nord"
+#
+# There is no [colors256] here, on purpose: on a terminal without truecolour
+# every role is quantised from its hex, which is the path a theme author who
+# does not hand-pick 256 values gets. docs/themes/gruvbox.toml shows the
+# other one.
+
+[theme]
+inherit = "dark"
+
+[colors]
+# Surfaces: Polar Night. Panel stays nord0 with the thread, so the in-panel
+# dividers (rule_soft, nord1) still show on it; the columns are told apart
+# by the nord2 rules between them.
+bg        = "#2e3440"      # nord0
+panel     = "#2e3440"      # nord0
+chrome    = "#3b4252"      # nord1
+sel       = "#434c5e"      # nord2
+cur_line  = "#3b4252"      # nord1
+rule      = "#434c5e"      # nord2
+rule_soft = "#3b4252"      # nord1
+border    = "#4c566a"      # nord3
+
+# Text: Polar Night's brightest into Snow Storm. Nord has no official step
+# between nord3 and nord4 besides the comment grey that dim takes, so faint
+# shares nord3 with ghost.
+ghost  = "#4c566a"         # nord3
+faint  = "#4c566a"         # nord3
+dim    = "#616e88"         # nord3, brightened: the Nord vim port's comments
+fg     = "#d8dee9"         # nord4
+bright = "#eceff4"         # nord6
+
+# Accents: Frost and Aurora.
+cyan  = "#88c0d0"          # nord8
+amber = "#ebcb8b"          # nord13
+green = "#a3be8c"          # nord14
+mauve = "#b48ead"          # nord15
+blue  = "#81a1c1"          # nord9
+red   = "#bf616a"          # nord11
