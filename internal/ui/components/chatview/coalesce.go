@@ -16,13 +16,15 @@ import (
 // FLOOD_WAIT, and the failure was silent because every one of those results
 // was discarded.
 //
-// Both are now accumulated and flushed on a short tick. The shape was
-// already here for read receipts: the blurred path kept only the maximum
-// message ID and sent one call on refocus, because a read receipt is
-// cumulative. This applies the same reasoning to the focused path, and the
-// batching Telegram's own list-taking RPCs were always willing to accept to
-// the refetches. Clearing the unread reactions of the open chat is the
-// third: it covers the whole chat, so a burst needs only one.
+// All three are now accumulated and flushed on a short tick each: read
+// receipts, refetches and clears of the chat's unread reactions. The shape
+// was already here for read receipts: the blurred path kept only the
+// maximum message ID and sent one call on refocus, because a read receipt
+// is cumulative. This applies the same reasoning to the focused path, and
+// the batching Telegram's own list-taking RPCs were always willing to
+// accept to the refetches. A reactions clear covers the whole chat, so a
+// burst needs only one, and the clear an open owes waits in the same
+// window, so a chat the reader only passes through is not cleared.
 //
 // See issue #46.
 

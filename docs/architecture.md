@@ -136,13 +136,16 @@ different account.
 reaction and a poll tally each used to cost their own RPC — one
 `readHistory` per message, one `getMessages` per change — which in a busy
 group is one request per update and the pattern Telegram answers with
-`FLOOD_WAIT`. Both are accumulated over a 300ms window now
-(`internal/ui/components/chatview/coalesce.go`): a read receipt is
-cumulative, so a burst becomes one call carrying the highest ID, and the
-refetches become one `getMessages` with the deduplicated list, minus any ID
-the store no longer holds. The tick carries the chat it was scheduled for,
-so one that outlives a chat switch is dropped rather than fired against the
-new chat. This is the same coalescing the peer cache does above, for the
+`FLOOD_WAIT`. Three kinds of work are accumulated over a 300ms window now
+(`internal/ui/components/chatview/coalesce.go`), each on a tick of its own:
+a read receipt is cumulative, so a burst becomes one call carrying the
+highest ID; the refetches become one `getMessages` with the deduplicated
+list, minus any ID the store no longer holds; and clearing the chat's
+unread reactions covers the whole chat, so a burst of reactions, or the
+clear an open owes, becomes one `readReactions`. Each tick carries the chat
+it was scheduled for, so one that outlives a chat switch is dropped rather
+than fired against the new chat — which is also what keeps a chat the
+reader only passed through from being marked read or cleared. This is the same coalescing the peer cache does above, for the
 same reason.
 
 Note what is NOT here: a `FLOOD_WAIT` back-off. Errors from these
