@@ -258,18 +258,19 @@ func sendMacOS(timeout time.Duration, title, body string) error {
 // the session.
 const helperTimeout = 10 * time.Second
 
-// helperWaitDelay is how long a killed helper is given to be gone before
-// Wait stops waiting for it anyway.
-const helperWaitDelay = time.Second
-
 // runHelper runs one of the programs this package leans on — a notifier or
-// a sound player — to completion, or kills it after timeout, and says
-// whether it worked. A helper that was killed did not.
+// a sound player — to completion, or kills it after timeout, with anything
+// it started, and says whether it worked. A helper that was killed did not.
+//
+// There is no WaitDelay. Its two jobs are closing the pipes of a helper
+// that has gone quiet, and there are none — stdin and stdout are nil — and
+// killing a helper that outlives its cancellation, which is already a
+// SIGKILL. What survives that cannot be hurried by a second one.
 func runHelper(timeout time.Duration, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.WaitDelay = helperWaitDelay
+	killGroupOnCancel(cmd)
 	return cmd.Run()
 }
