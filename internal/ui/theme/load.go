@@ -14,14 +14,19 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// RolesForSpec is the palette for a theme: the builtin named by builtin,
-// with whatever the spec sets drawn over it. A nil spec is the builtin
-// alone, so this is the one place the app's palette is chosen whether or
-// not a theme file is involved.
+// RolesForSpec is the palette for a theme, and the ramp its senders' names
+// are coloured from: the builtin named by builtin — [config.Config.ThemeBuiltin],
+// which for a theme file is the base it inherits — with whatever the spec
+// sets drawn over it. A nil spec is the builtin alone, so this is the one
+// place the app's palette is chosen, theme file or not.
+//
+// Nothing in a spec is fatal. What cannot be used is left out, its role
+// inherits, and the warnings say so, each naming the theme file. They do
+// not depend on trueColor: a broken [colors256] is broken on any terminal.
 func RolesForSpec(spec *config.ThemeSpec, builtin string, trueColor bool) (Roles, []lipgloss.Color, []string) {
 	r := RolesFor(builtin, trueColor)
 	if spec == nil {
-		return r, nil, nil
+		return r, DefaultSenderRamp(r), nil
 	}
 	hex, warnings := tableRoles(spec.Source, "colors", spec.Colors, hexForm)
 	xterm, w := tableRoles(spec.Source, "colors256", spec.Colors256, xtermForm)
@@ -32,7 +37,36 @@ func RolesForSpec(spec *config.ThemeSpec, builtin string, trueColor bool) (Roles
 			v.Field(i).SetString(value)
 		}
 	}
-	return r, nil, warnings
+	ramp, w := senderRamp(spec.Source, spec.Ramp, r)
+	return r, ramp, append(warnings, w...)
+}
+
+// senderRamp is [senders].ramp as colours, resolved against the theme's
+// finished roles, so a ramp naming cyan gets the theme's cyan. Absent is the
+// default ramp. A ramp naming anything that is not a role, or nothing, is
+// the default ramp with a warning — all of it, because a ramp with an entry
+// dropped is a different length and everybody hashes to a new colour
+// anyway. One entry is legal: one colour for everybody is a taste.
+func senderRamp(source string, names []string, r Roles) ([]lipgloss.Color, []string) {
+	if names == nil {
+		return DefaultSenderRamp(r), nil
+	}
+	if len(names) == 0 {
+		return DefaultSenderRamp(r), []string{fmt.Sprintf(
+			"theme file %s: senders.ramp is empty; using the default ramp", source)}
+	}
+	v := reflect.ValueOf(r)
+	ramp := make([]lipgloss.Color, len(names))
+	for n, name := range names {
+		i, ok := roleKeys[strings.ToLower(name)]
+		if !ok {
+			return DefaultSenderRamp(r), []string{fmt.Sprintf(
+				"theme file %s: senders.ramp names %q, which is not a role; using the default ramp",
+				source, name)}
+		}
+		ramp[n] = lipgloss.Color(v.Field(i).String())
+	}
+	return ramp, nil
 }
 
 // atDepth is the theme's own value for role i at the terminal's colour

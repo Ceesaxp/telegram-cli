@@ -2,6 +2,7 @@ package theme
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -260,12 +261,15 @@ func TestAThemeFileIsDrawnOverItsBase(t *testing.T) {
 		t.Fatalf("the fixture's base is %q, want light", builtin)
 	}
 
-	got, _, warnings := RolesForSpec(spec, builtin, true)
+	got, ramp, warnings := RolesForSpec(spec, builtin, true)
 	if len(warnings) != 0 {
 		t.Errorf("the fixture warned: %q", warnings)
 	}
 	if string(got.Cyan) != "#8ec07c" || string(got.Red) != "#fb4934" {
 		t.Errorf("cyan %q and red %q, want the fixture's #8ec07c and #fb4934", got.Cyan, got.Red)
+	}
+	if !slices.Equal(ramp, []lipgloss.Color{got.Cyan, got.Red}) {
+		t.Errorf("ramp is %q, want the fixture's cyan and red", ramp)
 	}
 	base := LightRoles(true)
 	got.Cyan, got.Red = base.Cyan, base.Red
@@ -340,5 +344,85 @@ func TestQuantiseRefusesWhatTermenvCannotConvert(t *testing.T) {
 		if got, ok := quantise(junk); ok {
 			t.Errorf("quantise(%q) = %q, want a refusal", junk, got)
 		}
+	}
+}
+
+// withRamp is a spec with a [senders].ramp as written.
+func withRamp(s *config.ThemeSpec, ramp ...string) *config.ThemeSpec {
+	s.Ramp = ramp
+	if s.Ramp == nil {
+		s.Ramp = []string{}
+	}
+	return s
+}
+
+// A theme with no [senders] gets the default ramp — of its own roles, so a
+// theme that moves mauve moves the people who were mauve with it.
+func TestNoRampIsTheDefaultRampOfTheThemesRoles(t *testing.T) {
+	got, ramp, warnings := RolesForSpec(spec(map[string]string{"mauve": "#d3869b"}, nil),
+		config.ThemeDark, true)
+	if !slices.Equal(ramp, DefaultSenderRamp(got)) || string(ramp[0]) != "#d3869b" {
+		t.Errorf("ramp is %q, want the default ramp of the theme's roles, mauve first", ramp)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warned: %q", warnings)
+	}
+
+	builtin, ramp, _ := RolesForSpec(nil, config.ThemeLight, false)
+	if !slices.Equal(ramp, DefaultSenderRamp(builtin)) {
+		t.Errorf("with no spec the ramp is %q, want the builtin's default", ramp)
+	}
+}
+
+// A ramp names roles, resolved after [colors], in any case; one entry is
+// a legal ramp.
+func TestARampNamesRoles(t *testing.T) {
+	for _, tt := range []struct {
+		ramp []string
+		want func(Roles) []lipgloss.Color
+	}{
+		{[]string{"green", "Red", "CUR_LINE"}, func(r Roles) []lipgloss.Color {
+			return []lipgloss.Color{r.Green, r.Red, r.CurLine}
+		}},
+		{[]string{"cyan"}, func(r Roles) []lipgloss.Color { return []lipgloss.Color{r.Cyan} }},
+	} {
+		got, ramp, warnings := RolesForSpec(
+			withRamp(spec(map[string]string{"cyan": "#8ec07c"}, nil), tt.ramp...), config.ThemeDark, true)
+		if !slices.Equal(ramp, tt.want(got)) {
+			t.Errorf("ramp %q resolved to %q, want %q", tt.ramp, ramp, tt.want(got))
+		}
+		if len(warnings) != 0 {
+			t.Errorf("ramp %q warned: %q", tt.ramp, warnings)
+		}
+	}
+	_, ramp, _ := RolesForSpec(withRamp(spec(map[string]string{"cyan": "#8ec07c"}, nil), "cyan"),
+		config.ThemeDark, true)
+	if string(ramp[0]) != "#8ec07c" {
+		t.Errorf("the ramp's cyan is %q, want the theme's #8ec07c", ramp[0])
+	}
+}
+
+// A ramp that names something that is not a role, or nothing at all,
+// warns and is the default ramp instead — the whole ramp, since half a
+// ramp is still everybody changing colour.
+func TestABadRampWarnsAndIsTheDefault(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		ramp    []string
+		mention string
+	}{
+		{"an unknown role", []string{"mauve", "pink"}, `"pink"`},
+		{"an empty ramp", []string{}, "empty"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ramp, warnings := RolesForSpec(withRamp(spec(nil, nil), tt.ramp...), config.ThemeDark, true)
+			if !slices.Equal(ramp, DefaultSenderRamp(got)) {
+				t.Errorf("ramp is %q, want the default", ramp)
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0], "themes/test.toml") ||
+				!strings.Contains(warnings[0], "senders.ramp") || !strings.Contains(warnings[0], tt.mention) {
+				t.Errorf("want one warning naming the file, senders.ramp and %s; got %q", tt.mention, warnings)
+			}
+		})
 	}
 }
