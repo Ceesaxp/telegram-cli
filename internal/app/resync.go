@@ -9,7 +9,8 @@ import (
 // connTracker turns the stream of connection states into the one event the
 // thread cares about: coming back. A reconnect is where updates go missing
 // — gotd replays what it can from the sync point, but not what the server
-// declines to replay — so it is where the open chat is worth a second look.
+// declines to replay — so it is where the open chat and the chat list are
+// worth a second look.
 //
 // The first Ready of a session is not a reconnect: the first page is loading
 // then and is the newest page already.
