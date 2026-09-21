@@ -858,6 +858,46 @@ func (m *Model) noteSeen(id int64) tea.Cmd {
 	return m.noteRead(id)
 }
 
+// readOnOpen marks a chat read up to the newest message on its first page.
+// Opening a chat is always deliberate here, so a chat opened at its newest
+// messages has been read. Without this, a chat read in this client stayed
+// unread on the reader's phone until something arrived while it was open.
+//
+// Only the first page, and only when there was no target: an older page is
+// the reader scrolling back, and a chat opened at a search hit, a link or a
+// reply jump has its newest messages below the fold, unseen.
+//
+// A chat already read that far is left alone. Every receipt is an RPC and a
+// pts step, and every pts step here also costs a getDifference. A chat the
+// store does not describe is read anyway, since nothing says it was.
+//
+// The unread divider is not touched. It was placed from the marker as it
+// stood in OpenChatAt, not from the store this receipt moves.
+func (m *Model) readOnOpen(msg historyLoadedMsg) tea.Cmd {
+	if msg.fromID != 0 || m.targetMsgID != 0 {
+		return nil
+	}
+	newest := newestServerID(msg.messages)
+	if entry, ok := m.store.Chats.Get(m.chatID); ok && entry.Chat != nil &&
+		newest <= entry.Chat.LastReadInboxMessageID && entry.UnreadCount == 0 {
+		return nil
+	}
+	return m.noteSeen(newest)
+}
+
+// newestServerID is the highest message ID on a page. A non-positive ID is
+// a local echo's placeholder rather than a message the server knows, and
+// reading up to it would read nothing, so it never wins.
+func newestServerID(msgs []*telegram.Message) int64 {
+	var newest int64
+	for _, msg := range msgs {
+		if msg.ID > newest {
+			newest = msg.ID
+		}
+	}
+	return newest
+}
+
 // MarkReadCmd marks the open chat read up to its newest loaded message,
 // without moving the scroll position — the point of an explicit mark-read is
 // to clear the badge while you keep reading where you are.
@@ -1624,6 +1664,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
+		// Before the hunt below, which clears the target once it is found.
+		read := m.readOnOpen(msg)
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1666,15 +1708,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if len(priority) > 0 {
 			m.metaBusy = true
-			return m, m.fetchSendersCmd(m.gen, m.chatID, priority, work)
+			return m, tea.Batch(read, m.fetchSendersCmd(m.gen, m.chatID, priority, work))
 		}
 		if cmd := m.nextMetaCmd(work); cmd != nil {
 			m.metaBusy = true
-			return m, cmd
+			return m, tea.Batch(read, cmd)
 		}
 		m.metaBusy = false
 		m.settleJump()
-		return m, nil
+		return m, read
 
 	case sendersFetchedMsg:
 		if msg.gen != m.gen || msg.chatID != m.chatID {
