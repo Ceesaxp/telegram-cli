@@ -29,6 +29,11 @@ type ListItem struct {
 	// interprets them.
 	Kind  int
 	Saved bool
+
+	// Mention is whether the item has an unread mention of the reader, for
+	// the chat list's @ chip. Like Kind and Saved it is for callers whose
+	// rows draw it; the widget itself never reads it.
+	Mention bool
 }
 
 // List is a generic scrollable list widget with vim-style navigation.

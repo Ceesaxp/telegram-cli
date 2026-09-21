@@ -18,7 +18,7 @@ import (
 //	col  1      type sigil             (indent)
 //	col  2      space                  (indent)
 //	cols 3..    title                  preview
-//	right       relative time (5)      unread badge, right-aligned
+//	right       relative time (5)      @ chip and unread badge, right-aligned
 //	last        blank                  blank
 //
 // The time sits in a FIXED five-cell field rather than being right-aligned
@@ -77,7 +77,9 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	switch {
 	case selected:
 		titleColour = r.Bright
-	case item.Badge != "" && !item.Muted:
+	// A mention lifts the title even in a muted chat: it is the one thing
+	// muting does not silence, as the @ chip says below.
+	case (item.Badge != "" && !item.Muted) || item.Mention:
 		titleColour = r.Fg
 	}
 
@@ -124,9 +126,25 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 }
 
 // renderTrail is what sits right of the preview on row two: the chips that
-// say the chat is waiting for the reader. The preview gives way to it.
+// say the chat is waiting for the reader, the @ first and then the unread
+// badge, a cell apart. The preview gives way to it.
 func (m Model) renderTrail(item widgets.ListItem) string {
-	return m.renderBadge(item)
+	chips := make([]string, 0, 2)
+	if item.Mention {
+		chips = append(chips, m.renderMention())
+	}
+	if badge := m.renderBadge(item); badge != "" {
+		chips = append(chips, badge)
+	}
+	return strings.Join(chips, " ")
+}
+
+// renderMention draws the @ chip for a chat with an unread mention of the
+// reader. It is always in the unmuted badge's colours: muting a chat
+// silences it, but a mention is the one thing Telegram lets through, so
+// the chip says so even on a row that is otherwise subdued.
+func (m Model) renderMention() string {
+	return m.badgeStyle(false).Render("@")
 }
 
 // renderBadge draws the unread chip.
