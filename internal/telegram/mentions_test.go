@@ -365,8 +365,12 @@ func TestReadAllMentionsAnnouncesTheClear(t *testing.T) {
 			inv := &readAllMentionsInvoker{}
 			c, got := viewClient(t, inv)
 
-			if err := c.ReadAllMentions(chatID); err != nil {
+			done, err := c.ReadAllMentions(chatID)
+			if err != nil {
 				t.Fatalf("ReadAllMentions: %v", err)
+			}
+			if !done {
+				t.Error("ReadAllMentions did not report a clear the server finished as done")
 			}
 
 			if len(inv.asked) != 1 {
@@ -390,8 +394,12 @@ func TestReadAllMentionsRepeatsUntilTheServerIsDone(t *testing.T) {
 	inv := &readAllMentionsInvoker{offsets: []int{40, 10, 0}}
 	c, got := viewClient(t, inv)
 
-	if err := c.ReadAllMentions(basicGroupID); err != nil {
+	done, err := c.ReadAllMentions(basicGroupID)
+	if err != nil {
 		t.Fatalf("ReadAllMentions: %v", err)
+	}
+	if !done {
+		t.Error("ReadAllMentions did not report the walk the server finished as done")
 	}
 
 	if len(inv.asked) != 3 {
@@ -404,7 +412,8 @@ func TestReadAllMentionsRepeatsUntilTheServerIsDone(t *testing.T) {
 
 // A server that never says it is done must not be called in a tight loop
 // until the timeout. The walk stops at the cap, without an error, and
-// without claiming a clear the server never confirmed: the @ stays.
+// without claiming a clear the server never confirmed: the @ stays, and
+// the caller is told the clear is not done.
 func TestReadAllMentionsStopsAtTheCap(t *testing.T) {
 	never := make([]int, 3*maxReadMentionsCalls)
 	for i := range never {
@@ -413,8 +422,12 @@ func TestReadAllMentionsStopsAtTheCap(t *testing.T) {
 	inv := &readAllMentionsInvoker{offsets: never}
 	c, got := viewClient(t, inv)
 
-	if err := c.ReadAllMentions(basicGroupID); err != nil {
+	done, err := c.ReadAllMentions(basicGroupID)
+	if err != nil {
 		t.Fatalf("ReadAllMentions: %v, want a quiet stop", err)
+	}
+	if done {
+		t.Error("ReadAllMentions reported a walk stopped at the cap as done")
 	}
 
 	if len(inv.asked) != maxReadMentionsCalls {
@@ -429,8 +442,8 @@ func TestReadAllMentionsStopsAtTheCap(t *testing.T) {
 func TestReadAllMentionsAnnouncesNothingWhenTheClearFails(t *testing.T) {
 	c, got := viewClient(t, &readAllMentionsInvoker{readErr: errors.New("no connection")})
 
-	if err := c.ReadAllMentions(basicGroupID); err == nil {
-		t.Fatal("ReadAllMentions reported success for a failed clear")
+	if done, err := c.ReadAllMentions(basicGroupID); err == nil || done {
+		t.Fatalf("ReadAllMentions = %v, %v for a failed clear, want not done and an error", done, err)
 	}
 	if len(*got) != 0 {
 		t.Errorf("a failed clear published %#v", *got)

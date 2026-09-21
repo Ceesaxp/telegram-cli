@@ -78,33 +78,40 @@ func TestReadMentionsClearsTheOpenChat(t *testing.T) {
 	}
 }
 
-// The clear is finished when the client says so: it announces a clear
-// the server finished, before the request returns. A request that returns
-// with nothing announced failed, or stopped at the client's cap of
-// repeats, and either way the @ is still there.
-func TestReadMentionsSaysClearedOnlyWhenTheClientAnnouncesIt(t *testing.T) {
+// The notice follows what the request reports: cleared when the server
+// said it had finished, and not otherwise — a refusal, or a walk the
+// client stopped at its cap, both leave the @ there.
+func TestReadMentionsSaysHowTheClearWent(t *testing.T) {
 	for name, tc := range map[string]struct {
-		announced bool
-		want      string
+		cleared bool
+		want    string
 	}{
-		"announced":     {true, "mentions cleared"},
-		"not announced": {false, "could not clear mentions"},
+		"finished":     {true, "mentions cleared"},
+		"not finished": {false, "could not clear mentions"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := groupModel(t, telegram.ChatTypeSupergroup)
 			m, _, _ = m.runCommandLine("read-mentions")
 
-			if tc.announced {
-				updated, _ := m.Update(telegram.ChatMentionsReadMsg{ChatId: testChatID, All: true})
-				m = updated.(Model)
-			}
-			updated, _ := m.Update(chatview.ReadAllMentionsDoneMsg{ChatId: testChatID})
-			m = updated.(Model)
-
-			if row := hintBarRow(t, m); !strings.Contains(row, tc.want) {
+			updated, _ := m.Update(chatview.ReadAllMentionsDoneMsg{ChatId: testChatID, Cleared: tc.cleared})
+			if row := hintBarRow(t, updated.(Model)); !strings.Contains(row, tc.want) {
 				t.Errorf("the hint bar does not say %q:\n%s", tc.want, row)
 			}
 		})
+	}
+}
+
+// Zeroing a chat's count goes out as the message a finished clear
+// announces, and g@ sends it too, as a local correction, when the server
+// lists no mentions at all. That is not :read-mentions finishing, even
+// with one running, and the app must not say it was.
+func TestACountCorrectionIsNotTakenForTheClear(t *testing.T) {
+	m := groupModel(t, telegram.ChatTypeSupergroup)
+	m, _, _ = m.runCommandLine("read-mentions")
+
+	updated, _ := m.Update(telegram.ChatMentionsReadMsg{ChatId: testChatID, All: true})
+	if row := hintBarRow(t, updated.(Model)); strings.Contains(row, "mentions cleared") {
+		t.Errorf("a count correction was reported as the clear finishing:\n%s", row)
 	}
 }
 

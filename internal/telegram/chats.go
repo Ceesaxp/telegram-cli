@@ -890,26 +890,31 @@ const maxReadMentionsCalls = 10
 // maxReadMentionsCalls times, the way [ReadReactions] repeats its own. Only
 // an answer that says it is done is announced; stopping at the cap leaves
 // the count for the next reload to correct.
-func (c *Client) ReadAllMentions(chatID int64) error {
+//
+// done reports whether the server said it had finished. Stopping at the cap
+// is not an error, and it is not done either, so a caller that has to say
+// whether the mentions are gone reads done rather than inferring it from a
+// nil error.
+func (c *Client) ReadAllMentions(chatID int64) (done bool, err error) {
 	ctx, cancel := opCtx()
 	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
-		return fmt.Errorf("read all mentions: %w", err)
+		return false, fmt.Errorf("read all mentions: %w", err)
 	}
 
-	done, err := repeatUntilDone(maxReadMentionsCalls, func() (*tg.MessagesAffectedHistory, error) {
+	done, err = repeatUntilDone(maxReadMentionsCalls, func() (*tg.MessagesAffectedHistory, error) {
 		return c.api.MessagesReadMentions(ctx, &tg.MessagesReadMentionsRequest{
 			Peer: peer,
 		})
 	})
 	if err != nil {
-		return fmt.Errorf("read all mentions: %w", err)
+		return false, fmt.Errorf("read all mentions: %w", err)
 	}
 	if done {
 		c.send(ChatMentionsReadMsg{ChatId: chatID, All: true})
 	}
-	return nil
+	return done, nil
 }
 
 // peerAsInputChannel extracts an InputChannel from an InputPeer.

@@ -119,12 +119,6 @@ type Model struct {
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
 
-	// clearingMentions is the chat a :read-mentions is clearing, 0 when
-	// none. The client announces a finished clear before the request
-	// returns, so the announcement answers "mentions cleared" and a return
-	// that finds this still set answers that it did not finish.
-	clearingMentions int64
-
 	// lastLocalEchoID is the last ID handed to a locally echoed send. It
 	// only ever decrements, so every send in flight owns a distinct
 	// negative ID and two of them cannot collide on a slow link — which is
@@ -1176,17 +1170,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatview.TelegramLinkMsg:
 		cmds = append(cmds, m.followTelegramLink(msg))
 
-	case telegram.ChatMentionsReadMsg:
-		if msg.All && msg.ChatId == m.clearingMentions {
-			m.clearingMentions = 0
-			m.notify("mentions cleared")
-		}
-
 	case chatview.ReadAllMentionsDoneMsg:
-		if msg.ChatId == m.clearingMentions {
-			// Returned with no finish announced: refused, or stopped at
-			// the client's cap. The @ is still there.
-			m.clearingMentions = 0
+		// :read-mentions reports its own outcome. Not cleared is a refusal
+		// or a walk stopped at the client's cap: the @ is still there.
+		if msg.Cleared {
+			m.notify("mentions cleared")
+		} else {
 			m.notify("could not clear mentions")
 		}
 

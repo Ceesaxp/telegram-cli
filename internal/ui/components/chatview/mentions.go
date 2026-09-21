@@ -407,8 +407,8 @@ func (m Model) CanHaveMentions() bool {
 
 // ReadAllMentionsCmd clears every unread mention in the open chat, for
 // :read-mentions. Like MarkReadCmd it does not wait for focus or for the
-// window: it was asked for. When the request returns it reports so with
-// [ReadAllMentionsDoneMsg].
+// window: it was asked for. When the request returns it reports how it
+// went with [ReadAllMentionsDoneMsg].
 //
 // Nil with no chat open, no client to ask, or a chat that cannot have
 // mentions, so a caller can treat nil as nothing sent.
@@ -422,21 +422,16 @@ func (m *Model) ReadAllMentionsCmd() tea.Cmd {
 
 	chatID, tg := m.chatID, m.tg
 	return func() tea.Msg {
-		// The error says nothing the announcement does not: see
-		// ReadAllMentionsDoneMsg.
-		_ = tg.ReadAllMentions(chatID)
-		return ReadAllMentionsDoneMsg{ChatId: chatID}
+		done, err := tg.ReadAllMentions(chatID)
+		return ReadAllMentionsDoneMsg{ChatId: chatID, Cleared: done && err == nil}
 	}
 }
 
-// ReadAllMentionsDoneMsg is :read-mentions' request returning. It does not
-// say whether the clear finished, because the request cannot: it returns
-// no error when it stops at the client's cap of repeats, as well as when
-// the server says it is done. What does say is the client's
-// telegram.ChatMentionsReadMsg with All set, which it announces only for a
-// finished clear, and before the request returns — so a host that has not
-// seen that announcement by the time this arrives knows the clear did not
-// finish.
+// ReadAllMentionsDoneMsg is :read-mentions' request returning. Cleared is
+// whether the server said it had finished: a refusal is not, and neither
+// is a walk the client stopped at its cap of repeats, which returns no
+// error and leaves mentions unread.
 type ReadAllMentionsDoneMsg struct {
-	ChatId int64
+	ChatId  int64
+	Cleared bool
 }

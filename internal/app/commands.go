@@ -81,11 +81,10 @@ func (m Model) commandRegistry() []Command {
 			// Guarded on the chat view's chat rather than the chat list's
 			// active one: that is the chat the clear goes to, and a jump
 			// opens a chat without the list hearing of it.
-			// The notice follows the outcome rather than the asking; see
-			// Model.clearingMentions.
+			// The notice follows the outcome rather than the asking: see
+			// chatview.ReadAllMentionsDoneMsg.
 			Run: func(m Model, _ string) (Model, tea.Cmd, string) {
-				chatID := m.chatView.ChatId()
-				if chatID == 0 {
+				if m.chatView.ChatId() == 0 {
 					return m, nil, "no chat open"
 				}
 				if !m.chatView.CanHaveMentions() {
@@ -95,7 +94,6 @@ func (m Model) commandRegistry() []Command {
 				if cmd == nil {
 					return m, nil, "could not clear mentions"
 				}
-				m.clearingMentions = chatID
 				return m, cmd, "clearing mentions..."
 			},
 		},
