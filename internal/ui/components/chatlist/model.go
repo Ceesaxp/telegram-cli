@@ -656,6 +656,10 @@ func (m *Model) OpenCursor() (int64, bool) {
 //
 // It reports false when nothing in the folder is unread, so the caller can
 // say so instead of leaving a key that looks broken.
+//
+// Unread means the entry's live count, the one the badge is drawn from, not
+// the snapshot in the dialog the chat was loaded from: u visits exactly the
+// chats that show a badge.
 func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
 	n := len(m.list.Items)
 	if n == 0 {
@@ -666,7 +670,7 @@ func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
 		i := (start + step) % n
 		id := itemChatId(m.list.Items[i])
 		entry, found := m.store.Chats.Get(id)
-		if !found || entry.Chat == nil || entry.Chat.UnreadCount <= 0 {
+		if !found || entry.UnreadCount <= 0 {
 			continue
 		}
 		m.list.SelectIndex(i)

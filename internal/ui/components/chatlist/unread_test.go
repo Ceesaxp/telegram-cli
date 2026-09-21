@@ -53,3 +53,40 @@ func TestReadingTheChatClearsTheBadge(t *testing.T) {
 		t.Errorf("badge = %q after reading up to the last message, want none", got)
 	}
 }
+
+// u goes to the chats that show a badge. It read the dialog's snapshot
+// instead, so a chat whose unread messages all arrived live was a badge u
+// could not reach.
+func TestNextUnreadVisitsAChatUnreadOnlySinceTheDialog(t *testing.T) {
+	m := newLoadedModel(t, "Ana", "Bob")
+	m, _ = m.Update(telegram.ChatLastMessageMsg{
+		ChatId:      2,
+		LastMessage: &telegram.Message{ID: 5, ChatID: 2, Date: 1700000000},
+	})
+	if got := badgeOf(t, m, 2); got == "" {
+		t.Fatal("precondition: the live message raised no badge")
+	}
+
+	if got, ok := m.SelectNextUnread(); !ok || got != 2 {
+		t.Errorf("u chose (%d, %v), want the chat with the badge, 2", got, ok)
+	}
+}
+
+// And the other way round: a chat read in this client has no badge, even
+// though the dialog it was loaded from said it had unread messages, and u
+// must not stop there.
+func TestNextUnreadSkipsAChatReadSinceTheDialog(t *testing.T) {
+	m := newLoadedModel(t, "Ana", "Bob")
+	m.store.Chats.Set(&telegram.Chat{
+		ID: 2, Title: "Bob", Type: telegram.ChatTypePrivate, Order: 1,
+		UnreadCount: 3, LastMessage: &telegram.Message{ID: 9, ChatID: 2},
+	})
+	m, _ = m.Update(telegram.ChatMarkedReadMsg{ChatId: 2, MaxID: 9})
+	if got := badgeOf(t, m, 2); got != "" {
+		t.Fatalf("precondition: the read left a badge %q", got)
+	}
+
+	if got, ok := m.SelectNextUnread(); ok {
+		t.Errorf("u chose %d, a chat with no badge", got)
+	}
+}
