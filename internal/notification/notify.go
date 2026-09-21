@@ -58,7 +58,7 @@ func NewNotifier(enabled, showPreview bool, method string) *Notifier {
 		method:      ResolveMethod(method),
 		terminal:    detectTerminal(),
 	}
-	n.system = n.sendSystem
+	n.system = platformNotifier(runtime.GOOS)
 	return n
 }
 
@@ -133,18 +133,21 @@ func (n *Notifier) terminalSequence(title, body string) (string, bool) {
 	}
 }
 
-func (n *Notifier) sendSystem(title, body string) {
-	switch runtime.GOOS {
+// platformNotifier is the platform's own notifier on goos: a function that
+// posts one notification and returns once the process it runs has exited.
+func platformNotifier(goos string) func(title, body string) {
+	switch goos {
 	case "linux":
-		n.sendLinux(title, body)
+		return sendLinux
 	case "darwin":
-		n.sendMacOS(title, body)
+		return sendMacOS
 	default:
 		// Unsupported platform.
+		return func(string, string) {}
 	}
 }
 
-func (n *Notifier) sendLinux(title, body string) {
+func sendLinux(title, body string) {
 	// Try notify-send first.
 	cmd := exec.Command("notify-send",
 		"--app-name=Tele-TUI",
@@ -165,7 +168,7 @@ func (n *Notifier) sendLinux(title, body string) {
 // notification sequence at all, and for a user who prefers the system's own
 // alert. See terminal.go for why a CLI cannot do better here without
 // shipping an app bundle.
-func (n *Notifier) sendMacOS(title, body string) {
+func sendMacOS(title, body string) {
 	script := fmt.Sprintf(
 		`display notification %q with title %q`,
 		body, title,
