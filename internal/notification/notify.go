@@ -222,11 +222,15 @@ func platformNotifier(goos string, lookPath func(string) (string, error), timeou
 
 // sendLinux posts through notify-send. It is installed, so a failure most
 // likely means a desktop with no notification daemon behind it.
+//
+// The title and body are the sender's text, and positional: "--" ends the
+// options first, so a message that starts with a dash is not read as one.
 func sendLinux(run runner, title, body string) error {
 	return run("notify-send",
 		"--app-name=Tele-TUI",
 		"--icon=telegram",
 		"--urgency=normal",
+		"--",
 		title,
 		body,
 	)
@@ -238,12 +242,18 @@ func sendLinux(run runner, title, body string) error {
 // notification sequence at all, and for a user who prefers the system's own
 // alert. See terminal.go for why a CLI cannot do better here without
 // shipping an app bundle.
+//
+// The script is fixed and the text reaches it as arguments, never as part
+// of its source. Quoted into the source with %q, a character Go does not
+// print — the tag characters in a flag emoji — came out as \U000e0067,
+// which AppleScript does not know, and the notification was lost.
 func sendMacOS(run runner, title, body string) error {
-	script := fmt.Sprintf(
-		`display notification %q with title %q`,
-		body, title,
+	return run("osascript",
+		"-e", "on run argv",
+		"-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+		"-e", "end run",
+		"--", body, title,
 	)
-	return run("osascript", "-e", script)
 }
 
 // helperTimeout is how long a notifier or a sound player may run before it
