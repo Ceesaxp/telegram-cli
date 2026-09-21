@@ -36,8 +36,11 @@ every other colour from one of the builtins. A theme is found by name —
 directory of the config file in use and then in `~/.config/tele-tui/`, so a
 second profile under `TELETUI_CONFIG` still finds the shared collection — or
 by path, for a value holding a `/` or ending in `.toml`, resolved like every
-other path in `config.toml`. `dark` and `light` always mean the builtins,
-whatever is in `themes/`.
+other path in `config.toml`. A name is lowercased, so name the file in lower
+case (`theme = "Gruvbox"` reads `themes/gruvbox.toml`), and it may hold only
+letters, digits, `-`, `_` and `.`; a path keeps its case. `dark` and `light`
+always mean the builtins, whatever is in `themes/` — a `themes/dark.toml`
+there draws a warning giving the path that would reach it.
 
 Examples to copy into place are in [`docs/themes/`](themes/), drawn from
 popular vim colour schemes: `tokyonight`, `gruvbox`, `dracula`,
@@ -47,11 +50,14 @@ from. The format — the role names, `[colors256]` for terminals
 without truecolour, the sender-name ramp — is in [Theming](theming.md).
 
 Nothing about a theme stops the client starting. A file that cannot be
-read or parsed falls back to `dark`; an unknown role or a malformed colour
-costs only that entry, and a bad sender ramp is replaced by the default
-one. Either way the reason is printed as a
-`config:` line before the screen is taken, alongside any keybinding
-warnings. The theme is read once, at startup.
+read or parsed falls back to `dark`; a section of the wrong shape (say
+`senders = ["mauve"]` for `[senders]`) costs only that section, an unknown
+role or a malformed colour only that entry, and a bad sender ramp is
+replaced by the default one. `[theme] name` is ignored. Either way the
+reason is printed as a `config:` line before the screen is taken, alongside
+any keybinding warnings — with control characters replaced, since a theme
+file is often somebody else's and must not be able to write escape
+sequences to your terminal. The theme is read once, at startup.
 
 ## Where files go
 

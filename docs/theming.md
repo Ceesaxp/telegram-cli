@@ -50,10 +50,11 @@ user's hex values (see "Colour depth" below).
 theme = "gruvbox"        # builtin name, theme-file stem, or explicit path
 ```
 
-Resolution order (the value is trimmed and lowercased first; an empty
-value means `dark` **without** a warning — the `ResolveComposeEditing`
-precedent is explicit that an empty value is an older config, not a
-mistake):
+Resolution order (the value is trimmed first, and lowercased unless rule 2
+makes it a path — a path keeps its case, because on most filesystems case
+is part of a file's name; an empty value means `dark` **without** a
+warning — the `ResolveComposeEditing` precedent is explicit that an empty
+value is an older config, not a mistake):
 
 1. `"dark"` or `"light"` → the compiled-in palette. Unchanged behaviour.
 2. A value containing a path separator or ending in `.toml` → treated as a
@@ -62,13 +63,23 @@ mistake):
    directory — a second relative-path convention in the same file is a trap
    for anyone reading it top to bottom. "Next to my config" is what rule 3
    is for.
-3. Anything else → `themes/<name>.toml`, searched in two directories in
+3. A plain name → `themes/<name>.toml`, searched in two directories in
    order: the directory of the loaded config file, then the default config
    directory (`$XDG_CONFIG_HOME/tele-tui`). The second entry makes a shared
    theme collection the default for multi-profile users
    (`TELETUI_CONFIG=~/work.toml` would otherwise put the themes dir at
    `~/themes/`). So `theme = "gruvbox"` normally reads
-   `~/.config/tele-tui/themes/gruvbox.toml`.
+   `~/.config/tele-tui/themes/gruvbox.toml`. The name is lowercased, so on
+   a case-sensitive filesystem the file must be named in lower case:
+   `theme = "Gruvbox"` reads `themes/gruvbox.toml`, never `Gruvbox.toml`.
+
+   A plain name is a whitelist, because it is spliced into a path: letters
+   (any script), digits, `-`, `_` and `.`, not starting with `.`. Anything
+   else that is not path-shaped — `..`, `~`, a space, a `:` — is not a
+   theme name: it is never searched for, so nothing outside `themes/` is
+   reachable through one, and it warns (`ui.theme ".." is not a theme name
+   — a name is letters, digits, "-", "_" and ".", and a file is named by a
+   path or a .toml suffix`) and falls back to `dark`.
 4. Not found / unreadable / invalid → fall back to `dark` and emit a
    `StartupWarnings` entry naming the file and the reason. **This replaces
    today's silent-typo-means-dark behaviour for builtins too** (which is
@@ -102,7 +113,8 @@ failures degrade". A theme defining no colours draws one warning.)
 # ~/.config/tele-tui/themes/gruvbox.toml
 
 [theme]
-name    = "gruvbox"        # optional; display only. Defaults to file stem.
+name    = "gruvbox"        # optional, and ignored: nothing reads it. A label
+                           # for whoever reads the file.
 inherit = "dark"           # "dark" or "light" (only builtins may be
                            # inherited; no theme-file chains). Default "dark".
 
@@ -152,25 +164,33 @@ before lookup. The mapping is mechanical (`CurLine` → `cur_line`); a new
 `Roles` field automatically becomes a new legal key. Reference table with
 the roles' meanings: `docs/tui-2.0.md` palette section.
 
-**Decode shape (normative, not an implementation detail):** `[colors]` and
-`[colors256]` decode as `map[string]any`, with values coerced afterwards —
-a string is taken as-is, an integer is stringified, anything else warns
-and inherits. Decoding straight into `map[string]string` would make
-`bg = 235` (an xterm index written the way everyone writes xterm indices)
-a **whole-file** parse failure under go-toml v2, which is exactly the
-degradation promise this spec makes broken at its first contact with a
-user. Duplicate keys and duplicate tables are hard TOML parse errors and
-correctly fall under "fails parsing entirely" below; the warning must
-carry the parser's position, and note the duplicate-key error is not a
-`*toml.DecodeError`, so the message cannot be recovered via `errors.As`.
+**Decode shape (normative, not an implementation detail):** the whole
+document decodes as `map[string]any`, and every section and value is
+checked by hand afterwards. In `[colors]` and `[colors256]` a string is
+taken as-is, an integer is stringified, and anything else warns and
+inherits. Any typed shape hands the checking to go-toml, which fails the
+**whole file** over one mismatch — `bg = 235` (an xterm index written the
+way everyone writes xterm indices) into a `map[string]string`,
+`senders = ["mauve"]` into a struct — and says so in Go's type names,
+which is exactly the degradation promise this spec makes broken at its
+first contact with a user. Section names, and the keys of `[theme]` and
+`[senders]`, fold to lower case like role keys: `[Colors]` is `[colors]`.
+Duplicate keys and duplicate tables are hard TOML parse errors and
+correctly fall under "fails parsing entirely" below; the warning carries
+the parser's position when it has one. A syntax error has a line and
+column; a duplicate key or table is not a `*toml.DecodeError` and carries
+neither — its warning names the key or table instead.
 
 ### Validation
 
 Strict where cheap, forgiving where it matters:
 
-- Unknown key in `[colors]`/`[colors256]` → warning (named in
-  `StartupWarnings`), key ignored. Not fatal: a theme written against a
-  newer build should degrade, not brick the older one.
+- Unknown key in `[colors]`/`[colors256]` → warning, key ignored. Not
+  fatal: a theme written against a newer build should degrade, not brick
+  the older one. Role names are the theme half's to know, so this warning
+  (like every role, value and ramp warning below) comes from
+  `theme.CheckSpec`, which `main` prints in the same loop as
+  `StartupWarnings`.
 - Malformed colour value → warning, that role inherits from the base.
   **Validation is strict and happens at load**, because lipgloss renders
   an invalid colour as *no colour at all* — zero escape bytes, which for
@@ -181,8 +201,19 @@ Strict where cheap, forgiving where it matters:
 - Two keys in one table that fold to the same role (`Cyan` and `cyan`) →
   warning, and the first in sorted order is used — every run, whatever
   order the map decoded in.
+- A section that is not a table (`senders = ["mauve"]`, `colors = 5`,
+  `[[colors]]`) → warning in plain words (`senders should be a table, like
+  [senders]`), that section ignored; the rest of the file still applies.
+- One section written twice in two cases (`[colors]` and `[Colors]`) →
+  warning, and the first in sorted order is used, as for role keys.
+- A top-level key that is not a section → warning, ignored. `inherit`,
+  `name` and `ramp` there say which section they belong under; nothing is
+  guessed into one.
 - Unknown `inherit` value → warning, `dark`.
-- `[senders].ramp` naming an unknown role → warning, default ramp.
+- `[senders].ramp` naming an unknown role → warning, default ramp — the
+  whole ramp, since a shorter one moves everybody's colour anyway. An
+  entry that is not a string (`5`) is passed on as its text and fails the
+  same way.
 - Empty `ramp` → warning, default ramp. (One-element ramps are legal:
   uniform sender colour is a defensible taste.)
 - A theme file that fails TOML parsing entirely → fall back to `dark`,
@@ -190,6 +221,13 @@ Strict where cheap, forgiving where it matters:
 
 All failures degrade toward the builtin dark palette; the app never
 refuses to start over a theme.
+
+Theme files are made to be shared, so what one says is somebody else's
+text, and warnings quote it. Keys are named as TOML writes them — bare when
+they can be, quoted otherwise (`colors."\x1b]0;…"`) — and `main` prints
+every startup warning through a filter that replaces C0 and C1 control
+characters, DEL and non-UTF-8 bytes with U+FFFD, so no file can write an
+escape sequence to the terminal.
 
 ## Colour depth
 
@@ -262,8 +300,9 @@ Phase 2 is scoped honestly; Phase 1 is unaffected.
   `internal/config` resolves and reads (name → builtin | path, stat guard,
   TOML decode into a transport `ThemeSpec{Name, Inherit; Colors,
   Colors256; Ramp}`, warnings accumulated — no lipgloss import);
-  `internal/ui/theme` converts (`RolesFrom(spec, base, trueColor)` — the
-  snake_case reflection map, validation, quantisation, ramp resolution).
+  `internal/ui/theme` converts (`RolesFrom(spec, base, trueColor)`, built
+  as `RolesForSpec` — the snake_case reflection map, validation,
+  quantisation, ramp resolution).
   Only this split keeps `StartupWarnings` a pure function of `*Config`,
   which is its tested contract — and ordering forces it anyway: `main`
   prints warnings *before* `app.New` runs, so a theme resolved inside
@@ -340,10 +379,14 @@ Phase 2 is scoped honestly; Phase 1 is unaffected.
    quietly reintroducing the theme-file chains this spec rules out; and
    the builtins are the guaranteed-good floor of every degradation path
    above — a fallback a user file can redefine is not a fallback. The
-   escape hatch is the path form: `theme = "./themes/light.toml"` reaches
-   the file, because rule 1 matches the two exact strings only. Keep the
-   shadow check cheap: stat for it only when the configured name *is*
-   `dark`/`light`.
+   escape hatch is the path form: a path to `themes/light.toml` reaches the
+   file, because rule 1 matches the two exact strings only. The warning
+   spells out the file's full path to set, since a relative
+   `./themes/light.toml` is the working directory's, like every relative
+   path in `config.toml`. Keep the shadow check cheap: stat for it only
+   when the configured name *is* `dark`/`light`, and warn only about a file
+   the stat found — a `themes` that is itself a file, or cannot be
+   searched, shadows nothing.
 2. Example themes ship in-repo under **`docs/themes/`** — not `contrib/`,
    which implies a place third parties add to and therefore a review queue
    for taste, the exact thing this spec exists to avoid. Two or three
@@ -371,7 +414,7 @@ while TOML fixtures under `testdata/` are never scanned.
   fails. `config.Load` calls it and keeps the result on unexported fields,
   read through `Config.ThemeSpec()` (nil for a builtin) and
   `Config.ThemeBuiltin()` (the base); `StartupWarnings` appends its
-  warnings and stays pure.
+  warnings and stays pure. `[theme].name` is not read.
 - **Theme half** — `internal/ui/theme/load.go`.
   `RolesForSpec(spec, builtin, trueColor) (Roles, []lipgloss.Color,
   []string)` is the palette, the resolved sender ramp and the warnings;
@@ -387,7 +430,8 @@ while TOML fixtures under `testdata/` are never scanned.
   cfg.ThemeBuiltin(), SupportsTrueColor())`, the single dispatch point, and
   hands the ramp to the two components; its signature is unchanged. `main`
   prints `config.StartupWarnings` and `theme.CheckSpec` in one loop, before
-  `app.New`.
+  `app.New`, each line through `printable`, which replaces control
+  characters.
 - **Examples** — nine themes in `docs/themes/`, each mapped from a vim
   colour scheme's own source (named in the file's header) by the same rules:
   Normal bg/fg for `bg`/`fg`, the sidebar, status line, visual and cursor-line
