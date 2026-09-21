@@ -105,9 +105,11 @@ func (m *Model) flushRead() tea.Cmd {
 	}
 }
 
-// noteUnreadReaction records that a reaction to the reader's message has
-// arrived in the open chat, and schedules the flush if one is not already
-// pending. Blurred, it only records: FocusMsg sends the clear.
+// noteUnreadReaction records that the open chat owes a clear of its unread
+// reactions, and schedules the flush if one is not already pending.
+// Blurred, it only records: FocusMsg sends the clear. It is how both an
+// open with reactions to clear and a reaction arriving in the open chat
+// ask for one, so a chat left inside the window is never cleared.
 //
 // A popular message collects reactions in bursts, and the clear covers the
 // whole chat, so N reactions in the window cost one messages.readReactions.

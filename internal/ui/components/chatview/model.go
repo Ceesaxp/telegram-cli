@@ -941,6 +941,12 @@ func isIncoming(msg *telegram.Message) bool { return !msg.IsOutgoing }
 // opened, not what is on screen. A page fetched by scrolling back is not an
 // open. A chat with nothing to clear costs nothing: the store's count,
 // from the dialog and kept live by the chat list, says whether to ask.
+//
+// It waits out the same window as a reaction arriving in the open chat,
+// rather than going with the first page. J and K open every chat they pass
+// through, and a chat left inside the window was not read: the switch
+// drops the owed clear, as it drops the read receipt, instead of spending
+// a request on a heart nobody looked at.
 func (m *Model) readReactionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 	if msg.fromID != 0 {
 		return nil
@@ -948,15 +954,13 @@ func (m *Model) readReactionsOnOpen(msg historyLoadedMsg) tea.Cmd {
 	if entry, ok := m.store.Chats.Get(m.chatID); !ok || entry.UnreadReactionsCount <= 0 {
 		return nil
 	}
-	m.pendingReactionsRead = true
-	return m.flushReactionsRead()
+	return m.noteUnreadReaction()
 }
 
 // flushReactionsRead sends the owed clear, unless the terminal is in the
 // background: a chat opened there has not been looked at, and FocusMsg
-// sends it instead, as it does the read receipt. The open sends at once,
-// since a chat is opened once; reactions arriving in the open chat come
-// here through a coalescing tick instead (noteUnreadReaction).
+// sends it instead, as it does the read receipt. Otherwise it is reached
+// from the window's tick (noteUnreadReaction).
 func (m *Model) flushReactionsRead() tea.Cmd {
 	if !m.pendingReactionsRead || m.blurred {
 		return nil

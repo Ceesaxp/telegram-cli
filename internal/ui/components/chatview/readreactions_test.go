@@ -13,10 +13,11 @@ import (
 // the reader's own messages anywhere in the history, not at the bottom,
 // so this is about opening the chat rather than about what is on screen.
 //
-// The chat view holds a concrete client, so these tests read the request
-// off the command the first page returns. The chats here are read to
-// their newest message, which makes the clear the only command a first
-// page can produce: none of them owes a read receipt or meta work.
+// The chat view holds a concrete client, so these tests read the clear off
+// the state that owes it and the command its flush returns. The chats here
+// are read to their newest message, which makes the clear's window the
+// only command a first page can produce: none of them owes a read receipt
+// or meta work.
 
 // reactedChat is a chat read to its newest message, with reactions
 // unread on the reader's messages.
@@ -27,15 +28,49 @@ func reactedChat(reactions int32) Model {
 	return m
 }
 
-// Focused, the clear goes with the first page. There is no window to
-// coalesce in: a chat is opened once.
+// Focused, the first page owes the clear and opens the window, the way the
+// read receipt waits out its own. A reader who stays past the window gets
+// exactly one clear.
 func TestOpeningAChatClearsItsUnreadReactions(t *testing.T) {
 	m := reactedChat(2)
 	m.OpenChat(testChatID, "nadia")
 
-	_, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	m, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if cmd == nil || !m.reactionsFlushPending || !m.pendingReactionsRead {
+		t.Fatalf("after the first page: cmd=%v, window scheduled=%v, clear owed=%v; want the clear owed and its window scheduled",
+			cmd != nil, m.reactionsFlushPending, m.pendingReactionsRead)
+	}
+
+	m, cmd = m.Update(reactionsFlushMsg{chatID: testChatID})
 	if cmd == nil {
-		t.Fatal("the first page of a chat with unread reactions sent no clear")
+		t.Fatal("the window closed on a reader still in the chat and sent no clear")
+	}
+	if _, cmd = m.Update(reactionsFlushMsg{chatID: testChatID}); cmd != nil {
+		t.Fatal("one open sent a second clear")
+	}
+}
+
+// J and K step through the chat list, and every step is an open. A chat
+// the reader passes through on the way to another has not been read: its
+// messages stay unread, and its reactions must too. Clearing them would
+// cost a request and a pts step for every chat passed, for hearts the
+// reader never looked at.
+func TestPassingThroughAChatLeavesItsReactionsAlone(t *testing.T) {
+	m := reactedChat(2)
+	m.OpenChat(testChatID, "nadia")
+	m, _ = m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if !m.pendingReactionsRead {
+		t.Fatal("the first page sent the clear at once instead of waiting out the window")
+	}
+
+	m.OpenChat(testChatID+1, "elsewhere")
+
+	m, cmd := m.Update(reactionsFlushMsg{chatID: testChatID})
+	if cmd != nil {
+		t.Fatal("the passed-through chat's tick sent its clear after the reader left")
+	}
+	if _, cmd = m.Update(tea.FocusMsg{}); cmd != nil {
+		t.Fatal("the passed-through chat's clear was still owed")
 	}
 }
 
@@ -59,15 +94,20 @@ func TestOpeningAChatAtAnOlderMessageStillClearsItsReactions(t *testing.T) {
 	m := reactedChat(2)
 	m.OpenChatAt(testChatID, "nadia", 2)
 
-	_, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
-	if cmd == nil {
-		t.Fatal("opening at message 2 sent no clear")
+	m, _ = m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if !m.pendingReactionsRead || !m.reactionsFlushPending {
+		t.Fatalf("opening at message 2: clear owed=%v, window scheduled=%v; want both",
+			m.pendingReactionsRead, m.reactionsFlushPending)
+	}
+	if _, cmd := m.Update(reactionsFlushMsg{chatID: testChatID}); cmd == nil {
+		t.Fatal("opening at message 2 sent no clear once the window closed")
 	}
 }
 
 // When the target is not on the first page, the first page goes straight
-// on to fetch the next one back, and the clear has to go with that fetch
-// rather than wait for a first paint the hunt returns early from.
+// on to fetch the next one back, and the clear's window has to open with
+// that fetch rather than wait for a first paint the hunt returns early
+// from. Left out, the tick never comes and the clear stays owed.
 func TestHuntingForAnOlderMessageStillClearsTheReactions(t *testing.T) {
 	m := reactedChat(2)
 	m.OpenChatAt(testChatID, "nadia", 2)
@@ -76,9 +116,9 @@ func TestHuntingForAnOlderMessageStillClearsTheReactions(t *testing.T) {
 	if m.loadStatus != "Searching for message..." {
 		t.Fatalf("the first page did not start the hunt: status %q", m.loadStatus)
 	}
-	// Two commands: the next page back, and the clear.
+	// Two commands: the next page back, and the clear's window.
 	if n := len(runBatch(t, cmd)); n != 2 {
-		t.Fatalf("the hunt's first page returned %d commands, want the fetch and the clear", n)
+		t.Fatalf("the hunt's first page returned %d commands, want the fetch and the clear's window", n)
 	}
 }
 
