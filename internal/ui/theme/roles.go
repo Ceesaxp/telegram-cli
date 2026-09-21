@@ -196,7 +196,13 @@ func RolesFor(name string, trueColor bool) Roles {
 // the rail beside it is two people as far as the reader is concerned.
 func SenderColour(id int64, r Roles) lipgloss.Color {
 	palette := [...]lipgloss.Color{r.Mauve, r.Cyan, r.Blue, r.Amber}
+	return palette[senderHash(id)%uint64(len(palette))]
+}
 
+// senderHash is FNV-1a over the eight bytes of a user ID, low byte first.
+// Every person's colour is this modulo the length of a ramp, so it must
+// never change: a different hash is everybody changing colour at once.
+func senderHash(id int64) uint64 {
 	const (
 		offset64 = uint64(14695981039346656037)
 		prime64  = uint64(1099511628211)
@@ -208,5 +214,5 @@ func SenderColour(id int64, r Roles) lipgloss.Color {
 		h *= prime64
 		u >>= 8
 	}
-	return palette[h%uint64(len(palette))]
+	return h
 }
