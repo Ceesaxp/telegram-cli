@@ -1071,12 +1071,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// than waiting for one of these, because the client demonstrably
 		// works by then and the event timing is not guaranteed.
 		m.topBar.SetConnection(topBarConnState(msg.State))
-		// Back after a drop: the open chat gets a second look, since a
-		// reconnect is exactly where the update stream loses things the
-		// server will not replay. The chat list is left alone — this is
-		// routine on a laptop, and one page request is the right price.
+		// Back after a drop: a reconnect is exactly where the update stream
+		// loses things the server will not replay, so the open chat gets a
+		// second look and the chat list is reloaded. The list used to be
+		// left alone to save the request, but gotd drops a read receipt
+		// that follows a new message in the same difference: a message
+		// read on the phone while the laptop slept came back counted, and
+		// its badge stayed until something else reloaded the dialogs.
+		// Whichever of the reload and the replay lands first, the counts
+		// converge — a dialog is authoritative, and one that arrives early
+		// makes the replayed message not new.
 		if m.conn.observe(msg.State) {
-			return m, m.chatView.CatchUpCmd()
+			return m, tea.Batch(m.chatList.ReloadCmd(), m.chatView.CatchUpCmd())
 		}
 		return m, nil
 

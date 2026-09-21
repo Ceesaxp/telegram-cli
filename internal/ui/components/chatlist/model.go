@@ -383,7 +383,7 @@ func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
 	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
 		return 0, false
 	}
-	m.activeChatId = chatID
+	m.setActiveChat(chatID)
 	return chatID, true
 }
 
@@ -456,7 +456,7 @@ func (m *Model) SelectDelta(delta int) (chatID int64, ok bool) {
 	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
 		return 0, false
 	}
-	m.activeChatId = chatID
+	m.setActiveChat(chatID)
 	return chatID, true
 }
 
@@ -640,7 +640,7 @@ func (m *Model) OpenCursor() (int64, bool) {
 	if chatID == 0 {
 		return 0, false
 	}
-	m.activeChatId = chatID
+	m.setActiveChat(chatID)
 	return chatID, true
 }
 
@@ -656,6 +656,10 @@ func (m *Model) OpenCursor() (int64, bool) {
 //
 // It reports false when nothing in the folder is unread, so the caller can
 // say so instead of leaving a key that looks broken.
+//
+// Unread means the entry's live count, the one the badge is drawn from, not
+// the snapshot in the dialog the chat was loaded from: u visits exactly the
+// chats that show a badge.
 func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
 	n := len(m.list.Items)
 	if n == 0 {
@@ -666,11 +670,11 @@ func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
 		i := (start + step) % n
 		id := itemChatId(m.list.Items[i])
 		entry, found := m.store.Chats.Get(id)
-		if !found || entry.Chat == nil || entry.Chat.UnreadCount <= 0 {
+		if !found || entry.UnreadCount <= 0 {
 			continue
 		}
 		m.list.SelectIndex(i)
-		m.activeChatId = id
+		m.setActiveChat(id)
 		return id, true
 	}
 	return 0, false
@@ -849,6 +853,16 @@ func (m *Model) markDirty() {
 	*m.dirty = true
 }
 
+// setActiveChat records which chat is open. A change redraws the list,
+// because which chats a folder holds depends on it: a folder of unread
+// chats keeps the open one, and lets it go when the reader moves on.
+func (m *Model) setActiveChat(chatID int64) {
+	if chatID != m.activeChatId {
+		m.activeChatId = chatID
+		m.markDirty()
+	}
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -898,7 +912,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.markDirty()
 
 	case telegram.ChatReadInboxMsg:
-		m.store.Chats.UpdateReadInbox(msg.ChatId, msg.UnreadCount)
+		m.store.Chats.UpdateReadInbox(msg.ChatId, msg.LastReadInboxMessageId, msg.UnreadCount)
+		m.markDirty()
+
+	case telegram.ChatMarkedReadMsg:
+		m.store.Chats.MarkReadUpTo(msg.ChatId, msg.MaxMessageId)
 		m.markDirty()
 
 	case telegram.ChatUpdateMsg:
@@ -1004,7 +1022,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if item != nil {
 					var chatID int64
 					fmt.Sscanf(item.ID, "%d", &chatID)
-					m.activeChatId = chatID
+					m.setActiveChat(chatID)
 					cmds = append(cmds, func() tea.Msg {
 						return ChatSelectedMsg{ChatId: chatID}
 					})
@@ -1371,7 +1389,8 @@ func chatTitle(entry *store.ChatEntry) string {
 //     shows every remaining chat;
 //   - ExcludeMuted drops muted chats, ExcludeRead drops read chats — both
 //     only for chats that reached this point (pinned/included chats
-//     already returned true above, matching Telegram's own behavior).
+//     already returned true above, matching Telegram's own behavior);
+//     ExcludeRead also spares the open chat, as Telegram does.
 //
 // folder == nil (should not normally happen; New/normalizeFolders always
 // leave at least the synthesized "All" folder in place) means "no
@@ -1414,7 +1433,10 @@ func (m *Model) chatInFolder(folder *telegram.ChatFolder, entry *store.ChatEntry
 	if folder.ExcludeMuted && chat.Muted {
 		return false
 	}
-	if folder.ExcludeRead && entry.UnreadCount == 0 {
+	// The open chat is exempt, as it is in Telegram: opening it reads it,
+	// and dropping it for that would pull the row out from under the
+	// cursor. It leaves when the reader opens something else.
+	if folder.ExcludeRead && entry.UnreadCount == 0 && chat.ID != m.activeChatId {
 		return false
 	}
 

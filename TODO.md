@@ -1,5 +1,17 @@
 # TODO
 
+## Unread-count wave (2026-09-21) — branch fix/unread-count, stacked on fix/sync-gap
+
+Reported: a new message showed in the chat list without an unread badge. Diagnosis: since the TDLib port nothing counted arrivals — MTProto sends no per-message count — so a badge appeared only on a dialog reload. This client's own reads never cleared the badge locally either.
+
+- [x] `UpdateLastMessage` counts an incoming message newer than the newest seen and above the read mark; receipts move the mark forward only, and a stale one changes nothing
+- [x] `ViewMessages` announces `ChatMarkedReadMsg`; `MarkReadUpTo` clears the badge when the read reaches the newest message seen
+- [x] `u` follows the live count; an unread-only folder keeps the open chat until the reader moves on
+- [x] Reconnect reloads the chat list: gotd v0.161 drops a read receipt that follows a new message in the same getDifference (buffered in the pts box, discarded as outdated), which would leave a phantom badge
+- [ ] Deferred: a deleted newest message can pin a badge after mark-read until the next reload (the chat list ignores `MessageDeletedMsg`)
+- [ ] Deferred: a chat opened from outside the list (search, t.me links, jumps) never updates the chat list's `activeChatId`
+- [ ] Noticed in the TELETUI_DEBUG log: own sends and reads discard the pts they return, so every one leaves a 1–3 pts gap that gotd fills with getDifference
+
 ## Sync-gap wave (2026-09-07) — done, uncommitted branch main
 
 Reported: a reply showed in the chat list but not in the open thread; the sent message kept a single tick. Diagnosis: both panels are fed from one publish call, so the live update never reached the app; gotd v0.161 gates private short updates on a user-hash source the app never provided (empty every run), forcing getDifference per unseen sender, and a "difference too long" drops the message with no callback set. Separately, ChatReadOutboxMsg was emitted and consumed by nobody.

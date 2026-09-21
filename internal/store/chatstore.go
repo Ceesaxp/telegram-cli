@@ -34,6 +34,20 @@ type ChatEntry struct {
 	// they cannot disagree, and so the second one to need it does not
 	// make the call again.
 	MemberCount int32
+
+	// newestMessageID is the highest message ID this entry has been shown,
+	// and it only moves forward. It is not LastMessage.ID: a replay out of
+	// order puts an older message on show, and counting against that made
+	// the newer one, arriving again, look new. See [countsAsUnread].
+	newestMessageID int64
+}
+
+// sawMessage moves the entry's newest message ID forward to msg's, if msg is
+// newer.
+func (e *ChatEntry) sawMessage(msg *telegram.Message) {
+	if msg != nil && msg.ID > e.newestMessageID {
+		e.newestMessageID = msg.ID
+	}
 }
 
 // ChatStore is a thread-safe in-memory cache of chats.
@@ -70,6 +84,7 @@ func (s *ChatStore) Set(chat *telegram.Chat) {
 
 	if chat.LastMessage != nil {
 		entry.LastMessage = chat.LastMessage
+		entry.sawMessage(chat.LastMessage)
 	}
 	if chat.Order != 0 {
 		entry.Order = chat.Order
@@ -178,7 +193,8 @@ func (s *ChatStore) Get(chatID int64) (*ChatEntry, bool) {
 	return entry, ok
 }
 
-// UpdateLastMessage updates a chat's last message and sort order.
+// UpdateLastMessage updates a chat's last message and sort order, and counts
+// the message as unread when it is news — see [countsAsUnread].
 func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,19 +211,83 @@ func (s *ChatStore) UpdateLastMessage(chatID int64, msg *telegram.Message) {
 		s.chats[chatID] = entry
 	}
 
+	if countsAsUnread(entry, msg) {
+		entry.UnreadCount++
+	}
+	entry.sawMessage(msg)
 	entry.LastMessage = msg
 	if msg != nil {
 		entry.Order = int64(msg.Date)
 	}
 }
 
-// UpdateReadInbox updates the unread count for a chat.
-func (s *ChatStore) UpdateReadInbox(chatID int64, unreadCount int32) {
+// countsAsUnread says whether msg adds one to entry's unread count.
+//
+// MTProto does not send a fresh count with every message the way TDLib did,
+// so the client counts arrivals itself. Only a message from the other side
+// that is newer than anything the entry has seen counts: the same message
+// can arrive twice (a getDifference replay), and one at or below the read
+// mark was read before it got here. A local echo has no server ID
+// and is never marked read, so it never counts either.
+func countsAsUnread(entry *ChatEntry, msg *telegram.Message) bool {
+	if msg == nil || msg.IsOutgoing || msg.ID <= 0 {
+		return false
+	}
+	if msg.ID <= entry.newestMessageID {
+		return false
+	}
+	return entry.Chat == nil || msg.ID > entry.Chat.LastReadInboxMessageID
+}
+
+// UpdateReadInbox applies the server's read receipt for a chat: the unread
+// count it reports, which is authoritative, and the read mark maxID, which
+// [countsAsUnread] needs to tell a late message from a new one.
+//
+// A receipt below the mark already held is ignored outright. Telegram's
+// read mark never goes backwards, so such a receipt is stale, and so is its
+// count — taking it brought back a badge a local read had just cleared.
+func (s *ChatStore) UpdateReadInbox(chatID int64, maxID int64, unreadCount int32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if entry, ok := s.chats[chatID]; ok {
-		entry.UnreadCount = unreadCount
+	entry, ok := s.chats[chatID]
+	if !ok {
+		return
+	}
+	if entry.Chat != nil && maxID < entry.Chat.LastReadInboxMessageID {
+		return
+	}
+	entry.UnreadCount = unreadCount
+	entry.advanceReadInbox(maxID)
+}
+
+// MarkReadUpTo records that this client has just read a chat up to maxID.
+//
+// The server does not reliably echo this session's own reads back, so
+// without it the chat the reader is looking at kept its badge. Reading as
+// far as the newest message seen leaves nothing unread; reading less leaves an
+// unknown remainder, so the count is left for the next dialog reload to
+// correct. A no-op for a chat the store does not know.
+func (s *ChatStore) MarkReadUpTo(chatID int64, maxID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.chats[chatID]
+	if !ok {
+		return
+	}
+	entry.advanceReadInbox(maxID)
+	if maxID >= entry.newestMessageID {
+		entry.UnreadCount = 0
+	}
+}
+
+// advanceReadInbox moves the read mark forward to maxID, never back: reads
+// and receipts can arrive out of order, and an older one must not make read
+// messages count again.
+func (e *ChatEntry) advanceReadInbox(maxID int64) {
+	if e.Chat != nil && maxID > e.Chat.LastReadInboxMessageID {
+		e.Chat.LastReadInboxMessageID = maxID
 	}
 }
 
