@@ -840,6 +840,24 @@ func (m *Model) ScrollByLines(n int) {
 // drives ScrollByLines and would otherwise never trigger a lazy load.
 func (m *Model) LazyMediaCmd() tea.Cmd { return m.lazyPhotoCmd() }
 
+// noteSeen records that everything up to id is on screen in the open chat,
+// and is what every automatic read receipt goes through.
+//
+// It only claims the message was read when the terminal actually has
+// focus; otherwise it remembers the newest ID and FocusMsg catches up.
+// Focused, the receipt is accumulated and flushed on a tick: a receipt is
+// cumulative, so a burst costs one call carrying the highest ID rather than
+// one call each (issue #46).
+func (m *Model) noteSeen(id int64) tea.Cmd {
+	if m.blurred {
+		if id > m.pendingReadID {
+			m.pendingReadID = id
+		}
+		return nil
+	}
+	return m.noteRead(id)
+}
+
 // MarkReadCmd marks the open chat read up to its newest loaded message,
 // without moving the scroll position — the point of an explicit mark-read is
 // to clear the badge while you keep reading where you are.
@@ -1104,15 +1122,7 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.resolveUnreadDivider()
 
-	var cmds []tea.Cmd
-	newest := inserted[len(inserted)-1].ID
-	if m.blurred {
-		if newest > m.pendingReadID {
-			m.pendingReadID = newest
-		}
-	} else {
-		cmds = append(cmds, m.noteRead(newest))
-	}
+	cmds := []tea.Cmd{m.noteSeen(inserted[len(inserted)-1].ID)}
 
 	if !m.metaBusy {
 		priority, trailing := senderTargets(inserted, m.store, senderPriorityWindow)
@@ -1697,18 +1707,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			m.cache.invalidate(msg.Message.ID)
 
-			// Only claim the message was read when the terminal actually
-			// has focus; otherwise remember it and catch up on FocusMsg.
-			if m.blurred {
-				if msg.Message.ID > m.pendingReadID {
-					m.pendingReadID = msg.Message.ID
-				}
-				return m, nil
-			}
-			// Focused: accumulate too, and flush on a tick. A receipt is
-			// cumulative, so a burst of arrivals costs one call carrying
-			// the highest ID rather than one call each (issue #46).
-			return m, m.noteRead(msg.Message.ID)
+			return m, m.noteSeen(msg.Message.ID)
 		}
 
 	case telegram.ChatReadOutboxMsg:
