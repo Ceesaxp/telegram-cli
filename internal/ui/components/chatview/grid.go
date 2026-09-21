@@ -239,7 +239,7 @@ func (m Model) senderFor(msg *telegram.Message) (string, lipgloss.Color) {
 	if name == "" {
 		name = "—"
 	}
-	return name, theme.SenderColour(senderIdentity(msg), m.roles)
+	return name, theme.SenderColourFrom(senderIdentity(msg), m.senderRamp, m.roles)
 }
 
 // gridReplyRow is the one body-aligned row a reply gets: the quoted sender

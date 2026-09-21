@@ -426,3 +426,23 @@ func TestNewMessagesRefreshOnlyTheSectionTheyCouldChange(t *testing.T) {
 		t.Fatal("precondition: a DM has sections")
 	}
 }
+
+// A member's name carries the identity colour from the ramp the theme
+// resolved, the one the thread is handed too, so the same person is the same
+// colour in both. Until a ramp is given it is the default one.
+func TestAMembersColourComesFromTheRampItWasGiven(t *testing.T) {
+	m := New(theme.DarkRoles(false))
+	rows := []Row{{Kind: RowMemberOnline, ID: 200}, {Kind: RowMemberOffline, ID: 201}}
+	for _, row := range rows {
+		if got, want := m.textColour(row), theme.SenderColour(row.ID, m.roles); got != want {
+			t.Errorf("member %d is %q with no ramp given, want the default ramp's %q", row.ID, got, want)
+		}
+	}
+
+	m.SetSenderRamp([]lipgloss.Color{m.roles.Red})
+	for _, row := range rows {
+		if got := m.textColour(row); got != m.roles.Red {
+			t.Errorf("member %d is %q, want red, the only colour on the ramp", row.ID, got)
+		}
+	}
+}

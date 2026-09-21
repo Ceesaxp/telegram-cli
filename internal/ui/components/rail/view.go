@@ -8,6 +8,7 @@
 package rail
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -94,6 +95,10 @@ type Model struct {
 	height int
 	roles  theme.Roles
 
+	// senderRamp is the colours members' names are hashed into, as the
+	// theme resolved them. Nil is the default ramp of roles.
+	senderRamp []lipgloss.Color
+
 	store *store.Store
 	tg    *telegram.Client
 
@@ -125,6 +130,11 @@ func (m *Model) SetSize(width, height int) {
 
 // SetRoles supplies the TUI 2.0 semantic palette.
 func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
+// SetSenderRamp sets the colours members' names are drawn from: the ramp
+// the theme resolved, which the thread is handed too. Nil or empty is the
+// palette's default ramp.
+func (m *Model) SetSenderRamp(ramp []lipgloss.Color) { m.senderRamp = slices.Clone(ramp) }
 
 // View renders the rail as height rows, each exactly width cells.
 func (m Model) View() string {
@@ -233,7 +243,7 @@ func (m Model) textColour(row Row) lipgloss.Color {
 	switch row.Kind {
 	case RowMemberOnline, RowMemberOffline:
 		if row.ID != 0 {
-			return theme.SenderColour(row.ID, r)
+			return theme.SenderColourFrom(row.ID, m.senderRamp, r)
 		}
 		return r.Fg
 	case RowPinned:
