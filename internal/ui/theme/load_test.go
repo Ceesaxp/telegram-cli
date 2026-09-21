@@ -1,6 +1,8 @@
 package theme
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -445,6 +447,29 @@ func TestABadRampWarnsAndIsTheDefault(t *testing.T) {
 				t.Errorf("want one warning naming the file, senders.ramp and %s; got %q", tt.mention, warnings)
 			}
 		})
+	}
+}
+
+// The two halves of the loader agree about a ramp entry that is not a role
+// name: a 5 in the file is the default ramp and one warning, the same as a
+// "pink" — not a shorter ramp that moves everybody's colour anyway.
+func TestANonStringRampEntryIsTheDefaultRampThroughBothHalves(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.toml")
+	body := "[colors]\nmauve = \"#d3869b\"\n\n[senders]\nramp = [\"mauve\", 5, \"cyan\"]\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, builtin, warnings := config.LoadTheme(path, "", "")
+	if s == nil {
+		t.Fatalf("did not load: %q", warnings)
+	}
+	got, ramp, w := RolesForSpec(s, builtin, true)
+	warnings = append(warnings, w...)
+	if !slices.Equal(ramp, DefaultSenderRamp(got)) {
+		t.Errorf("ramp is %q, want the default %q", ramp, DefaultSenderRamp(got))
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "senders.ramp") || !strings.Contains(warnings[0], `"5"`) {
+		t.Errorf("warnings = %q, want one, naming senders.ramp and the 5", warnings)
 	}
 }
 

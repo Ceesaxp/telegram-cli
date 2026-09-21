@@ -430,8 +430,10 @@ func coerceColors(source, table string, raw map[string]any) (map[string]string, 
 }
 
 // coerceRamp is [senders].ramp as a list of strings, nil when absent. An
-// entry that is not a string cannot name a role, so it is dropped with a
-// warning; whether the strings that remain ARE roles is the converter's call.
+// entry that is not a string is passed on as its text: whether an entry
+// names a role is the converter's call, and it answers a bad one with the
+// default ramp, whole. Dropping the entry here would make the same mistake
+// a shorter ramp instead — everybody's colour moves either way.
 func coerceRamp(source string, v any) ([]string, []string) {
 	if v == nil {
 		return nil, nil
@@ -442,19 +444,11 @@ func coerceRamp(source string, v any) ([]string, []string) {
 			"theme file %s: senders.ramp is %s, not a list of role names; ignored",
 			source, tomlKind(v))}
 	}
-	out := make([]string, 0, len(list))
-	var warnings []string
+	out := make([]string, len(list))
 	for i, entry := range list {
-		s, ok := entry.(string)
-		if !ok {
-			warnings = append(warnings, fmt.Sprintf(
-				"theme file %s: senders.ramp entry %d is %s, not a role name; dropped",
-				source, i+1, tomlKind(entry)))
-			continue
-		}
-		out = append(out, s)
+		out[i] = fmt.Sprint(entry)
 	}
-	return out, warnings
+	return out, nil
 }
 
 // tomlKind names a decoded TOML value the way a theme author would.

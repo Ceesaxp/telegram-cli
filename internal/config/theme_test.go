@@ -667,19 +667,22 @@ func TestReadThemeFileWarnsOnAnUnknownInherit(t *testing.T) {
 	}
 }
 
-// TestReadThemeFileDropsANonStringRampEntry: the ramp names roles, so an
-// entry that is not a string cannot be one. It goes, the rest stay.
-func TestReadThemeFileDropsANonStringRampEntry(t *testing.T) {
-	path := writeTheme(t, "[senders]\nramp = [\"mauve\", 5, \"cyan\"]\n")
+// TestReadThemeFilePassesANonStringRampEntryOnAsText: whether an entry
+// names a role is the converter's call, and its answer for one that does
+// not is the default ramp, whole. Dropping a 5 here instead would hand it a
+// shorter ramp — which moves everybody's colour just the same, with a
+// different warning from a "pink" for the same mistake.
+func TestReadThemeFilePassesANonStringRampEntryOnAsText(t *testing.T) {
+	path := writeTheme(t, "[senders]\nramp = [\"mauve\", 5, \"cyan\", true]\n")
 	got, warnings := readThemeFile(path)
 	if got == nil {
 		t.Fatalf("readThemeFile returned no spec; warnings %q", warnings)
 	}
-	if want := []string{"mauve", "cyan"}; !reflect.DeepEqual(got.Ramp, want) {
+	if want := []string{"mauve", "5", "cyan", "true"}; !reflect.DeepEqual(got.Ramp, want) {
 		t.Errorf("Ramp = %q, want %q", got.Ramp, want)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], path) || !strings.Contains(warnings[0], "senders.ramp") {
-		t.Errorf("warnings = %q, want one naming the file and senders.ramp", warnings)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none: the converter says what is wrong", warnings)
 	}
 }
 
