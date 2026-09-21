@@ -301,6 +301,11 @@ type Model struct {
 	pendingRefetch      map[int64]struct{}
 	readFlushPending    bool
 	refetchFlushPending bool
+	// pendingReactionsRead is a clear of the open chat's unread reactions
+	// that is owed but not sent: the chat was opened while blurred, and
+	// FocusMsg sends it. It belongs to the open chat, so opening another
+	// drops it.
+	pendingReactionsRead bool
 
 	// In-chat search (ctrl+f). searchActive means the input line under
 	// the header owns every keypress; searchHits are the message IDs of
@@ -922,6 +927,46 @@ func newestServerID(msgs []*telegram.Message, keep func(*telegram.Message) bool)
 func anyMessage(*telegram.Message) bool     { return true }
 func isIncoming(msg *telegram.Message) bool { return !msg.IsOutgoing }
 
+// readReactionsOnOpen clears the chat's unread reactions when its first
+// page lands: the heart the phone shows when somebody reacted to one of the
+// reader's messages. Without it the heart stayed however long the reader
+// spent in the chat here.
+//
+// Unlike the read receipt it goes for every open, including one at an
+// older message. The reactions are on the reader's own messages anywhere in
+// the history, not at the bottom, so what counts is that the chat was
+// opened, not what is on screen. A page fetched by scrolling back is not an
+// open. A chat with nothing to clear costs nothing: the store's count,
+// from the dialog and kept live by the chat list, says whether to ask.
+func (m *Model) readReactionsOnOpen(msg historyLoadedMsg) tea.Cmd {
+	if msg.fromID != 0 {
+		return nil
+	}
+	if entry, ok := m.store.Chats.Get(m.chatID); !ok || entry.UnreadReactionsCount <= 0 {
+		return nil
+	}
+	m.pendingReactionsRead = true
+	return m.flushReactionsRead()
+}
+
+// flushReactionsRead sends the owed clear, unless the terminal is in the
+// background: a chat opened there has not been looked at, and FocusMsg
+// sends it instead, as it does the read receipt. There is nothing to
+// coalesce, since a chat is opened once.
+func (m *Model) flushReactionsRead() tea.Cmd {
+	if !m.pendingReactionsRead || m.blurred {
+		return nil
+	}
+	m.pendingReactionsRead = false
+	chatID, tg := m.chatID, m.tg
+	return func() tea.Msg {
+		// Dropped, as the background receipt's error is: a clear that
+		// failed leaves the count standing, and the next open asks again.
+		_ = tg.ReadReactions(chatID)
+		return nil
+	}
+}
+
 // MarkReadCmd marks the open chat read up to its newest loaded message,
 // without moving the scroll position — the point of an explicit mark-read is
 // to clear the badge while you keep reading where you are.
@@ -991,6 +1036,7 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.pendingJumpID = 0
 	m.pendingMeta = nil
 	m.pendingReadID = 0
+	m.pendingReactionsRead = false
 	m.metaBusy = false
 	m.typing = nil
 	m.stopTypingAnim()
@@ -1688,8 +1734,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
-		// Before the hunt below, which clears the target once it is found.
-		onOpen := m.readOnOpen(msg)
+		// What opening the chat owes. Worked out before the hunt below,
+		// which clears the target once it is found, and handed on by every
+		// return from here, the hunt's own included.
+		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg))
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1706,7 +1754,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.targetPages++
 				m.loadStatus = "Searching for message..."
 				if oldest := m.store.Messages.OldestMessageId(m.chatID); oldest != 0 {
-					return m, m.loadHistoryCmd(m.gen, m.chatID, oldest)
+					return m, tea.Batch(onOpen, m.loadHistoryCmd(m.gen, m.chatID, oldest))
 				}
 				fallthrough
 			default:
@@ -1823,7 +1871,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		m.blurred = false
-		return m, m.catchUpRead()
+		return m, tea.Batch(m.catchUpRead(), m.flushReactionsRead())
 
 	case tea.BlurMsg:
 		m.blurred = true

@@ -62,9 +62,16 @@ func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 	// Route them through the same refetch an edit takes: the tallies come
 	// back attached to the message they belong to, so nothing here has to
 	// merge a partial update into a message it cannot see.
+	//
+	// A reaction to the reader's own message also raises the chat's unread
+	// reactions, the heart on the phone, until something reads it. The
+	// update flags each recent reaction the reader has not seen.
 	d.OnMessageReactions(func(ctx context.Context, e tg.Entities, u *tg.UpdateMessageReactions) error {
 		if edited, ok := messageEdited(u.Peer, u.MsgID); ok {
 			c.send(edited)
+		}
+		if hasUnreadReaction(u.Reactions) {
+			c.send(ChatUnreadReactionsMsg{ChatId: chatIDFromPeer(u.Peer)})
 		}
 		return nil
 	})
@@ -214,6 +221,18 @@ func messageEdited(peer tg.PeerClass, msgID int) (MessageEditedMsg, bool) {
 		return MessageEditedMsg{}, false
 	}
 	return MessageEditedMsg{ChatId: chatID, MessageId: int64(msgID)}, true
+}
+
+// hasUnreadReaction says whether any of a message's recent reactions is
+// one the reader has not seen. Only reactions to the reader's own messages
+// are ever flagged.
+func hasUnreadReaction(r tg.MessageReactions) bool {
+	for _, p := range r.RecentReactions {
+		if p.Unread {
+			return true
+		}
+	}
+	return false
 }
 
 func intsToInt64s(ids []int) []int64 {

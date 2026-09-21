@@ -335,6 +335,7 @@ func (c *Client) chatsFromDialogParts(dialogs []tg.DialogClass, messages []tg.Me
 		}
 		chat.Pinned = d.Pinned
 		chat.UnreadCount = int32(d.UnreadCount)
+		chat.UnreadReactionsCount = int32(d.UnreadReactionsCount)
 		chat.LastReadInboxMessageID = int64(d.ReadInboxMaxID)
 		chat.LastReadOutboxMessageID = int64(d.ReadOutboxMaxID)
 		chat.Muted = mutedFromNotifySettings(d.NotifySettings, now)
@@ -734,6 +735,37 @@ func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 		return fmt.Errorf("read history: %w", err)
 	}
 	c.send(ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: maxID})
+	return nil
+}
+
+// ReadReactions clears a chat's unread reactions, and on success announces
+// it with [ChatReactionsReadMsg], for the reason [ViewMessages] announces a
+// read. It is the whole chat, not a thread: no top message is given.
+//
+// The server works through a long history in batches. A positive offset in
+// its answer means it stopped partway and the same call has to be made
+// again. The offset shrinks as it goes, and a single timeout covers the
+// whole walk, so a server that never finished could not keep it going.
+func (c *Client) ReadReactions(chatID int64) error {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("read reactions: %w", err)
+	}
+
+	for {
+		affected, err := c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
+			Peer: peer,
+		})
+		if err != nil {
+			return fmt.Errorf("read reactions: %w", err)
+		}
+		if affected.Offset <= 0 {
+			break
+		}
+	}
+	c.send(ChatReactionsReadMsg{ChatId: chatID})
 	return nil
 }
 

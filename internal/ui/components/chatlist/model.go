@@ -919,6 +919,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.store.Chats.MarkReadUpTo(msg.ChatId, msg.MaxMessageId)
 		m.markDirty()
 
+	case telegram.ChatUnreadReactionsMsg:
+		m.store.Chats.AddUnreadReaction(msg.ChatId)
+		m.markDirty()
+
+	case telegram.ChatReactionsReadMsg:
+		m.store.Chats.MarkReactionsRead(msg.ChatId)
+		m.markDirty()
+
 	case telegram.ChatUpdateMsg:
 		if msg.Chat != nil {
 			// A peer view is partial: merging keeps the unread count, the

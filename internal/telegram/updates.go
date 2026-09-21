@@ -65,6 +65,23 @@ type ChatMarkedReadMsg struct {
 	MaxMessageId int64
 }
 
+// ChatUnreadReactionsMsg is sent when somebody reacts to one of the
+// reader's messages and the reaction is flagged unread: the chat now has a
+// reaction to clear. It carries no count. The update says a reaction is
+// unread, not how many of the chat's messages have one, so the most it can
+// say is "at least one".
+type ChatUnreadReactionsMsg struct {
+	ChatId int64
+}
+
+// ChatReactionsReadMsg is sent when this client has cleared a chat's
+// unread reactions. It is the reactions' counterpart of
+// [ChatMarkedReadMsg], sent for the same reason: the chat list should not
+// have to wait on the server to say what this client just did.
+type ChatReactionsReadMsg struct {
+	ChatId int64
+}
+
 // ChatReadOutboxMsg is sent when the read outbox state changes.
 type ChatReadOutboxMsg struct {
 	ChatId                  int64
