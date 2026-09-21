@@ -858,6 +858,22 @@ func (m *Model) noteSeen(id int64) tea.Cmd {
 	return m.noteRead(id)
 }
 
+// catchUpRead sends the receipt noteSeen held while the terminal was in
+// the background. It goes at once rather than on a tick: whatever piled up
+// is already one receipt, carrying the highest ID.
+func (m *Model) catchUpRead() tea.Cmd {
+	if m.chatID == 0 || m.pendingReadID == 0 {
+		return nil
+	}
+	chatID, msgID := m.chatID, m.pendingReadID
+	m.pendingReadID = 0
+	tg := m.tg
+	return func() tea.Msg {
+		tg.ViewMessages(chatID, []int64{msgID})
+		return nil
+	}
+}
+
 // readOnOpen marks a chat read up to the newest message on its first page.
 // Opening a chat is always deliberate here, so a chat opened at its newest
 // messages has been read. Without this, a chat read in this client stayed
@@ -1673,7 +1689,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
 		// Before the hunt below, which clears the target once it is found.
-		read := m.readOnOpen(msg)
+		onOpen := m.readOnOpen(msg)
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1716,15 +1732,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if len(priority) > 0 {
 			m.metaBusy = true
-			return m, tea.Batch(read, m.fetchSendersCmd(m.gen, m.chatID, priority, work))
+			return m, tea.Batch(onOpen, m.fetchSendersCmd(m.gen, m.chatID, priority, work))
 		}
 		if cmd := m.nextMetaCmd(work); cmd != nil {
 			m.metaBusy = true
-			return m, tea.Batch(read, cmd)
+			return m, tea.Batch(onOpen, cmd)
 		}
 		m.metaBusy = false
 		m.settleJump()
-		return m, read
+		return m, onOpen
 
 	case sendersFetchedMsg:
 		if msg.gen != m.gen || msg.chatID != m.chatID {
@@ -1807,15 +1823,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		m.blurred = false
-		if m.chatID != 0 && m.pendingReadID != 0 {
-			chatID, msgID := m.chatID, m.pendingReadID
-			m.pendingReadID = 0
-			tg := m.tg
-			return m, func() tea.Msg {
-				tg.ViewMessages(chatID, []int64{msgID})
-				return nil
-			}
-		}
+		return m, m.catchUpRead()
 
 	case tea.BlurMsg:
 		m.blurred = true
