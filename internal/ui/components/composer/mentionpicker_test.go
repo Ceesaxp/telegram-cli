@@ -429,6 +429,8 @@ func TestAfterEscOnlyANewAtReopens(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 var (
+	errFlood = errors.New("FLOOD_WAIT_5")
+
 	nadiaUser = user(1, "nadia", "Nadia", "Petrova")
 	nadiaS    = user(2, "", "Nadia", "S.")
 	olegUser  = user(3, "", "Oleg", "")
@@ -580,7 +582,7 @@ func TestAFailedSearchKeepsTheLocalCandidates(t *testing.T) {
 	m, q := openAt(t, m, "@na")
 
 	res := answer(q)
-	res.Err = errors.New("FLOOD_WAIT_5")
+	res.Err = errFlood
 	m, _ = m.Update(res)
 
 	if !slices.Equal(shown(m), []int64{1}) {
