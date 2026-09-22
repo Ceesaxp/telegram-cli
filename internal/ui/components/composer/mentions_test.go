@@ -27,68 +27,72 @@ func shifted(s MentionSpan, by int) MentionSpan {
 func TestAdjustMentions(t *testing.T) {
 	oleg := MentionSpan{Start: 10, End: 14, UserID: 8, Label: "Oleg"}
 
+	// before and after are the cursor on either side of the edit: where it
+	// would naturally be for the key that made it. An insertion starts at
+	// before and ends with the cursor after the new text; a deletion
+	// backwards ends with the cursor at its start.
 	cases := []struct {
-		name  string
-		spans []MentionSpan
-		old   string
-		new   string
-		want  []MentionSpan
+		name          string
+		spans         []MentionSpan
+		old, new      string
+		before, after int
+		want          []MentionSpan
 	}{
 		// Insertions.
 		{"insert before shifts", []MentionSpan{nadia},
-			"hi Nadia ok", "oh, hi Nadia ok", []MentionSpan{shifted(nadia, 4)}},
+			"hi Nadia ok", "oh, hi Nadia ok", 0, 4, []MentionSpan{shifted(nadia, 4)}},
 		{"insert exactly at the start shifts", []MentionSpan{nadia},
-			"hi Nadia ok", "hi XNadia ok", []MentionSpan{shifted(nadia, 1)}},
+			"hi Nadia ok", "hi XNadia ok", 3, 4, []MentionSpan{shifted(nadia, 1)}},
 		{"insert inside drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hi NaXdia ok", nil},
+			"hi Nadia ok", "hi NaXdia ok", 5, 6, nil},
 		{"insert exactly at the end leaves it", []MentionSpan{nadia},
-			"hi Nadia ok", "hi NadiaX ok", []MentionSpan{nadia}},
+			"hi Nadia ok", "hi NadiaX ok", 8, 9, []MentionSpan{nadia}},
 		{"insert after leaves it", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadia okay", []MentionSpan{nadia}},
+			"hi Nadia ok", "hi Nadia okay", 11, 13, []MentionSpan{nadia}},
 
 		// Deletions.
 		{"delete before shifts", []MentionSpan{nadia},
-			"hi Nadia ok", "Nadia ok", []MentionSpan{shifted(nadia, -3)}},
+			"hi Nadia ok", "Nadia ok", 3, 0, []MentionSpan{shifted(nadia, -3)}},
 		{"delete overlapping the start drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hiadia ok", nil},
+			"hi Nadia ok", "hiadia ok", 4, 2, nil},
 		{"delete overlapping the end drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadiok", nil},
+			"hi Nadia ok", "hi Nadiok", 9, 7, nil},
 		{"delete covering drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hiok", nil},
+			"hi Nadia ok", "hiok", 9, 2, nil},
 		{"delete inside drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nia ok", nil},
+			"hi Nadia ok", "hi Nia ok", 6, 4, nil},
 		{"delete ending exactly at the start shifts", []MentionSpan{nadia},
-			"hi Nadia ok", "hiNadia ok", []MentionSpan{shifted(nadia, -1)}},
+			"hi Nadia ok", "hiNadia ok", 3, 2, []MentionSpan{shifted(nadia, -1)}},
 		{"delete starting exactly at the end leaves it", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadiaok", []MentionSpan{nadia}},
+			"hi Nadia ok", "hi Nadiaok", 9, 8, []MentionSpan{nadia}},
 		{"delete after leaves it", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadia", []MentionSpan{nadia}},
+			"hi Nadia ok", "hi Nadia", 11, 8, []MentionSpan{nadia}},
 
 		// Replacements.
 		{"replace before shifts by the length change", []MentionSpan{nadia},
-			"hi Nadia ok", "hello Nadia ok", []MentionSpan{shifted(nadia, 3)}},
+			"hi Nadia ok", "hello Nadia ok", 2, 5, []MentionSpan{shifted(nadia, 3)}},
 		{"replace inside drops", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadya ok", nil},
+			"hi Nadia ok", "hi Nadya ok", 7, 7, nil},
 		{"replace after leaves it", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadia, bye", []MentionSpan{nadia}},
+			"hi Nadia ok", "hi Nadia, bye", 11, 13, []MentionSpan{nadia}},
 
 		// Offsets are runes, not bytes and not graphemes: the family emoji
 		// is five runes joined by ZWJ, and the span moves by all five
 		// plus the space.
 		{"multi-rune emoji before shifts by its runes", []MentionSpan{nadia},
-			"hi Nadia ok", "👨‍👩‍👧 hi Nadia ok", []MentionSpan{shifted(nadia, 6)}},
+			"hi Nadia ok", "👨\u200d👩\u200d👧 hi Nadia ok", 0, 6, []MentionSpan{shifted(nadia, 6)}},
 		{"CJK label", []MentionSpan{{Start: 3, End: 6, UserID: 9, Label: "李小龙"}},
-			"你好 李小龙 ok", "嗨，你好 李小龙 ok",
+			"你好 李小龙 ok", "嗨，你好 李小龙 ok", 0, 2,
 			[]MentionSpan{{Start: 5, End: 8, UserID: 9, Label: "李小龙"}}},
 
 		// Several spans are judged one at a time.
 		{"two spans, edit between them", []MentionSpan{
 			{Start: 0, End: 5, UserID: 7, Label: "Nadia"}, oleg},
-			"Nadia and Oleg", "Nadia & Oleg", []MentionSpan{
+			"Nadia and Oleg", "Nadia & Oleg", 9, 7, []MentionSpan{
 				{Start: 0, End: 5, UserID: 7, Label: "Nadia"}, shifted(oleg, -2)}},
 		{"two spans, edit inside the second", []MentionSpan{
 			{Start: 0, End: 5, UserID: 7, Label: "Nadia"}, oleg},
-			"Nadia and Oleg", "Nadia and Olga", []MentionSpan{
+			"Nadia and Oleg", "Nadia and Olga", 14, 14, []MentionSpan{
 				{Start: 0, End: 5, UserID: 7, Label: "Nadia"}}},
 
 		// Adjacent spans share a boundary: an insertion there is at the end
@@ -97,40 +101,41 @@ func TestAdjustMentions(t *testing.T) {
 		{"insert between adjacent spans", []MentionSpan{
 			{Start: 0, End: 5, UserID: 7, Label: "Nadia"},
 			{Start: 5, End: 9, UserID: 8, Label: "Oleg"}},
-			"NadiaOleg", "Nadia, Oleg", []MentionSpan{
+			"NadiaOleg", "Nadia, Oleg", 5, 7, []MentionSpan{
 				{Start: 0, End: 5, UserID: 7, Label: "Nadia"},
 				{Start: 7, End: 11, UserID: 8, Label: "Oleg"}}},
 		{"delete the gap between two spans", []MentionSpan{
 			{Start: 0, End: 5, UserID: 7, Label: "Nadia"},
 			{Start: 6, End: 10, UserID: 8, Label: "Oleg"}},
-			"Nadia Oleg", "NadiaOleg", []MentionSpan{
+			"Nadia Oleg", "NadiaOleg", 6, 5, []MentionSpan{
 				{Start: 0, End: 5, UserID: 7, Label: "Nadia"},
 				{Start: 5, End: 9, UserID: 8, Label: "Oleg"}}},
 
 		// No change at all.
 		{"identical text", []MentionSpan{nadia},
-			"hi Nadia ok", "hi Nadia ok", []MentionSpan{nadia}},
-		{"no spans", nil, "hi", "hello", nil},
+			"hi Nadia ok", "hi Nadia ok", 11, 11, []MentionSpan{nadia}},
+		{"no spans", nil, "hi", "hello", 2, 5, nil},
 
 		// The defensive check: whatever the diff concluded, a span only
 		// survives if it still covers exactly its label.
 		{"a span that no longer covers its label drops", []MentionSpan{
 			{Start: 3, End: 8, UserID: 7, Label: "Nadia"}},
-			"hi Oleg! ok", "hi Oleg! ok", nil},
+			"hi Oleg! ok", "hi Oleg! ok", 11, 11, nil},
 		{"a span past the end of the text drops", []MentionSpan{
 			{Start: 9, End: 14, UserID: 7, Label: "Nadia"}},
-			"hi Nadia", "hi Nadia", nil},
+			"hi Nadia", "hi Nadia", 8, 8, nil},
 		{"an empty span drops", []MentionSpan{
 			{Start: 3, End: 3, UserID: 7, Label: ""}},
-			"hi Nadia", "hi Nadia", nil},
+			"hi Nadia", "hi Nadia", 8, 8, nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := slices.Clone(tc.spans)
-			got := adjustMentions(tc.spans, tc.old, tc.new)
+			got := adjustMentions(tc.spans, tc.old, tc.new, tc.before, tc.after)
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("adjustMentions(%q -> %q)\n got %+v\nwant %+v", tc.old, tc.new, got, tc.want)
+				t.Errorf("adjustMentions(%q -> %q, cursor %d -> %d)\n got %+v\nwant %+v",
+					tc.old, tc.new, tc.before, tc.after, got, tc.want)
 			}
 			if !slices.Equal(tc.spans, in) {
 				t.Errorf("adjustMentions changed its input: %+v, was %+v", tc.spans, in)
@@ -146,7 +151,7 @@ func TestAdjustMentions(t *testing.T) {
 // span goes, rather than sliding onto a rune it never marked.
 func TestAdjustMentionsPrefixAndSuffixDoNotOverlap(t *testing.T) {
 	span := MentionSpan{Start: 2, End: 3, UserID: 7, Label: "a"}
-	if got := adjustMentions([]MentionSpan{span}, "aaa", "aa"); len(got) != 0 {
+	if got := adjustMentions([]MentionSpan{span}, "aaa", "aa", 3, 2); len(got) != 0 {
 		t.Errorf("got %+v, want the span over the deleted rune dropped", got)
 	}
 }

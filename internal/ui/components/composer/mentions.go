@@ -49,7 +49,9 @@ func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
 	m.textarea.Cursor = anchor
 	m.textarea.InsertString(label + " ")
 
-	spans := adjustMentions(m.mentions, before, m.textarea.Value)
+	// The replacement starts at anchor, wherever the cursor was, so anchor
+	// is where the edit happened.
+	spans := adjustMentions(m.mentions, before, m.textarea.Value, anchor, m.textarea.Cursor)
 	if userID != 0 && label != "" {
 		spans = append(spans, MentionSpan{
 			Start:  anchor,
@@ -71,8 +73,20 @@ func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
 // and a mention over words that do not name its user is worse than no
 // mention at all.
 func validMentions(spans []MentionSpan, text string) []MentionSpan {
-	out := adjustMentions(spans, text, text)
+	out := coveringLabels(spans, []rune(text))
 	slices.SortFunc(out, byStart)
+	return out
+}
+
+// coveringLabels returns, as a new slice, the spans that cover exactly their
+// labels in text.
+func coveringLabels(spans []MentionSpan, text []rune) []MentionSpan {
+	var out []MentionSpan
+	for _, span := range spans {
+		if coversLabel(text, span) {
+			out = append(out, span)
+		}
+	}
 	return out
 }
 
@@ -145,7 +159,7 @@ func MentionsIn(ft *telegram.FormattedText) []MentionSpan {
 // covers exactly its label. The diff cannot be wrong about which runes
 // changed, but a span that arrived out of step with the text can — and a
 // mention must never be sent over text that does not name its user.
-func adjustMentions(spans []MentionSpan, oldText, newText string) []MentionSpan {
+func adjustMentions(spans []MentionSpan, oldText, newText string, cursorBefore, cursorAfter int) []MentionSpan {
 	if len(spans) == 0 {
 		return nil
 	}

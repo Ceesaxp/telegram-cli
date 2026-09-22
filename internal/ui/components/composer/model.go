@@ -353,7 +353,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // would be the one that forgot. Comparing the text before and after catches
 // all of them. See adjustMentions.
 func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
-	before := m.textarea.Value
+	before, cursor := m.textarea.Value, m.textarea.Cursor
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
@@ -361,7 +361,7 @@ func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m, cmd = m.editKey(msg)
 	}
-	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value)
+	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, cursor, m.textarea.Cursor)
 	return m, cmd
 }
 
