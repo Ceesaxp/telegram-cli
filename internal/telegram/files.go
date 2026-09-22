@@ -3,6 +3,7 @@ package telegram
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -351,7 +352,13 @@ func (c *Client) download(key string, reregister func() error) (*File, error) {
 			if err := reregister(); err != nil {
 				return nil, fmt.Errorf("download %s: %w", key, err)
 			}
-			snap, ok = c.files.snapshot(key)
+			// The fetch went through and still did not register the key:
+			// the message was deleted (the server answers messageEmpty)
+			// or edited to carry something else. "Unknown file" would
+			// read as a bug in the client.
+			if snap, ok = c.files.snapshot(key); !ok {
+				return nil, fmt.Errorf("download %s: %w", key, errFileNotInMessage)
+			}
 		}
 		if !ok {
 			return nil, fmt.Errorf("unknown file %q", key)
@@ -364,6 +371,10 @@ func (c *Client) download(key string, reregister func() error) (*File, error) {
 	file, _ := v.(*File)
 	return file, nil
 }
+
+// errFileNotInMessage is a download whose message was fetched again and
+// came back without the file.
+var errFileNotInMessage = errors.New("the message no longer carries this file (deleted?)")
 
 // reregisterMessage fetches a message for the side effect of converting
 // it, which registers every file it carries.

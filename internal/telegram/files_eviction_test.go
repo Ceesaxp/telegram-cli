@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -149,16 +150,31 @@ func TestADownloadWhoseEntryIsThereFetchesNoMessage(t *testing.T) {
 }
 
 // A message that no longer carries the file cannot bring it back, and says
-// so rather than downloading something else.
-func TestADownloadTheRefetchCannotRecoverFails(t *testing.T) {
-	srv := &fileServer{messages: []tg.MessageClass{documentMessage(42, 8, 4)}}
-	c := serverClient(t, srv, newFileRegistry())
+// so rather than downloading something else — or than calling it an unknown
+// file, which reads as a bug in the client when the message was deleted.
+func TestADownloadTheRefetchCannotRecoverSaysWhy(t *testing.T) {
+	for name, answer := range map[string]tg.MessageClass{
+		// Deleted on the server: messages.getMessages answers for the ID
+		// with messageEmpty.
+		"the message was deleted": &tg.MessageEmpty{ID: 42},
+		// Edited to carry another file.
+		"the message carries another file": documentMessage(42, 8, 4),
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := &fileServer{messages: []tg.MessageClass{answer}}
+			c := serverClient(t, srv, newFileRegistry())
 
-	if _, err := c.DownloadMessageFile(5, 42, "doc:7"); err == nil {
-		t.Fatal("a file the message no longer carries was downloaded")
-	}
-	if n := srv.transferCount(); n != 0 {
-		t.Errorf("%d transfers started, want none", n)
+			_, err := c.DownloadMessageFile(5, 42, "doc:7")
+			if err == nil {
+				t.Fatal("a file the message no longer carries was downloaded")
+			}
+			if !strings.Contains(err.Error(), "no longer carries this file") {
+				t.Errorf("error = %q, want it to say the message no longer carries the file", err)
+			}
+			if n := srv.transferCount(); n != 0 {
+				t.Errorf("%d transfers started, want none", n)
+			}
+		})
 	}
 }
 
