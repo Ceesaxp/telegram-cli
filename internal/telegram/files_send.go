@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 )
 
@@ -238,6 +239,54 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
 	return msg, dropped, nil
+}
+
+// SendOpenedFileMessage is SendFileMessage for a file that is already open,
+// normally by [OpenAllowedSendFile]: it uploads from f and never opens
+// anything by name, so what is sent is what was checked. f is closed when
+// the send is over, whether or not it succeeded.
+func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
+	msg, _, err := c.SendOpenedFileMessageWithMentions(chatID, f, caption, nil, replyToMessageID, placeholderID)
+	return msg, err
+}
+
+// SendOpenedFileMessageWithMentions is SendOpenedFileMessage for a caption
+// that mentions users without a username, as SendFileMessageWithMentions
+// is for a send by path.
+//
+// The chat shows the file under the base of the name it was opened by,
+// which for [OpenAllowedSendFile] is the path the caller asked for — a
+// link's own name, not its target's.
+func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
+	defer f.Close()
+	ctx, cancel := transferCtx()
+	defer cancel()
+
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	name := filepath.Base(f.Name())
+	inputFile, err := c.uploadOpened(ctx, f, name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: upload %q: %w", name, err)
+	}
+
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, name), caption, mentions, replyToMessageID, placeholderID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	return msg, dropped, nil
+}
+
+// uploadOpened puts f on Telegram's servers as name, reading only from f.
+// The size comes from the descriptor as well, never from a path.
+func (c *Client) uploadOpened(ctx context.Context, f *os.File, name string) (tg.InputFileClass, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return c.newUploader().Upload(ctx, uploader.NewUpload(name, f, info.Size()))
 }
 
 // documentMedia is an uploaded file as a document named for path: its base

@@ -1,14 +1,23 @@
 package telegram
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/gotd/td/bin"
+	"github.com/gotd/td/telegram/peers"
+	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 )
 
 func TestResolveAllowedSendPath(t *testing.T) {
@@ -373,6 +382,178 @@ func TestOpenAllowedSendFileSaysAMissingFileIsMissing(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "outside") {
 		t.Errorf("error = %v, want no talk of outside for a path that is inside", err)
+	}
+}
+
+// uploadInvoker is a sendInvoker that also takes file uploads, keeping the
+// bytes of every part, so a test can see what a send actually read.
+// failUpload makes every part fail instead.
+type uploadInvoker struct {
+	*sendInvoker
+	failUpload bool
+
+	mu       sync.Mutex
+	uploaded bytes.Buffer
+}
+
+func (f *uploadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	req, ok := input.(*tg.UploadSaveFilePartRequest)
+	if !ok {
+		return f.sendInvoker.Invoke(ctx, input, output)
+	}
+	if f.failUpload {
+		return tgerr.New(400, "FILE_PART_INVALID")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// The uploader reuses its part buffer, so what is kept is a copy.
+	f.uploaded.Write(req.Bytes)
+	output.(*tg.BoolBox).Bool = &tg.BoolTrue{}
+	return nil
+}
+
+// bytes is everything uploaded so far.
+func (f *uploadInvoker) bytes() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.uploaded.String()
+}
+
+// uploadClient is mentionClient talking to an uploadInvoker.
+func uploadClient(t *testing.T) (*Client, *uploadInvoker) {
+	t.Helper()
+	c, send := mentionClient(t, false)
+	inv := &uploadInvoker{sendInvoker: send}
+	c.api = tg.NewClient(inv)
+	c.peers = peers.Options{}.Build(c.api)
+	return c, inv
+}
+
+// The race this whole path exists to close, run deterministically: the
+// file is checked and opened, then swapped for a link to a secret outside
+// the root, then sent. Sending by path would read the secret; sending the
+// descriptor reads what was checked.
+func TestSendOpenedFileMessageUploadsTheFileThatWasOpened(t *testing.T) {
+	root, file, secret := sendRoot(t)
+	c, inv := uploadClient(t)
+
+	f, err := OpenAllowedSendFile(file, root)
+	if err != nil {
+		t.Fatalf("OpenAllowedSendFile: %v", err)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, file); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.SendOpenedFileMessage(basicGroupID, f, "", 0, 0); err != nil {
+		t.Fatalf("SendOpenedFileMessage: %v", err)
+	}
+
+	if got := inv.bytes(); got != "the file" {
+		t.Fatalf("uploaded %q, want %q, the file that was opened", got, "the file")
+	}
+	if len(inv.media) != 1 {
+		t.Fatalf("sent %d media, want 1", len(inv.media))
+	}
+}
+
+// The send owns the descriptor it is handed: it is closed once the send is
+// over, and a failed upload is no exception.
+func TestSendOpenedFileMessageClosesTheFile(t *testing.T) {
+	for name, failUpload := range map[string]bool{"after a send": false, "after a failed upload": true} {
+		t.Run(name, func(t *testing.T) {
+			root, file, _ := sendRoot(t)
+			c, inv := uploadClient(t)
+			inv.failUpload = failUpload
+
+			f, err := OpenAllowedSendFile(file, root)
+			if err != nil {
+				t.Fatalf("OpenAllowedSendFile: %v", err)
+			}
+			_, sendErr := c.SendOpenedFileMessage(basicGroupID, f, "", 0, 0)
+			if failed := sendErr != nil; failed != failUpload {
+				t.Fatalf("send error = %v, want failure %v", sendErr, failUpload)
+			}
+
+			if err := f.Close(); !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("closing again = %v, want %v: the send left the file open", err, os.ErrClosed)
+			}
+		})
+	}
+}
+
+// The chat shows the file under the name the caller asked for — through a
+// link, the link's name rather than its target's — and its extension picks
+// the MIME type, as it does for a send by path.
+func TestSendOpenedFileMessageNamesTheFileAsTheCallerDid(t *testing.T) {
+	root, _, _ := sendRoot(t)
+	link := filepath.Join(root, "report.md")
+	if err := os.Symlink("file.txt", link); err != nil {
+		t.Fatal(err)
+	}
+	c, inv := uploadClient(t)
+
+	f, err := OpenAllowedSendFile(link, root)
+	if err != nil {
+		t.Fatalf("OpenAllowedSendFile: %v", err)
+	}
+	if _, err := c.SendOpenedFileMessage(basicGroupID, f, "", 0, 0); err != nil {
+		t.Fatalf("SendOpenedFileMessage: %v", err)
+	}
+
+	if len(inv.media) != 1 {
+		t.Fatalf("sent %d media, want 1", len(inv.media))
+	}
+	doc, ok := inv.media[0].Media.(*tg.InputMediaUploadedDocument)
+	if !ok {
+		t.Fatalf("media = %T, want an uploaded document", inv.media[0].Media)
+	}
+	want := documentMedia(doc.File, "report.md")
+	if doc.MimeType != want.MimeType {
+		t.Errorf("MIME type = %q, want %q", doc.MimeType, want.MimeType)
+	}
+	if !reflect.DeepEqual(doc.Attributes, want.Attributes) {
+		t.Errorf("attributes = %#v, want %#v", doc.Attributes, want.Attributes)
+	}
+	if file, ok := doc.File.(*tg.InputFile); !ok || file.Name != "report.md" {
+		t.Errorf("uploaded file = %#v, want one named %q", doc.File, "report.md")
+	}
+}
+
+// A send from a descriptor carries what a send by path does: the caption,
+// its mentions, and the message it replies to.
+func TestSendOpenedFileMessageCarriesCaptionMentionsAndReply(t *testing.T) {
+	root, file, _ := sendRoot(t)
+	c, inv := uploadClient(t)
+
+	f, err := OpenAllowedSendFile(file, root)
+	if err != nil {
+		t.Fatalf("OpenAllowedSendFile: %v", err)
+	}
+	_, dropped, err := c.SendOpenedFileMessageWithMentions(basicGroupID, f, "hi Nadia",
+		[]MentionSpan{{Offset: 3, Length: 5, UserID: nadia}}, 42, 0)
+	if err != nil {
+		t.Fatalf("SendOpenedFileMessageWithMentions: %v", err)
+	}
+
+	if dropped != 0 {
+		t.Errorf("dropped %d mentions, want none", dropped)
+	}
+	if len(inv.media) != 1 {
+		t.Fatalf("sent %d media, want 1", len(inv.media))
+	}
+	got := inv.media[0]
+	if got.Message != "hi Nadia" {
+		t.Errorf("caption = %q, want %q", got.Message, "hi Nadia")
+	}
+	if want := []tg.MessageEntityClass{mentionOf(3, 5)}; !reflect.DeepEqual(got.Entities, want) {
+		t.Errorf("entities = %s, want %s", describe(got.Entities), describe(want))
+	}
+	if want := (&tg.InputReplyToMessage{ReplyToMsgID: 42}); !reflect.DeepEqual(got.ReplyTo, want) {
+		t.Errorf("reply to = %#v, want %#v", got.ReplyTo, want)
 	}
 }
 
