@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/gotd/td/tg"
@@ -75,15 +76,9 @@ func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*Cha
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup members: %w", err)
 	}
-
-	participants, ok := res.(*tg.ChannelsChannelParticipants)
-	if !ok {
-		return nil, fmt.Errorf("unexpected participants type %T", res)
-	}
-
-	// Seed the peers manager with member users.
-	if err := c.peers.Apply(ctx, participants.Users, nil); err != nil {
-		return nil, fmt.Errorf("apply peers: %w", err)
+	participants, err := c.seededParticipants(ctx, res)
+	if err != nil {
+		return nil, err
 	}
 
 	members := make([]*ChatMember, 0, len(participants.Participants))
@@ -103,15 +98,9 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 	if err != nil {
 		return nil, fmt.Errorf("get basic group full info: %w", err)
 	}
-
-	full, ok := res.FullChat.(*tg.ChatFull)
-	if !ok {
-		return nil, fmt.Errorf("unexpected full chat type %T", res.FullChat)
-	}
-
-	// Seed the peers manager with member users.
-	if err := c.peers.Apply(ctx, res.Users, res.Chats); err != nil {
-		return nil, fmt.Errorf("apply peers: %w", err)
+	full, err := c.seededChatFull(ctx, res)
+	if err != nil {
+		return nil, err
 	}
 
 	info := &BasicGroupFullInfo{}
@@ -140,6 +129,34 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 		}
 	}
 	return info, nil
+}
+
+// seededParticipants reads a channels.getParticipants answer and seeds the
+// peers manager with the users it carries, so every member it names has
+// the access hash that acting on them takes.
+func (c *Client) seededParticipants(ctx context.Context, res tg.ChannelsChannelParticipantsClass) (*tg.ChannelsChannelParticipants, error) {
+	participants, ok := res.(*tg.ChannelsChannelParticipants)
+	if !ok {
+		return nil, fmt.Errorf("unexpected participants type %T", res)
+	}
+	if err := c.peers.Apply(ctx, participants.Users, nil); err != nil {
+		return nil, fmt.Errorf("apply peers: %w", err)
+	}
+	return participants, nil
+}
+
+// seededChatFull reads a messages.getFullChat answer and seeds the peers
+// manager with its users and chats, for the reason [seededParticipants]
+// does.
+func (c *Client) seededChatFull(ctx context.Context, res *tg.MessagesChatFull) (*tg.ChatFull, error) {
+	full, ok := res.FullChat.(*tg.ChatFull)
+	if !ok {
+		return nil, fmt.Errorf("unexpected full chat type %T", res.FullChat)
+	}
+	if err := c.peers.Apply(ctx, res.Users, res.Chats); err != nil {
+		return nil, fmt.Errorf("apply peers: %w", err)
+	}
+	return full, nil
 }
 
 // CreatePrivateChat returns a (synthetic) private chat entry for a user.
