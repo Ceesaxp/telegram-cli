@@ -65,7 +65,7 @@ type Command struct {
 // Keys are the resolved bindings, not hardcoded spellings, so a rebound key
 // shows correctly in the palette.
 func (m Model) commandRegistry() []Command {
-	return append([]Command{
+	return []Command{
 		{
 			Name:        "mark-read",
 			Arg:         ArgNone,
@@ -146,13 +146,8 @@ func (m Model) commandRegistry() []Command {
 				return out.(Model), cmd, ""
 			},
 		},
-	}, testCommands...)
+	}
 }
-
-// testCommands are added to the registry by tests, and are nil otherwise.
-// No shipped command offers argument candidates yet, and the path a chosen
-// value takes from the palette to Run has to be driven by one that does.
-var testCommands []Command
 
 // paletteItems projects the registry into the palette's display type. The
 // projection lives here rather than in the palette so that package stays
