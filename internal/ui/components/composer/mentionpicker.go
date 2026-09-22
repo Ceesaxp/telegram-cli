@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 
@@ -32,8 +33,15 @@ type mentionState struct {
 
 // SetMentionsEnabled says whether a typed @ may open completion here. The
 // host switches it on for basic groups and supergroups.
+//
+// It is a property of the open chat: SetChatId switches it off again, so the
+// host calls this after every switch. Forgetting to leaves a group without
+// completion — never a private chat with it.
 func (m *Model) SetMentionsEnabled(on bool) {
 	m.mentionsEnabled = on
+	if !on {
+		m.closeMention()
+	}
 }
 
 // MentionActive reports whether the picker is open. While it is, the
@@ -47,7 +55,63 @@ func (m *Model) trackMention(msg tea.Msg, before string, cursor int) tea.Cmd {
 	if m.typedMentionTrigger(msg, before, cursor) {
 		return m.openMention(cursor)
 	}
+	if m.mention.active {
+		return m.followMention()
+	}
 	return nil
+}
+
+// followMention re-reads the query from the text and the cursor after an
+// edit or a motion: asks again if it changed, and closes the completion if
+// the cursor has left the token.
+//
+// Every way out comes down to that one test, so none of them needs a rule of
+// its own — a space or a line break typed, a comma, the @ backspaced or
+// killed, the cursor walked or jumped off either end, a paste with a space
+// in it. The draft is left exactly as the key made it: "@ " is an @ and a
+// space.
+func (m *Model) followMention() tea.Cmd {
+	q, ok := m.mentionQuery()
+	if !ok {
+		m.closeMention()
+		return nil
+	}
+	if q == m.mention.query {
+		return nil
+	}
+	return m.queryMention(q)
+}
+
+// mentionEnders end the token being completed: whitespace, what can start
+// one, and what closes a bracket, a quote or a sentence. None of them is in
+// a username, and a name is found by its words without them.
+const mentionEnders = mentionOpeners + `)]}».`
+
+func endsMention(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune(mentionEnders, r)
+}
+
+// mentionQuery returns the query the cursor is completing — the runes from
+// the @ to the cursor — and false once the cursor is no longer in the token:
+// at or before the @, past something that ends the token, or the @ itself
+// gone.
+func (m Model) mentionQuery() (string, bool) {
+	runes := []rune(m.textarea.Value)
+	anchor, cursor := m.mention.anchor, m.textarea.Cursor
+	if anchor >= len(runes) || runes[anchor] != '@' || cursor <= anchor || cursor > len(runes) {
+		return "", false
+	}
+	q := runes[anchor+1 : cursor]
+	if slices.ContainsFunc(q, endsMention) {
+		return "", false
+	}
+	return string(q), true
+}
+
+// closeMention ends the completion, keeping only the generation: an answer
+// still on its way must not match whatever opens next.
+func (m *Model) closeMention() {
+	m.mention = mentionState{gen: m.mention.gen}
 }
 
 // typedMentionTrigger reports whether the edit just made was an @ typed at

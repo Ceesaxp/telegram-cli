@@ -47,6 +47,10 @@ func (m *Model) SetChatId(chatID int64) string {
 	if chatID == m.chatID {
 		return ""
 	}
+	// Completion belongs to the chat it was opened in, and whether it
+	// applies at all is for the host to say about the next one.
+	m.closeMention()
+	m.mentionsEnabled = false
 	m.parkDraft()
 	m.chatID = chatID
 	m.restoreDraft(chatID)

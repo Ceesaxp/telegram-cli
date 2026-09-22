@@ -151,3 +151,201 @@ func TestAPastedAtDoesNotOpen(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The query
+// ---------------------------------------------------------------------------
+
+// Every key that changes the query asks again, under a newer generation, so
+// the host can tell the answer to "na" from the answer to "n".
+func TestTypingAfterTheAtFollowsTheQuery(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi ")
+
+	var gens []uint64
+	for _, r := range "@na" {
+		var msg tea.Msg
+		m, msg = send(t, m, string(r))
+		q, ok := queryIn(msg)
+		if !ok {
+			t.Fatalf("typing %q asked nothing", r)
+		}
+		gens = append(gens, q.Gen)
+		if r == 'a' {
+			want := MentionQueryMsg{ChatID: 42, Anchor: 3, Query: "na", Gen: q.Gen}
+			if q != want {
+				t.Errorf("MentionQueryMsg = %+v, want %+v", q, want)
+			}
+		}
+	}
+	if !(gens[0] < gens[1] && gens[1] < gens[2]) {
+		t.Errorf("generations %v, want each newer than the last", gens)
+	}
+	if got := m.mention.query; got != "na" {
+		t.Errorf("query = %q, want %q", got, "na")
+	}
+}
+
+// Raw terminal sequences for the keys the dismissal cases press.
+const (
+	keyBackspace = "\x7f"
+	keyLeft      = "\x1b[D"
+	keyRight     = "\x1b[C"
+	keyUp        = "\x1b[A"
+	keyDown      = "\x1b[B"
+	keyTab       = "\t"
+	keyEsc       = "\x1b"
+	keyEnter     = "\r"
+	keyCtrlA     = "\x01"
+	keyCtrlJ     = "\n"
+	keyCtrlW     = "\x17"
+)
+
+// Leaving the token closes completion, however it is left, and leaves the
+// draft exactly as the keys made it: nothing is completed on the way out.
+func TestLeavingTheTokenClosesCompletion(t *testing.T) {
+	cases := []struct {
+		name  string
+		typed string   // typed first, a character at a time
+		keys  []string // then these
+		draft string
+	}{
+		{"a space right after the @ keeps the literal @", "hi @", []string{" "}, "hi @ "},
+		{"a space after the query", "hi @na", []string{" "}, "hi @na "},
+		{"a line break", "hi @na", []string{keyCtrlJ}, "hi @na\n"},
+		{"a comma", "hi @na", []string{","}, "hi @na,"},
+		{"a full stop", "hi @na", []string{"."}, "hi @na."},
+		{"a closing bracket", "(@na", []string{")"}, "(@na)"},
+		{"backspacing the @ away", "hi @na", []string{keyBackspace, keyBackspace, keyBackspace}, "hi "},
+		{"killing the word", "hi @na", []string{keyCtrlW}, "hi "},
+		{"the cursor moving left of the @", "hi @na", []string{keyLeft, keyLeft, keyLeft}, "hi @na"},
+		{"the cursor jumping to the line start", "hi @na", []string{keyCtrlA}, "hi @na"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := chars(t, mentionComposer(t), tc.typed)
+			if !m.MentionActive() {
+				t.Fatalf("precondition: typing %q did not open completion", tc.typed)
+			}
+			m = typeSeq(t, m, tc.keys...)
+			if m.MentionActive() {
+				t.Errorf("still open with the draft at %q", m.Draft())
+			}
+			if m.Draft() != tc.draft {
+				t.Errorf("Draft = %q, want %q", m.Draft(), tc.draft)
+			}
+		})
+	}
+}
+
+// The cursor can also leave to the right, when there is text after the
+// token: an @ typed in front of a word, then the cursor walked on past it.
+func TestTheCursorLeavingRightClosesCompletion(t *testing.T) {
+	m := chars(t, mentionComposer(t), " rest")
+	m = typeSeq(t, m, keyCtrlA)
+	m = chars(t, m, "@na")
+	if !m.MentionActive() {
+		t.Fatal("precondition: completion not open")
+	}
+
+	m = typeSeq(t, m, keyRight)
+	if m.MentionActive() {
+		t.Errorf("still open with the cursor past the token in %q", m.Draft())
+	}
+}
+
+// Inside the token the cursor may move, and the query follows it: the
+// query is what lies between the @ and the cursor.
+func TestTheCursorInsideTheTokenNarrowsTheQuery(t *testing.T) {
+	m := chars(t, mentionComposer(t), "@nad")
+	m, msg := send(t, m, keyLeft)
+
+	if !m.MentionActive() {
+		t.Fatal("moving left inside the token closed completion")
+	}
+	if q, ok := queryIn(msg); !ok || q.Query != "na" {
+		t.Errorf("moving left asked %+v, want the query %q", q, "na")
+	}
+}
+
+// Once closed, it stays closed: typing on in the same word is typing, and
+// nothing but another @ opens completion again.
+func TestAClosedTokenDoesNotReopen(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+	m = typeSeq(t, m, keyLeft, keyLeft, keyLeft) // out, to the left
+	m = typeSeq(t, m, keyRight, keyRight, keyRight)
+	m = chars(t, m, "dia")
+	if m.MentionActive() {
+		t.Error("walking back into a closed token reopened it")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Closing from outside
+// ---------------------------------------------------------------------------
+
+// A chat switch closes completion, and coming back brings the draft back
+// without it: the members it was offering were the other chat's.
+func TestAChatSwitchClosesCompletion(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+
+	m.SetChatId(43)
+	if m.MentionActive() {
+		t.Error("completion survived the switch to another chat")
+	}
+	m.SetChatId(42)
+	m.SetMentionsEnabled(true)
+	if m.MentionActive() {
+		t.Error("coming back reopened completion")
+	}
+	if m.Draft() != "hi @na" {
+		t.Errorf("Draft = %q, want the parked draft back", m.Draft())
+	}
+}
+
+// Whether completion applies is a property of the chat, so it does not
+// follow the composer into the next one. The host says so again for each.
+func TestAChatSwitchSwitchesMentionsOff(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetChatId(43)
+	if m, _ = send(t, m, "@"); m.MentionActive() {
+		t.Error("an @ opened completion in a chat the host never enabled it for")
+	}
+}
+
+// Losing focus closes it, and getting focus back does not reopen it.
+func TestLosingFocusClosesCompletion(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+
+	m.SetFocused(false)
+	if m.MentionActive() {
+		t.Error("completion survived losing focus")
+	}
+	m.SetFocused(true)
+	if m.MentionActive() {
+		t.Error("getting focus back reopened completion")
+	}
+}
+
+func TestSwitchingMentionsOffClosesCompletion(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+	m.SetMentionsEnabled(false)
+	if m.MentionActive() {
+		t.Error("completion survived mentions being switched off")
+	}
+}
+
+// Anything that replaces the draft wholesale closes it: the token it was
+// completing is gone with the text.
+func TestReplacingTheDraftClosesCompletion(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+	m.EnterEditMode(9, "@na")
+	if m.MentionActive() {
+		t.Error("completion survived entering edit mode")
+	}
+
+	m = chars(t, mentionComposer(t), "hi @na")
+	m, _ = m.Update(editorFinishedMsg{text: "hi @na", ok: true})
+	if m.MentionActive() {
+		t.Error("completion survived the external editor")
+	}
+}

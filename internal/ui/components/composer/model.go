@@ -116,7 +116,8 @@ type Model struct {
 
 	// mentionsEnabled is whether a typed @ may open completion, set by the
 	// host from the chat's type: a group has members to choose between,
-	// and a private chat has one. See mentionpicker.go.
+	// and a private chat has one. It is a property of the chat, so
+	// switching chats switches it off again. See mentionpicker.go.
 	mentionsEnabled bool
 
 	// mention is the @-completion in progress, if any.
@@ -192,6 +193,10 @@ func (m *Model) SetFocused(focused bool) {
 	}
 	m.focused = focused
 	m.textarea.Focused = focused
+	// The keys that would drive the picker are going somewhere else.
+	if !focused {
+		m.closeMention()
+	}
 }
 
 // EnterReplyMode starts replying to a message.
@@ -226,6 +231,7 @@ func (m *Model) EnterEditMode(messageID int64, currentText string, mentions ...M
 	m.asPhoto = false
 	m.mode = ModeEdit
 	m.editMsgID = messageID
+	m.closeMention()
 	m.textarea.Value = currentText
 	m.textarea.Cursor = len([]rune(currentText))
 	// The draft's mentions were parked with it; the message loaded in its

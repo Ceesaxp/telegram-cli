@@ -165,6 +165,9 @@ func editorResult(path string) func(error) tea.Msg {
 // "As it went" is measured against the draft on screen, which is the text
 // that went: the program is suspended while the editor runs.
 func (m *Model) applyEditorResult(msg editorFinishedMsg) {
+	// Whatever came back, the draft has been somewhere the completion
+	// could not follow.
+	m.closeMention()
 	if !msg.ok {
 		// A non-zero exit is how every vi user aborts an edit (:cq, or a
 		// crash). Keeping the original draft is the only safe reading.
