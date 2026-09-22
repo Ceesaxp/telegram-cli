@@ -18,6 +18,11 @@ type draft struct {
 	replyText  string
 	attachment string
 	asPhoto    bool
+
+	// mentions are the mention spans over text. Nothing modifies a span
+	// slice in place (see adjustMentions), so the parked draft and the
+	// model can share one.
+	mentions []MentionSpan
 }
 
 func (d draft) empty() bool {
@@ -63,6 +68,7 @@ func (m *Model) parkDraft() {
 		replyText:  m.replyText,
 		attachment: m.attachment,
 		asPhoto:    m.asPhoto,
+		mentions:   m.mentions,
 	}
 	if d.empty() {
 		delete(m.drafts, m.chatID)
@@ -95,6 +101,7 @@ func (m *Model) restoreDraft(chatID int64) {
 	m.replyText = d.replyText
 	m.attachment = d.attachment
 	m.asPhoto = d.asPhoto
+	m.mentions = d.mentions
 	m.notice = ""
 	// A restored draft is ready to be typed into, the same as a cleared one.
 	m.vi = viInsert

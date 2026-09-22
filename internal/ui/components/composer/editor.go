@@ -154,6 +154,16 @@ func editorResult(path string) func(error) tea.Msg {
 // applyEditorResult folds an editor session back into the composer. Only the
 // text changes: the reply/edit mode, the target chat and any pending
 // attachment are exactly as they were before the editor opened.
+//
+// The text's mention spans survive only if the text comes back exactly as it
+// went. Anything else arrives as a whole new text with no edits to follow,
+// and diffing it would be a guess about where each mention went — the one
+// thing a mention must never be (issue #41). So they are dropped, and the
+// user is told: the names still read the same on screen, and nothing else
+// would say they no longer mention anybody.
+//
+// "As it went" is measured against the draft on screen, which is the text
+// that went: the program is suspended while the editor runs.
 func (m *Model) applyEditorResult(msg editorFinishedMsg) {
 	if !msg.ok {
 		// A non-zero exit is how every vi user aborts an edit (:cq, or a
@@ -163,10 +173,15 @@ func (m *Model) applyEditorResult(msg editorFinishedMsg) {
 	}
 
 	// Editors add a trailing newline; a chat message should not carry one.
-	text := strings.ReplaceAll(msg.text, "\r\n", "\n")
-	m.textarea.Value = strings.TrimRight(text, "\n")
+	text := strings.TrimRight(strings.ReplaceAll(msg.text, "\r\n", "\n"), "\n")
+	changed := text != m.textarea.Value
+	m.textarea.Value = text
 	m.textarea.Cursor = m.textarea.Len()
 	m.notice = ""
+	if changed && len(m.mentions) > 0 {
+		m.mentions = nil
+		m.notice = noticeMentionsDropped
+	}
 	// Coming back from the editor, the user is composing again.
 	if m.editing == ModeVi {
 		m.vi = viInsert

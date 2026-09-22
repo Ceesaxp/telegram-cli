@@ -8,6 +8,13 @@ type MessageSubmittedMsg struct {
 	EditMessageId int64
 	Attachment    string // local file path, empty if none
 	AsPhoto       bool   // send the attachment as an inline photo, not a document
+
+	// Mentions are the users mentioned by ID in Text, as rune ranges of it,
+	// sorted by Start (issue #41). Only the mentions a username cannot carry
+	// are here; "@username" typed out is already a mention on its own.
+	// Converting to UTF-16 and merging with the Markdown entities is the
+	// send path's business.
+	Mentions []MentionSpan
 }
 
 // AttachRequestedMsg is emitted when the user asks to attach a file (Ctrl+T).
