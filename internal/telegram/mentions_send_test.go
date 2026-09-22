@@ -1,7 +1,10 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -125,6 +128,91 @@ func TestEditTextMessageWithMentionsPutsTheMentionOnTheWire(t *testing.T) {
 	}
 	if got, want := inv.edits[0].Entities, []tg.MessageEntityClass{mentionOf(3, 5)}; !reflect.DeepEqual(got, want) {
 		t.Errorf("entities = %s, want %s", describe(got), describe(want))
+	}
+}
+
+// uploaded is a small file on disk whose upload c already holds, the way
+// an attachment is uploaded when it is attached: the send then goes
+// straight to messages.sendMedia, which is the request under test.
+func uploaded(t *testing.T, c *Client) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "note.png")
+	if err := os.WriteFile(path, []byte("png"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	c.uploads.start(path, func(context.Context, string, uint64) (tg.InputFileClass, error) {
+		return uploadedFile(7), nil
+	})
+	return path
+}
+
+// captionSenders are the two ways an attachment goes out, without mentions.
+var captionSenders = map[string]func(c *Client, path, caption string) error{
+	"a file": func(c *Client, path, caption string) error {
+		_, err := c.SendFileMessage(basicGroupID, path, caption, 0, 0)
+		return err
+	},
+	"a photo": func(c *Client, path, caption string) error {
+		_, err := c.SendPhotoMessage(basicGroupID, path, caption, 0, 0)
+		return err
+	},
+}
+
+// A caption without mentions goes out as it always did.
+func TestACaptionIsSentAsItAlwaysWas(t *testing.T) {
+	for name, send := range captionSenders {
+		t.Run(name, func(t *testing.T) {
+			c, inv := mentionClient(t, true)
+
+			if err := send(c, uploaded(t, c), "a **b** c"); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+
+			if len(inv.media) != 1 {
+				t.Fatalf("sent %d media, want 1", len(inv.media))
+			}
+			if got := inv.media[0].Message; got != "a b c" {
+				t.Errorf("caption = %q, want %q", got, "a b c")
+			}
+			want := []tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 2, Length: 1}}
+			if got := inv.media[0].Entities; !reflect.DeepEqual(got, want) {
+				t.Errorf("entities = %s, want %s", describe(got), describe(want))
+			}
+		})
+	}
+}
+
+// A caption is message text like any other, so a mention in it goes out
+// the same way, for a file and for a photo alike.
+func TestACaptionCarriesItsMentions(t *testing.T) {
+	for name, send := range map[string]func(c *Client, path string, mentions []MentionSpan) (int, error){
+		"a file": func(c *Client, path string, mentions []MentionSpan) (int, error) {
+			_, dropped, err := c.SendFileMessageWithMentions(basicGroupID, path, "hi Nadia", mentions, 0, 0)
+			return dropped, err
+		},
+		"a photo": func(c *Client, path string, mentions []MentionSpan) (int, error) {
+			_, dropped, err := c.SendPhotoMessageWithMentions(basicGroupID, path, "hi Nadia", mentions, 0, 0)
+			return dropped, err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, inv := storedMentionClient(t)
+
+			dropped, err := send(c, uploaded(t, c), []MentionSpan{{Offset: 3, Length: 5, UserID: nadia}})
+			if err != nil {
+				t.Fatalf("send: %v", err)
+			}
+
+			if dropped != 0 {
+				t.Errorf("dropped %d mentions, want none", dropped)
+			}
+			if len(inv.media) != 1 {
+				t.Fatalf("sent %d media, want 1", len(inv.media))
+			}
+			if got, want := inv.media[0].Entities, []tg.MessageEntityClass{mentionOf(3, 5)}; !reflect.DeepEqual(got, want) {
+				t.Errorf("entities = %s, want %s", describe(got), describe(want))
+			}
+		})
 	}
 }
 

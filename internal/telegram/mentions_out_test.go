@@ -33,6 +33,7 @@ type sendInvoker struct {
 	asked []string
 	sends []*tg.MessagesSendMessageRequest
 	edits []*tg.MessagesEditMessageRequest
+	media []*tg.MessagesSendMediaRequest
 }
 
 func (f *sendInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -56,6 +57,11 @@ func (f *sendInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.
 		f.edits = append(f.edits, req)
 		edited := &tg.Message{ID: req.ID, PeerID: &tg.PeerChat{ChatID: 5}, Out: true, Message: req.Message}
 		output.(*tg.UpdatesBox).Updates = &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateEditMessage{Message: edited}}}
+		return nil
+	case *tg.MessagesSendMediaRequest:
+		f.media = append(f.media, req)
+		sent := &tg.Message{ID: 101, PeerID: &tg.PeerChat{ChatID: 5}, Out: true, Message: req.Message}
+		output.(*tg.UpdatesBox).Updates = &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateNewMessage{Message: sent}}}
 		return nil
 	default:
 		return readHistoryInvoker{}.Invoke(ctx, input, output)
