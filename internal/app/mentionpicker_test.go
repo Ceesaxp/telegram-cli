@@ -1,8 +1,11 @@
 package app
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
@@ -263,5 +266,207 @@ func TestAMentionQueryRefreshesTheCandidates(t *testing.T) {
 	}
 	if names := pickerNames(t, m); !strings.Contains(names, "Nadia Feld") {
 		t.Fatalf("picker =\n%s\nwant the sender who spoke after the chat opened", names)
+	}
+}
+
+// fakeMembers stands in for the client's member search and records what
+// it was asked.
+type fakeMembers struct {
+	asked []memberSearch
+	users []*telegram.User
+	err   error
+}
+
+type memberSearch struct {
+	chatID int64
+	query  string
+	limit  int
+}
+
+func (f *fakeMembers) SearchChatMembers(chatID int64, query string, limit int) ([]*telegram.User, error) {
+	f.asked = append(f.asked, memberSearch{chatID, query, limit})
+	return f.users, f.err
+}
+
+// searchingGroup is an open supergroup whose member search is members.
+func searchingGroup(t *testing.T, members *fakeMembers) Model {
+	t.Helper()
+	m := openedChat(t, &telegram.Chat{ID: supergroupID, Type: telegram.ChatTypeSupergroup, Title: "infra"})
+	m.members = members
+	return m
+}
+
+// answersIn collects the answers to the picker a command produced, running
+// it the way the runtime would and feeding what it returns back into m —
+// the search's result comes back as a message of its own before it is an
+// answer. Ticks are not run: a test fires one by sending mentionSearchMsg.
+func answersIn(t *testing.T, m Model, cmd tea.Cmd) (Model, []composer.MentionResultsMsg) {
+	t.Helper()
+	var out []composer.MentionResultsMsg
+	for _, msg := range flattenCmd(cmd) {
+		switch msg := msg.(type) {
+		case composer.MentionResultsMsg:
+			out = append(out, msg)
+		case mentionMembersMsg:
+			next, more := m.Update(msg)
+			m = next.(Model)
+			var answers []composer.MentionResultsMsg
+			m, answers = answersIn(t, m, more)
+			out = append(out, answers...)
+		}
+	}
+	return m, out
+}
+
+// fire lets q's debounce run out and returns the answers that follow.
+func fire(t *testing.T, m Model, q composer.MentionQueryMsg) (Model, []composer.MentionResultsMsg) {
+	t.Helper()
+	next, cmd := m.Update(mentionSearchMsg{query: q})
+	return answersIn(t, next.(Model), cmd)
+}
+
+// A query waits out the debounce before it reaches the server, and the tick
+// that ends the wait carries the query it waited for.
+func TestAMentionQueryIsSearchedAfterTheDebounce(t *testing.T) {
+	members := &fakeMembers{}
+	m := searchingGroup(t, members)
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Anchor: 0, Query: "na", Gen: 3}
+
+	next, cmd := m.Update(q)
+	m = next.(Model)
+	if len(members.asked) != 0 {
+		t.Fatalf("the query reached the server at once: %+v", members.asked)
+	}
+	var tick mentionSearchMsg
+	for _, msg := range flattenCmd(cmd) {
+		if msg, ok := msg.(mentionSearchMsg); ok {
+			tick = msg
+		}
+	}
+	if tick.query != q {
+		t.Fatalf("the debounce fired for %+v, want %+v", tick.query, q)
+	}
+}
+
+// When the debounce runs out on the latest query, the server is asked and
+// the composer gets an answer naming the query it answers.
+func TestTheLatestMentionQueryIsAnswered(t *testing.T) {
+	mira := &telegram.User{ID: 11, FirstName: "Mira"}
+	members := &fakeMembers{users: []*telegram.User{mira}}
+	m := searchingGroup(t, members)
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Anchor: 4, Query: "mi", Gen: 3}
+	m = send(t, m, q)
+
+	_, answers := fire(t, m, q)
+	if len(members.asked) != 1 || members.asked[0] != (memberSearch{supergroupID, "mi", mentionSearchLimit}) {
+		t.Fatalf("searched %+v, want one search for %q", members.asked, "mi")
+	}
+	if len(answers) != 1 {
+		t.Fatalf("got %d answers, want 1", len(answers))
+	}
+	a := answers[0]
+	if a.ChatID != q.ChatID || a.Anchor != q.Anchor || a.Query != q.Query || a.Gen != q.Gen {
+		t.Fatalf("answer %+v does not name the query %+v", a, q)
+	}
+	if len(a.Users) != 1 || a.Users[0] != mira || a.Err != nil {
+		t.Fatalf("answer carries %v / %v, want Mira and no error", userIDs(a.Users), a.Err)
+	}
+}
+
+// A tick whose query has been typed past asks the server nothing: the newer
+// query has a tick of its own coming, and that one is answered.
+func TestASupersededMentionQueryIsNotSearched(t *testing.T) {
+	members := &fakeMembers{}
+	m := searchingGroup(t, members)
+	older := composer.MentionQueryMsg{ChatID: supergroupID, Query: "n", Gen: 3}
+	newer := composer.MentionQueryMsg{ChatID: supergroupID, Query: "na", Gen: 4}
+	m = send(t, m, older)
+	m = send(t, m, newer)
+
+	m, answers := fire(t, m, older)
+	if len(members.asked) != 0 || len(answers) != 0 {
+		t.Fatalf("the superseded tick searched %+v and answered %+v", members.asked, answers)
+	}
+	if _, answers = fire(t, m, newer); len(answers) != 1 || answers[0].Gen != newer.Gen {
+		t.Fatalf("the newest query got %+v, want its own answer", answers)
+	}
+}
+
+// Nobody matching is an answer too. Without it the picker would say
+// "searching…" for as long as it stayed open.
+func TestAnEmptyMemberSearchIsStillAnswered(t *testing.T) {
+	m := searchingGroup(t, &fakeMembers{})
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Query: "zz", Gen: 3}
+	m = send(t, m, q)
+
+	if _, answers := fire(t, m, q); len(answers) != 1 || len(answers[0].Users) != 0 || answers[0].Err != nil {
+		t.Fatalf("answers = %+v, want one empty answer", answers)
+	}
+}
+
+// A failed search says so, so the picker can say so under what it has.
+func TestAFailedMemberSearchIsCarriedToThePicker(t *testing.T) {
+	boom := errors.New("FLOOD_WAIT_7")
+	m := searchingGroup(t, &fakeMembers{err: boom})
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Query: "na", Gen: 3}
+	m = send(t, m, q)
+
+	if _, answers := fire(t, m, q); len(answers) != 1 || !errors.Is(answers[0].Err, boom) {
+		t.Fatalf("answers = %+v, want the error carried", answers)
+	}
+}
+
+// With no client there is nobody to ask, and the question is still
+// answered — empty — rather than left to spin.
+func TestAMentionQueryWithoutAClientIsAnsweredEmpty(t *testing.T) {
+	m := searchingGroup(t, nil)
+	m.members = nil
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Query: "na", Gen: 3}
+	m = send(t, m, q)
+
+	if _, answers := fire(t, m, q); len(answers) != 1 || len(answers[0].Users) != 0 || answers[0].Err != nil {
+		t.Fatalf("answers = %+v, want one empty answer", answers)
+	}
+}
+
+// Whoever the search turns up is a user this client now knows, for the
+// thread's sender names as much as for the picker — and a member the next
+// completion in this chat can offer before its own search answers.
+func TestSearchedMembersAreKeptAndOfferedAgain(t *testing.T) {
+	mira := &telegram.User{ID: 11, FirstName: "Mira", Username: "mira"}
+	m := searchingGroup(t, &fakeMembers{users: []*telegram.User{mira}})
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Query: "mi", Gen: 3}
+	m = send(t, m, q)
+	m, _ = fire(t, m, q)
+
+	if u, ok := m.store.Users.Get(mira.ID); !ok || u.Username != "mira" {
+		t.Fatalf("store has %+v, want the searched member", u)
+	}
+	if got := userIDs(m.mentionCandidates(supergroupID)); len(got) != 1 || got[0] != mira.ID {
+		t.Fatalf("candidates = %v, want the searched member offered", got)
+	}
+}
+
+// End to end: an @ typed in a supergroup, the debounce, the search, and the
+// member it found on the picker.
+func TestTheSearchedMemberReachesThePicker(t *testing.T) {
+	mira := &telegram.User{ID: 11, FirstName: "Mira", LastName: "Okonkwo"}
+	m := searchingGroup(t, &fakeMembers{users: []*telegram.User{mira}})
+
+	m, cmd := updateCmd(t, m, "@")
+	for _, msg := range flattenCmd(cmd) {
+		q, ok := msg.(composer.MentionQueryMsg)
+		if !ok {
+			continue
+		}
+		m = send(t, m, q)
+		var answers []composer.MentionResultsMsg
+		m, answers = fire(t, m, q)
+		for _, a := range answers {
+			m = send(t, m, a)
+		}
+	}
+	if names := pickerNames(t, m); !strings.Contains(names, "Mira Okonkwo") {
+		t.Fatalf("picker =\n%s\nwant the member the search found", names)
 	}
 }

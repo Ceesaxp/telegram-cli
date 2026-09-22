@@ -122,6 +122,20 @@ type Model struct {
 	// Nil when there is no client.
 	sends messageSender
 
+	// members is the slice of the Telegram client the @ picker searches a
+	// chat's members with, an interface for the reason sends is one. Nil
+	// when there is no client. See mentionpicker.go.
+	members memberSearcher
+
+	// mentionQuery is the @ picker's latest question. A debounced search
+	// that fires for any other has been typed past, and asks nothing.
+	mentionQuery composer.MentionQueryMsg
+
+	// mentionMembers is what the member search has said about each chat's
+	// members this session: the users it turned up, offered again before
+	// the next search answers.
+	mentionMembers map[int64]chatMembers
+
 	// pasteInFlight is set while a clipboard paste command is running, so a
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
@@ -364,6 +378,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	if tg != nil {
 		m.uploads = tg
 		m.sends = tg
+		m.members = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -1222,6 +1237,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The @ picker asking who the query could mean. See
 		// mentionpicker.go. Nothing below has a use for the question.
 		return m, m.handleMentionQuery(msg)
+
+	case mentionSearchMsg:
+		return m, m.handleMentionSearch(msg)
+
+	case mentionMembersMsg:
+		return m, m.handleMentionMembers(msg)
 
 	case composer.PasteRequestedMsg:
 		if !m.pasteInFlight {
