@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/charmbracelet/x/ansi"
@@ -549,5 +550,110 @@ func TestAFailedBasicGroupFetchIsAskedAgain(t *testing.T) {
 	m = send(t, m, again)
 	if _, answers = fire(t, m, again); len(members.asked) != 2 || len(answers) != 1 || len(answers[0].Users) != 1 {
 		t.Fatalf("searched %+v, answered %+v; want a second fetch answering", members.asked, answers)
+	}
+}
+
+// fiveMembers fill the picker's five rows.
+func fiveMembers() []*telegram.User {
+	return []*telegram.User{
+		nadia(), ivo(),
+		{ID: 9, FirstName: "Sam", Username: "sam"},
+		{ID: 10, FirstName: "Mira"},
+		{ID: 11, FirstName: "Jonas", Username: "jonas"},
+	}
+}
+
+// pickerOpenAndClosed is ops open at w×h with an @ typed and the picker
+// up, and the same model after Esc has closed it — the draft identical, so
+// any difference between the two frames is the picker's.
+func pickerOpenAndClosed(t *testing.T, w, h int) (open, closed Model) {
+	t.Helper()
+	m := openedChat(t, opsGroup())
+	m = send(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+	m.composer.SetMentionCandidates(basicGroupID, fiveMembers())
+	open = typeText(t, m, "@")
+	if !open.composer.MentionActive() {
+		t.Fatal("setup: the picker did not open")
+	}
+	closed = update(t, open, "\x1b")
+	if closed.composer.MentionActive() || closed.composer.Draft() != "@" {
+		t.Fatal("setup: esc did not just close the picker")
+	}
+	return open, closed
+}
+
+// frameRows is a model's screen, one string per row.
+func frameRows(m Model) []string {
+	return strings.Split(strings.TrimSuffix(m.View().Content, "\n"), "\n")
+}
+
+// The picker is painted over the bottom of the thread, directly above the
+// composer, and over nothing else: the thread above it, the composer under
+// it and every other column are exactly the frame without it. That is what
+// keeps opening and closing it from moving anything — it takes no rows of
+// its own, so neither the composer's height nor the thread's lines change.
+func TestTheMentionPickerIsPaintedOverTheThreadsFoot(t *testing.T) {
+	for _, size := range []struct {
+		name string
+		w, h int
+		rows int // the picker's rows at this size
+	}{
+		{"two panels", 100, 40, 5},
+		{"one panel", 60, 24, 5},
+		// Five rows: no chrome, one for the composer, four for the thread
+		// — its header and three the picker may have.
+		{"short terminal", 100, 5, 3},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			open, closed := pickerOpenAndClosed(t, size.w, size.h)
+			l := open.layout
+			if closed.layout != l {
+				t.Fatalf("the layout moved when the picker closed:\n%+v\n%+v", l, closed.layout)
+			}
+			want, ok := open.composer.MentionPicker(l.ThreadWidth, mentionPickerRows)
+			if !ok {
+				t.Fatal("setup: the picker has no rows")
+			}
+			want = want[:size.rows]
+
+			top := 0
+			if l.TopBar {
+				top = 1
+			}
+			first := top + l.ThreadHeight - len(want) // the picker's first screen row
+			openRows, closedRows := frameRows(open), frameRows(closed)
+			if len(openRows) != size.h || len(closedRows) != size.h {
+				t.Fatalf("frames are %d and %d rows, want %d", len(openRows), len(closedRows), size.h)
+			}
+			for i := range openRows {
+				if w := cell.Width(openRows[i]); w != size.w {
+					t.Errorf("row %d is %d cells, want %d", i, w, size.w)
+				}
+				if p := cell.PaintedWidth(openRows[i]); p != size.w {
+					t.Errorf("row %d: painted %d of %d cells", i, p, size.w)
+				}
+				if i >= first && i < first+len(want) {
+					got, line := ansi.Strip(openRows[i]), ansi.Strip(want[i-first])
+					if !strings.HasSuffix(got, line) {
+						t.Errorf("row %d = %q, want the picker's row %q", i, got, line)
+					}
+					continue
+				}
+				if openRows[i] != closedRows[i] {
+					t.Errorf("row %d changed under the picker:\nopen   %q\nclosed %q",
+						i, ansi.Strip(openRows[i]), ansi.Strip(closedRows[i]))
+				}
+			}
+		})
+	}
+}
+
+// With no row to spare below the thread's header there is no picker, and
+// nothing is painted over the header to make room for one.
+func TestNoMentionPickerWithoutARowForIt(t *testing.T) {
+	open, closed := pickerOpenAndClosed(t, 100, 2)
+	if got, want := frameRows(open), frameRows(closed); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("a %d-row thread drew the picker:\n%s", open.layout.ThreadHeight,
+			ansi.Strip(strings.Join(got, "\n")))
 	}
 }

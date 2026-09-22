@@ -278,3 +278,36 @@ func (m Model) mentionCandidates(chatID int64) []*telegram.User {
 	}
 	return out
 }
+
+// mentionPickerRows is the most rows the picker is given: five members and
+// a line about the search, which is all MentionPicker ever draws.
+const mentionPickerRows = 6
+
+// threadHeaderRows is the chat view's header, which the picker never
+// covers: it names the chat the mention is going to.
+const threadHeaderRows = 1
+
+// paintMentionPicker paints the open @ picker over the foot of thread — the
+// thread column's lines, exactly ThreadHeight of them — so its last row sits
+// directly above the composer.
+//
+// Over the thread, not between it and the composer. The picker takes no rows
+// of its own: the composer keeps its height, the thread keeps its lines and
+// its scroll, and opening or closing the picker repaints the rows under it
+// and moves nothing. Which is also why a closed picker changes nothing at
+// all — thread comes back as it went in.
+//
+// It is the thread column's width, and never more than mentionPickerRows
+// tall. On a short terminal it gets what is left under the header, and the
+// composer draws fewer members rather than spill over it; with no row to
+// spare there is no picker.
+func (m Model) paintMentionPicker(thread []string) []string {
+	rows := min(mentionPickerRows, len(thread)-threadHeaderRows)
+	picker, ok := m.composer.MentionPicker(m.layout.ThreadWidth, rows)
+	if !ok {
+		return thread
+	}
+	picker = picker[:min(len(picker), rows)]
+	copy(thread[len(thread)-len(picker):], picker)
+	return thread
+}
