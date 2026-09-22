@@ -26,6 +26,13 @@ type Config struct {
 	themeSpec     *ThemeSpec
 	themeBuiltin  string
 	themeWarnings []string
+
+	// Where [Load] looked: the file it read ("" when there was none) and
+	// the two directories it searched for themes/ in. Unexported for the
+	// same reason; read them through [Config.Path] and [Config.ThemeDirs].
+	path            string
+	themeConfigDir  string
+	themeDefaultDir string
 }
 
 type TelegramConfig struct {
@@ -654,6 +661,8 @@ func Load() (*Config, error) {
 // defaults, as a first run gets them.
 func loadFrom(configPath string) (*Config, error) {
 	cfg := defaultConfig()
+	cfg.path = configPath
+	cfg.themeConfigDir, cfg.themeDefaultDir = searchedDirs(configPath)
 
 	if configPath == "" {
 		return cfg, nil
@@ -679,9 +688,46 @@ func loadFrom(configPath string) (*Config, error) {
 	// Here rather than in app.New: main prints StartupWarnings before the
 	// app is built, so a theme resolved any later would warn into the void.
 	cfg.themeSpec, cfg.themeBuiltin, cfg.themeWarnings = LoadTheme(
-		cfg.UI.Theme, filepath.Dir(configPath), filepath.Dir(defaultConfigPath()))
+		cfg.UI.Theme, cfg.themeConfigDir, cfg.themeDefaultDir)
 
 	return cfg, nil
+}
+
+// searchedDirs are the directories a config read from configPath searches
+// for themes/ in: its own, then the default config directory. With no file
+// its own is where [ConfigPath] would put one.
+func searchedDirs(configPath string) (configDir, defaultConfigDir string) {
+	if configPath == "" {
+		configPath = ConfigPath()
+	}
+	return filepath.Dir(configPath), filepath.Dir(defaultConfigPath())
+}
+
+// ThemeDirs are the directories a theme name is searched for in, in order —
+// see [ResolveThemeName] — as [Load] searched them: the loaded file's
+// directory, then the default config directory. Recorded rather than looked
+// up again, so a theme listed or switched to while running is found where
+// the startup one was, whatever the environment says by then.
+//
+// A Config that Load did not build — a test's &Config{}, say — has no
+// record, and gets the directory of [ConfigPath] and the default one: where
+// Load would look now.
+func (c *Config) ThemeDirs() (configDir, defaultConfigDir string) {
+	if c.themeDefaultDir == "" {
+		return searchedDirs(c.path)
+	}
+	return c.themeConfigDir, c.themeDefaultDir
+}
+
+// Path is the config file this Config belongs to: the one [Load] read, or,
+// when it read none, [ConfigPath] — where a first write creates it and where
+// Load will find it next time. A Config that Load did not build gets
+// ConfigPath too.
+func (c *Config) Path() string {
+	if c.path == "" {
+		return ConfigPath()
+	}
+	return c.path
 }
 
 // SendRoots returns the directories a remote caller may send files from,
