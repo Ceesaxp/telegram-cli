@@ -112,14 +112,17 @@ The effective set is `files_dir` plus everything in `send_dirs`:
   start, even if it is created in the meantime.
 - A path is opened **inside** its root rather than resolved and then checked,
   so neither `../` nor a symlink pointing out of a root gets past it. A
-  symlink inside a root is followed only if it is relative and stays inside;
-  an absolute one is refused even when it points into the root. Only regular
-  files are sent: not directories, fifos, sockets or devices. A file sent
-  through a symlink goes under the link's name.
+  symlink inside a root is followed only while it stays inside. An absolute
+  link as the file itself is refused, even one pointing into the root; a
+  linked directory on the way is followed when it leads into a root. Only
+  regular files are sent: not directories, fifos, sockets or devices. A file
+  sent through a symlink goes under the link's name.
 - A root matches a path named under it as written or under where it really
   is, in either direction: a root under `/tmp` on macOS also takes paths
   under `/private/tmp`, and one written as `/private/tmp/...` takes
-  `/tmp/...`.
+  `/tmp/...`. On Windows a path on a network share (`\\host\share\...`) is
+  never resolved, since resolving it would connect to that host; it matches
+  only a root written on the same share.
 
 Both servers log the effective set at startup, and warn about a listed
 directory that does not exist or cannot be opened:
