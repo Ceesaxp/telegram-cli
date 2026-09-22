@@ -64,6 +64,14 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	return m
 }
 
+// SetRoles replaces the palette, and everything New derived from it —
+// the rows' binding most of all, without which a new palette would reach
+// the filter row and nothing under it.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.restyle()
+}
+
 // restyle derives from the palette everything that is styled ahead of
 // drawing rather than while drawing. Whatever replaces the palette has to
 // call it too, or these keep the colours they were built with.
