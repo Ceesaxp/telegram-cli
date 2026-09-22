@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"sort"
 	"sync"
 
@@ -57,16 +58,11 @@ func (s *MessageStore) Append(chatID int64, msg *telegram.Message) {
 	msgs := s.messages[chatID]
 
 	// Deduplicate by message ID.
-	for i, m := range msgs {
-		if m.ID == msg.ID {
-			msgs[i] = msg
-			s.indexLocked(chatID, msg)
-			s.storeLocked(chatID, msgs)
-			return
-		}
+	if i, ok := s.positionLocked(chatID, msg.ID); ok {
+		msgs[i] = msg
+	} else {
+		msgs = append(msgs, msg)
 	}
-
-	msgs = append(msgs, msg)
 	s.indexLocked(chatID, msg)
 	s.storeLocked(chatID, msgs)
 }
@@ -79,17 +75,16 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 
 	existing := s.messages[chatID]
 
-	// Build a set of existing IDs to avoid duplicates.
-	idSet := make(map[int64]struct{}, len(existing))
-	for _, m := range existing {
-		idSet[m.ID] = struct{}{}
-	}
-
+	// Skip what is already held, and a page's own repeats.
+	held := s.byID[chatID]
+	seen := make(map[int64]struct{}, len(msgs))
 	var toAdd []*telegram.Message
 	for _, m := range msgs {
-		if _, exists := idSet[m.ID]; !exists {
+		_, exists := held[m.ID]
+		_, repeat := seen[m.ID]
+		if !exists && !repeat {
 			toAdd = append(toAdd, m)
-			idSet[m.ID] = struct{}{}
+			seen[m.ID] = struct{}{}
 		}
 	}
 
@@ -198,14 +193,11 @@ func (s *MessageStore) UpdateMessage(chatID int64, messageID int64, newMsg *tele
 	defer s.mu.Unlock()
 
 	msgs := s.messages[chatID]
-	for i, m := range msgs {
-		if m.ID == messageID {
-			msgs[i] = newMsg
-			s.forgetLocked(chatID, []*telegram.Message{m}, msgs)
-			s.indexLocked(chatID, newMsg)
-			s.storeLocked(chatID, msgs)
-			return
-		}
+	if i, ok := s.positionLocked(chatID, messageID); ok {
+		old := msgs[i]
+		msgs[i] = newMsg
+		s.forgetLocked(chatID, []*telegram.Message{old}, msgs)
+		s.indexLocked(chatID, newMsg)
 	}
 	s.storeLocked(chatID, msgs)
 }
@@ -228,6 +220,12 @@ func (s *MessageStore) DeleteFromAll(messageIDs []int64) {
 }
 
 func (s *MessageStore) deleteLocked(chatID int64, messageIDs []int64) {
+	// A delete without a peer is offered to every chat, and nearly all of
+	// them hold none of it: the index says so without a walk.
+	if !s.holdsAnyLocked(chatID, messageIDs) {
+		return
+	}
+
 	msgs := s.messages[chatID]
 	idSet := make(map[int64]struct{}, len(messageIDs))
 	for _, id := range messageIDs {
@@ -294,28 +292,20 @@ func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *teleg
 	defer s.mu.Unlock()
 
 	msgs := s.messages[chatID]
-	alreadyThere := false
-	for _, m := range msgs {
-		if m.ID == newMsg.ID {
-			alreadyThere = true
-			break
-		}
-	}
+	_, alreadyThere := s.byID[chatID][newMsg.ID]
 
-	for i, m := range msgs {
-		if m.ID != oldID {
-			continue
-		}
+	if i, ok := s.positionLocked(chatID, oldID); ok {
+		placeholder := msgs[i]
 		if alreadyThere {
 			// The dispatcher won the race. Remove the placeholder row and
 			// keep the copy that is already in the right place.
 			kept := append(msgs[:i:i], msgs[i+1:]...)
-			s.forgetLocked(chatID, []*telegram.Message{m}, kept)
+			s.forgetLocked(chatID, []*telegram.Message{placeholder}, kept)
 			s.storeLocked(chatID, kept)
 			return
 		}
 		msgs[i] = newMsg
-		s.forgetLocked(chatID, []*telegram.Message{m}, msgs)
+		s.forgetLocked(chatID, []*telegram.Message{placeholder}, msgs)
 		s.indexLocked(chatID, newMsg)
 		s.storeLocked(chatID, msgs)
 		return
@@ -343,9 +333,29 @@ func (s *MessageStore) MarkSendFailed(chatID int64, messageID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, m := range s.messages[chatID] {
-		if m.ID == messageID {
-			m.SendFailed = true
+	m, ok := s.byID[chatID][messageID]
+	if ok {
+		m.SendFailed = true
+	}
+	return ok
+}
+
+// positionLocked is where message id sits in chatID's history. The index
+// answers whether it is there at all, so only a message that is pays for
+// the walk to find its place.
+func (s *MessageStore) positionLocked(chatID, id int64) (int, bool) {
+	m, ok := s.byID[chatID][id]
+	if !ok {
+		return -1, false
+	}
+	return slices.Index(s.messages[chatID], m), true
+}
+
+// holdsAnyLocked reports whether chatID's history holds any of ids.
+func (s *MessageStore) holdsAnyLocked(chatID int64, ids []int64) bool {
+	index := s.byID[chatID]
+	for _, id := range ids {
+		if _, ok := index[id]; ok {
 			return true
 		}
 	}
