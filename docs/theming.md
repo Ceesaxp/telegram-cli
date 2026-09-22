@@ -310,6 +310,10 @@ Decisions made in Phase 2:
   warnings is applied, and the notice counts them — the file half's and the
   palette half's together — and quotes the first. This is also where theme
   warnings reach the hint bar, which the out-of-scope list below asked for.
+  What a warning quotes is the theme file's, so every notice — this one and
+  all the app's others — passes `cell.Printable` in `notify`, the filter
+  `main` applies to the startup print: a key spelled as an escape sequence
+  reaches the screen as text.
 - **`:theme` persists by editing one line** (`config.SetThemeLine`), never
   through `config.Save`, which re-encodes the whole file and drops its
   comments. The value of the `theme` key in `[ui]` is replaced in place —

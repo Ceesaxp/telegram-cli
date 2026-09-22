@@ -7,6 +7,7 @@ import (
 
 	"github.com/Ceesaxp/telegram-cli/internal/render"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/topbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/frame"
@@ -112,8 +113,14 @@ func (m Model) bodyRow(y int) int {
 // the one-row frame, since the composer's inline form has no spare row.
 //
 // Every notice in the app routes through here rather than calling either
-// component directly, so a new message cannot land in only one of the two.
+// component directly, so a new message cannot land in only one of the two —
+// and so every notice passes cell.Printable on its way. A notice quotes what
+// it is about, and that can be anybody's text: a theme file's key, a server
+// error, a file name. Filtered here, where they are all shown, rather than
+// where each is built, because the next one built would be the one that
+// forgot.
 func (m *Model) notify(text string) {
+	text = cell.Printable(text)
 	m.composer.SetNotice(text)
 
 	kind := "info"
