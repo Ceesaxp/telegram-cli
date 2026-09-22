@@ -1686,12 +1686,8 @@ func (m Model) invalidateByFile(fileID string) {
 
 // hasMessage reports whether a message is in the open chat's loaded set.
 func (m Model) hasMessage(id int64) bool {
-	for _, msg := range m.store.Messages.Get(m.chatID) {
-		if msg.ID == id {
-			return true
-		}
-	}
-	return false
+	_, ok := m.store.Messages.GetByID(m.chatID, id)
+	return ok
 }
 
 // scrollToMessage positions the target message inside the body, roughly
