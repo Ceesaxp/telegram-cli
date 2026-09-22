@@ -59,8 +59,8 @@ type Command struct {
 // first. **Secret chat and Markdown export are deliberately absent** — they
 // are deferred, and a palette entry that cannot run is worse than no entry.
 // The server-mutating commands decision 8 authorises (pin/unpin,
-// mute/unmute, reload-config) are not here yet either, because each needs a
-// Telegram or config service this build does not have; see TODO.md.
+// mute/unmute) are not here yet either, because each needs a Telegram
+// service this build does not have; see TODO.md.
 //
 // Keys are the resolved bindings, not hardcoded spellings, so a rebound key
 // shows correctly in the palette.
@@ -131,6 +131,12 @@ func (m Model) commandRegistry() []Command {
 			Description:   "switch the colour theme, and save it",
 			ArgCandidates: Model.themeCandidates,
 			Run:           Model.runTheme,
+		},
+		{
+			Name:        "reload-config",
+			Arg:         ArgNone,
+			Description: "re-read config.toml and apply its theme",
+			Run:         Model.runReloadConfig,
 		},
 		{
 			Name:        "quit",
