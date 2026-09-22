@@ -93,6 +93,50 @@ func (m *Model) trackMention(msg tea.Msg, before string, cursor int) tea.Cmd {
 	return nil
 }
 
+// typedMentionTrigger reports whether the edit just made was an @ typed at
+// the cursor.
+//
+// Read from what the edit did rather than from the key: one @ more in the
+// text, where the cursor was, with the cursor now after it, is typing and
+// nothing else — whatever the terminal called the key. Which is also why vi's
+// normal mode needs no rule of its own: no command there types an @.
+//
+// A paste can leave the same trace, so it is ruled out by what it is.
+func (m Model) typedMentionTrigger(msg tea.Msg, before string, cursor int) bool {
+	if _, key := msg.(tea.KeyPressMsg); !key || !m.mentionsEnabled || m.chatID == 0 {
+		return false
+	}
+	after := []rune(m.textarea.Value)
+	typed := len(after) == len([]rune(before))+1 &&
+		m.textarea.Cursor == cursor+1 && after[cursor] == '@'
+	return typed && (cursor == 0 || canStartMention(after[cursor-1]))
+}
+
+// mentionOpeners are the punctuation an @ may follow and still start a
+// mention: what opens a bracket or a quote, and what separates the parts of
+// a sentence. A full stop is not among them: "a.@b" is likelier an address
+// than a mention.
+const mentionOpeners = `([{"'«,;:!?`
+
+// canStartMention reports whether an @ typed after prev starts a mention:
+// after whitespace — a line break included — or one of mentionOpeners.
+// Anything else puts the @ inside a word, and name@example.com must stay an
+// address.
+func canStartMention(prev rune) bool {
+	return unicode.IsSpace(prev) || strings.ContainsRune(mentionOpeners, prev)
+}
+
+// openMention starts a completion at the @ at anchor.
+func (m *Model) openMention(anchor int) tea.Cmd {
+	m.mention = mentionState{
+		active: true,
+		chatID: m.chatID,
+		anchor: anchor,
+		gen:    m.mention.gen,
+	}
+	return m.queryMention("")
+}
+
 // followMention re-reads the query from the text and the cursor after an
 // edit or a motion: asks again if it changed, and closes the completion if
 // the cursor has left the token.
@@ -138,6 +182,25 @@ func (m Model) mentionQuery() (string, bool) {
 		return "", false
 	}
 	return string(q), true
+}
+
+// queryMention makes q the completion's query, under a new generation, and
+// asks the host about it.
+func (m *Model) queryMention(q string) tea.Cmd {
+	m.mention.query = q
+	m.mention.gen++
+	m.mention.loading = true
+	m.mention.failed = false
+	m.rankMention()
+	// A new list: whoever was selected is usually not on it any more.
+	m.mention.selected = 0
+	ask := MentionQueryMsg{
+		ChatID: m.mention.chatID,
+		Anchor: m.mention.anchor,
+		Query:  q,
+		Gen:    m.mention.gen,
+	}
+	return func() tea.Msg { return ask }
 }
 
 // mentionKey runs a key the open picker owns, and reports whether stroke was
@@ -229,67 +292,4 @@ func (m *Model) rankMention() {
 // still on its way must not match whatever opens next.
 func (m *Model) closeMention() {
 	m.mention = mentionState{gen: m.mention.gen}
-}
-
-// typedMentionTrigger reports whether the edit just made was an @ typed at
-// the cursor.
-//
-// Read from what the edit did rather than from the key: one @ more in the
-// text, where the cursor was, with the cursor now after it, is typing and
-// nothing else — whatever the terminal called the key. Which is also why vi's
-// normal mode needs no rule of its own: no command there types an @.
-//
-// A paste can leave the same trace, so it is ruled out by what it is.
-func (m Model) typedMentionTrigger(msg tea.Msg, before string, cursor int) bool {
-	if _, key := msg.(tea.KeyPressMsg); !key || !m.mentionsEnabled || m.chatID == 0 {
-		return false
-	}
-	after := []rune(m.textarea.Value)
-	typed := len(after) == len([]rune(before))+1 &&
-		m.textarea.Cursor == cursor+1 && after[cursor] == '@'
-	return typed && (cursor == 0 || canStartMention(after[cursor-1]))
-}
-
-// mentionOpeners are the punctuation an @ may follow and still start a
-// mention: what opens a bracket or a quote, and what separates the parts of
-// a sentence. A full stop is not among them: "a.@b" is likelier an address
-// than a mention.
-const mentionOpeners = `([{"'«,;:!?`
-
-// canStartMention reports whether an @ typed after prev starts a mention:
-// after whitespace — a line break included — or one of mentionOpeners.
-// Anything else puts the @ inside a word, and name@example.com must stay an
-// address.
-func canStartMention(prev rune) bool {
-	return unicode.IsSpace(prev) || strings.ContainsRune(mentionOpeners, prev)
-}
-
-// openMention starts a completion at the @ at anchor.
-func (m *Model) openMention(anchor int) tea.Cmd {
-	m.mention = mentionState{
-		active: true,
-		chatID: m.chatID,
-		anchor: anchor,
-		gen:    m.mention.gen,
-	}
-	return m.queryMention("")
-}
-
-// queryMention makes q the completion's query, under a new generation, and
-// asks the host about it.
-func (m *Model) queryMention(q string) tea.Cmd {
-	m.mention.query = q
-	m.mention.gen++
-	m.mention.loading = true
-	m.mention.failed = false
-	m.rankMention()
-	// A new list: whoever was selected is usually not on it any more.
-	m.mention.selected = 0
-	ask := MentionQueryMsg{
-		ChatID: m.mention.chatID,
-		Anchor: m.mention.anchor,
-		Query:  q,
-		Gen:    m.mention.gen,
-	}
-	return func() tea.Msg { return ask }
 }

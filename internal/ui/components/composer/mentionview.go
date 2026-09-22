@@ -60,35 +60,6 @@ func (m Model) MentionPicker(width, maxRows int) (lines []string, ok bool) {
 	return lines, len(lines) > 0
 }
 
-// mentionStatus is the picker's one line about itself, if it has one.
-//
-// With nothing to offer there is always one — searching, or nobody matched —
-// because an empty picker would look closed, and an Enter that then did not
-// send would look broken. A failed search says so under the matches it
-// failed to add to. Waiting says nothing under matches already on screen:
-// the list would grow and shrink by a row on every key.
-func (m Model) mentionStatus() (string, lipgloss.Color) {
-	s := m.mention
-	switch {
-	case s.failed:
-		return "⚠ member search failed", m.roles.Amber
-	case len(s.results) > 0:
-		return "", ""
-	case s.loading:
-		return "searching…", m.roles.Dim
-	default:
-		return "no matches", m.roles.Dim
-	}
-}
-
-// mentionStatusRow draws the status line, indented to the names.
-func (m Model) mentionStatusRow(text string, colour lipgloss.Color, width int) string {
-	avail := max(width-mentionRowLead-mentionRowTrail, 0)
-	line := strings.Repeat(" ", mentionRowLead) +
-		lipgloss.NewStyle().Foreground(colour).Render(cell.Truncate(text, avail))
-	return cell.Fill(m.roles.Panel, line, width)
-}
-
 // mentionColumns splits a row between the names and the @usernames, from the
 // rows on screen: the names padded to the longest so the usernames line up
 // after them, and — when the two do not fit — the usernames given up to two
@@ -114,42 +85,6 @@ func mentionColumns(users []*telegram.User, width int) (nameW, tagW int) {
 		return avail, 0
 	}
 	return nameW, tagW
-}
-
-// mentionTag is what follows a member's name: the @username to type, and
-// "bot" for a bot.
-func mentionTag(u *telegram.User) string {
-	handle, kind := mentionTagParts(u)
-	return strings.TrimSpace(handle + " " + kind)
-}
-
-func mentionTagParts(u *telegram.User) (handle, kind string) {
-	if u.Username != "" {
-		handle = "@" + u.Username
-	}
-	if u.IsBot {
-		kind = "bot"
-	}
-	return handle, kind
-}
-
-// mentionTagCell draws a member's tag in at most width cells: the @username
-// in the mention colour, "bot" after it and dimmer. When the two do not
-// fit, "bot" is what gives way — the username is what gets typed.
-func (m Model) mentionTagCell(u *telegram.User, width int) string {
-	handle, kind := mentionTagParts(u)
-	blue := lipgloss.NewStyle().Foreground(m.roles.Blue)
-	faint := lipgloss.NewStyle().Foreground(m.roles.Faint)
-	switch {
-	case handle == "" && kind == "":
-		return ""
-	case handle == "":
-		return faint.Render(cell.Truncate(kind, width))
-	case kind == "" || cell.Width(handle)+1+cell.Width(kind) > width:
-		return blue.Render(cell.Truncate(handle, width))
-	default:
-		return blue.Render(handle) + faint.Render(" "+kind)
-	}
 }
 
 // mentionRow draws one member.
@@ -181,4 +116,70 @@ func (m Model) mentionRow(u *telegram.User, selected bool, width, nameW, tagW in
 		line += m.mentionTagCell(u, tagW)
 	}
 	return cell.Fill(surface, line, width)
+}
+
+// mentionTag is what follows a member's name: the @username to type, and
+// "bot" for a bot.
+func mentionTag(u *telegram.User) string {
+	handle, kind := mentionTagParts(u)
+	return strings.TrimSpace(handle + " " + kind)
+}
+
+// mentionTagParts are the two halves of mentionTag, drawn in two colours.
+func mentionTagParts(u *telegram.User) (handle, kind string) {
+	if u.Username != "" {
+		handle = "@" + u.Username
+	}
+	if u.IsBot {
+		kind = "bot"
+	}
+	return handle, kind
+}
+
+// mentionTagCell draws a member's tag in at most width cells: the @username
+// in the mention colour, "bot" after it and dimmer. When the two do not
+// fit, "bot" is what gives way — the username is what gets typed.
+func (m Model) mentionTagCell(u *telegram.User, width int) string {
+	handle, kind := mentionTagParts(u)
+	blue := lipgloss.NewStyle().Foreground(m.roles.Blue)
+	faint := lipgloss.NewStyle().Foreground(m.roles.Faint)
+	switch {
+	case handle == "" && kind == "":
+		return ""
+	case handle == "":
+		return faint.Render(cell.Truncate(kind, width))
+	case kind == "" || cell.Width(handle)+1+cell.Width(kind) > width:
+		return blue.Render(cell.Truncate(handle, width))
+	default:
+		return blue.Render(handle) + faint.Render(" "+kind)
+	}
+}
+
+// mentionStatus is the picker's one line about itself, if it has one.
+//
+// With nothing to offer there is always one — searching, or nobody matched —
+// because an empty picker would look closed, and an Enter that then did not
+// send would look broken. A failed search says so under the matches it
+// failed to add to. Waiting says nothing under matches already on screen:
+// the list would grow and shrink by a row on every key.
+func (m Model) mentionStatus() (string, lipgloss.Color) {
+	s := m.mention
+	switch {
+	case s.failed:
+		return "⚠ member search failed", m.roles.Amber
+	case len(s.results) > 0:
+		return "", ""
+	case s.loading:
+		return "searching…", m.roles.Dim
+	default:
+		return "no matches", m.roles.Dim
+	}
+}
+
+// mentionStatusRow draws the status line, indented to the names.
+func (m Model) mentionStatusRow(text string, colour lipgloss.Color, width int) string {
+	avail := max(width-mentionRowLead-mentionRowTrail, 0)
+	line := strings.Repeat(" ", mentionRowLead) +
+		lipgloss.NewStyle().Foreground(colour).Render(cell.Truncate(text, avail))
+	return cell.Fill(m.roles.Panel, line, width)
 }
