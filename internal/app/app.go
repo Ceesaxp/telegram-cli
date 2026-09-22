@@ -1218,6 +1218,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// panel border plus the composer help line make the mode visible.
 		cmds = append(cmds, m.handleMessageSubmit(msg))
 
+	case composer.MentionQueryMsg:
+		// The @ picker asking who the query could mean. See
+		// mentionpicker.go.
+		cmds = append(cmds, m.handleMentionQuery(msg))
+
 	case composer.PasteRequestedMsg:
 		if !m.pasteInFlight {
 			m.pasteInFlight = true
@@ -2215,7 +2220,7 @@ func (m *Model) switchComposerTo(chatID int64) {
 	clipboard.Remove(m.composer.SetChatId(chatID))
 	// SetChatId switches @-completion off: whether an @ offers members is
 	// the new chat's to say, and only the store knows what kind it is.
-	m.composer.SetMentionsEnabled(m.mentionsAllowed(chatID))
+	m.prepareMentions(chatID)
 	m.chatList.SetDraftChats(m.composer.DraftChats())
 	m.updateLayout()
 	// Warm the peer cache now, in the background, so a cache miss costs

@@ -1,11 +1,13 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The @ picker's app half (issue #41): which chats offer it, who it offers,
@@ -152,5 +154,114 @@ func TestEnterInsertsFromAnOpenPickerRatherThanSending(t *testing.T) {
 	}
 	if got := m.composer.Draft(); got != "@nadia " {
 		t.Fatalf("draft = %q, want the chosen member inserted", got)
+	}
+}
+
+// said is a text message in chat from sender.
+func said(chatID, id int64, sender telegram.MessageSender) *telegram.Message {
+	return &telegram.Message{
+		ID: id, ChatID: chatID, SenderID: sender,
+		Content: &telegram.MessageText{Text: &telegram.FormattedText{Text: "hi"}},
+	}
+}
+
+func byUser(id int64) telegram.MessageSender { return &telegram.MessageSenderUser{UserID: id} }
+
+// userIDs lists who users are, for a readable failure.
+func userIDs(users []*telegram.User) []int64 {
+	out := make([]int64, 0, len(users))
+	for _, u := range users {
+		out = append(out, u.ID)
+	}
+	return out
+}
+
+// The members an @ offers before any search answers are the people who
+// have been talking: newest first, each once, and only people — not the
+// reader, whom mentioning notifies nobody, and not a channel posting in the
+// group, which is not a member at all. A sender the store cannot name has
+// nothing to insert, so is left for the server to find.
+func TestMentionCandidatesAreTheRecentSenders(t *testing.T) {
+	m := sizedMainModel(t)
+	m.myUserId = 1
+	for _, u := range []*telegram.User{
+		{ID: 1, FirstName: "Me"},
+		{ID: 2, FirstName: "Ivo"},
+		{ID: 3, FirstName: "Sam"},
+		{ID: 4, FirstName: "Mira"},
+	} {
+		m.store.Users.Set(u)
+	}
+	for i, sender := range []telegram.MessageSender{
+		byUser(3),
+		byUser(2),
+		&telegram.MessageSenderChat{ChatID: channelID},
+		byUser(3),
+		byUser(1),
+		byUser(9), // not in the store
+		byUser(4),
+	} {
+		m.store.Messages.Append(basicGroupID, said(basicGroupID, int64(i+1), sender))
+	}
+
+	got := userIDs(m.mentionCandidates(basicGroupID))
+	want := []int64{4, 3, 2}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidates = %v, want %v", got, want)
+		}
+	}
+}
+
+// pickerNames is what the open picker lists, top to bottom, as plain text.
+func pickerNames(t *testing.T, m Model) string {
+	t.Helper()
+	rows, ok := m.composer.MentionPicker(60, 6)
+	if !ok {
+		t.Fatal("the picker drew nothing")
+	}
+	return ansi.Strip(strings.Join(rows, "\n"))
+}
+
+// The candidates are handed over when the chat opens, so the first @ has
+// something to offer at once.
+func TestOpeningAGroupOffersItsRecentSenders(t *testing.T) {
+	m := sizedMainModel(t)
+	m.store.Users.Set(nadia())
+	m.store.Messages.Append(basicGroupID, said(basicGroupID, 1, byUser(nadia().ID)))
+	m.store.Chats.Set(opsGroup())
+	m = send(t, m, chatlist.ChatSelectedMsg{ChatId: basicGroupID})
+	m.setFocus(PanelComposer)
+
+	m = typeText(t, m, "@")
+	if names := pickerNames(t, m); !strings.Contains(names, "Nadia Feld") {
+		t.Fatalf("picker =\n%s\nwant the recent sender offered", names)
+	}
+}
+
+// Messages keep arriving after the chat opens, and the page that was
+// loading when it opened lands later still. Each query hands the composer
+// the senders as they are now.
+func TestAMentionQueryRefreshesTheCandidates(t *testing.T) {
+	m := openedChat(t, opsGroup())
+	m.store.Users.Set(nadia())
+	m.store.Messages.Append(basicGroupID, said(basicGroupID, 1, byUser(nadia().ID)))
+
+	m, cmd := updateCmd(t, m, "@")
+	var asked bool
+	for _, msg := range flattenCmd(cmd) {
+		if q, ok := msg.(composer.MentionQueryMsg); ok {
+			m = send(t, m, q)
+			asked = true
+		}
+	}
+	if !asked {
+		t.Fatal("setup: @ asked the host nothing")
+	}
+	if names := pickerNames(t, m); !strings.Contains(names, "Nadia Feld") {
+		t.Fatalf("picker =\n%s\nwant the sender who spoke after the chat opened", names)
 	}
 }
