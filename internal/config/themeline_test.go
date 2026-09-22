@@ -1,0 +1,368 @@
+package config
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// configFile writes body to a config.toml of its own and returns the path.
+// The default config directory is a temp one too: SetThemeLine checks its
+// write with the real loader, and the loader looks for themes there.
+func configFile(t *testing.T, body string) string {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestSetThemeLineEditsOnlyTheThemeLine: the file is the user's, comments,
+// order, spelling and spacing included, so the one value is all that
+// changes — not the key's spelling, not the spaces around the =, not the
+// comment after it, not the line endings, not whether the file ends in a
+// newline. Re-encoding the whole file, as Save does, would lose all of that
+// to change one word.
+func TestSetThemeLineEditsOnlyTheThemeLine(t *testing.T) {
+	tests := []struct {
+		name, before, value, after string
+	}{
+		{name: "the theme line in [ui], among other keys, keeping its comment",
+			value: "gruvbox",
+			before: "# my config\n[telegram]\napi_id = 1\n\n[ui]\nrail = true\n" +
+				"# theme = \"light\"\ntheme = \"dark\"   # the palette\nparse_markdown = false\n\n" +
+				"[keys]\nquit = \"ctrl+q\"\n",
+			after: "# my config\n[telegram]\napi_id = 1\n\n[ui]\nrail = true\n" +
+				"# theme = \"light\"\ntheme = 'gruvbox'   # the palette\nparse_markdown = false\n\n" +
+				"[keys]\nquit = \"ctrl+q\"\n"},
+		{name: "a quoted key",
+			value:  "gruvbox",
+			before: "[ui]\n\"theme\" = \"dark\"\n",
+			after:  "[ui]\n\"theme\" = 'gruvbox'\n"},
+		{name: "a literal-quoted key",
+			value:  "gruvbox",
+			before: "[ui]\n'theme' = 'dark'\n",
+			after:  "[ui]\n'theme' = 'gruvbox'\n"},
+		{name: "no spaces around the =, and indented",
+			value:  "gruvbox",
+			before: "[ui]\n  theme='dark'\n",
+			after:  "[ui]\n  theme='gruvbox'\n"},
+		{name: "tabs around the =",
+			value:  "gruvbox",
+			before: "[ui]\ntheme\t=\t\"dark\"\t# tabs\n",
+			after:  "[ui]\ntheme\t=\t'gruvbox'\t# tabs\n"},
+		{name: "a multi-line string value",
+			value:  "gruvbox",
+			before: "[ui]\ntheme = \"\"\"dark\"\"\"\nrail = true\n",
+			after:  "[ui]\ntheme = 'gruvbox'\nrail = true\n"},
+		{name: "a [ui] header with spaces, a comment and indentation",
+			value:  "gruvbox",
+			before: "  [ ui ]  # interface\ntheme = \"dark\"\n",
+			after:  "  [ ui ]  # interface\ntheme = 'gruvbox'\n"},
+		{name: "a quoted [ui] header",
+			value:  "gruvbox",
+			before: "[\"ui\"]\ntheme = \"dark\"\n",
+			after:  "[\"ui\"]\ntheme = 'gruvbox'\n"},
+		{name: "a theme key in another table is not the theme",
+			value:  "gruvbox",
+			before: "[media]\ntheme = \"dark\"\n\n[ui]\ntheme = \"dark\"\n",
+			after:  "[media]\ntheme = \"dark\"\n\n[ui]\ntheme = 'gruvbox'\n"},
+		{name: "a table header inside a multi-line string is not a table",
+			value: "gruvbox",
+			before: "[telegram]\nphone = \"\"\"\n[ui]\ntheme = \"evil\"\n\"\"\"\n\n" +
+				"[ui]\ntheme = \"dark\"\n",
+			after: "[telegram]\nphone = \"\"\"\n[ui]\ntheme = \"evil\"\n\"\"\"\n\n" +
+				"[ui]\ntheme = 'gruvbox'\n"},
+		{name: "[ui] without a theme key gets one under the header",
+			value:  "gruvbox",
+			before: "[ui]  # interface\nrail = true\n",
+			after:  "[ui]  # interface\ntheme = 'gruvbox'\nrail = true\n"},
+		{name: "[ui] as the last line, with no newline after it",
+			value:  "gruvbox",
+			before: "[telegram]\napi_id = 1\n[ui]",
+			after:  "[telegram]\napi_id = 1\n[ui]\ntheme = 'gruvbox'"},
+		{name: "no [ui] table gets one at the end",
+			value:  "gruvbox",
+			before: "[telegram]\napi_id = 1\n",
+			after:  "[telegram]\napi_id = 1\n\n[ui]\ntheme = 'gruvbox'\n"},
+		{name: "an empty file",
+			value:  "gruvbox",
+			before: "",
+			after:  "[ui]\ntheme = 'gruvbox'\n"},
+		{name: "CRLF stays CRLF when the value is replaced",
+			value:  "gruvbox",
+			before: "[ui]\r\ntheme = \"dark\"\r\nrail = true\r\n",
+			after:  "[ui]\r\ntheme = 'gruvbox'\r\nrail = true\r\n"},
+		{name: "CRLF stays CRLF when a line is inserted",
+			value:  "gruvbox",
+			before: "[ui]\r\nrail = true\r\n",
+			after:  "[ui]\r\ntheme = 'gruvbox'\r\nrail = true\r\n"},
+		{name: "CRLF stays CRLF when a table is appended",
+			value:  "gruvbox",
+			before: "[telegram]\r\napi_id = 1\r\n",
+			after:  "[telegram]\r\napi_id = 1\r\n\r\n[ui]\r\ntheme = 'gruvbox'\r\n"},
+		{name: "no final newline stays that way when the value is replaced",
+			value:  "gruvbox",
+			before: "[ui]\ntheme = \"dark\"",
+			after:  "[ui]\ntheme = 'gruvbox'"},
+		{name: "no final newline stays that way when a table is appended",
+			value:  "gruvbox",
+			before: "[telegram]\napi_id = 1",
+			after:  "[telegram]\napi_id = 1\n\n[ui]\ntheme = 'gruvbox'"},
+		{name: "a Windows path is written literally, backslashes and all",
+			value:  `C:\Users\me\themes\nord.toml`,
+			before: "[ui]\ntheme = \"dark\"\n",
+			after:  "[ui]\ntheme = 'C:\\Users\\me\\themes\\nord.toml'\n"},
+		{name: "a value with a ' is a basic string",
+			value:  "~/themes/o'brien.toml",
+			before: "[ui]\ntheme = \"dark\"\n",
+			after:  "[ui]\ntheme = \"~/themes/o'brien.toml\"\n"},
+		{name: "a Windows path with a ' has its backslashes escaped",
+			value:  `C:\Users\O'Brien\themes\nord.toml`,
+			before: "[ui]\ntheme = \"dark\"\n",
+			after:  "[ui]\ntheme = \"C:\\\\Users\\\\O'Brien\\\\themes\\\\nord.toml\"\n"},
+		{name: "a value with a double quote",
+			value:  `~/themes/"quoted"'.toml`,
+			before: "[ui]\ntheme = \"dark\"\n",
+			after:  "[ui]\ntheme = \"~/themes/\\\"quoted\\\"'.toml\"\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := configFile(t, tt.before)
+
+			if err := SetThemeLine(path, tt.value); err != nil {
+				t.Fatalf("SetThemeLine: %v", err)
+			}
+			if got := readFile(t, path); got != tt.after {
+				t.Errorf("the file is\n%q\nwant\n%q", got, tt.after)
+			}
+			// And the real loader reads back what was written.
+			cfg, err := loadFrom(path)
+			if err != nil {
+				t.Fatalf("the edited file does not load: %v", err)
+			}
+			if cfg.UI.Theme != tt.value {
+				t.Errorf("the loader reads ui.theme = %q, want %q", cfg.UI.Theme, tt.value)
+			}
+		})
+	}
+}
+
+// TestSetThemeLineRefusesWhatItCannotEditSafely: a ui.theme written some
+// other way than a line in a [ui] table cannot be changed by rewriting one
+// line, and adding a [ui] table beside it would make the file invalid. A
+// file that is not TOML at all has no line to trust. Each is left alone,
+// unbacked-up, with a word to edit it by hand.
+func TestSetThemeLineRefusesWhatItCannotEditSafely(t *testing.T) {
+	tests := []struct {
+		name, body string
+	}{
+		{"a dotted top-level key", "ui.theme = \"dark\"\n"},
+		{"a dotted top-level key with spaces", "ui . theme = \"dark\"\n"},
+		{"another dotted ui key, which a [ui] table would collide with", "ui.rail = true\n"},
+		{"an inline table", "ui = { theme = \"dark\" }\n"},
+		{"an inline table without theme", "ui = { rail = true }\n"},
+		{"ui that is not a table", "ui = \"dark\"\n"},
+		{"a dotted theme key inside [ui]", "[ui]\ntheme.name = \"dark\"\n"},
+		{"a [ui.theme] table", "[ui.theme]\nname = \"dark\"\n"},
+		{"an array of [[ui]] tables", "[[ui]]\ntheme = \"dark\"\n"},
+		{"a theme that is not a string", "[ui]\ntheme = 5\n"},
+		{"not TOML at all", "[ui\ntheme = \"dark\"\n"},
+		{"a key defined twice", "[ui]\ntheme = \"dark\"\ntheme = \"light\"\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := configFile(t, tt.body)
+
+			err := SetThemeLine(path, "gruvbox")
+			if err == nil {
+				t.Fatalf("SetThemeLine accepted %q:\n%s", tt.body, readFile(t, path))
+			}
+			if !strings.Contains(err.Error(), "by hand") {
+				t.Errorf("the error %q does not say to edit the file by hand", err)
+			}
+			if got := readFile(t, path); got != tt.body {
+				t.Errorf("the file was changed to\n%q", got)
+			}
+			if _, err := os.Stat(path + ".bak"); err == nil {
+				t.Error("a refusal left a backup behind")
+			}
+		})
+	}
+}
+
+// TestSetThemeLineCreatesAMissingFile: a first run has no config.toml, and a
+// theme chosen then is saved to where Load will find it — private, as every
+// config write is, since the file will hold an api_hash one day.
+func TestSetThemeLineCreatesAMissingFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "tele-tui", "config.toml")
+
+	if err := SetThemeLine(path, "gruvbox"); err != nil {
+		t.Fatalf("SetThemeLine: %v", err)
+	}
+	if got, want := readFile(t, path), "[ui]\ntheme = 'gruvbox'\n"; got != want {
+		t.Errorf("the new file is %q, want %q", got, want)
+	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		} else if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("the new file's mode is %v, want 0600", got)
+		}
+	}
+}
+
+// TestSetThemeLineBacksUpFirst: the original is copied aside before the
+// edit, and a second edit does not overwrite that copy — the first backup is
+// the file as the user wrote it.
+func TestSetThemeLineBacksUpFirst(t *testing.T) {
+	original := "[ui]\ntheme = \"dark\"  # mine\n"
+	path := configFile(t, original)
+
+	if err := SetThemeLine(path, "gruvbox"); err != nil {
+		t.Fatalf("SetThemeLine: %v", err)
+	}
+	if got := readFile(t, path+".bak"); got != original {
+		t.Errorf("the backup holds %q, want the original %q", got, original)
+	}
+
+	if err := SetThemeLine(path, "nord"); err != nil {
+		t.Fatalf("second SetThemeLine: %v", err)
+	}
+	if got := readFile(t, path+".bak"); got != original {
+		t.Errorf("the second edit overwrote the first backup with %q", got)
+	}
+	stamped, _ := filepath.Glob(path + ".bak.*")
+	if len(stamped) != 1 {
+		t.Fatalf("want one timestamped backup beside the first, found %v", stamped)
+	}
+	if got, want := readFile(t, stamped[0]), "[ui]\ntheme = 'gruvbox'  # mine\n"; got != want {
+		t.Errorf("the second backup holds %q, want the file before the second edit, %q", got, want)
+	}
+}
+
+// TestSetThemeLineKeepsTheFileMode: this edits a line; how private the file
+// is was decided by its owner, and a one-line edit does not decide it again.
+func TestSetThemeLineKeepsTheFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permissions")
+	}
+	path := configFile(t, "[ui]\ntheme = \"dark\"\n")
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetThemeLine(path, "gruvbox"); err != nil {
+		t.Fatalf("SetThemeLine: %v", err)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != 0o640 {
+		t.Errorf("mode = %v after the edit, want the file's own 0640", got)
+	}
+}
+
+// TestSetThemeLineWritesThroughASymlink: a config.toml symlinked out of a
+// dotfiles repository is edited where it lives. Replacing the link with a
+// file would quietly end the dotfiles copy's life as the source of truth.
+func TestSetThemeLineWritesThroughASymlink(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dotfiles, confDir := t.TempDir(), t.TempDir()
+	real := filepath.Join(dotfiles, "config.toml")
+	link := filepath.Join(confDir, "config.toml")
+	if err := os.WriteFile(real, []byte("[ui]\ntheme = \"dark\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := SetThemeLine(link, "gruvbox"); err != nil {
+		t.Fatalf("SetThemeLine: %v", err)
+	}
+
+	if info, err := os.Lstat(link); err != nil {
+		t.Fatalf("the symlink is gone: %v", err)
+	} else if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a regular file")
+	}
+	if got, want := readFile(t, real), "[ui]\ntheme = 'gruvbox'\n"; got != want {
+		t.Errorf("the target holds %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(evalDir(t, dotfiles), "config.toml.bak")); err != nil {
+		t.Errorf("no backup beside the target: %v", err)
+	}
+}
+
+// TestSetThemeLineRestoresWhatDoesNotReadBack: the edit is checked with the
+// real loader, and a file that does not load, or does not say what was
+// written, is put back the way it was. A config that stops loading is a
+// client that stops starting.
+func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
+	original := "[ui]\ntheme = \"dark\"  # mine\n"
+	checks := map[string]func(string) (*Config, error){
+		"the loader fails": func(string) (*Config, error) {
+			return nil, errors.New("simulated")
+		},
+		"the loader reads another theme": func(string) (*Config, error) {
+			return &Config{UI: UIConfig{Theme: "dark"}}, nil
+		},
+	}
+	for name, check := range checks {
+		t.Run(name, func(t *testing.T) {
+			path := configFile(t, original)
+			if runtime.GOOS != "windows" {
+				if err := os.Chmod(path, 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			loadWritten = check
+			t.Cleanup(func() { loadWritten = loadFrom })
+
+			err := SetThemeLine(path, "gruvbox")
+			if err == nil {
+				t.Fatal("SetThemeLine reported success for a write that did not read back")
+			}
+			if got := readFile(t, path); got != original {
+				t.Errorf("the file was left as %q, want the original restored", got)
+			}
+			if runtime.GOOS != "windows" {
+				if info, err := os.Stat(path); err != nil {
+					t.Fatal(err)
+				} else if got := info.Mode().Perm(); got != 0o640 {
+					t.Errorf("the restored file's mode is %v, want 0640", got)
+				}
+			}
+		})
+	}
+
+	// And a file that did not exist is not left existing.
+	t.Run("a created file", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		path := filepath.Join(t.TempDir(), "config.toml")
+		loadWritten = checks["the loader fails"]
+		t.Cleanup(func() { loadWritten = loadFrom })
+
+		if err := SetThemeLine(path, "gruvbox"); err == nil {
+			t.Fatal("SetThemeLine reported success for a write that did not read back")
+		}
+		if _, err := os.Stat(path); err == nil {
+			t.Error("the file it created and could not read back is still there")
+		}
+	})
+}
