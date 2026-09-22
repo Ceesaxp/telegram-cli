@@ -38,3 +38,20 @@ type AttachmentDiscardedMsg struct {
 // doing. Emitting rather than assuming is what keeps the two from disagreeing
 // about where the composer starts.
 type ResizedMsg struct{}
+
+// MentionQueryMsg asks the host for the members an @ could mean (issue #41).
+//
+// The composer emits one when completion opens — with an empty Query, which a
+// supergroup answers with its recent members — and again every time the
+// query changes. Anchor is the rune offset of the @ in the draft, and Gen
+// is this query's generation: no two queries share one, for the life of the
+// composer.
+//
+// The answer is a MentionResultsMsg carrying all four back. A host that
+// debounces may skip a query outright, since a newer one supersedes it.
+type MentionQueryMsg struct {
+	ChatID int64
+	Anchor int
+	Query  string
+	Gen    uint64
+}

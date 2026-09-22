@@ -113,6 +113,14 @@ type Model struct {
 	// whatever replaces the text wholesale replaces them with it. See
 	// mentions.go.
 	mentions []MentionSpan
+
+	// mentionsEnabled is whether a typed @ may open completion, set by the
+	// host from the chat's type: a group has members to choose between,
+	// and a private chat has one. See mentionpicker.go.
+	mentionsEnabled bool
+
+	// mention is the @-completion in progress, if any.
+	mention mentionState
 }
 
 // New creates a new composer model.
@@ -375,7 +383,9 @@ func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 		after = cursor
 	}
 	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, cursor, after)
-	return m, cmd
+	// The @-completion follows the same edits from the same door, for the
+	// same reason. See mentionpicker.go.
+	return m, tea.Batch(cmd, m.trackMention(msg, before, cursor))
 }
 
 // editKey runs one editing key: a newline chord, a vi normal-mode command, or
