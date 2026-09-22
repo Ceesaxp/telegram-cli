@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // nadia is the span the table below starts from: "Nadia" in "hi Nadia ok",
@@ -583,4 +584,57 @@ func TestAFailedEditorKeepsMentions(t *testing.T) {
 	m, _ = m.Update(editorFinishedMsg{err: os.ErrPermission})
 
 	wantMentions(t, m, nadia)
+}
+
+// ---------------------------------------------------------------------------
+// Editing a message that already mentions somebody
+// ---------------------------------------------------------------------------
+
+// Only mentions by ID become spans. "@oleg" typed out is a mention on its own
+// and bold is not a mention at all. Offsets are already runes by the time
+// they reach the domain type.
+func TestMentionsInReadsTheMentionsByID(t *testing.T) {
+	ft := &telegram.FormattedText{
+		Text: "hi Nadia, @oleg 👍 Лев",
+		Entities: []*telegram.TextEntity{
+			{Offset: 0, Length: 2, Type: &telegram.TextEntityTypeBold{}},
+			{Offset: 3, Length: 5, Type: &telegram.TextEntityTypeMentionName{UserID: 7}},
+			{Offset: 10, Length: 5, Type: &telegram.TextEntityTypeMention{}},
+			nil,
+			{Offset: 18, Length: 3, Type: &telegram.TextEntityTypeMentionName{UserID: 9}},
+			{Offset: 20, Length: 9, Type: &telegram.TextEntityTypeMentionName{UserID: 10}},
+		},
+	}
+
+	want := []MentionSpan{
+		nadia,
+		{Start: 18, End: 21, UserID: 9, Label: "Лев"},
+	}
+	if got := MentionsIn(ft); !slices.Equal(got, want) {
+		t.Errorf("MentionsIn = %+v, want %+v (the out-of-range one dropped)", got, want)
+	}
+	if got := MentionsIn(nil); got != nil {
+		t.Errorf("MentionsIn(nil) = %+v, want nil", got)
+	}
+}
+
+// The message being edited keeps the mentions it was sent with: sending the
+// edit without them would turn a mention into a name that pings nobody.
+func TestEditModeLoadsTheMessagesMentions(t *testing.T) {
+	m := newFocused()
+	m.EnterEditMode(99, "hi Nadia ok", nadia)
+	wantMentions(t, m, nadia)
+
+	_, sub := submitted(t, m)
+	if want := []MentionSpan{nadia}; !slices.Equal(sub.Mentions, want) {
+		t.Errorf("Mentions = %+v, want %+v", sub.Mentions, want)
+	}
+}
+
+// What the caller hands over is checked against the text like any other span.
+func TestEditModeDropsAMentionThatDoesNotFitTheText(t *testing.T) {
+	m := newFocused()
+	m.EnterEditMode(99, "hi Oleg ok", nadia)
+
+	wantMentions(t, m)
 }

@@ -3,6 +3,8 @@ package composer
 import (
 	"cmp"
 	"slices"
+
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // MentionSpan marks the runes of the draft that mention a user: the label the
@@ -75,6 +77,41 @@ func validMentions(spans []MentionSpan, text string) []MentionSpan {
 }
 
 func byStart(a, b MentionSpan) int { return cmp.Compare(a.Start, b.Start) }
+
+// MentionsIn returns the mentions by ID in a message's text, as spans of it,
+// for EnterEditMode.
+//
+// Only TextEntityTypeMentionName counts. A plain @username mention is its own
+// text and needs no span, and nothing else names a user. An entity that does
+// not fit inside the text is skipped rather than clamped: a shortened span
+// would cover part of a name, and that is not a mention of anybody.
+func MentionsIn(ft *telegram.FormattedText) []MentionSpan {
+	if ft == nil {
+		return nil
+	}
+	text := []rune(ft.Text)
+	var out []MentionSpan
+	for _, e := range ft.Entities {
+		if e == nil {
+			continue
+		}
+		mention, ok := e.Type.(*telegram.TextEntityTypeMentionName)
+		if !ok {
+			continue
+		}
+		span := MentionSpan{
+			Start:  int(e.Offset),
+			End:    int(e.Offset) + int(e.Length),
+			UserID: mention.UserID,
+		}
+		if span.Start < 0 || span.Start >= span.End || span.End > len(text) {
+			continue
+		}
+		span.Label = string(text[span.Start:span.End])
+		out = append(out, span)
+	}
+	return out
+}
 
 // adjustMentions carries spans across one change to the draft, from oldText to
 // newText. It returns a new slice and never touches spans: the model is

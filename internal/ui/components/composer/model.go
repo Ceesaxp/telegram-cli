@@ -201,7 +201,12 @@ func (m *Model) EnterReplyMode(messageID int64, previewText string) {
 // text over it used to destroy whatever was half-written, without a confirm
 // and without a way back. Cancelling the edit or sending it puts the draft
 // back — see unparkEdit.
-func (m *Model) EnterEditMode(messageID int64, currentText string) string {
+//
+// mentions are the message's own mentions by ID, as spans of currentText —
+// MentionsIn reads them off the message. They are checked against the text
+// like any other span, and without them an edit would send the names back
+// as plain words.
+func (m *Model) EnterEditMode(messageID int64, currentText string, mentions ...MentionSpan) string {
 	// Only the first e parks. A second one, pressed while already editing,
 	// would otherwise park the message text of the first edit as if it
 	// were the user's own draft.
@@ -216,8 +221,8 @@ func (m *Model) EnterEditMode(messageID int64, currentText string) string {
 	m.textarea.Value = currentText
 	m.textarea.Cursor = len([]rune(currentText))
 	// The draft's mentions were parked with it; the message loaded in its
-	// place starts with none of its own.
-	m.mentions = nil
+	// place brings its own.
+	m.mentions = validMentions(mentions, currentText)
 	if discarded != "" {
 		m.notice = noticeEditDiscard
 	}
