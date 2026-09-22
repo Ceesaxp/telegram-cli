@@ -3,10 +3,10 @@ package telegram
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -42,9 +42,9 @@ type avatarRef struct {
 // of it is a megabyte or two.
 //
 // Falling out of it costs a refetch, not a failure: a file whose entry is
-// gone is registered again from its message (see [Client.DownloadMessageFile])
-// or, for an avatar, from its chat. So the number is a trade between memory
-// and round trips, and both ends of it are cheap.
+// gone is registered again from its message (see [Client.DownloadMessageFile]).
+// So the number is a trade between memory and round trips, and both ends of
+// it are cheap.
 const fileRegistryCapacity = 4096
 
 // fileRegistry maps string keys to downloadable tg file locations, keeping
@@ -55,6 +55,12 @@ const fileRegistryCapacity = 4096
 // no longer there is a file on disk the next open does not know about. So
 // the registry can stand above its capacity, by the keys in flight and only
 // while they are.
+//
+// An avatar key has no recovery. Nothing downloads avatars — the TUI draws
+// none, and the REST and MCP servers take their keys from message media —
+// so an evicted avatar is an unknown file until something does. Whatever
+// that is should register it again from its chat, which "avatar:<chatID>"
+// names.
 type fileRegistry struct {
 	mu       sync.Mutex
 	capacity int
@@ -305,34 +311,22 @@ func (c *Client) registerPhotoSize(p *tg.Photo, thumbType string, size int64) *F
 
 // registerAvatar registers a peer avatar; key "avatar:<chatID>".
 func (c *Client) registerAvatar(chatID, photoID int64) *File {
-	key := avatarKey(chatID)
+	key := fmt.Sprintf("avatar:%d", chatID)
 	return c.files.put(key, &fileEntry{
 		avatar: &avatarRef{chatID: chatID, photoID: photoID},
 		name:   strings.ReplaceAll(key, ":", "_") + ".jpg",
 	})
 }
 
-// avatarPrefix begins every avatar key; the chat ID follows it.
-const avatarPrefix = "avatar:"
-
-// avatarKey is the registry key of a chat's avatar.
-func avatarKey(chatID int64) string {
-	return fmt.Sprintf("%s%d", avatarPrefix, chatID)
-}
-
 // DownloadFileSync downloads a registered file to the files dir
 // and returns its local state. Concurrent calls for the same key share
 // one in-flight download via the registry's singleflight group.
 //
-// An avatar whose entry is gone is registered again from its chat, which
-// its key names. Any other key needs the message it came from to come back:
-// see [Client.DownloadMessageFile].
+// A key whose entry is gone is an unknown file here. A file a message
+// shows comes back through [Client.DownloadMessageFile], which knows the
+// message to fetch it from.
 func (c *Client) DownloadFileSync(key string) (*File, error) {
-	var reregister func() error
-	if chatID, ok := avatarChatID(key); ok {
-		reregister = func() error { return c.reregisterAvatar(chatID) }
-	}
-	return c.download(key, reregister)
+	return c.download(key, nil)
 }
 
 // DownloadMessageFile is [Client.DownloadFileSync] for a file a message
@@ -358,7 +352,13 @@ func (c *Client) download(key string, reregister func() error) (*File, error) {
 			if err := reregister(); err != nil {
 				return nil, fmt.Errorf("download %s: %w", key, err)
 			}
-			snap, ok = c.files.snapshot(key)
+			// The fetch went through and still did not register the key:
+			// the message was deleted (the server answers messageEmpty)
+			// or edited to carry something else. "Unknown file" would
+			// read as a bug in the client.
+			if snap, ok = c.files.snapshot(key); !ok {
+				return nil, fmt.Errorf("download %s: %w", key, errFileNotInMessage)
+			}
 		}
 		if !ok {
 			return nil, fmt.Errorf("unknown file %q", key)
@@ -372,6 +372,10 @@ func (c *Client) download(key string, reregister func() error) (*File, error) {
 	return file, nil
 }
 
+// errFileNotInMessage is a download whose message was fetched again and
+// came back without the file.
+var errFileNotInMessage = errors.New("the message no longer carries this file (deleted?)")
+
 // reregisterMessage fetches a message for the side effect of converting
 // it, which registers every file it carries.
 //
@@ -383,37 +387,6 @@ func (c *Client) reregisterMessage(chatID, messageID int64) error {
 	}
 	_, err := c.GetMessages(chatID, []int64{messageID})
 	return err
-}
-
-// reregisterAvatar resolves a chat again for the side effect of converting
-// it, which registers its current photo under the chat's avatar key. A chat
-// with no photo any more registers nothing, and the lookup after this one
-// misses as it should.
-//
-// The chat itself is thrown away. It is built by resolvedChat all the same,
-// which costs a notify-settings call a photo does not need, because every
-// peer-derived chat is built there (see TestPeerChatsAreBuiltInOnePlace) —
-// and a miss on an avatar is rare enough that one round trip is not worth
-// a second place to build chats in.
-func (c *Client) reregisterAvatar(chatID int64) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
-	if err != nil {
-		return fmt.Errorf("resolve peer %d: %w", chatID, err)
-	}
-	_, err = c.resolvedChat(ctx, peer)
-	return err
-}
-
-// avatarChatID is the chat an avatar key names, or false for any other key.
-func avatarChatID(key string) (int64, bool) {
-	rest, ok := strings.CutPrefix(key, avatarPrefix)
-	if !ok {
-		return 0, false
-	}
-	chatID, err := strconv.ParseInt(rest, 10, 64)
-	return chatID, err == nil
 }
 
 // fetch brings the bytes behind a registered key onto disk: from memory if

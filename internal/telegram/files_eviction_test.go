@@ -3,6 +3,7 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,19 +19,20 @@ import (
 )
 
 // fileServer stands in for the server a download talks to. It answers
-// messages.getMessages with messages, channels.getChannels with channels
+// messages.getMessages with messages, or with refetchErr when that is set,
 // and upload.getFile with payload, and counts what it was asked.
 //
 // When gate is set, upload.getFile announces itself on started and then
 // waits for gate to close: a transfer held open for as long as a test needs
-// one in flight.
+// one in flight. refetchStarted and refetchGate do the same for
+// messages.getMessages.
 type fileServer struct {
-	messages []tg.MessageClass
-	channels []tg.ChatClass
-	payload  []byte
+	messages   []tg.MessageClass
+	refetchErr error
+	payload    []byte
 
-	started chan struct{}
-	gate    chan struct{}
+	started, gate               chan struct{}
+	refetchStarted, refetchGate chan struct{}
 
 	mu        sync.Mutex
 	refetched [][]tg.InputMessageClass
@@ -43,27 +45,44 @@ func (f *fileServer) Invoke(ctx context.Context, input bin.Encoder, output bin.D
 		f.mu.Lock()
 		f.refetched = append(f.refetched, req.ID)
 		f.mu.Unlock()
+		if err := holdAt(ctx, f.refetchStarted, f.refetchGate); err != nil {
+			return err
+		}
+		if f.refetchErr != nil {
+			return f.refetchErr
+		}
 		output.(*tg.MessagesMessagesBox).Messages = &tg.MessagesMessages{Messages: f.messages}
-		return nil
-	case *tg.ChannelsGetChannelsRequest:
-		output.(*tg.MessagesChatsBox).Chats = &tg.MessagesChats{Chats: f.channels}
 		return nil
 	case *tg.UploadGetFileRequest:
 		f.mu.Lock()
 		f.transfers++
 		f.mu.Unlock()
-		if f.gate != nil {
-			f.started <- struct{}{}
-			select {
-			case <-f.gate:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		if err := holdAt(ctx, f.started, f.gate); err != nil {
+			return err
 		}
 		output.(*tg.UploadFileBox).File = &tg.UploadFile{Type: &tg.StorageFileJpeg{}, Bytes: f.payload}
 		return nil
 	default:
 		return fmt.Errorf("unexpected request %T", input)
+	}
+}
+
+// holdAt announces a request on started and waits for gate to close, when
+// there is a gate. The announcement never blocks: a second request arriving
+// is what a broken test has to be able to see, not a deadlock.
+func holdAt(ctx context.Context, started, gate chan struct{}) error {
+	if gate == nil {
+		return nil
+	}
+	select {
+	case started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-gate:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -154,16 +173,98 @@ func TestADownloadWhoseEntryIsThereFetchesNoMessage(t *testing.T) {
 }
 
 // A message that no longer carries the file cannot bring it back, and says
-// so rather than downloading something else.
-func TestADownloadTheRefetchCannotRecoverFails(t *testing.T) {
-	srv := &fileServer{messages: []tg.MessageClass{documentMessage(42, 8, 4)}}
+// so rather than downloading something else — or than calling it an unknown
+// file, which reads as a bug in the client when the message was deleted.
+func TestADownloadTheRefetchCannotRecoverSaysWhy(t *testing.T) {
+	for name, answer := range map[string]tg.MessageClass{
+		// Deleted on the server: messages.getMessages answers for the ID
+		// with messageEmpty.
+		"the message was deleted": &tg.MessageEmpty{ID: 42},
+		// Edited to carry another file.
+		"the message carries another file": documentMessage(42, 8, 4),
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := &fileServer{messages: []tg.MessageClass{answer}}
+			c := serverClient(t, srv, newFileRegistry())
+
+			_, err := c.DownloadMessageFile(5, 42, "doc:7")
+			if err == nil {
+				t.Fatal("a file the message no longer carries was downloaded")
+			}
+			if !strings.Contains(err.Error(), "no longer carries this file") {
+				t.Errorf("error = %q, want it to say the message no longer carries the file", err)
+			}
+			if n := srv.transferCount(); n != 0 {
+				t.Errorf("%d transfers started, want none", n)
+			}
+		})
+	}
+}
+
+// Readers that miss together share one refetch and one transfer. A page of
+// thumbnails whose entries were pushed out asks the server once per file,
+// not once per reader of it.
+func TestConcurrentMissesShareOneRefetch(t *testing.T) {
+	payload := []byte("%PDF")
+	srv := &fileServer{
+		messages:       []tg.MessageClass{documentMessage(42, 7, int64(len(payload)))},
+		payload:        payload,
+		refetchStarted: make(chan struct{}, 1),
+		refetchGate:    make(chan struct{}),
+	}
 	c := serverClient(t, srv, newFileRegistry())
 
-	if _, err := c.DownloadMessageFile(5, 42, "doc:7"); err == nil {
-		t.Fatal("a file the message no longer carries was downloaded")
+	const readers = 20
+	errs := make(chan error, readers)
+	for i := 0; i < readers; i++ {
+		go func() {
+			_, err := c.DownloadMessageFile(5, 42, "doc:7")
+			errs <- err
+		}()
+	}
+	select {
+	case <-srv.refetchStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refetch reached the server")
+	}
+	// The first refetch is held; the other readers arrive meanwhile. A
+	// lookup outside the flight would miss and reach the server now.
+	time.Sleep(50 * time.Millisecond)
+	close(srv.refetchGate)
+
+	for i := 0; i < readers; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("DownloadMessageFile: %v", err)
+		}
+	}
+	if n := len(srv.refetches()); n != 1 {
+		t.Errorf("%d readers missing together made %d refetches, want 1", readers, n)
+	}
+	if n := srv.transferCount(); n != 1 {
+		t.Errorf("%d readers missing together made %d transfers, want 1", readers, n)
+	}
+}
+
+// A refetch the server refuses is the answer the reader gets, and it lets
+// the key go: a hold left behind would keep the entry from ever being
+// evicted.
+func TestAFailedRefetchReportsItsErrorAndLetsTheKeyGo(t *testing.T) {
+	refused := errors.New("FLOOD_WAIT (30)")
+	srv := &fileServer{refetchErr: refused}
+	c := serverClient(t, srv, newFileRegistry())
+
+	_, err := c.DownloadMessageFile(5, 42, "doc:7")
+	if !errors.Is(err, refused) {
+		t.Fatalf("error = %v, want the server's %q", err, refused)
 	}
 	if n := srv.transferCount(); n != 0 {
 		t.Errorf("%d transfers started, want none", n)
+	}
+	c.files.mu.Lock()
+	held := len(c.files.inflight)
+	c.files.mu.Unlock()
+	if held != 0 {
+		t.Errorf("%d keys still held after the download returned", held)
 	}
 }
 
@@ -177,35 +278,6 @@ func TestADownloadForAPendingSendDoesNotAskTheServer(t *testing.T) {
 	}
 	if got := srv.refetches(); len(got) != 0 {
 		t.Errorf("asked the server for a pending send %d times", len(got))
-	}
-}
-
-// An avatar's key names its chat, so an avatar needs no message to come
-// back: asking for the chat again registers its current photo.
-func TestAnAvatarWhoseEntryIsGoneIsRegisteredAgain(t *testing.T) {
-	payload := []byte("jpeg")
-	srv := &fileServer{
-		channels: []tg.ChatClass{&tg.Channel{
-			ID: 11, AccessHash: 110, Title: "c", Broadcast: true,
-			Photo: &tg.ChatPhoto{PhotoID: 77},
-		}},
-		payload: payload,
-	}
-	c := serverClient(t, srv, newFileRegistry())
-
-	file, err := c.DownloadFileSync(avatarKey(channelChatID(11)))
-	if err != nil {
-		t.Fatalf("DownloadFileSync on an avatar with its entry gone: %v", err)
-	}
-	if !file.Downloaded {
-		t.Error("the avatar came back as not downloaded")
-	}
-	// The generation it was fetched under is the one the server has now.
-	if !strings.Contains(file.Path, "_77_") {
-		t.Errorf("path = %q, want it to carry photo 77", file.Path)
-	}
-	if n := srv.transferCount(); n != 1 {
-		t.Errorf("%d transfers, want 1", n)
 	}
 }
 
@@ -371,30 +443,6 @@ func TestAnEvictedDownloadIsServedFromTheCache(t *testing.T) {
 	}
 	if n := srv.transferCount(); n != 1 {
 		t.Errorf("%d transfers, want the first one only", n)
-	}
-}
-
-// An avatar pushed out of the registry comes back from its chat.
-func TestAnEvictedAvatarIsRegisteredAgain(t *testing.T) {
-	channel := &tg.Channel{
-		ID: 11, AccessHash: 110, Title: "c", Broadcast: true,
-		Photo: &tg.ChatPhoto{PhotoID: 77},
-	}
-	srv := &fileServer{channels: []tg.ChatClass{channel}, payload: []byte("jpeg")}
-	c := serverClient(t, srv, newFileRegistryOf(4))
-
-	key := c.registerAvatar(channelChatID(channel.ID), 77).ID
-	pushOut(c.files)
-	if c.files.holds(key) {
-		t.Fatal("the setup did not evict the avatar")
-	}
-
-	file, err := c.DownloadFileSync(key)
-	if err != nil {
-		t.Fatalf("DownloadFileSync on an evicted avatar: %v", err)
-	}
-	if !file.Downloaded {
-		t.Error("the avatar came back as not downloaded")
 	}
 }
 
