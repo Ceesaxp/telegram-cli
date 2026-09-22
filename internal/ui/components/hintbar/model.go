@@ -52,6 +52,11 @@ func New(roles theme.Roles) Model {
 	return Model{roles: roles}
 }
 
+// SetRoles replaces the palette. Nothing is derived from it ahead of
+// drawing — a notice keeps its kind, not its colour — so a notice already on
+// the row changes colour with everything else.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 func (m *Model) SetWidth(w int)    { m.width = w }
 func (m *Model) SetHints(h []Hint) { m.hints = h }
 func (m *Model) SetRight(s string) { m.right = s }
