@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -175,5 +176,51 @@ func TestMentionsSentAsPlainTextAreCounted(t *testing.T) {
 	m = send(t, m, mentionsSentPlainMsg(2))
 	if bar := ansi.Strip(m.hintBar.View()); !strings.Contains(bar, "2 mentions sent as plain text") {
 		t.Fatalf("hint bar = %q, want both counted", bar)
+	}
+}
+
+// Editing a message that mentions somebody by name keeps the mention: the
+// edit replaces every entity the message had, so a span not loaded with the
+// text would go back as the bare name.
+func TestAnEditKeepsTheMessagesMentions(t *testing.T) {
+	m := openedChat(t, opsGroup())
+	sender := &fakeSender{}
+	m.sends = sender
+	m.store.Messages.Append(basicGroupID, &telegram.Message{
+		ID: 55, ChatID: basicGroupID, IsOutgoing: true,
+		Content: &telegram.MessageText{Text: &telegram.FormattedText{
+			Text: "ping Ivo now",
+			Entities: []*telegram.TextEntity{
+				{Offset: 5, Length: 3, Type: &telegram.TextEntityTypeMentionName{UserID: 8}},
+			},
+		}},
+	})
+
+	m = send(t, m, chatview.MessageActionMsg{Action: "edit", ChatId: basicGroupID, MessageId: 55})
+	if m.focus != PanelComposer || m.composer.Draft() != "ping Ivo now" {
+		t.Fatalf("setup: edit left focus %v, draft %q", m.focus, m.composer.Draft())
+	}
+
+	m, cmd := updateCmd(t, m, "\r")
+	var submitted *composer.MessageSubmittedMsg
+	for _, msg := range flattenCmd(cmd) {
+		if s, ok := msg.(composer.MessageSubmittedMsg); ok {
+			submitted = &s
+		}
+	}
+	if submitted == nil {
+		t.Fatal("enter submitted nothing")
+	}
+	want := []composer.MentionSpan{{Start: 5, End: 8, UserID: 8, Label: "Ivo"}}
+	if submitted.EditMessageId != 55 || !reflect.DeepEqual(submitted.Mentions, want) {
+		t.Fatalf("submitted edit of %d with %+v, want message 55 with %+v",
+			submitted.EditMessageId, submitted.Mentions, want)
+	}
+
+	_, cmd = m.Update(*submitted)
+	flattenCmd(cmd)
+	if len(sender.sent) != 1 || !reflect.DeepEqual(sender.sent[0].mentions,
+		[]telegram.MentionSpan{{Offset: 5, Length: 3, UserID: 8}}) {
+		t.Fatalf("sent %+v, want the edit carrying the mention", sender.sent)
 	}
 }

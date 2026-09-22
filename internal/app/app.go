@@ -2086,8 +2086,12 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 			if message.ID == msg.MessageId {
 				if text, ok := message.Content.(*telegram.MessageText); ok {
 					// An edit cannot carry media — the composer drops any
-					// pending attachment and hands back its path.
-					dropped := m.composer.EnterEditMode(msg.MessageId, text.Text.Text)
+					// pending attachment and hands back its path. The
+					// message's mentions by name come with its text: an
+					// edit replaces every entity, so one not loaded here
+					// would go back as the bare name (issue #41).
+					dropped := m.composer.EnterEditMode(msg.MessageId, text.Text.Text,
+						composer.MentionsIn(text.Text)...)
 					m.cancelUpload(dropped)
 					clipboard.Remove(dropped)
 					m.setFocus(PanelComposer)
