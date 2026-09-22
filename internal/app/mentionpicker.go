@@ -188,11 +188,13 @@ func (m *Model) handleMentionQuery(q composer.MentionQueryMsg) tea.Cmd {
 // handleMentionSearch asks the server about a query whose debounce has run
 // out — unless another query has arrived since, in which case this one has
 // been typed past and its answer would be thrown away on arrival. The newer
-// query has a debounce of its own running.
+// query has a debounce of its own running. Nor is it asked once the picker
+// has closed — Esc, a send, a chat switch — while the query waited: nobody
+// is waiting for the answer.
 //
-// Every query that is not typed past gets an answer, even one with nobody
-// in it, and even with no client to ask: the picker says "searching…" until
-// it hears back, and would go on saying it.
+// Every query the open picker is still waiting on gets an answer, even one
+// with nobody in it, and even with no client to ask: the picker says
+// "searching…" until it hears back, and would go on saying it.
 //
 // A basic group is asked once for all its members, whatever the query —
 // that is what the search gives back for one — and the list answers every
@@ -200,7 +202,7 @@ func (m *Model) handleMentionQuery(q composer.MentionQueryMsg) tea.Cmd {
 // nothing: the list answers it when it lands.
 func (m *Model) handleMentionSearch(msg mentionSearchMsg) tea.Cmd {
 	q := msg.query
-	if q != m.mentionQuery {
+	if q != m.mentionQuery || !m.composer.MentionActive() {
 		return nil
 	}
 	if m.members == nil {

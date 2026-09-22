@@ -289,11 +289,22 @@ func (f *fakeMembers) SearchChatMembers(chatID int64, query string, limit int) (
 	return f.users, f.err
 }
 
-// searchingGroup is an open supergroup whose member search is members.
+// searchingGroup is an open supergroup whose member search is members, with
+// an @ typed: the picker is open, and a search has somebody waiting on it.
+// The query the @ sent is not delivered; each test sends its own.
 func searchingGroup(t *testing.T, members *fakeMembers) Model {
 	t.Helper()
 	m := openedChat(t, &telegram.Chat{ID: supergroupID, Type: telegram.ChatTypeSupergroup, Title: "infra"})
 	m.members = members
+	return pickerOpen(t, m)
+}
+
+// pickerOpen types an @ into m and checks that it opened the picker.
+func pickerOpen(t *testing.T, m Model) Model {
+	t.Helper()
+	if m = typeText(t, m, "@"); !m.composer.MentionActive() {
+		t.Fatal("setup: @ did not open the picker")
+	}
 	return m
 }
 
@@ -346,6 +357,23 @@ func TestAMentionQueryIsSearchedAfterTheDebounce(t *testing.T) {
 	}
 	if tick.query != q {
 		t.Fatalf("the debounce fired for %+v, want %+v", tick.query, q)
+	}
+}
+
+// A picker closed while its query waited out the debounce — Esc, a send, a
+// chat switch — is waiting for nothing, and the server is not asked.
+func TestAClosedPickersLastQueryIsNotSearched(t *testing.T) {
+	members := &fakeMembers{}
+	m := searchingGroup(t, members)
+	q := composer.MentionQueryMsg{ChatID: supergroupID, Query: "na", Gen: 3}
+	m = send(t, m, q)
+
+	m = update(t, m, "\x1b") // esc closes the picker
+	if m.composer.MentionActive() {
+		t.Fatal("setup: esc did not close the picker")
+	}
+	if _, answers := fire(t, m, q); len(members.asked) != 0 || len(answers) != 0 {
+		t.Fatalf("a closed picker searched %+v and answered %+v", members.asked, answers)
 	}
 }
 
@@ -452,7 +480,8 @@ func TestSearchedMembersAreKeptAndOfferedAgain(t *testing.T) {
 // member it found on the picker.
 func TestTheSearchedMemberReachesThePicker(t *testing.T) {
 	mira := &telegram.User{ID: 11, FirstName: "Mira", LastName: "Okonkwo"}
-	m := searchingGroup(t, &fakeMembers{users: []*telegram.User{mira}})
+	m := openedChat(t, &telegram.Chat{ID: supergroupID, Type: telegram.ChatTypeSupergroup, Title: "infra"})
+	m.members = &fakeMembers{users: []*telegram.User{mira}}
 
 	m, cmd := updateCmd(t, m, "@")
 	for _, msg := range flattenCmd(cmd) {
@@ -475,12 +504,13 @@ func TestTheSearchedMemberReachesThePicker(t *testing.T) {
 // ivo is a member without a username, mentioned by name.
 func ivo() *telegram.User { return &telegram.User{ID: 8, FirstName: "Ivo"} }
 
-// basicGroup is the open ops group, its member list behind members.
+// basicGroup is the open ops group, its member list behind members, with the
+// picker open as in searchingGroup.
 func basicGroup(t *testing.T, members *fakeMembers) Model {
 	t.Helper()
 	m := openedChat(t, opsGroup())
 	m.members = members
-	return m
+	return pickerOpen(t, m)
 }
 
 // A basic group hands over its whole member list, so it is fetched once, on
