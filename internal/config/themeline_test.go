@@ -167,7 +167,7 @@ func TestSetThemeLineEditsOnlyTheThemeLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := configFile(t, tt.before)
 
-			if err := SetThemeLine(path, tt.value, true); err != nil {
+			if _, err := SetThemeLine(path, tt.value, true); err != nil {
 				t.Fatalf("SetThemeLine: %v", err)
 			}
 			if got := readFile(t, path); got != tt.after {
@@ -214,9 +214,12 @@ func TestSetThemeLineRefusesWhatItCannotEditSafely(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := configFile(t, tt.body)
 
-			err := SetThemeLine(path, "gruvbox", true)
+			kept, err := SetThemeLine(path, "gruvbox", true)
 			if err == nil {
 				t.Fatalf("SetThemeLine accepted %q:\n%s", tt.body, readFile(t, path))
+			}
+			if kept {
+				t.Error("a refusal says the original is kept, and it made no backup")
 			}
 			if !strings.Contains(err.Error(), "by hand") {
 				t.Errorf("the error %q does not say to edit the file by hand", err)
@@ -238,11 +241,16 @@ func TestSetThemeLineCreatesAMissingFile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "tele-tui", "config.toml")
 
-	if err := SetThemeLine(path, "gruvbox", true); err != nil {
-		t.Fatalf("SetThemeLine: %v", err)
+	// There was nothing to keep, so nothing is missing: the file is
+	// tele-tui's from here on, and a later save has no reason to copy it.
+	if kept, err := SetThemeLine(path, "gruvbox", true); err != nil || !kept {
+		t.Fatalf("SetThemeLine = %v, %v", kept, err)
 	}
 	if got, want := readFile(t, path), "[ui]\ntheme = 'gruvbox'\n"; got != want {
 		t.Errorf("the new file is %q, want %q", got, want)
+	}
+	if found, _ := filepath.Glob(path + ".bak*"); len(found) != 0 {
+		t.Errorf("a file created from nothing was backed up: %v", found)
 	}
 	if runtime.GOOS != "windows" {
 		if info, err := os.Stat(path); err != nil {
@@ -253,41 +261,73 @@ func TestSetThemeLineCreatesAMissingFile(t *testing.T) {
 	}
 }
 
-// TestSetThemeLineBacksUpFirst: the original is copied aside before the
-// edit, and a second edit does not overwrite that copy — the first backup is
-// the file as the user wrote it.
-func TestSetThemeLineBacksUpFirst(t *testing.T) {
+// TestSetThemeLineKeepsOneBackup: the backup is the file as it was before
+// tele-tui first edited it — so it is made from the bytes the edit started
+// from, and made once. With config.toml.bak there already, from an earlier
+// session or from -migrate-config, a save makes none, timestamped or not:
+// each would be one more copy of an api_hash and a phone number, and none
+// of them the user's own file.
+func TestSetThemeLineKeepsOneBackup(t *testing.T) {
 	original := "[ui]\ntheme = \"dark\"  # mine\n"
 	path := configFile(t, original)
 
-	if err := SetThemeLine(path, "gruvbox", true); err != nil {
-		t.Fatalf("SetThemeLine: %v", err)
+	kept, err := SetThemeLine(path, "gruvbox", true)
+	if err != nil || !kept {
+		t.Fatalf("SetThemeLine = %v, %v; want the original kept", kept, err)
 	}
 	if got := readFile(t, path+".bak"); got != original {
 		t.Errorf("the backup holds %q, want the original %q", got, original)
 	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path + ".bak"); err != nil {
+			t.Fatal(err)
+		} else if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("the backup's mode is %v, want 0600: it holds what the config does", got)
+		}
+	}
 
-	if err := SetThemeLine(path, "nord", true); err != nil {
-		t.Fatalf("second SetThemeLine: %v", err)
+	// A later session, asked to back up again.
+	for _, theme := range []string{"nord", "amber"} {
+		if kept, err := SetThemeLine(path, theme, true); err != nil || !kept {
+			t.Fatalf("SetThemeLine(%s) = %v, %v; want the original still kept", theme, kept, err)
+		}
 	}
 	if got := readFile(t, path+".bak"); got != original {
-		t.Errorf("the second edit overwrote the first backup with %q", got)
+		t.Errorf("a later save overwrote the backup with %q", got)
 	}
-	stamped, _ := filepath.Glob(path + ".bak.*")
-	if len(stamped) != 1 {
-		t.Fatalf("want one timestamped backup beside the first, found %v", stamped)
+	if found, _ := filepath.Glob(path + ".bak*"); len(found) != 1 {
+		t.Errorf("backups %v, want config.toml.bak alone", found)
 	}
-	if got, want := readFile(t, stamped[0]), "[ui]\ntheme = 'gruvbox'  # mine\n"; got != want {
-		t.Errorf("the second backup holds %q, want the file before the second edit, %q", got, want)
+}
+
+// TestSetThemeLineLeavesAnExistingBackupAlone: a config.toml.bak that is
+// not :theme's — -migrate-config's, say — is the older file, and stays.
+func TestSetThemeLineLeavesAnExistingBackupAlone(t *testing.T) {
+	path := configFile(t, "[ui]\ntheme = \"dark\"\n")
+	const older = "# before -migrate-config\n"
+	if err := os.WriteFile(path+".bak", []byte(older), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if kept, err := SetThemeLine(path, "gruvbox", true); err != nil || !kept {
+		t.Fatalf("SetThemeLine = %v, %v", kept, err)
+	}
+	if got := readFile(t, path+".bak"); got != older {
+		t.Errorf("the existing backup now holds %q", got)
+	}
+	if found, _ := filepath.Glob(path + ".bak*"); len(found) != 1 {
+		t.Errorf("backups %v, want the existing one alone", found)
 	}
 }
 
 // TestSetThemeLineCanSkipTheBackup: a caller that has already kept the
-// user's file — earlier in the same session — edits without a new copy.
+// user's file — earlier in the same session — edits without a new copy,
+// even with no backup there: one deleted since is not a reason to back up
+// a file this session has already edited.
 func TestSetThemeLineCanSkipTheBackup(t *testing.T) {
 	path := configFile(t, "[ui]\ntheme = \"dark\"\n")
 
-	if err := SetThemeLine(path, "gruvbox", false); err != nil {
+	if _, err := SetThemeLine(path, "gruvbox", false); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 	if got := readFile(t, path); got != "[ui]\ntheme = 'gruvbox'\n" {
@@ -309,7 +349,7 @@ func TestSetThemeLineKeepsTheFileMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetThemeLine(path, "gruvbox", true); err != nil {
+	if _, err := SetThemeLine(path, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 	if info, err := os.Stat(path); err != nil {
@@ -334,7 +374,7 @@ func TestSetThemeLineWritesThroughASymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := SetThemeLine(link, "gruvbox", true); err != nil {
+	if _, err := SetThemeLine(link, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 
@@ -376,12 +416,24 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 			loadWritten = check
 			t.Cleanup(func() { loadWritten = loadFrom })
 
-			err := SetThemeLine(path, "gruvbox", true)
+			kept, err := SetThemeLine(path, "gruvbox", true)
 			if err == nil {
 				t.Fatal("SetThemeLine reported success for a write that did not read back")
 			}
 			if got := readFile(t, path); got != original {
 				t.Errorf("the file was left as %q, want the original restored", got)
+			}
+			// The backup was made before the write, and a failed save does
+			// not unmake it: it says so, so the caller does not ask again.
+			if !kept || readFile(t, path+".bak") != original {
+				t.Errorf("kept = %v, and the backup holds %q; want the original kept", kept, readFile(t, path+".bak"))
+			}
+			// A retry — the same failure again — backs up nothing more.
+			if _, err := SetThemeLine(path, "gruvbox", true); err == nil {
+				t.Fatal("the retry succeeded")
+			}
+			if found, _ := filepath.Glob(path + ".bak*"); len(found) != 1 {
+				t.Errorf("after a retry the backups are %v, want one", found)
 			}
 			if runtime.GOOS != "windows" {
 				if info, err := os.Stat(path); err != nil {
@@ -400,7 +452,7 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 		loadWritten = checks["the loader fails"]
 		t.Cleanup(func() { loadWritten = loadFrom })
 
-		if err := SetThemeLine(path, "gruvbox", false); err == nil {
+		if _, err := SetThemeLine(path, "gruvbox", false); err == nil {
 			t.Fatal("SetThemeLine reported success for a write that did not read back")
 		}
 		if got := readFile(t, path); got != original {
@@ -418,7 +470,7 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 		loadWritten = checks["the loader fails"]
 		t.Cleanup(func() { loadWritten = loadFrom })
 
-		if err := SetThemeLine(path, "gruvbox", true); err == nil {
+		if _, err := SetThemeLine(path, "gruvbox", true); err == nil {
 			t.Fatal("SetThemeLine reported success for a write that did not read back")
 		}
 		if _, err := os.Stat(path); err == nil {

@@ -321,11 +321,15 @@ Decisions made in Phase 2:
   a table — keeping indentation, the key's spelling, the spacing around `=`
   and a trailing comment; a `[ui]` without one gets a line under its header,
   a file without `[ui]` gets the table appended, and a missing file is
-  created at 0600. CRLF and a missing final newline are kept. The first
-  save of a session backs the file up with `BackupFile` — the file as it was
-  before tele-tui touched it; later saves in the session edit a line it
-  already wrote and make no copy (the app's `configSaved`, passed as
-  `SetThemeLine`'s `backup`). Every save is written atomically through a
+  created at 0600. CRLF and a missing final newline are kept. There is one
+  backup, `config.toml.bak`, and it is the file as it was before tele-tui
+  first edited it: a save makes it from the bytes the edit started from, at
+  0600, only when there is none — none on later saves or later sessions, and
+  no timestamped extras, which `BackupFile` makes for `-migrate-config` and
+  which here piled up one a session, each holding the api_hash. The app's
+  `configKept`, passed as `SetThemeLine`'s `backup`, stops a session asking
+  again once the file is kept, even by a save that then failed, so a retry
+  never backs up twice. Every save is written atomically through a
   symlink with its own mode, and read back with the real loader; if it does
   not load, or does not say the new value, the bytes read before the edit
   are restored, so the safety does not depend on a backup. It refuses,

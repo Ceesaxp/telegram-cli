@@ -40,55 +40,81 @@ import (
 // ui.theme is anything but a string on a line of [ui], and when the file is
 // not TOML at all.
 //
-// With backup, the file is copied aside with [BackupFile] before it is
-// written — only once it is known there will be a write, so a refusal
-// leaves nothing behind. The write is atomic, keeps the file's mode, and
-// lands on a symlink's target rather than replacing the link. The result is
-// then read back with the real loader; if it does not load, or does not say
-// value, the original is put back and the error returned. That safety does
-// not depend on the backup: the original is the bytes read before the edit.
-func SetThemeLine(path, value string, backup bool) error {
+// With backup, the file is kept as config.toml.bak before it is written —
+// only once it is known there will be a write, so a refusal leaves nothing
+// behind. One backup, ever: it is the file as it was before tele-tui first
+// edited it, so with a config.toml.bak already there (from an earlier save,
+// or from -migrate-config) none is made, timestamped or otherwise; each would
+// be one more copy of an api_hash, and none of them the user's own file.
+// kept reports whether that file is safe — backed up now, backed up
+// already, or never there, when this call creates the file — and holds even
+// when the save then fails, so the caller need not ask again. It is false
+// for a refusal, and whenever backup is.
+//
+// The write is atomic, keeps the file's mode, and lands on a symlink's
+// target rather than replacing the link. The result is then read back with
+// the real loader; if it does not load, or does not say value, the original
+// is put back and the error returned. That safety does not depend on the
+// backup: the original is the bytes read before the edit.
+func SetThemeLine(path, value string, backup bool) (kept bool, err error) {
 	original, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return createThemeFile(path, value)
+		return backup, createThemeFile(path, value)
 	}
 	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
+		return false, fmt.Errorf("reading config: %w", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
+		return false, fmt.Errorf("reading config: %w", err)
 	}
 
 	edited, err := editThemeLine(original, value)
 	if err != nil {
-		return fmt.Errorf("%s %w — edit it by hand", filepath.Base(path), err)
+		return false, fmt.Errorf("%s %w — edit it by hand", filepath.Base(path), err)
 	}
 
 	backupPath := ""
 	if backup {
-		if backupPath, err = BackupFile(path); err != nil {
-			return fmt.Errorf("backing up config: %w", err)
+		if backupPath, err = backupOnce(path, original); err != nil {
+			return false, fmt.Errorf("backing up config: %w", err)
 		}
+		kept = true
 	}
 	mode := info.Mode().Perm()
 	if err := writeFileAtomic(path, edited, mode); err != nil {
-		return err
+		return kept, err
 	}
 	if err := checkThemeLine(path, value); err != nil {
-		// The bytes read above rather than the backup file: they are what
-		// BackupFile copied, byte for byte, and nothing can have touched
-		// them since.
 		if restoreErr := writeFileAtomic(path, original, mode); restoreErr != nil {
 			if backupPath == "" {
-				return fmt.Errorf("%w, and restoring it failed too (%v)", err, restoreErr)
+				return kept, fmt.Errorf("%w, and restoring it failed too (%v)", err, restoreErr)
 			}
-			return fmt.Errorf("%w, and restoring it failed too (%v): the original is in %s",
+			return kept, fmt.Errorf("%w, and restoring it failed too (%v): the original is in %s",
 				err, restoreErr, backupPath)
 		}
-		return fmt.Errorf("%w; the file is as it was", err)
+		return kept, fmt.Errorf("%w; the file is as it was", err)
 	}
-	return nil
+	return kept, nil
+}
+
+// backupOnce keeps original as config.toml.bak, beside the file a symlink
+// resolves to as [BackupFile] puts it, unless a backup is there already —
+// then that one is the older file, and it stays. original is the bytes the
+// edit starts from, rather than the file read again: what is backed up is
+// then what the edit was made to. The path returned is the backup's.
+//
+// [BackupFile] is -migrate-config's, and keeps its own rule: never
+// overwrite, and timestamp a second backup. Once a migration, that is one
+// file; once a :theme, it was one a session and more.
+func backupOnce(path string, original []byte) (string, error) {
+	backup := resolveTarget(path) + ".bak"
+	if _, err := os.Lstat(backup); err == nil {
+		return backup, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	return backup, writeFilePrivate(backup, original)
 }
 
 // loadWritten is the loader SetThemeLine reads its own write back with. A

@@ -114,12 +114,16 @@ type Model struct {
 	// so `:theme dark` then saves dark over the name that did not work.
 	themeName string
 
-	// configSaved is whether :theme has written config.toml this session.
-	// The first write backs the file up — the file as it was before
-	// tele-tui touched it, which is what a backup is for — and later ones
-	// edit a line this session already wrote, so they make no copy of
-	// their own. A save that did not go through leaves it false.
-	configSaved bool
+	// configKept is whether this session has kept config.toml as it was
+	// before tele-tui touched it: backed it up, found a backup already
+	// there, or created the file from nothing. Until it has, a :theme save
+	// asks config.SetThemeLine to back up — which makes config.toml.bak only
+	// if there is none. Set as soon as that is done, even by a save that
+	// then fails, so a retry never backs up a second time, and a backup
+	// deleted mid-session is not replaced by a copy of a file this session
+	// has already edited. A refused save, which touched nothing, leaves it
+	// false.
+	configKept bool
 
 	// trueColor is the colour depth New resolved the palette at, from the
 	// environment. A theme applied later is resolved at the same depth

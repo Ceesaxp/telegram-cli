@@ -367,37 +367,60 @@ func TestThemeBacksUpOnceASession(t *testing.T) {
 	}
 }
 
-// TestANewSessionBacksUpAgain: the next start is a new session, and the
-// file it finds is the one to keep — once. The first session's backup, the
-// user's own file, is not touched.
-func TestANewSessionBacksUpAgain(t *testing.T) {
+// TestLaterSessionsMakeNoBackup: config.toml.bak is the file as it was
+// before tele-tui first edited it, and once it is there no session adds
+// another — a timestamped copy a session was one more file holding the
+// api_hash, and none of them the user's own.
+func TestLaterSessionsMakeNoBackup(t *testing.T) {
 	original := "[ui]\ntheme = \"dark\"\n"
 	w := newThemeWorld(t, original, map[string]string{"nord": nordTheme, "amber": nordTheme})
-	m := w.app(t)
-	m, _, _ = m.runCommandLine("theme nord")
-	m, _, _ = m.runCommandLine("theme light")
-	if n := len(w.backups(t)); n != 1 {
-		t.Fatalf("precondition: the first session left %d backups", n)
-	}
 
-	next := w.app(t)
-	next, _, _ = next.runCommandLine("theme amber")
-	next, _, _ = next.runCommandLine("theme nord")
-
-	var stamped []string
-	for _, b := range w.backups(t) {
-		if b != w.configPath+".bak" {
-			stamped = append(stamped, b)
+	for session := range 3 {
+		m := w.app(t)
+		for _, name := range []string{"nord", "amber", "light"} {
+			var notice string
+			if m, _, notice = m.runCommandLine("theme " + name); notice != "theme: "+name {
+				t.Fatalf("session %d, :theme %s says %q", session, name, notice)
+			}
 		}
 	}
-	if len(stamped) != 1 {
-		t.Fatalf("the second session left %d more backups (%v), want one", len(stamped), stamped)
-	}
-	if got := readBackup(t, stamped[0]); got != "[ui]\ntheme = 'light'\n" {
-		t.Errorf("the second session's backup holds %q, want the file as the first session left it", got)
+
+	if backups := w.backups(t); len(backups) != 1 || backups[0] != w.configPath+".bak" {
+		t.Fatalf("three sessions left the backups %v, want config.toml.bak alone", backups)
 	}
 	if got := readBackup(t, w.configPath+".bak"); got != original {
-		t.Errorf("the first backup now holds %q, want the original still", got)
+		t.Errorf("the backup holds %q, want the original %q", got, original)
+	}
+}
+
+// TestAFailedSaveStillCountsItsBackup: a save that backed up and then did
+// not read back — restored — has kept the original all the same, so the
+// session does not back up again: not on a retry, and not after the backup
+// is deleted, when the file is no longer the user's untouched one.
+func TestAFailedSaveStillCountsItsBackup(t *testing.T) {
+	w := newThemeWorld(t, "[ui]\ntheme = \"dark\"\n", map[string]string{"nord": nordTheme, "amber": nordTheme})
+	m := w.app(t)
+	// Valid TOML with a theme line to edit, and a setting the loader
+	// cannot read: the edit goes in, the read-back fails, it is restored.
+	unloadable := "[ui]\ntheme = \"dark\"\nrail = \"yes\"\n"
+	writeFile(t, w.configPath, unloadable)
+
+	m, _, notice := m.runCommandLine("theme nord")
+	if !strings.Contains(notice, "not saved") {
+		t.Fatalf("precondition: the save went through: %q", notice)
+	}
+	if got := w.file(t); got != unloadable || readBackup(t, w.configPath+".bak") != unloadable {
+		t.Fatalf("precondition: the file %q, the backup %q; want both the original", got, readBackup(t, w.configPath+".bak"))
+	}
+
+	if err := os.Remove(w.configPath + ".bak"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, w.configPath, "[ui]\ntheme = \"dark\"\n")
+	m, _, _ = m.runCommandLine("theme amber")
+
+	if backups := w.backups(t); len(backups) != 0 {
+		t.Errorf("the session backed up again after a save that had: %v", backups)
 	}
 }
 

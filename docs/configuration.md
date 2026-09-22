@@ -68,13 +68,14 @@ sequences to your terminal.
 only the value on the `theme` line under `[ui]` changes, and your comments,
 order, spacing, quoting and line endings stay as they were. A `[ui]` table
 without a `theme` line gets one under its header; a file without `[ui]` gets
-one at the end. The first save of a session copies the file to
-`config.toml.bak` first (beside the real file, if `config.toml` is a
-symlink): that is the file as you had it before tele-tui touched it, and
-trying theme after theme edits a line tele-tui already wrote, so later saves
-in the same session make no copy of their own. A later session backs up
-once more, and never overwrites an existing `config.toml.bak` — its copy
-gets a timestamp instead. Every save is read back before `:theme` reports
+one at the end. Before the first edit the file is copied to
+`config.toml.bak` (beside the real file, if `config.toml` is a symlink), and
+that is the only backup `:theme` ever makes: it is the file as you had it
+before tele-tui touched it. With a `config.toml.bak` already there — from an
+earlier save, a session before, or `-migrate-config` — no other is made and
+that one is left alone, so trying theme after theme, today or next week,
+leaves one copy of your config, not one a switch. Delete it to have the next
+save take a fresh one. Every save is read back before `:theme` reports
 success; if the file does not load, or does not say the new theme, it is put
 back the way it was before that save, backup or not.
 
