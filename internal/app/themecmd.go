@@ -70,8 +70,9 @@ func homeRelative(path string) string {
 
 // runTheme is :theme. With no argument it says which theme is on. With one
 // it applies the theme the argument names, on the spot, and saves it as
-// ui.theme — by rewriting that one line of config.toml, keeping a backup —
-// so the next start draws what is on screen now.
+// ui.theme — by rewriting that one line of config.toml — so the next start
+// draws what is on screen now. The first save of a session backs the file
+// up; see configSaved.
 //
 // A name that names nothing usable changes nothing and writes nothing: see
 // applyTheme. Nor does the theme already on, which is what Enter on the
@@ -99,9 +100,10 @@ func (m Model) runTheme(arg string) (Model, tea.Cmd, string) {
 	// The running config says what is running, saved or not.
 	m.config.UI.Theme = name
 	var report commandReport
-	if err := config.SetThemeLine(m.config.Path(), name, true); err != nil {
+	if err := config.SetThemeLine(m.config.Path(), name, !m.configSaved); err != nil {
 		report.warn(fmt.Sprintf("theme: %s (not saved: %v)", name, err))
 	} else {
+		m.configSaved = true
 		report.say("theme: " + name)
 	}
 	report.warnings(warnings)

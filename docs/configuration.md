@@ -68,11 +68,15 @@ sequences to your terminal.
 only the value on the `theme` line under `[ui]` changes, and your comments,
 order, spacing, quoting and line endings stay as they were. A `[ui]` table
 without a `theme` line gets one under its header; a file without `[ui]` gets
-one at the end. Before the edit the file is copied to `config.toml.bak`
-(beside the real file, if `config.toml` is a symlink), and a later edit
-never overwrites that copy — it gets a timestamped one instead. The edited
-file is read back before `:theme` reports success; if it does not load, or
-does not say the new theme, the original is put back.
+one at the end. The first save of a session copies the file to
+`config.toml.bak` first (beside the real file, if `config.toml` is a
+symlink): that is the file as you had it before tele-tui touched it, and
+trying theme after theme edits a line tele-tui already wrote, so later saves
+in the same session make no copy of their own. A later session backs up
+once more, and never overwrites an existing `config.toml.bak` — its copy
+gets a timestamp instead. Every save is read back before `:theme` reports
+success; if the file does not load, or does not say the new theme, it is put
+back the way it was before that save, backup or not.
 
 `:theme` will not edit a `config.toml` that sets `ui` with dotted keys
 (`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),

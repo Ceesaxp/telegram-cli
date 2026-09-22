@@ -318,3 +318,105 @@ func TestThemeListsEveryThemeWithWhereItLives(t *testing.T) {
 		t.Errorf("listed %v, want %v", got, want)
 	}
 }
+
+// backups is every backup of config.toml there is, first and timestamped.
+func (w themeWorld) backups(t *testing.T) []string {
+	t.Helper()
+	found, err := filepath.Glob(w.configPath + ".bak*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
+// readBackup is what a backup holds.
+func readBackup(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestThemeBacksUpOnceASession: the backup is there to keep the file as it
+// was before tele-tui touched it. Trying themes one after another rewrites
+// a line tele-tui already wrote, and each of those needs no copy of its
+// own — nine themes tried used to be nine timestamped backups.
+func TestThemeBacksUpOnceASession(t *testing.T) {
+	original := "# mine\n[ui]\ntheme = \"dark\"\n"
+	w := newThemeWorld(t, original, map[string]string{"nord": nordTheme, "amber": nordTheme})
+	m := w.app(t)
+
+	for _, name := range []string{"nord", "amber", "light"} {
+		var notice string
+		if m, _, notice = m.runCommandLine("theme " + name); notice != "theme: "+name {
+			t.Fatalf(":theme %s says %q", name, notice)
+		}
+	}
+
+	if got := w.file(t); got != "# mine\n[ui]\ntheme = 'light'\n" {
+		t.Errorf("config.toml is %q, want the last theme saved", got)
+	}
+	backups := w.backups(t)
+	if len(backups) != 1 || backups[0] != w.configPath+".bak" {
+		t.Fatalf("three switches left the backups %v, want config.toml.bak alone", backups)
+	}
+	if got := readBackup(t, backups[0]); got != original {
+		t.Errorf("the backup holds %q, want the file as it was before the session, %q", got, original)
+	}
+}
+
+// TestANewSessionBacksUpAgain: the next start is a new session, and the
+// file it finds is the one to keep — once. The first session's backup, the
+// user's own file, is not touched.
+func TestANewSessionBacksUpAgain(t *testing.T) {
+	original := "[ui]\ntheme = \"dark\"\n"
+	w := newThemeWorld(t, original, map[string]string{"nord": nordTheme, "amber": nordTheme})
+	m := w.app(t)
+	m, _, _ = m.runCommandLine("theme nord")
+	m, _, _ = m.runCommandLine("theme light")
+	if n := len(w.backups(t)); n != 1 {
+		t.Fatalf("precondition: the first session left %d backups", n)
+	}
+
+	next := w.app(t)
+	next, _, _ = next.runCommandLine("theme amber")
+	next, _, _ = next.runCommandLine("theme nord")
+
+	var stamped []string
+	for _, b := range w.backups(t) {
+		if b != w.configPath+".bak" {
+			stamped = append(stamped, b)
+		}
+	}
+	if len(stamped) != 1 {
+		t.Fatalf("the second session left %d more backups (%v), want one", len(stamped), stamped)
+	}
+	if got := readBackup(t, stamped[0]); got != "[ui]\ntheme = 'light'\n" {
+		t.Errorf("the second session's backup holds %q, want the file as the first session left it", got)
+	}
+	if got := readBackup(t, w.configPath+".bak"); got != original {
+		t.Errorf("the first backup now holds %q, want the original still", got)
+	}
+}
+
+// TestASaveThatDidNotHappenDoesNotUseUpTheBackup: a refused save leaves the
+// file as the user wrote it, so the first save that does go through is
+// still the first touch, and backs up.
+func TestASaveThatDidNotHappenDoesNotUseUpTheBackup(t *testing.T) {
+	w := newThemeWorld(t, "ui.theme = \"dark\"\n", map[string]string{"nord": nordTheme})
+	m := w.app(t)
+	m, _, notice := m.runCommandLine("theme nord")
+	if !strings.Contains(notice, "not saved") {
+		t.Fatalf("precondition: the dotted key was saved over: %q", notice)
+	}
+
+	fixed := "[ui]\ntheme = \"nord\"\n"
+	writeFile(t, w.configPath, fixed)
+	m, _, _ = m.runCommandLine("theme light")
+
+	if backups := w.backups(t); len(backups) != 1 || readBackup(t, backups[0]) != fixed {
+		t.Errorf("backups %v; want one, holding the file the save found", backups)
+	}
+}

@@ -317,10 +317,14 @@ Decisions made in Phase 2:
   a table — keeping indentation, the key's spelling, the spacing around `=`
   and a trailing comment; a `[ui]` without one gets a line under its header,
   a file without `[ui]` gets the table appended, and a missing file is
-  created at 0600. CRLF and a missing final newline are kept. The file is
-  backed up first with `BackupFile`, written atomically through a symlink
-  with its own mode, and read back with the real loader; if it does not
-  load, or does not say the new value, the original is restored. It refuses,
+  created at 0600. CRLF and a missing final newline are kept. The first
+  save of a session backs the file up with `BackupFile` — the file as it was
+  before tele-tui touched it; later saves in the session edit a line it
+  already wrote and make no copy (the app's `configSaved`, passed as
+  `SetThemeLine`'s `backup`). Every save is written atomically through a
+  symlink with its own mode, and read back with the real loader; if it does
+  not load, or does not say the new value, the bytes read before the edit
+  are restored, so the safety does not depend on a backup. It refuses,
   and says to edit by hand, when `ui` is dotted keys or an inline table or
   the file is not TOML: the theme still switches, and the notice says "not
   saved" and why.

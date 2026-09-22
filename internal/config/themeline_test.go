@@ -256,6 +256,22 @@ func TestSetThemeLineBacksUpFirst(t *testing.T) {
 	}
 }
 
+// TestSetThemeLineCanSkipTheBackup: a caller that has already kept the
+// user's file — earlier in the same session — edits without a new copy.
+func TestSetThemeLineCanSkipTheBackup(t *testing.T) {
+	path := configFile(t, "[ui]\ntheme = \"dark\"\n")
+
+	if err := SetThemeLine(path, "gruvbox", false); err != nil {
+		t.Fatalf("SetThemeLine: %v", err)
+	}
+	if got := readFile(t, path); got != "[ui]\ntheme = 'gruvbox'\n" {
+		t.Errorf("the file is %q, want the theme saved", got)
+	}
+	if found, _ := filepath.Glob(path + ".bak*"); len(found) != 0 {
+		t.Errorf("a write told not to back up left %v", found)
+	}
+}
+
 // TestSetThemeLineKeepsTheFileMode: this edits a line; how private the file
 // is was decided by its owner, and a one-line edit does not decide it again.
 func TestSetThemeLineKeepsTheFileMode(t *testing.T) {
@@ -350,6 +366,24 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 			}
 		})
 	}
+
+	// A write that was not backed up is restored the same way: from the
+	// bytes read before the edit, which no backup is needed for.
+	t.Run("without a backup", func(t *testing.T) {
+		path := configFile(t, original)
+		loadWritten = checks["the loader fails"]
+		t.Cleanup(func() { loadWritten = loadFrom })
+
+		if err := SetThemeLine(path, "gruvbox", false); err == nil {
+			t.Fatal("SetThemeLine reported success for a write that did not read back")
+		}
+		if got := readFile(t, path); got != original {
+			t.Errorf("the file was left as %q, want the original restored", got)
+		}
+		if _, err := os.Stat(path + ".bak"); err == nil {
+			t.Error("a write told not to back up left a backup")
+		}
+	})
 
 	// And a file that did not exist is not left existing.
 	t.Run("a created file", func(t *testing.T) {
