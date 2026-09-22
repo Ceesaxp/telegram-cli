@@ -103,7 +103,9 @@ func (f *fakeFileSender) SendOpenedFileMessage(chatID int64, file *os.File, capt
 func sendRootsServer(t *testing.T, client *telegram.Client) *Server {
 	t.Helper()
 	srv := New(client, testToken)
-	srv.SetSendRoots(telegram.OpenSendRoots(client.SendRoots()...))
+	roots, _ := telegram.OpenSendRoots(client.SendRoots()...)
+	t.Cleanup(func() { roots.Close() })
+	srv.SetSendRoots(roots)
 	return srv
 }
 

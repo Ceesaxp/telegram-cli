@@ -36,10 +36,9 @@ func sendRootsHandlers(t *testing.T) (h *handlers, filesDir, outbox string) {
 		FilesDir:    filesDir,
 		SendDirs:    []string{outbox},
 	}}
-	h = &handlers{
-		tg:    telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg)),
-		roots: telegram.OpenSendRoots(cfg.SendRoots()...),
-	}
+	roots, _ := telegram.OpenSendRoots(cfg.SendRoots()...)
+	t.Cleanup(func() { roots.Close() })
+	h = &handlers{tg: telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg)), roots: roots}
 	return h, filesDir, outbox
 }
 

@@ -21,15 +21,73 @@ import (
 // file through it; the TUI has none, because there the person choosing
 // the file is the person running the process.
 //
+// Every root is opened once, when the server starts, and held open until
+// it stops. Opening a root by name on each send would follow whatever the
+// name pointed at by then: with nested roots A and A/B, anyone who can
+// write to A swaps A/B for a link to ~/.ssh, and a root missing at the
+// start can be created later as a link to anywhere. A held root is the
+// directory it was, wherever its name points afterwards.
+//
 // A nil SendRoots has no roots and refuses every path.
 type SendRoots struct {
-	dirs []string
+	roots []*os.Root // held open, one per usable root
+	dirs  []string   // those roots as configured, for the refusal
+	names []rootName // every name a path may be matched under, in order
 }
 
-// OpenSendRoots makes the SendRoots for dirs, in the order they are
-// searched. Blank entries are skipped.
-func OpenSendRoots(dirs ...string) *SendRoots {
-	return &SendRoots{dirs: dirs}
+// rootName is one absolute name a held root answers to.
+type rootName struct {
+	name string
+	root *os.Root
+}
+
+// OpenSendRoots opens dirs, in the order they are to be searched, and
+// holds them open until Close. Blank entries are skipped. A directory that
+// cannot be opened — above all one that does not exist yet — is skipped
+// too, for as long as the SendRoots lives, and reported in errs so the
+// caller can say so.
+//
+// Each root answers to its name as written, made absolute, and to where it
+// really was when it was opened, so a root under /tmp on macOS also
+// matches the same path under /private/tmp. The names only choose a root;
+// what is opened is always inside the directory held here.
+func OpenSendRoots(dirs ...string) (roots *SendRoots, errs []error) {
+	roots = &SendRoots{}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("send root %s: %w", dir, err))
+			continue
+		}
+		root, err := os.OpenRoot(abs)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("send root %s: %w", dir, cause(err)))
+			continue
+		}
+		roots.roots = append(roots.roots, root)
+		roots.dirs = append(roots.dirs, dir)
+		roots.names = append(roots.names, rootName{abs, root})
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+			roots.names = append(roots.names, rootName{resolved, root})
+		}
+	}
+	return roots, errs
+}
+
+// Close releases the roots. Files already opened through them stay open;
+// Open refuses every path from now on.
+func (r *SendRoots) Close() error {
+	if r == nil {
+		return nil
+	}
+	var errs []error
+	for _, root := range r.roots {
+		errs = append(errs, root.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // Open opens path for a remote caller's send if it names a regular file
@@ -44,15 +102,12 @@ func OpenSendRoots(dirs ...string) *SendRoots {
 // [os.Root], which follows a link only while it stays inside. Whatever the
 // name points at afterwards, what is sent is what was opened.
 //
-// With no usable root everything is refused. A root is matched as written
-// and where it really is (see rootDirs), so a root under /tmp on macOS
-// also matches the same path under /private/tmp. A link inside a root must
-// be relative and stay inside: os.Root refuses an absolute link even when
-// it names a file in the root.
+// With no usable root everything is refused. A link inside a root must be
+// relative and stay inside: os.Root refuses an absolute link even when it
+// names a file in the root.
 func (r *SendRoots) Open(path string) (*os.File, error) {
-	var roots []string
-	if r != nil {
-		roots = r.dirs
+	if r == nil {
+		r = &SendRoots{}
 	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
@@ -62,12 +117,12 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 	// outranks "outside": the path was inside, and saying otherwise would
 	// send the caller looking for a typo that is not there.
 	var found error
-	for _, dir := range rootDirs(roots) {
-		rel, ok := within(dir, abs)
+	for _, n := range r.names {
+		rel, ok := within(n.name, abs)
 		if !ok {
 			continue
 		}
-		f, err := openInRoot(dir, rel)
+		f, err := openRegular(n.root, rel)
 		if err == nil {
 			return f, nil
 		}
@@ -81,9 +136,11 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 	// Name the roots. The caller here is an authenticated operator or the
 	// agent they configured, the set is already logged at startup and
 	// documented, and "outside the allowed directories" with no list is a
-	// dead end — the reader cannot tell a typo from a policy.
+	// dead end — the reader cannot tell a typo from a policy. Only the
+	// roots actually held are named: one that could not be opened at the
+	// start was reported then, and is not searched.
 	return nil, fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
-		path, strings.Join(nonEmpty(roots), ", "))
+		path, strings.Join(r.dirs, ", "))
 }
 
 // errNotRegular refuses what is not a plain file: a directory, a fifo, a
@@ -91,21 +148,15 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 // side effects or never ends.
 var errNotRegular = errors.New("not a regular file")
 
-// openInRoot opens name, relative to dir, without leaving dir, and only if
-// it is a regular file. An [os.Root] refuses a ".." or a symlink that
-// points outside it, checking each link as it follows it on the
-// descriptors it opens; the type is then asked of the descriptor, not of
-// the path, which may name something else by now.
+// openRegular opens name inside root, and only if it is a regular file.
+// An [os.Root] refuses a ".." or a symlink that points outside it,
+// checking each link as it follows it on the descriptors it opens; the
+// type is then asked of the descriptor, not of the path, which may name
+// something else by now.
 //
-// The root is closed on the way out. The file is not tied to it and stays
-// open, which is what [os.OpenInRoot] relies on too.
-func openInRoot(dir, name string) (*os.File, error) {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-
+// The file is not tied to the root: it stays open when the root is
+// closed, which is what [os.OpenInRoot] relies on too.
+func openRegular(root *os.Root, name string) (*os.File, error) {
 	f, err := root.OpenFile(name, sendOpenFlags, 0)
 	if err != nil {
 		return nil, err
@@ -142,29 +193,6 @@ func cause(err error) error {
 	return err
 }
 
-// rootDirs is every directory a path may be named under: each root as
-// written, made absolute, and also where it really is when that differs.
-// A root is configuration, not something a caller can swap, so resolving
-// its links here is safe in a way that resolving the file's would not be.
-// Blank roots are skipped, as is one that cannot be made absolute.
-func rootDirs(roots []string) []string {
-	dirs := make([]string, 0, len(roots))
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		dirs = append(dirs, abs)
-		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
-			dirs = append(dirs, resolved)
-		}
-	}
-	return dirs
-}
-
 // within returns path relative to dir, if path is dir or lies beneath it.
 // Both must be absolute and clean. It reads nothing from disk: a symlink
 // on the way is the open's business, not this.
@@ -177,20 +205,6 @@ func within(dir, path string) (string, bool) {
 		return "", false
 	}
 	return rel, true
-}
-
-// nonEmpty drops the blank roots SendRoots.Open skips, so the
-// error names the set that was actually searched. A caller that passes no
-// usable root gets "()" and rejects everything, which is the correct
-// fail-closed reading of an empty allowlist.
-func nonEmpty(roots []string) []string {
-	out := make([]string, 0, len(roots))
-	for _, r := range roots {
-		if r != "" {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // SendFileMessage uploads a local file and sends it as a document,

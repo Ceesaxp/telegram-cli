@@ -119,9 +119,9 @@ func TestPrepareSendRootsCreatesTheOutbox(t *testing.T) {
 }
 
 // An operator's own directory is never created. Making a typo real is
-// worse than reporting it, and telegram.SendRoots skips a root it
-// cannot resolve — silently, which is why the warning has to come from
-// here.
+// worse than reporting it, and telegram.OpenSendRoots skips a root it
+// cannot open for as long as the server runs, which is why the warning
+// has to come from here.
 func TestPrepareSendRootsReportsMissingOperatorDirs(t *testing.T) {
 	cfg := homeConfig(t)
 	if err := os.MkdirAll(cfg.Storage.FilesDir, 0o700); err != nil {

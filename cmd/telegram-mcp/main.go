@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
@@ -299,6 +300,7 @@ func runServe(cfg *config.Config) {
 	}
 
 	roots := openSendRoots(cfg)
+	defer roots.Close()
 
 	srv := mcpserver.New(client, roots)
 
@@ -310,11 +312,12 @@ func runServe(cfg *config.Config) {
 	}
 }
 
-// openSendRoots returns the directories send_file will accept a path
-// from, creating the default outbox if it is one of them, and reports
-// them. The set used to be files_dir plus whatever directory the process
-// happened to start in, which nobody chose and nothing printed; logging it
-// is half of making it a decision (see issue #48).
+// openSendRoots opens the directories send_file will accept a path from,
+// creating the default outbox if it is one of them, and reports them. The
+// set used to be files_dir plus whatever directory the process happened to
+// start in, which nobody chose and nothing printed; logging it is half of
+// making it a decision (see issue #48). The roots are held open until the
+// caller closes them, so what they are is fixed here, at start.
 //
 // This function is deliberately identical in cmd/telegram-api: the two
 // frontends must describe the same policy in the same words, and they
@@ -328,5 +331,12 @@ func openSendRoots(cfg *config.Config) *telegram.SendRoots {
 	for _, dir := range missing {
 		log.Printf("WARNING: send_file root %s does not exist; files under it cannot be sent", dir)
 	}
-	return telegram.OpenSendRoots(dirs...)
+	roots, errs := telegram.OpenSendRoots(dirs...)
+	for _, err := range errs {
+		// A missing root was reported just above.
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("WARNING: %v; files under it cannot be sent", err)
+		}
+	}
+	return roots
 }

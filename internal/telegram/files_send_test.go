@@ -37,9 +37,20 @@ func sendRoot(t *testing.T) (root, file, secret string) {
 }
 
 // openAllowed opens path through a SendRoots made from roots, the way a
-// server that started with those roots would.
+// server that started with those roots would, and closes the roots before
+// returning: the file it hands back must not depend on them.
 func openAllowed(path string, roots ...string) (*os.File, error) {
-	return OpenSendRoots(roots...).Open(path)
+	held, _ := OpenSendRoots(roots...)
+	defer held.Close()
+	return held.Open(path)
+}
+
+// heldRoots opens roots for the length of the test.
+func heldRoots(t *testing.T, roots ...string) *SendRoots {
+	t.Helper()
+	held, _ := OpenSendRoots(roots...)
+	t.Cleanup(func() { held.Close() })
+	return held
 }
 
 // contents reads what f holds and closes it.
@@ -78,6 +89,91 @@ func TestSendRootsSearchesEveryRoot(t *testing.T) {
 	}
 	if got := contents(t, f); got != "the file" {
 		t.Fatalf("read %q, want %q", got, "the file")
+	}
+}
+
+// Roots are held open from the start. With nested roots [A, A/B], whoever
+// can write to A can swap A/B for a link to somewhere else; B is still the
+// directory it was when the server started, and nothing outside is opened.
+func TestSendRootsKeepANestedRootThatIsSwappedAfterTheStart(t *testing.T) {
+	a := t.TempDir()
+	b := filepath.Join(a, "b")
+	if err := os.Mkdir(b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, _, secret := sendRoot(t)
+	roots := heldRoots(t, a, b)
+
+	if err := os.Rename(b, filepath.Join(a, "b.old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(secret), b); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(b, "secret.txt")
+	f, err := roots.Open(path)
+	if err == nil {
+		got := contents(t, f)
+		t.Fatalf("opened %s through a root swapped after the start, and read %q", path, got)
+	}
+}
+
+// A root that is missing at the start is not a root. Created later — as a
+// link to anywhere, by anyone who can write to its parent, which for a
+// root under /tmp is everyone — it is still not one.
+func TestSendRootsIgnoreARootCreatedAfterTheStart(t *testing.T) {
+	outbox := filepath.Join(t.TempDir(), "outbox")
+	_, _, secret := sendRoot(t)
+	roots := heldRoots(t, outbox)
+
+	if err := os.Symlink(filepath.Dir(secret), outbox); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(outbox, "secret.txt")
+	f, err := roots.Open(path)
+
+	wantRefused(t, f, err, path)
+}
+
+// A root that cannot be opened at the start is reported, so the server
+// can say so; the ones that can are held regardless.
+func TestOpenSendRootsReportsTheRootsItCannotOpen(t *testing.T) {
+	root, file, _ := sendRoot(t)
+	missing := filepath.Join(t.TempDir(), "outbox")
+
+	roots, errs := OpenSendRoots(missing, "", file, root)
+	t.Cleanup(func() { roots.Close() })
+
+	if len(errs) != 2 {
+		t.Fatalf("errs = %v, want one for the missing root and one for the file", errs)
+	}
+	if !errors.Is(errs[0], fs.ErrNotExist) || !strings.Contains(errs[0].Error(), missing) {
+		t.Errorf("errs[0] = %v, want %s reported as missing", errs[0], missing)
+	}
+	if !strings.Contains(errs[1].Error(), file) {
+		t.Errorf("errs[1] = %v, want it to name %s", errs[1], file)
+	}
+	f, err := roots.Open(filepath.Join(root, "file.txt"))
+	if err != nil {
+		t.Fatalf("Open under the root that did open: %v", err)
+	}
+	f.Close()
+}
+
+// Closing the roots, at shutdown, leaves nothing to send from.
+func TestSendRootsRefuseEverythingOnceClosed(t *testing.T) {
+	root, file, _ := sendRoot(t)
+	roots, _ := OpenSendRoots(root)
+
+	if err := roots.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	f, err := roots.Open(file)
+	if err == nil {
+		f.Close()
+		t.Fatalf("opened %s through closed roots", file)
 	}
 }
 
