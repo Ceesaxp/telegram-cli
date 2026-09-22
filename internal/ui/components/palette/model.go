@@ -1,5 +1,7 @@
 // Package palette is the `:` command overlay: a filtered list of commands
-// with a live query, driven entirely by a caller-supplied item list.
+// with a live query, driven entirely by a caller-supplied item list — and,
+// once a command that offers them is typed, a filtered list of the values
+// its argument can take.
 //
 // It deliberately knows nothing about what a command does. The app owns the
 // registry and executes; this package owns the query, the filtering, the
@@ -61,7 +63,7 @@ type Action int
 const (
 	// ActionNone means the palette handled the key itself.
 	ActionNone Action = iota
-	// ActionRun means Enter was pressed: execute Query().
+	// ActionRun means Enter was pressed: execute Line().
 	ActionRun
 	// ActionCancel means Escape was pressed: close without running.
 	ActionCancel
