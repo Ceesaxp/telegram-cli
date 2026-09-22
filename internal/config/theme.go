@@ -96,18 +96,28 @@ func ResolveThemeName(value, configDir, defaultConfigDir string) ThemeResolution
 }
 
 // themeCandidates is themes/<name>.toml in each directory, in order, each
+// directory once: see [themeSearchDirs].
+func themeCandidates(name string, dirs ...string) []string {
+	var out []string
+	for _, themes := range themeSearchDirs(dirs...) {
+		out = append(out, filepath.Join(themes, name+".toml"))
+	}
+	return out
+}
+
+// themeSearchDirs is the themes/ directory in each directory, in order, each
 // directory once. Join cleans the path, so "/a/" and "/a/." are one
 // directory; a symlink to it is not, and finding out would take a stat. An
 // empty directory is skipped rather than joined into the working directory.
-func themeCandidates(name string, dirs ...string) []string {
+func themeSearchDirs(dirs ...string) []string {
 	var out []string
 	for _, dir := range dirs {
 		if dir == "" {
 			continue
 		}
-		candidate := filepath.Join(dir, "themes", name+".toml")
-		if !slices.Contains(out, candidate) {
-			out = append(out, candidate)
+		themes := filepath.Join(dir, "themes")
+		if !slices.Contains(out, themes) {
+			out = append(out, themes)
 		}
 	}
 	return out
