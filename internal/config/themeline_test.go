@@ -581,6 +581,10 @@ func TestSetThemeLineDoesNotSaveOverAnEditMadeWhileSaving(t *testing.T) {
 		"a file that was not there": "",
 	} {
 		t.Run(name, func(t *testing.T) {
+			// An existing file was backed up before the write, and that
+			// stands; a file this was to create was not created, and the
+			// file there now is somebody else's, which nothing has kept.
+			wantKept := before != ""
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.toml")
@@ -595,10 +599,13 @@ func TestSetThemeLineDoesNotSaveOverAnEditMadeWhileSaving(t *testing.T) {
 				}
 			})
 
-			_, err := SetThemeLine(path, "gruvbox", true)
+			kept, err := SetThemeLine(path, "gruvbox", true)
 
 			if err == nil || !strings.Contains(err.Error(), "config.toml changed while saving; not saved") {
 				t.Fatalf("err = %v, want the save stopped", err)
+			}
+			if kept != wantKept {
+				t.Errorf("kept = %v, want %v", kept, wantKept)
 			}
 			if got := readFile(t, path); got != theirs {
 				t.Errorf("the file is %q, want the edit made while saving, %q", got, theirs)

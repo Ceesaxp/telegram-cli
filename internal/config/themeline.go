@@ -47,8 +47,9 @@ import (
 // or from -migrate-config) none is made, timestamped or otherwise; each would
 // be one more copy of an api_hash, and none of them the user's own file.
 // kept reports whether that file is safe — backed up now, backed up
-// already, or never there, when this call creates the file — and holds even
-// when the save then fails, so the caller need not ask again. It is false
+// already, or never there, when this call has created the file — and holds
+// even when the save then fails, so the caller need not ask again. A create
+// that fails keeps nothing. It is false
 // for a refusal, and whenever backup is.
 //
 // The write is atomic, keeps the file's mode, and lands on a symlink's
@@ -63,7 +64,12 @@ func SetThemeLine(path, value string, backup bool) (kept bool, err error) {
 			return false, fmt.Errorf("%s is a symlink to %s, which does not exist — create that file, "+
 				"or edit %s by hand", filepath.Base(path), target, filepath.Base(path))
 		}
-		return backup, createThemeFile(path, value)
+		// Kept only once the file is created: a create that failed, or was
+		// stopped by a file somebody else wrote meanwhile, has kept nothing.
+		if err := createThemeFile(path, value); err != nil {
+			return false, err
+		}
+		return backup, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("reading config: %w", err)
