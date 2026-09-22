@@ -531,19 +531,35 @@ func settingTables(cfgType reflect.Type) []settingTable {
 	var tables []settingTable
 	for i := range cfgType.NumField() {
 		section := cfgType.Field(i)
-		name := section.Tag.Get("toml")
-		if name == "" || section.Type.Kind() != reflect.Struct {
+		name, ok := tomlKey(section)
+		if !ok || section.Type.Kind() != reflect.Struct {
 			continue
 		}
 		t := settingTable{name: name, index: i}
 		for j := range section.Type.NumField() {
-			if key := section.Type.Field(j).Tag.Get("toml"); key != "" {
+			if key, ok := tomlKey(section.Type.Field(j)); ok {
 				t.fields = append(t.fields, settingField{key: key, index: j})
 			}
 		}
 		tables = append(tables, t)
 	}
 	return tables
+}
+
+// tomlKey is the key a tagged field is in config.toml, as go-toml reads the
+// tag: the name before any options (`theme,omitempty` is theme), the field's
+// own name when the tag gives options only, and no key for `-` — nor, here,
+// for a field with no tag at all, which is not a setting.
+func tomlKey(f reflect.StructField) (string, bool) {
+	tag := f.Tag.Get("toml")
+	name, _, _ := strings.Cut(tag, ",")
+	switch {
+	case tag == "" || name == "-":
+		return "", false
+	case name == "":
+		return f.Name, true
+	}
+	return name, true
 }
 
 // rawKeyPresence reports which [keys] fields the file contained.

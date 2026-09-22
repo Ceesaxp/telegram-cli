@@ -174,3 +174,60 @@ func changeValue(t *testing.T, key string, v reflect.Value) {
 		t.Fatalf("%s is a %s, which this test does not know how to change", key, v.Type())
 	}
 }
+
+// optionsConfig is a config shaped the way Config could be: tags carrying
+// options, a field go-toml is told to skip, one with no tag, and a map.
+type optionsConfig struct {
+	UI struct {
+		Theme    string `toml:"theme,omitempty"`
+		Hidden   string `toml:"-"`
+		Untagged string
+		Colors   map[string]string `toml:"colors,omitempty"`
+	} `toml:"ui,omitempty"`
+}
+
+// TestSettingsAreNamedWithoutTheirTagOptions: `toml:"theme,omitempty"` is
+// the key theme, and `toml:"-"` is no key at all — as go-toml reads them.
+func TestSettingsAreNamedWithoutTheirTagOptions(t *testing.T) {
+	var got []string
+	for _, table := range settingTables(reflect.TypeOf(optionsConfig{})) {
+		for _, f := range table.fields {
+			got = append(got, table.name+"."+f.key)
+		}
+	}
+	if want := []string{"ui.theme", "ui.colors"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("settings = %q, want %q", got, want)
+	}
+
+	var a, b optionsConfig
+	b.UI.Theme = "nord"
+	if got := changedSettings(reflect.ValueOf(a), reflect.ValueOf(b)); !reflect.DeepEqual(got, []string{"ui.theme"}) {
+		t.Errorf("changedSettings = %q, want [ui.theme]", got)
+	}
+}
+
+// TestNothingAndEmptyAreTheSameSetting: a list or a table left out and one
+// written empty say the same thing, and a reload that finds one where the
+// other was has found no change — `send_dirs = []` against the defaults,
+// say. Something in either is still a change.
+func TestNothingAndEmptyAreTheSameSetting(t *testing.T) {
+	a, b := defaultConfig(), defaultConfig()
+	a.Storage.SendDirs, b.Storage.SendDirs = nil, []string{}
+	if got := ChangedSettings(a, b); got != nil {
+		t.Errorf("nil and empty send_dirs differ in %q", got)
+	}
+	b.Storage.SendDirs = []string{"/srv/outbox"}
+	if got := ChangedSettings(a, b); !reflect.DeepEqual(got, []string{"storage.send_dirs"}) {
+		t.Errorf("ChangedSettings = %q, want [storage.send_dirs]", got)
+	}
+
+	var x, y optionsConfig
+	y.UI.Colors = map[string]string{}
+	if got := changedSettings(reflect.ValueOf(x), reflect.ValueOf(y)); got != nil {
+		t.Errorf("nil and empty maps differ in %q", got)
+	}
+	y.UI.Colors["cyan"] = "#123456"
+	if got := changedSettings(reflect.ValueOf(x), reflect.ValueOf(y)); !reflect.DeepEqual(got, []string{"ui.colors"}) {
+		t.Errorf("changedSettings = %q, want [ui.colors]", got)
+	}
+}

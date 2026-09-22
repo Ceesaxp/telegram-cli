@@ -28,15 +28,33 @@ func (c *Config) Reload() (*Config, error) {
 // What Load keeps beside the settings — the file it read, the theme it
 // resolved — has no tag and is not compared.
 func ChangedSettings(a, b *Config) []string {
+	return changedSettings(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem())
+}
+
+// changedSettings is [ChangedSettings] for any two values of one config
+// struct type.
+func changedSettings(a, b reflect.Value) []string {
 	var changed []string
-	va, vb := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
-	for _, t := range settingTables(va.Type()) {
+	for _, t := range settingTables(a.Type()) {
 		for _, f := range t.fields {
-			if !reflect.DeepEqual(va.Field(t.index).Field(f.index).Interface(),
-				vb.Field(t.index).Field(f.index).Interface()) {
+			if !sameSetting(a.Field(t.index).Field(f.index), b.Field(t.index).Field(f.index)) {
 				changed = append(changed, t.name+"."+f.key)
 			}
 		}
 	}
 	return changed
+}
+
+// sameSetting reports whether two values of a setting say the same thing.
+// A list or a map left out and one written empty do — `send_dirs = []`
+// and no send_dirs decode to an empty slice and a nil one — so two empty
+// ones are equal however they got that way.
+func sameSetting(a, b reflect.Value) bool {
+	switch a.Kind() {
+	case reflect.Slice, reflect.Map:
+		if a.Len() == 0 && b.Len() == 0 {
+			return true
+		}
+	}
+	return reflect.DeepEqual(a.Interface(), b.Interface())
 }
