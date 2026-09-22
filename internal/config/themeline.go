@@ -37,8 +37,8 @@ import (
 // It refuses, and says to edit the file by hand, rather than guess: when ui
 // is written as dotted keys or an inline table (where one more line cannot
 // set it, and a [ui] table beside them would make the file invalid), when
-// ui.theme is anything but a string on a line of [ui], and when the file is
-// not TOML at all.
+// ui.theme is anything but a string on a line of [ui], when the file is not
+// TOML at all, and when it is read-only.
 //
 // With backup, the file is kept as config.toml.bak before it is written —
 // only once it is known there will be a write, so a refusal leaves nothing
@@ -67,6 +67,12 @@ func SetThemeLine(path, value string, backup bool) (kept bool, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false, fmt.Errorf("reading config: %w", err)
+	}
+	// Asked of the file, because the write would not ask: it renames a new
+	// file over the old, which needs only the directory to be writable, so a
+	// config made read-only on purpose would be replaced regardless.
+	if info.Mode().Perm()&0o222 == 0 {
+		return false, fmt.Errorf("%s is read-only; edit it by hand or make it writable", filepath.Base(path))
 	}
 
 	edited, err := editThemeLine(original, value)

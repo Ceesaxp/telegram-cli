@@ -81,7 +81,8 @@ back the way it was before that save, backup or not.
 
 `:theme` will not edit a `config.toml` that sets `ui` with dotted keys
 (`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
-or one that is not valid TOML: the theme still switches, the notice says
+or one that is not valid TOML, or one you have made read-only: the theme
+still switches, the notice says
 "not saved" and why, and the file is left for you to edit by hand.
 
 A name that is not a usable theme — no such file, a file that does not

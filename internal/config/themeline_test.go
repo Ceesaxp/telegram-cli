@@ -359,6 +359,40 @@ func TestSetThemeLineKeepsTheFileMode(t *testing.T) {
 	}
 }
 
+// TestSetThemeLineRefusesAReadOnlyFile: a config made read-only was made
+// so on purpose. Replacing it would still work — a rename needs only the
+// directory to be writable — which is exactly why this has to ask the file.
+func TestSetThemeLineRefusesAReadOnlyFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permissions")
+	}
+	original := "[ui]\ntheme = \"dark\"\n"
+	path := configFile(t, original)
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	kept, err := SetThemeLine(path, "gruvbox", true)
+
+	if err == nil || !strings.Contains(err.Error(), "config.toml is read-only; edit it by hand or make it writable") {
+		t.Fatalf("err = %v, want the read-only refusal", err)
+	}
+	if kept {
+		t.Error("a refusal says the original is kept")
+	}
+	if got := readFile(t, path); got != original {
+		t.Errorf("the read-only file was rewritten: %q", got)
+	}
+	if found, _ := filepath.Glob(path + ".bak*"); len(found) != 0 {
+		t.Errorf("a refusal left %v", found)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != 0o400 {
+		t.Errorf("mode = %v, want 0400 still", got)
+	}
+}
+
 // TestSetThemeLineWritesThroughASymlink: a config.toml symlinked out of a
 // dotfiles repository is edited where it lives. Replacing the link with a
 // file would quietly end the dotfiles copy's life as the source of truth.
