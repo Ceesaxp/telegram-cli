@@ -141,6 +141,11 @@ func New(r theme.Roles) Model {
 	return Model{roles: r}
 }
 
+// SetRoles replaces the palette. Every style the picker draws with is built
+// while drawing, and the rows it holds are text, so there is nothing else to
+// re-derive.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 // Open shows the picker for one message, with an empty query and the
 // caller's candidate list.
 func (m *Model) Open(src Source, candidates []Chat) {
