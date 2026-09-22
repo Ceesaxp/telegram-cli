@@ -91,6 +91,11 @@ func New(r theme.Roles) Model {
 	return Model{roles: r}
 }
 
+// SetRoles supplies the TUI 2.0 semantic palette, replacing the one New was
+// given. There is nothing derived from it to rebuild: View builds its styles
+// from the roles on every call, so the next frame is drawn in these.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 // SetItems replaces the command list. The app calls this with its registry.
 func (m *Model) SetItems(items []Item) {
 	m.items = items
