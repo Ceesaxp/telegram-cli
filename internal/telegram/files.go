@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -223,9 +224,43 @@ func avatarKey(chatID int64) string {
 // DownloadFileSync downloads a registered file to the files dir
 // and returns its local state. Concurrent calls for the same key share
 // one in-flight download via the registry's singleflight group.
+//
+// An avatar whose entry is gone is registered again from its chat, which
+// its key names. Any other key needs the message it came from to come back:
+// see [Client.DownloadMessageFile].
 func (c *Client) DownloadFileSync(key string) (*File, error) {
+	var reregister func() error
+	if chatID, ok := avatarChatID(key); ok {
+		reregister = func() error { return c.reregisterAvatar(chatID) }
+	}
+	return c.download(key, reregister)
+}
+
+// DownloadMessageFile is [Client.DownloadFileSync] for a file a message
+// shows, and the form to use whenever the message is at hand.
+//
+// The registry is bounded (#33), so the entry behind a key can be gone by
+// the time a reader asks for it: a photo still on screen, scrolled past
+// thousands of files ago. The message is what registered it, so fetching
+// the message again — the same fetch an edit takes — registers it again,
+// and the download goes ahead instead of reporting an unknown file.
+func (c *Client) DownloadMessageFile(chatID, messageID int64, key string) (*File, error) {
+	return c.download(key, func() error { return c.reregisterMessage(chatID, messageID) })
+}
+
+// download is the shared body of the two: look the key up, register it
+// again if it is gone and reregister knows how, then fetch. The whole of
+// it runs inside the key's singleflight, so callers that miss together
+// share one refetch as well as one transfer.
+func (c *Client) download(key string, reregister func() error) (*File, error) {
 	v, err := c.files.do(key, func() (any, error) {
 		snap, ok := c.files.snapshot(key)
+		if !ok && reregister != nil {
+			if err := reregister(); err != nil {
+				return nil, fmt.Errorf("download %s: %w", key, err)
+			}
+			snap, ok = c.files.snapshot(key)
+		}
 		if !ok {
 			return nil, fmt.Errorf("unknown file %q", key)
 		}
@@ -236,6 +271,50 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 	}
 	file, _ := v.(*File)
 	return file, nil
+}
+
+// reregisterMessage fetches a message for the side effect of converting
+// it, which registers every file it carries.
+//
+// A pending send has a negative ID and no server copy, so there is nothing
+// to ask for.
+func (c *Client) reregisterMessage(chatID, messageID int64) error {
+	if messageID <= 0 {
+		return fmt.Errorf("message %d is not on the server yet", messageID)
+	}
+	_, err := c.GetMessages(chatID, []int64{messageID})
+	return err
+}
+
+// reregisterAvatar resolves a chat again for the side effect of converting
+// it, which registers its current photo under the chat's avatar key. A chat
+// with no photo any more registers nothing, and the lookup after this one
+// misses as it should.
+//
+// The chat itself is thrown away. It is built by resolvedChat all the same,
+// which costs a notify-settings call a photo does not need, because every
+// peer-derived chat is built there (see TestPeerChatsAreBuiltInOnePlace) —
+// and a miss on an avatar is rare enough that one round trip is not worth
+// a second place to build chats in.
+func (c *Client) reregisterAvatar(chatID int64) error {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
+	if err != nil {
+		return fmt.Errorf("resolve peer %d: %w", chatID, err)
+	}
+	_, err = c.resolvedChat(ctx, peer)
+	return err
+}
+
+// avatarChatID is the chat an avatar key names, or false for any other key.
+func avatarChatID(key string) (int64, bool) {
+	rest, ok := strings.CutPrefix(key, avatarPrefix)
+	if !ok {
+		return 0, false
+	}
+	chatID, err := strconv.ParseInt(rest, 10, 64)
+	return chatID, err == nil
 }
 
 // fetch brings the bytes behind a registered key onto disk: from memory if
