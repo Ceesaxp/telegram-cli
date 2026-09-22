@@ -29,6 +29,56 @@ func TestGetByIDFindsTheStoredMessage(t *testing.T) {
 	}
 }
 
+// An update handed a message whose ID another row already has used to leave
+// both rows in the history and only one in the index — so once the cap
+// trimmed the indexed one, the other was on screen and could not be found.
+// The update now leaves exactly one row for that ID: the new copy, in the
+// place the ID already had, the same way ReplaceMessageId settles a
+// placeholder the dispatcher beat.
+func TestUpdateToAnIDAnotherRowHoldsLeavesOneRow(t *testing.T) {
+	const chatID = int64(1)
+	s := NewMessageStore()
+	s.maxSize = 3
+	for id := int64(1); id <= 3; id++ {
+		s.Append(chatID, storedMessage(chatID, id))
+	}
+
+	renamed := storedMessage(chatID, 2)
+	s.UpdateMessage(chatID, 1, renamed)
+	s.Append(chatID, storedMessage(chatID, 4))
+
+	history := ids(s.Get(chatID))
+	if got, ok := s.GetByID(chatID, 2); !ok || got != renamed {
+		t.Fatalf("history %v, yet GetByID(2) = %v, %v; want the updated copy", history, got, ok)
+	}
+	if want := []int64{2, 3, 4}; !equalIDs(history, want) {
+		t.Fatalf("history = %v, want %v", history, want)
+	}
+	if s.Get(chatID)[0] != renamed {
+		t.Fatal("the row for ID 2 is the stale copy, not the update")
+	}
+}
+
+// The surviving row sits where its ID already was, not where the renamed
+// message used to be: confirmed history is in ID order, and the row that
+// already carried the ID is the one in the right place for it.
+func TestUpdateToAnIDAnotherRowHoldsKeepsThatRowsPlace(t *testing.T) {
+	const chatID = int64(1)
+	s := NewMessageStore()
+	for id := int64(1); id <= 3; id++ {
+		s.Append(chatID, storedMessage(chatID, id))
+	}
+
+	s.UpdateMessage(chatID, 3, storedMessage(chatID, 1))
+
+	if got, want := ids(s.Get(chatID)), []int64{1, 2}; !equalIDs(got, want) {
+		t.Fatalf("history = %v, want %v", got, want)
+	}
+	if n := retainedPastLen(s, chatID); n != 0 {
+		t.Fatalf("%d dropped messages are still reachable past len", n)
+	}
+}
+
 // The store is shared between the update dispatcher and the UI, so a lookup
 // runs while other goroutines write. This is here for -race to watch.
 func TestGetByIDIsSafeAlongsideWriters(t *testing.T) {
@@ -189,10 +239,14 @@ func (h *indexHarness) step() string {
 	case r < 55:
 		id := h.present(chatID)
 		newID := id
-		if h.rng.IntN(4) == 0 {
-			// Every caller hands over the same ID it names, but the index
-			// has to follow the message it was given, not the one named.
+		// Every caller hands over the same ID it names, but the index has
+		// to follow the message it was given, not the one named — to an ID
+		// nothing holds, and to one another row already has.
+		switch h.rng.IntN(4) {
+		case 0:
 			newID = h.absent(chatID, id)
+		case 1:
+			newID = h.present(chatID)
 		}
 		s.UpdateMessage(chatID, id, storedMessage(chatID, newID))
 		return fmt.Sprintf("UpdateMessage(%d, %d -> %d)", chatID, id, newID)
