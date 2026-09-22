@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +66,28 @@ func mentionClient(t *testing.T, markdown bool) (*Client, *sendInvoker) {
 	cfg.UI.ParseMarkdown = markdown
 	c := &Client{api: api, peers: peers.Options{}.Build(api), config: cfg, files: newFileRegistry()}
 	c.setMsgSink(func(tea.Msg) {})
+	return c, inv
+}
+
+// storedMentionClient is mentionClient with the persistent peer cache the
+// real client runs on, holding nadia's access hash the way the member
+// search leaves it: applied through the peers manager.
+func storedMentionClient(t *testing.T) (*Client, *sendInvoker) {
+	t.Helper()
+	c, inv := mentionClient(t, false)
+	path := filepath.Join(t.TempDir(), "state.db")
+	stores, err := openStateStores(path, path)
+	if err != nil {
+		t.Fatalf("openStateStores: %v", err)
+	}
+	t.Cleanup(func() { stores.Close() })
+	c.stores = stores
+	c.peers = peers.Options{Storage: stores.peerStorage()}.Build(c.api)
+
+	seen := []tg.UserClass{&tg.User{ID: nadia, AccessHash: nadiasHash, FirstName: "Nadia"}}
+	if err := c.peers.Apply(context.Background(), seen, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
 	return c, inv
 }
 
@@ -258,6 +281,37 @@ func TestAMentionOfAnUnresolvableUserIsDropped(t *testing.T) {
 		"Nadia and Bob",
 		[]tg.MessageEntityClass{mentionOf(0, 5)},
 		1)
+}
+
+// The peers manager keeps no user objects, only their access hashes, so
+// resolving a user through it is a users.getUsers every time: one request
+// per mention per send. The member search that offered the user already
+// stored the hash, and the hash is all an InputUser needs.
+func TestAMentionOfAStoredUserAsksTheServerNothing(t *testing.T) {
+	c, inv := storedMentionClient(t)
+
+	wantFormatted(t, c, "hi Nadia",
+		[]MentionSpan{{Offset: 3, Length: 5, UserID: nadia}},
+		"hi Nadia",
+		[]tg.MessageEntityClass{mentionOf(3, 5)},
+		0)
+	if len(inv.asked) != 0 {
+		t.Errorf("formatting a mention of a stored user asked the server %v, want nothing", inv.asked)
+	}
+}
+
+// A user the cache has no hash for is still worth one lookup before the
+// mention is given up on.
+func TestAMentionOfAnUnstoredUserIsLookedUpBeforeItIsDropped(t *testing.T) {
+	c, inv := storedMentionClient(t)
+	const stranger int64 = 99
+
+	wantFormatted(t, c, "hi Bob",
+		[]MentionSpan{{Offset: 3, Length: 3, UserID: stranger}},
+		"hi Bob", nil, 1)
+	if want := []string{"users.getUsers"}; !reflect.DeepEqual(inv.asked, want) {
+		t.Errorf("asked the server %v, want %v", inv.asked, want)
+	}
 }
 
 // A span that is empty or does not fit the text belongs to some other

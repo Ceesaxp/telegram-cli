@@ -103,15 +103,36 @@ func (c *Client) mentionEntity(ctx context.Context, out *outgoing, s MentionSpan
 	if start < taken {
 		return nil, "overlaps an earlier mention"
 	}
-	user, err := c.peers.ResolveUserID(ctx, s.UserID)
+	user, err := c.mentionedUser(ctx, s.UserID)
 	if err != nil {
 		return nil, "user cannot be resolved: " + err.Error()
 	}
 	return &tg.InputMessageEntityMentionName{
 		Offset: start,
 		Length: end - start,
-		UserID: user.InputUser(),
+		UserID: user,
 	}, ""
+}
+
+// mentionedUser is the InputUser a mention of userID carries. It is built
+// from the access hash the peer cache already holds, which the member
+// search stored when it offered the user, so a mention costs no request.
+// Only a user the cache does not know is looked up through the peers
+// manager, and that is always a users.getUsers: gotd's manager keeps
+// access hashes, not user objects, so it cannot answer from memory.
+func (c *Client) mentionedUser(ctx context.Context, userID int64) (tg.InputUserClass, error) {
+	if hasher := c.stores.userHasher(); hasher != nil {
+		// The first ID names the account asking, which the peer cache's
+		// key does not include (see peerUserHasher), so 0 serves.
+		if hash, found, err := hasher.GetUserAccessHash(ctx, 0, userID); err == nil && found {
+			return &tg.InputUser{UserID: userID, AccessHash: hash}, nil
+		}
+	}
+	user, err := c.peers.ResolveUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return user.InputUser(), nil
 }
 
 // inCode reports whether output units [start, end) touch a code or pre
