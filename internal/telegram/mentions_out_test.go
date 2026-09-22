@@ -221,6 +221,59 @@ func TestAMentionInsideBoldKeepsBoth(t *testing.T) {
 		0)
 }
 
+// Bold is not special: every kind of formatting the Markdown subset makes
+// may hold a mention, so each keeps both.
+func TestAMentionInsideAnyFormattingKeepsBoth(t *testing.T) {
+	for name, tt := range map[string]struct {
+		text       string
+		formatting tg.MessageEntityClass
+	}{
+		"italic":        {"__hi Nadia__", &tg.MessageEntityItalic{Offset: 0, Length: 8}},
+		"strikethrough": {"~~hi Nadia~~", &tg.MessageEntityStrike{Offset: 0, Length: 8}},
+		"spoiler":       {"||hi Nadia||", &tg.MessageEntitySpoiler{Offset: 0, Length: 8}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := mentionClient(t, true)
+
+			wantFormatted(t, c, tt.text,
+				[]MentionSpan{{Offset: 5, Length: 5, UserID: nadia}},
+				"hi Nadia",
+				[]tg.MessageEntityClass{tt.formatting, mentionOf(3, 5)},
+				0)
+		})
+	}
+}
+
+// The nesting rule on its own, for the shapes Markdown never produces
+// because a marker inside a mention already drops it: a mention may sit
+// wholly inside formatting or clear of an entity, and nowhere else.
+func TestAMentionNestsOnlyInsideFormatting(t *testing.T) {
+	const start, end = 3, 8
+	for name, tt := range map[string]struct {
+		entity tg.MessageEntityClass
+		legal  bool
+	}{
+		"inside bold":             {&tg.MessageEntityBold{Offset: 0, Length: 10}, true},
+		"exactly bold":            {&tg.MessageEntityBold{Offset: 3, Length: 5}, true},
+		"inside underline":        {&tg.MessageEntityUnderline{Offset: 0, Length: 8}, true},
+		"partly over bold":        {&tg.MessageEntityBold{Offset: 5, Length: 10}, false},
+		"holding bold":            {&tg.MessageEntityBold{Offset: 4, Length: 2}, false},
+		"inside a link":           {&tg.MessageEntityTextURL{Offset: 0, Length: 10}, false},
+		"holding a link":          {&tg.MessageEntityTextURL{Offset: 4, Length: 2}, false},
+		"next to a link":          {&tg.MessageEntityTextURL{Offset: 8, Length: 4}, true},
+		"after code":              {&tg.MessageEntityCode{Offset: 0, Length: 3}, true},
+		"inside a plain mention":  {&tg.MessageEntityMention{Offset: 2, Length: 7}, false},
+		"partly over a code span": {&tg.MessageEntityCode{Offset: 7, Length: 3}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := nestsLegally([]tg.MessageEntityClass{tt.entity}, start, end); got != tt.legal {
+				t.Errorf("a mention at %d..%d beside %s: legal = %v, want %v",
+					start, end, describe([]tg.MessageEntityClass{tt.entity}), got, tt.legal)
+			}
+		})
+	}
+}
+
 // Entities go out sorted by offset, as the Markdown parser already emits
 // its own, so a mention ahead of the formatting has to be merged in ahead
 // of it rather than tacked on after.
@@ -278,6 +331,19 @@ func TestAMentionInsideCodeIsDropped(t *testing.T) {
 				tt.wantText, []tg.MessageEntityClass{tt.wantCode}, 1)
 		})
 	}
+}
+
+// A text link is not formatting: Telegram lets no entity but bold, italic,
+// underline, strikethrough and spoiler hold another, so a mention inside a
+// link would be refused or lost. The link goes out; the mention does not.
+func TestAMentionInsideALinkIsDropped(t *testing.T) {
+	c, _ := mentionClient(t, true)
+
+	wantFormatted(t, c, "[hi Nadia](https://example.com)",
+		[]MentionSpan{{Offset: 4, Length: 5, UserID: nadia}},
+		"hi Nadia",
+		[]tg.MessageEntityClass{&tg.MessageEntityTextURL{Offset: 0, Length: 8, URL: "https://example.com"}},
+		1)
 }
 
 // A mention is only as good as the InputUser behind it, and that needs the

@@ -37,13 +37,14 @@ type MentionSpan struct {
 //   - it falls outside the text, or its length is zero or negative;
 //   - what it covers on the wire differs from what it covered in the draft,
 //     which is what happens when it straddles a Markdown marker;
-//   - it touches code or a code block, where text is literal;
+//   - it breaks Telegram's nesting rule (see nestsLegally): it sits in or
+//     across anything but formatting, such as code, a code block or a link;
 //   - it overlaps a mention earlier in the text;
 //   - its user cannot be resolved to an InputUser.
 //
 // Dropping costs only the link to the user, and it is always better than
-// naming someone on text they were not picked for. A mention nested in
-// bold, italic or any other formatting is legal in Telegram and is kept.
+// naming someone on text they were not picked for. A mention nested inside
+// bold, italic, strikethrough or a spoiler is legal in Telegram and is kept.
 func (c *Client) formatOutgoingWithMentions(ctx context.Context, text string, spans []MentionSpan) (string, []tg.MessageEntityClass, int) {
 	if len(spans) == 0 {
 		body, entities := c.formatOutgoing(text)
@@ -97,8 +98,8 @@ func (c *Client) mentionEntity(ctx context.Context, out *outgoing, s MentionSpan
 	if string(utf16.Decode(out.units[start:end])) != string(out.src[s.Offset:s.Offset+s.Length]) {
 		return nil, "its text did not survive Markdown intact"
 	}
-	if inCode(out.entities, start, end) {
-		return nil, "inside code, which is literal"
+	if !nestsLegally(out.entities, start, end) {
+		return nil, "Telegram does not let it nest where it is"
 	}
 	if start < taken {
 		return nil, "overlaps an earlier mention"
@@ -156,16 +157,38 @@ func asReceived(entities []tg.MessageEntityClass) []tg.MessageEntityClass {
 	return out
 }
 
-// inCode reports whether output units [start, end) touch a code or pre
-// entity.
-func inCode(entities []tg.MessageEntityClass, start, end int) bool {
+// nestsLegally reports whether a mention over output units [start, end)
+// obeys Telegram's entity nesting rule against every other entity.
+//
+// The rule is the Bot API's, under "Formatting options": message entities
+// may nest, but only bold, italic, underline, strikethrough and spoiler
+// may contain or be part of another entity, and never pre or code; every
+// other type can neither contain nor be contained; and two entities that
+// share characters must nest, never partially overlap. For a mention, which
+// is one of the "other" types, that leaves exactly two legal places: clear
+// of an entity, or wholly inside formatting. A mention inside a link, code
+// or a code block, or straddling any edge, is refused or silently lost.
+func nestsLegally(entities []tg.MessageEntityClass, start, end int) bool {
 	for _, e := range entities {
-		switch e.(type) {
-		case *tg.MessageEntityCode, *tg.MessageEntityPre:
-			if start < e.GetOffset()+e.GetLength() && e.GetOffset() < end {
-				return true
-			}
+		eStart, eEnd := e.GetOffset(), e.GetOffset()+e.GetLength()
+		if end <= eStart || eEnd <= start {
+			continue
 		}
+		if isFormatting(e) && eStart <= start && end <= eEnd {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isFormatting reports whether e is one of the entity types Telegram lets
+// hold others: bold, italic, underline, strikethrough and spoiler.
+func isFormatting(e tg.MessageEntityClass) bool {
+	switch e.(type) {
+	case *tg.MessageEntityBold, *tg.MessageEntityItalic, *tg.MessageEntityUnderline,
+		*tg.MessageEntityStrike, *tg.MessageEntitySpoiler:
+		return true
 	}
 	return false
 }
