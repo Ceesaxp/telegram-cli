@@ -96,19 +96,116 @@ func ResolveThemeName(value, configDir, defaultConfigDir string) ThemeResolution
 }
 
 // themeCandidates is themes/<name>.toml in each directory, in order, each
+// directory once: see [themeSearchDirs].
+func themeCandidates(name string, dirs ...string) []string {
+	var out []string
+	for _, themes := range themeSearchDirs(dirs...) {
+		out = append(out, filepath.Join(themes, name+".toml"))
+	}
+	return out
+}
+
+// themeSearchDirs is the themes/ directory in each directory, in order, each
 // directory once. Join cleans the path, so "/a/" and "/a/." are one
 // directory; a symlink to it is not, and finding out would take a stat. An
 // empty directory is skipped rather than joined into the working directory.
-func themeCandidates(name string, dirs ...string) []string {
+func themeSearchDirs(dirs ...string) []string {
 	var out []string
 	for _, dir := range dirs {
 		if dir == "" {
 			continue
 		}
-		candidate := filepath.Join(dir, "themes", name+".toml")
-		if !slices.Contains(out, candidate) {
-			out = append(out, candidate)
+		themes := filepath.Join(dir, "themes")
+		if !slices.Contains(out, themes) {
+			out = append(out, themes)
 		}
+	}
+	return out
+}
+
+// ThemeKind is where a listed theme comes from.
+type ThemeKind int
+
+const (
+	// ThemeKindBuiltin is [ThemeDark] or [ThemeLight]: compiled in.
+	ThemeKindBuiltin ThemeKind = iota
+	// ThemeKindFile is a themes/<name>.toml.
+	ThemeKindFile
+)
+
+// ThemeEntry is one theme [ListThemes] found.
+type ThemeEntry struct {
+	// Name is what ui.theme — or a command — names it by.
+	Name string
+	Kind ThemeKind
+	// Dir is the themes/ directory the file is in; empty for a builtin.
+	Dir string
+}
+
+// ListThemes is every theme a name can choose, for offering them: the
+// builtins [ThemeDark] and [ThemeLight] first, then the themes/*.toml of
+// configDir and of defaultConfigDir, sorted by name.
+//
+// A file is listed only when naming it would load it — what
+// [ResolveThemeName] and the loader would do with its stem, not a second
+// opinion about file names:
+//
+//   - The name is the stem lowercased, as a ui.theme value is; a stem that
+//     is not a plain name, or is shaped like a path, is never searched for
+//     and is not listed.
+//   - themes/dark.toml and themes/light.toml are not listed as themes of
+//     their own. The builtin names always win, so neither file can be
+//     chosen by its name; the path form still reaches them.
+//   - A name in both directories is listed once, from configDir: that is
+//     the copy the search finds first.
+//   - What the name reads has to be a regular file, symlinks followed.
+//     Directories, other files, and entries that cannot be stat'd are
+//     skipped, as is a mixed-case stem on a filesystem that does not fold
+//     case, where its lowercased name reads nothing.
+//
+// It never fails: a directory that is missing or cannot be read lists
+// nothing. The directories are parameters, as they are for [LoadTheme], and
+// the caller passes the same two.
+func ListThemes(configDir, defaultConfigDir string) []ThemeEntry {
+	var files []ThemeEntry
+	seen := map[string]bool{}
+	for _, dir := range themeSearchDirs(configDir, defaultConfigDir) {
+		for _, name := range themeNamesIn(dir) {
+			if !seen[name] {
+				seen[name] = true
+				files = append(files, ThemeEntry{Name: name, Kind: ThemeKindFile, Dir: dir})
+			}
+		}
+	}
+	slices.SortFunc(files, func(a, b ThemeEntry) int { return strings.Compare(a.Name, b.Name) })
+	return append([]ThemeEntry{
+		{Name: ThemeDark, Kind: ThemeKindBuiltin},
+		{Name: ThemeLight, Kind: ThemeKindBuiltin},
+	}, files...)
+}
+
+// themeNamesIn is the theme names a themes/ directory answers to: see
+// [ListThemes] for which files count.
+func themeNamesIn(dir string) []string {
+	// A read that failed partway still returns what it read.
+	entries, _ := os.ReadDir(dir)
+	var out []string
+	for _, entry := range entries {
+		stem, ok := strings.CutSuffix(strings.ToLower(entry.Name()), ".toml")
+		if !ok {
+			continue
+		}
+		r := ResolveThemeName(stem, "", "")
+		if r.Form != ThemeFormStem {
+			continue
+		}
+		// The file the name reads, which is this entry — or, for a
+		// mixed-case stem, whatever the filesystem makes of the lowercase.
+		info, err := os.Stat(filepath.Join(dir, r.Name+".toml"))
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		out = append(out, r.Name)
 	}
 	return out
 }

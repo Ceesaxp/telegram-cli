@@ -43,6 +43,10 @@ type Command struct {
 	// teaches the keymap rather than duplicating it. Empty when there is no
 	// single key for the command.
 	Key string
+	// ArgCandidates lists the values the argument can take, which the
+	// palette offers once the command word and a space are typed. Nil for
+	// an argument that is free text, or absent.
+	ArgCandidates func(m Model) []palette.Arg
 	// Run performs the command. It receives the model by value and returns
 	// the updated model, matching how Update threads state everywhere else.
 	// The returned string is a notice for the user; empty means silent.
@@ -61,7 +65,7 @@ type Command struct {
 // Keys are the resolved bindings, not hardcoded spellings, so a rebound key
 // shows correctly in the palette.
 func (m Model) commandRegistry() []Command {
-	return []Command{
+	return append([]Command{
 		{
 			Name:        "mark-read",
 			Arg:         ArgNone,
@@ -134,8 +138,13 @@ func (m Model) commandRegistry() []Command {
 				return out.(Model), cmd, ""
 			},
 		},
-	}
+	}, testCommands...)
 }
+
+// testCommands are added to the registry by tests, and are nil otherwise.
+// No shipped command offers argument candidates yet, and the path a chosen
+// value takes from the palette to Run has to be driven by one that does.
+var testCommands []Command
 
 // paletteItems projects the registry into the palette's display type. The
 // projection lives here rather than in the palette so that package stays
@@ -144,15 +153,27 @@ func (m Model) paletteItems() []palette.Item {
 	cmds := m.commandRegistry()
 	items := make([]palette.Item, 0, len(cmds))
 	for _, c := range cmds {
-		items = append(items, palette.Item{
+		it := palette.Item{
 			Name:        c.Name,
 			Args:        c.Placeholder,
 			Description: c.Description,
 			Key:         c.Key,
-		})
+		}
+		if c.ArgCandidates != nil {
+			it.Candidates = c.ArgCandidates(m)
+		}
+		items = append(items, it)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	return items
+}
+
+// openPalette opens the command palette with its items projected afresh, so
+// an argument's candidates are read when the palette opens: a theme file
+// dropped in since startup is there to choose, and one deleted is not.
+func (m *Model) openPalette() {
+	m.palette.SetItems(m.paletteItems())
+	m.palette.Open()
 }
 
 // lookupCommand finds a command by exact name.
