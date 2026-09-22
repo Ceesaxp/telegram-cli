@@ -137,6 +137,42 @@ func TestSendRootsIgnoreARootCreatedAfterTheStart(t *testing.T) {
 	wantRefused(t, f, err, path)
 }
 
+// The other way round from a symlinked root: a root written in its
+// resolved form still takes a path named through a link on the way to it,
+// as /var/... names what a root written /private/var/... holds on macOS.
+func TestSendRootsMatchAPathThroughItsResolvedDirectory(t *testing.T) {
+	target, _, _ := sendRoot(t)
+	sub := filepath.Join(target, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "deep.txt"), []byte("deep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range map[string]string{
+		filepath.Join(alias, "file.txt"):        "the file",
+		filepath.Join(alias, "sub", "deep.txt"): "deep",
+	} {
+		f, err := openAllowed(path, resolved)
+		if err != nil {
+			t.Errorf("Open(%s) under root %s: %v", path, resolved, err)
+			continue
+		}
+		if got := contents(t, f); got != want {
+			t.Errorf("Open(%s) read %q, want %q", path, got, want)
+		}
+	}
+}
+
 // A root that cannot be opened at the start is reported, so the server
 // can say so; the ones that can are held regardless.
 func TestOpenSendRootsReportsTheRootsItCannotOpen(t *testing.T) {

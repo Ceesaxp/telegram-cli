@@ -97,10 +97,11 @@ func (r *SendRoots) Close() error {
 // That is the point of it. Checking a path and then opening it by name
 // leaves a gap in which anyone who can write to a root swaps the checked
 // file for a symlink to one outside, and the upload reads that instead.
-// Here the check is the open: path is made absolute and clean but not
-// resolved, taken relative to each root in turn, and opened through an
-// [os.Root], which follows a link only while it stays inside. Whatever the
-// name points at afterwards, what is sent is what was opened.
+// Here the check is the open: path is made absolute and clean, taken
+// relative to each root in turn (its directory may be resolved to choose
+// the root, see namesFor, but the open never relies on that), and opened
+// through an [os.Root], which follows a link only while it stays inside.
+// Whatever the name points at afterwards, what is sent is what was opened.
 //
 // With no usable root everything is refused. A link inside a root must be
 // relative and stay inside: os.Root refuses an absolute link even when it
@@ -117,17 +118,19 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 	// outranks "outside": the path was inside, and saying otherwise would
 	// send the caller looking for a typo that is not there.
 	var found error
-	for _, n := range r.names {
-		rel, ok := within(n.name, abs)
-		if !ok {
-			continue
-		}
-		f, err := openRegular(n.root, rel)
-		if err == nil {
-			return f, nil
-		}
-		if found == nil && foundButUnsendable(err) {
-			found = fmt.Errorf("send file: %q: %w", path, cause(err))
+	for _, candidate := range namesFor(abs) {
+		for _, n := range r.names {
+			rel, ok := within(n.name, candidate)
+			if !ok {
+				continue
+			}
+			f, err := openRegular(n.root, rel)
+			if err == nil {
+				return f, nil
+			}
+			if found == nil && foundButUnsendable(err) {
+				found = fmt.Errorf("send file: %q: %w", path, cause(err))
+			}
 		}
 	}
 	if found != nil {
@@ -191,6 +194,28 @@ func cause(err error) error {
 		return pathErr.Err
 	}
 	return err
+}
+
+// namesFor is abs as given and, when its directory resolves somewhere
+// else, the same name in the resolved directory: a caller's /var/... names
+// what a root written /private/var/... holds on macOS.
+//
+// This only chooses the root and the path within it. Resolving the parent
+// here is not the race it would be for the open itself, because the open
+// still happens inside a held root, which refuses anything that leaves it
+// whatever the parent resolved to; a parent swapped in between can at most
+// pick a different file inside a root. The file's own name is never
+// resolved, so a final link is still os.Root's to judge.
+func namesFor(abs string) []string {
+	names := []string{abs}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return names
+	}
+	if resolved := filepath.Join(dir, filepath.Base(abs)); resolved != abs {
+		names = append(names, resolved)
+	}
+	return names
 }
 
 // within returns path relative to dir, if path is dir or lies beneath it.
