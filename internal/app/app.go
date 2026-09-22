@@ -374,7 +374,6 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 		tg:         tg,
 		store:      s,
 		config:     cfg,
-		roles:      roles,
 		notifier:   notification.NewNotifier(cfg.Notifications.Enabled, cfg.Notifications.ShowPreview, cfg.Notifications.Method),
 		sound:      notification.NewSoundPlayer(cfg.Notifications.Sound),
 		authorizer: authorizer,
@@ -395,10 +394,11 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 	// and leave the chat titles sheared.
 	cell.SetEmojiMode(cell.ParseEmojiMode(config.ResolveEmojiWidth(cfg.UI.EmojiWidth)))
 
-	// The ramp is the theme's, like the palette: the thread and the rail
-	// name the same people and have to agree on their colours.
-	m.chatView.SetSenderRamp(senderRamp)
-	m.rail.SetSenderRamp(senderRamp)
+	// The components were built in the palette already; this is the rest of
+	// it — the app's own copy and the sender ramp — through the path a live
+	// theme switch takes, so startup and a switch cannot reach different
+	// things.
+	m.applyRoles(roles, senderRamp)
 	m.chatView.ApplyMedia(cfg.Media)
 	m.chatView.ApplyUI(cfg.UI)
 	m.chatView.ApplyStorage(cfg.Storage)
