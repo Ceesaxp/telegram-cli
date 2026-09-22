@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Ceesaxp/telegram-cli/internal/keys"
@@ -89,28 +90,38 @@ func (m Model) composerHelpSection() help.Section {
 		{Keys: "ctrl+p", Desc: "Expand the composer, and back"},
 	}
 
-	if m.composer.EditingMode() == composer.ModeVi {
-		return help.Section{Title: "Composer (vi editing)", Bindings: append(common,
-			help.Binding{Keys: "esc", Desc: "Leave insert mode; again to cancel reply/edit, then leave"},
-			help.Binding{Keys: "i / a / A", Desc: "Insert before / after cursor, at end of line"},
-			help.Binding{Keys: "o / O", Desc: "Open a line below / above and insert"},
-			help.Binding{Keys: "h / l / j / k", Desc: "Move by character and line (normal mode)"},
-			help.Binding{Keys: "w / b", Desc: "Move by word (normal mode)"},
-			help.Binding{Keys: "0 / home", Desc: "Start of line (0 only in normal mode)"},
-			help.Binding{Keys: "$ / end", Desc: "End of line ($ only in normal mode)"},
-			help.Binding{Keys: "x / D / dd", Desc: "Delete character, to end of line, whole line"},
-		)}
+	// The @ picker's keys (issue #41). The same in both keymaps: while the
+	// picker is open it takes them ahead of either, so they come last, as
+	// the exception to everything above them.
+	completion := []help.Binding{
+		{Keys: "@", Desc: "In a group: complete a member's name"},
+		{Keys: "up / down", Desc: "Completing: choose a member"},
+		{Keys: "enter / tab", Desc: "Completing: insert the chosen member"},
+		{Keys: "esc", Desc: "Completing: close it, keeping the text"},
 	}
 
-	return help.Section{Title: "Composer (emacs editing)", Bindings: append(common,
-		help.Binding{Keys: "esc", Desc: "Cancel reply/edit/attachment, then leave"},
-		help.Binding{Keys: "ctrl+a / home", Desc: "Start of line"},
-		help.Binding{Keys: "ctrl+e / end", Desc: "End of line"},
-		help.Binding{Keys: "ctrl+b / ctrl+f", Desc: "Back / forward one character"},
-		help.Binding{Keys: "ctrl+u / ctrl+k", Desc: "Kill to start / end of line"},
-		help.Binding{Keys: "ctrl+w", Desc: "Kill the previous word"},
-		help.Binding{Keys: "ctrl+d / delete", Desc: "Delete the character under the cursor"},
-	)}
+	if m.composer.EditingMode() == composer.ModeVi {
+		return help.Section{Title: "Composer (vi editing)", Bindings: slices.Concat(common, []help.Binding{
+			{Keys: "esc", Desc: "Leave insert mode; again to cancel reply/edit, then leave"},
+			{Keys: "i / a / A", Desc: "Insert before / after cursor, at end of line"},
+			{Keys: "o / O", Desc: "Open a line below / above and insert"},
+			{Keys: "h / l / j / k", Desc: "Move by character and line (normal mode)"},
+			{Keys: "w / b", Desc: "Move by word (normal mode)"},
+			{Keys: "0 / home", Desc: "Start of line (0 only in normal mode)"},
+			{Keys: "$ / end", Desc: "End of line ($ only in normal mode)"},
+			{Keys: "x / D / dd", Desc: "Delete character, to end of line, whole line"},
+		}, completion)}
+	}
+
+	return help.Section{Title: "Composer (emacs editing)", Bindings: slices.Concat(common, []help.Binding{
+		{Keys: "esc", Desc: "Cancel reply/edit/attachment, then leave"},
+		{Keys: "ctrl+a / home", Desc: "Start of line"},
+		{Keys: "ctrl+e / end", Desc: "End of line"},
+		{Keys: "ctrl+b / ctrl+f", Desc: "Back / forward one character"},
+		{Keys: "ctrl+u / ctrl+k", Desc: "Kill to start / end of line"},
+		{Keys: "ctrl+w", Desc: "Kill the previous word"},
+		{Keys: "ctrl+d / delete", Desc: "Delete the character under the cursor"},
+	}, completion)}
 }
 
 // helpFooter is the hint strip along the bottom of the overlay. Built from

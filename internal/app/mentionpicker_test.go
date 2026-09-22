@@ -657,3 +657,27 @@ func TestNoMentionPickerWithoutARowForIt(t *testing.T) {
 			ansi.Strip(strings.Join(got, "\n")))
 	}
 }
+
+// The picker's keys are on the help card, in both editing keymaps: while it
+// is open Enter and Tab insert rather than send and cycle, and the card is
+// where a reader goes to find out why.
+func TestTheHelpCardDescribesMentionCompletion(t *testing.T) {
+	for _, mode := range []composer.EditingMode{composer.ModeEmacs, composer.ModeVi} {
+		m := mainModel(t, PanelComposer)
+		m.composer.SetEditingMode(mode)
+		rows := map[string]string{}
+		for _, sec := range m.helpSections() {
+			if strings.HasPrefix(sec.Title, "Composer") {
+				for _, b := range sec.Bindings {
+					rows[b.Keys] += b.Desc
+				}
+			}
+		}
+		for _, keys := range []string{"@", "up / down", "enter / tab", "esc"} {
+			if !strings.Contains(strings.ToLower(rows[keys]), "complet") &&
+				!strings.Contains(strings.ToLower(rows[keys]), "member") {
+				t.Errorf("mode %v: no composer row for %q about completion (have %q)", mode, keys, rows[keys])
+			}
+		}
+	}
+}
