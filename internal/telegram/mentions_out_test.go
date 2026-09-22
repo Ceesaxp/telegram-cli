@@ -32,6 +32,7 @@ const nadiasHash int64 = 70
 type sendInvoker struct {
 	asked []string
 	sends []*tg.MessagesSendMessageRequest
+	edits []*tg.MessagesEditMessageRequest
 }
 
 func (f *sendInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -50,6 +51,11 @@ func (f *sendInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.
 	case *tg.MessagesSendMessageRequest:
 		f.sends = append(f.sends, req)
 		output.(*tg.UpdatesBox).Updates = &tg.UpdateShortSentMessage{ID: 100, Date: 1}
+		return nil
+	case *tg.MessagesEditMessageRequest:
+		f.edits = append(f.edits, req)
+		edited := &tg.Message{ID: req.ID, PeerID: &tg.PeerChat{ChatID: 5}, Out: true, Message: req.Message}
+		output.(*tg.UpdatesBox).Updates = &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateEditMessage{Message: edited}}}
 		return nil
 	default:
 		return readHistoryInvoker{}.Invoke(ctx, input, output)

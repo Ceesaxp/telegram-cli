@@ -135,6 +135,27 @@ func (c *Client) mentionedUser(ctx context.Context, userID int64) (tg.InputUserC
 	return user.InputUser(), nil
 }
 
+// asReceived is entities as the server will echo them back. A mention goes
+// out naming its user by InputUser and comes back as a
+// messageEntityMentionName naming them by ID, which is the only form the
+// incoming converter knows. A message rebuilt locally from what was sent
+// goes through this so it renders like the server's copy.
+func asReceived(entities []tg.MessageEntityClass) []tg.MessageEntityClass {
+	out := slices.Clone(entities)
+	for i, e := range out {
+		m, ok := e.(*tg.InputMessageEntityMentionName)
+		if !ok {
+			continue
+		}
+		mention := &tg.MessageEntityMentionName{Offset: m.Offset, Length: m.Length}
+		if u, ok := m.UserID.(*tg.InputUser); ok {
+			mention.UserID = u.UserID
+		}
+		out[i] = mention
+	}
+	return out
+}
+
 // inCode reports whether output units [start, end) touch a code or pre
 // entity.
 func inCode(entities []tg.MessageEntityClass, start, end int) bool {
