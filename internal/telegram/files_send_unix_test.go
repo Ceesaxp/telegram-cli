@@ -89,6 +89,16 @@ func TestSendRootsSayWhyAPathInsideCannotBeSent(t *testing.T) {
 	}
 }
 
+// A root can hold device nodes — a root of / or /dev does — and opening a
+// terminal without O_NOCTTY can make it the process's controlling
+// terminal before the not-a-regular-file check refuses it. Doing that for
+// real needs a process with no terminal of its own, so this asks the flag.
+func TestSendOpenFlagsNeverTakeAControllingTerminal(t *testing.T) {
+	if sendOpenFlags&syscall.O_NOCTTY == 0 {
+		t.Fatalf("sendOpenFlags = %#x, want O_NOCTTY (%#x) set", sendOpenFlags, syscall.O_NOCTTY)
+	}
+}
+
 // A fifo is refused, and promptly. Opening one for reading waits for a
 // writer, so an open that asks the path first and the type second hangs
 // the handler until someone writes — which is anyone who can write to the
