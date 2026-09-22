@@ -498,25 +498,52 @@ func LoadRawFile(path string) (*RawFile, error) {
 // recognizes, read from the toml struct tags so it cannot drift from Config.
 func knownFields() map[string]map[string]bool {
 	out := map[string]map[string]bool{}
-	cfgType := reflect.TypeOf(Config{})
-	for i := range cfgType.NumField() {
-		section := cfgType.Field(i).Tag.Get("toml")
-		if section == "" {
-			continue
-		}
-		body := cfgType.Field(i).Type
-		if body.Kind() != reflect.Struct {
-			continue
-		}
+	for _, t := range settingTables(reflect.TypeOf(Config{})) {
 		fields := map[string]bool{}
-		for j := range body.NumField() {
-			if tag := body.Field(j).Tag.Get("toml"); tag != "" {
-				fields[tag] = true
-			}
+		for _, f := range t.fields {
+			fields[f.key] = true
 		}
-		out[section] = fields
+		out[t.name] = fields
 	}
 	return out
+}
+
+// settingTable is one table of config.toml as a struct declares it: its
+// name, where it is among the struct's fields, and its settings.
+type settingTable struct {
+	name   string
+	index  int
+	fields []settingField
+}
+
+// settingField is one setting in a table: its key, and where it is among
+// the table's fields.
+type settingField struct {
+	key   string
+	index int
+}
+
+// settingTables walks a config struct's toml tags, in declaration order: a
+// table is a struct field with a tag, and a setting is a field of one with
+// a tag. The one walk behind knownFields and ChangedSettings, so what
+// counts as a setting cannot differ between them.
+func settingTables(cfgType reflect.Type) []settingTable {
+	var tables []settingTable
+	for i := range cfgType.NumField() {
+		section := cfgType.Field(i)
+		name := section.Tag.Get("toml")
+		if name == "" || section.Type.Kind() != reflect.Struct {
+			continue
+		}
+		t := settingTable{name: name, index: i}
+		for j := range section.Type.NumField() {
+			if key := section.Type.Field(j).Tag.Get("toml"); key != "" {
+				t.fields = append(t.fields, settingField{key: key, index: j})
+			}
+		}
+		tables = append(tables, t)
+	}
+	return tables
 }
 
 // rawKeyPresence reports which [keys] fields the file contained.

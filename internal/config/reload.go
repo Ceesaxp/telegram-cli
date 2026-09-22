@@ -23,26 +23,18 @@ func (c *Config) Reload() (*Config, error) {
 //
 // It walks the struct rather than a list, so a setting added later is
 // compared without anybody remembering to add it here. A setting is what
-// [knownFields] says one is: a field with a toml tag, in a table with one.
+// [knownFields] says one is — the two share settingTables: a field with a
+// toml tag, in a table with one.
 // What Load keeps beside the settings — the file it read, the theme it
 // resolved — has no tag and is not compared.
 func ChangedSettings(a, b *Config) []string {
 	var changed []string
 	va, vb := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
-	cfgType := va.Type()
-	for i := range cfgType.NumField() {
-		section := cfgType.Field(i)
-		table := section.Tag.Get("toml")
-		if table == "" || section.Type.Kind() != reflect.Struct {
-			continue
-		}
-		for j := range section.Type.NumField() {
-			tag := section.Type.Field(j).Tag.Get("toml")
-			if tag == "" {
-				continue
-			}
-			if !reflect.DeepEqual(va.Field(i).Field(j).Interface(), vb.Field(i).Field(j).Interface()) {
-				changed = append(changed, table+"."+tag)
+	for _, t := range settingTables(va.Type()) {
+		for _, f := range t.fields {
+			if !reflect.DeepEqual(va.Field(t.index).Field(f.index).Interface(),
+				vb.Field(t.index).Field(f.index).Interface()) {
+				changed = append(changed, t.name+"."+f.key)
 			}
 		}
 	}
