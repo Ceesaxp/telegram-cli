@@ -519,3 +519,34 @@ func TestTheCurrentValueIsMarked(t *testing.T) {
 	}
 	assertUniformWidth(t, m.View())
 }
+
+// TestAValueIsDrawnAsText: a value and its description come from outside —
+// a theme's path out of the user's config, a file name — and a control
+// character in one reaches the palette as a mark, not as a sequence the
+// terminal obeys. Only the drawing is filtered: Enter still runs the value
+// as it is, or the command could not recognise it.
+func TestAValueIsDrawnAsText(t *testing.T) {
+	const value = "/tmp/evil\x1b]0;pwned\a.toml"
+	m := New(theme.DarkRoles(true))
+	m.SetItems([]Item{{Name: "theme", Args: "<name>", Candidates: []Arg{
+		{Value: value, Description: "by path\x1b[2J", Current: true},
+		{Value: "dark", Description: "built in"},
+	}}})
+	m.Open()
+	m = typeString(t, m, "theme ")
+	view := m.View()
+
+	for _, raw := range []string{"\x1b]", "\a", "\x1b[2J"} {
+		if strings.Contains(view, raw) {
+			t.Errorf("View() draws %q raw:\n%s", raw, strings.NewReplacer("\x1b", "ESC", "\a", "BEL").Replace(view))
+		}
+	}
+	for _, shown := range []string{"/tmp/evil\uFFFD]0;pwned\uFFFD.toml", "by path\uFFFD[2J"} {
+		if !strings.Contains(ansi.Strip(view), shown) {
+			t.Errorf("View() does not show %q:\n%s", shown, ansi.Strip(view))
+		}
+	}
+	if got := m.Line(); got != "theme "+value {
+		t.Errorf("Line() = %q, want the value as it is", got)
+	}
+}

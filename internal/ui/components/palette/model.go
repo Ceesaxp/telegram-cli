@@ -537,6 +537,12 @@ const currentMark = "current"
 func (m Model) argLine(a Arg, selected bool, valueStyle, descStyle lipgloss.Style) string {
 	marker := rowMarker(selected)
 
+	// A value and its note come from outside — a theme's path from the
+	// user's config, a directory name — so they are drawn as text: a
+	// control character in one is a mark on the row, not a sequence the
+	// terminal obeys. Only the drawing: Line still hands over a.Value.
+	a.Value, a.Description = cell.Printable(a.Value), cell.Printable(a.Description)
+
 	value := cell.Truncate(a.Value, Width-cell.Width(marker))
 	line := marker + valueStyle.Render(value)
 
