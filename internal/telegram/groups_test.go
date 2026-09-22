@@ -296,6 +296,46 @@ func TestSearchChatMembersOffersNobodyFromAHiddenBasicGroup(t *testing.T) {
 	}
 }
 
+// The picker is only for chats with members to choose between. A private
+// chat has one other person in it, and nobody is mentioned in a broadcast
+// channel's posts, so both offer nobody without a member list being asked
+// for. A private chat is told by its ID alone. A channel's broadcast flag
+// comes from resolving it, the lookup every channel call in this client
+// starts with.
+func TestSearchChatMembersOffersNobodyOutsideAGroup(t *testing.T) {
+	t.Run("a private chat", func(t *testing.T) {
+		inv := &memberInvoker{}
+		c, _ := memberClient(inv)
+
+		got, err := c.SearchChatMembers(userChatID(4), "na", 20)
+		if err != nil {
+			t.Fatalf("SearchChatMembers: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("SearchChatMembers = %v, want nobody", userIDs(got))
+		}
+		if len(inv.asked) != 0 {
+			t.Errorf("asked the server %#v, want nothing", inv.asked)
+		}
+	})
+
+	t.Run("a broadcast channel", func(t *testing.T) {
+		inv := &memberInvoker{}
+		c, _ := memberClient(inv)
+
+		got, err := c.SearchChatMembers(channelChatID(10), "na", 20)
+		if err != nil {
+			t.Fatalf("SearchChatMembers: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("SearchChatMembers = %v, want nobody", userIDs(got))
+		}
+		if n := inv.memberRequests(); n != 0 {
+			t.Errorf("asked for the members %d times, want never", n)
+		}
+	})
+}
+
 // A refusal is the caller's to handle, and a FLOOD_WAIT most of all: the
 // picker is typed into, and a lookup that waited out the flood here would
 // hold a stale query open for as long as the server asked. It is asked

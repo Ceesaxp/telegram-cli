@@ -132,8 +132,29 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 	return info, nil
 }
 
-// SearchChatMembers finds the members of a chat whose names match query,
-// for the @-mention picker.
+// SearchChatMembers finds the members of a chat whom the @-mention picker
+// can offer for query, the text typed after the @.
+//
+// What it asks depends on the kind of chat:
+//
+//   - A supergroup is searched on the server for query, or asked for its
+//     recent members when query is empty. At most limit members come back
+//     (the server allows no more than 200), in the server's order.
+//   - A basic group returns ALL its members, and query and limit are
+//     ignored. A basic group is small, so the composer filters the list
+//     locally as the query grows and does not ask again.
+//   - A private chat or a broadcast channel returns nil with no error, and
+//     no member list is asked for. The picker is not offered there.
+//
+// Either way each user comes back once. The reader's own account and
+// deleted accounts are left out, and so is anyone the answer names only as
+// someone's inviter or promoter. Every user in the answer is handed to the
+// peers manager before this returns, so a mention of the one picked has the
+// access hash a send needs to name them by ID.
+//
+// A refusal from the server is wrapped and returned. A FLOOD_WAIT is not
+// waited out here: the caller is a picker being typed into, and it decides
+// whether a later query is worth asking.
 func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -142,10 +163,13 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 		users []*User
 		err   error
 	)
-	if constant.TDLibPeerID(chatID).IsChat() {
+	switch id := constant.TDLibPeerID(chatID); {
+	case id.IsChat():
 		users, err = c.basicGroupMembers(ctx, chatID)
-	} else {
+	case id.IsChannel():
 		users, err = c.supergroupMembers(ctx, chatID, query, limit)
+	default:
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("search chat members: %w", err)
@@ -160,6 +184,9 @@ func (c *Client) supergroupMembers(ctx context.Context, chatID int64, query stri
 	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
 	if err != nil {
 		return nil, err
+	}
+	if channel.IsBroadcast() {
+		return nil, nil
 	}
 
 	var filter tg.ChannelParticipantsFilterClass = &tg.ChannelParticipantsSearch{Q: query}
