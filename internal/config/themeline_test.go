@@ -435,6 +435,35 @@ func TestSetThemeLineWritesThroughASymlink(t *testing.T) {
 	}
 }
 
+// TestSetThemeLineRefusesADanglingSymlink: a config.toml that is a link to
+// a file not there — a dotfiles checkout not made yet, a moved repository —
+// is not a missing config to create. Creating it would put a regular file
+// where the link was, and the link is the part the user set up.
+func TestSetThemeLineRefusesADanglingSymlink(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "config.toml")
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	kept, err := SetThemeLine(link, "gruvbox", true)
+
+	if err == nil || !strings.Contains(err.Error(), "symlink") || !strings.Contains(err.Error(), target) {
+		t.Fatalf("err = %v, want a refusal naming the missing target", err)
+	}
+	if kept {
+		t.Error("a refusal says the original is kept")
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link was replaced or removed (err %v)", err)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Error("the missing target was created")
+	}
+}
+
 // TestSetThemeLineRestoresWhatDoesNotReadBack: the edit is checked with the
 // real loader, and a file that does not load, or does not say what was
 // written, is put back the way it was. A config that stops loading is a

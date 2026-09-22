@@ -38,7 +38,7 @@ import (
 // is written as dotted keys or an inline table (where one more line cannot
 // set it, and a [ui] table beside them would make the file invalid), when
 // ui.theme is anything but a string on a line of [ui], when the file is not
-// TOML at all, and when it is read-only.
+// TOML at all, when it is read-only, and when it is a symlink to nothing.
 //
 // With backup, the file is kept as config.toml.bak before it is written —
 // only once it is known there will be a write, so a refusal leaves nothing
@@ -59,6 +59,10 @@ import (
 func SetThemeLine(path, value string, backup bool) (kept bool, err error) {
 	original, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		if target, dangling := danglingLink(path); dangling {
+			return false, fmt.Errorf("%s is a symlink to %s, which does not exist — create that file, "+
+				"or edit %s by hand", filepath.Base(path), target, filepath.Base(path))
+		}
 		return backup, createThemeFile(path, value)
 	}
 	if err != nil {
@@ -139,6 +143,22 @@ func checkThemeLine(path, value string) error {
 		return fmt.Errorf("the edited config reads ui.theme as %q, not %q", cfg.UI.Theme, value)
 	}
 	return nil
+}
+
+// danglingLink reports whether path is a symlink whose target is not there,
+// and the target it names. Such a config is not a missing one to create:
+// writing it would put a regular file where the link was, and the link —
+// into a dotfiles checkout, say — is the part the user set up.
+func danglingLink(path string) (target string, dangling bool) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	target, err = os.Readlink(path)
+	if err != nil {
+		target = "a file that is not there"
+	}
+	return target, true
 }
 
 // createThemeFile writes a config holding nothing but the theme, where
