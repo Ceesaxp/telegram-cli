@@ -116,8 +116,10 @@ var (
 	walkPastes = []string{"Alex", "Alex, ", "@A", "x\nAlex", "Al", " ", "😀", "\nA"}
 	// walkNames are the members the picker offers: names that repeat and
 	// prefix one another, a name starting with @, and a username that is
-	// one of the names.
-	walkNames = []string{"Alex", "Al", "A", "Alex x", "Алекс😀", "éx", "@Alex"}
+	// one of the names. "e\u0301x" is a combining mark, two runes for one
+	// letter, and "Alex," ends in a character after which @ opens the
+	// picker, so an insert can land exactly at a mention's end.
+	walkNames = []string{"Alex", "Al", "A", "Alex x", "Алекс😀", "e\u0301x", "@Alex", "@A", "Alex,"}
 )
 
 // run takes steps random steps, and reports whether they all held.
