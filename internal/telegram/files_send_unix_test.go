@@ -4,7 +4,9 @@ package telegram
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,56 @@ func TestSendRootsSaysAnUnreadableFileIsUnreadable(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "outside") {
 		t.Errorf("error = %v, want no talk of outside for a path that is inside", err)
+	}
+}
+
+// A path inside a root that cannot be opened for a reason of its own is
+// refused for that reason, not as outside: the caller named the right
+// directory, and "outside" would send them looking for a typo.
+func TestSendRootsSayWhyAPathInsideCannotBeSent(t *testing.T) {
+	root, _, _ := sendRoot(t)
+	// Nine links in a chain, one more than os.Root follows.
+	prev := "file.txt"
+	for i := 9; i >= 1; i-- {
+		name := fmt.Sprintf("link%d", i)
+		if err := os.Symlink(prev, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+		prev = name
+	}
+	// A socket's path is limited to about a hundred bytes, which a test's
+	// own temporary directory can already exceed.
+	sockets, err := os.MkdirTemp("", "sr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockets) })
+	ln, err := net.Listen("unix", filepath.Join(sockets, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	for name, tc := range map[string]struct {
+		path, root, want string
+	}{
+		"a chain of links too long to follow": {filepath.Join(root, "link1"), root, "too many levels of symbolic links"},
+		"a file used as a directory":          {filepath.Join(root, "file.txt", "x"), root, "not a directory"},
+		"a socket":                            {filepath.Join(sockets, "s"), sockets, "not a regular file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, err := openAllowed(tc.path, tc.root)
+			if err == nil {
+				f.Close()
+				t.Fatalf("opened %s, want it refused", tc.path)
+			}
+			if want := fmt.Sprintf("%q: %s", tc.path, tc.want); !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want %s", err, want)
+			}
+			if strings.Contains(err.Error(), "outside") {
+				t.Errorf("error = %v, want no talk of outside for a path that is inside", err)
+			}
+		})
 	}
 }
 

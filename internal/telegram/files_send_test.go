@@ -173,6 +173,25 @@ func TestSendRootsMatchAPathThroughItsResolvedDirectory(t *testing.T) {
 	}
 }
 
+// A NUL cannot be in a file name, so a path with one is invalid rather
+// than outside.
+func TestSendRootsCallAPathWithANulInvalid(t *testing.T) {
+	root, _, _ := sendRoot(t)
+	path := filepath.Join(root, "file.txt\x00.png")
+
+	f, err := openAllowed(path, root)
+	if err == nil {
+		f.Close()
+		t.Fatalf("opened %q, want it refused", path)
+	}
+	if want := fmt.Sprintf("%q: invalid path", path); !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want %s", err, want)
+	}
+	if strings.Contains(err.Error(), "outside") {
+		t.Errorf("error = %v, want no talk of outside", err)
+	}
+}
+
 // A root that cannot be opened at the start is reported, so the server
 // can say so; the ones that can are held regardless.
 func TestOpenSendRootsReportsTheRootsItCannotOpen(t *testing.T) {

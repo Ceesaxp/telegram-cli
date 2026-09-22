@@ -110,6 +110,9 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 	if r == nil {
 		r = &SendRoots{}
 	}
+	if strings.ContainsRune(path, 0) {
+		return nil, fmt.Errorf("send file: %q: %w", path, errInvalidPath)
+	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("send file: %w", err)
@@ -128,8 +131,8 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 			if err == nil {
 				return f, nil
 			}
-			if found == nil && foundButUnsendable(err) {
-				found = fmt.Errorf("send file: %q: %w", path, cause(err))
+			if why := whyInside(err); found == nil && why != nil {
+				found = fmt.Errorf("send file: %q: %w", path, why)
 			}
 		}
 	}
@@ -150,6 +153,9 @@ func (r *SendRoots) Open(path string) (*os.File, error) {
 // device. There is nothing in one to send, and reading some of them has
 // side effects or never ends.
 var errNotRegular = errors.New("not a regular file")
+
+// errInvalidPath refuses a path no file can have: one with a NUL in it.
+var errInvalidPath = errors.New("invalid path")
 
 // openRegular opens name inside root, and only if it is a regular file.
 // An [os.Root] refuses a ".." or a symlink that points outside it,
@@ -175,15 +181,20 @@ func openRegular(root *os.Root, name string) (*os.File, error) {
 	return f, nil
 }
 
-// foundButUnsendable reports whether err, from opening a path inside a
-// root, says the file is there (or ought to be) and cannot be sent, as
-// opposed to lying outside. Anything else — above all os.Root's refusal
-// of a path that leaves it, which has no exported error of its own — reads
-// as outside.
-func foundButUnsendable(err error) bool {
-	return errors.Is(err, errNotRegular) ||
+// whyInside is why a path inside a root cannot be sent, given the error
+// opening it: the file is not regular, is missing or unreadable, or the
+// way to it breaks inside the root (see whyInsideOS). It is nil for
+// anything else — above all os.Root's refusal of a path that leaves it,
+// which has no exported error of its own — and the path then reads as
+// outside.
+func whyInside(err error) error {
+	err = cause(err)
+	if errors.Is(err, errNotRegular) ||
 		errors.Is(err, fs.ErrNotExist) ||
-		errors.Is(err, fs.ErrPermission)
+		errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	return whyInsideOS(err)
 }
 
 // cause is err without the path os.Root put on it, which is relative to
