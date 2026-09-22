@@ -230,7 +230,8 @@ func (m *Model) EnterEditMode(messageID int64, currentText string, mentions ...M
 }
 
 // parkEdit stores what an edit is about to displace: the text, where the
-// cursor was in it, and the reply target it was going to answer.
+// cursor was in it, the mentions in it, and the reply target it was going to
+// answer.
 //
 // Unconditionally, even when there is nothing to store, because presence is
 // what unparkEdit reads. The attachment is deliberately not carried: an edit
