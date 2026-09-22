@@ -55,10 +55,25 @@ func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
 			UserID: userID,
 			Label:  label,
 		})
-		slices.SortFunc(spans, func(a, b MentionSpan) int { return cmp.Compare(a.Start, b.Start) })
+		slices.SortFunc(spans, byStart)
 	}
 	m.mentions = spans
 }
+
+// mentionsToSend is what a submit hands over: the spans that still cover
+// their labels in text, sorted by Start.
+//
+// Every path that changes the text already keeps the spans in step, so the
+// check should find nothing to drop. It runs anyway because this is the last
+// point before a user ID goes on the wire, and a mention over words that do
+// not name its user is worse than no mention at all.
+func mentionsToSend(spans []MentionSpan, text string) []MentionSpan {
+	out := adjustMentions(spans, text, text)
+	slices.SortFunc(out, byStart)
+	return out
+}
+
+func byStart(a, b MentionSpan) int { return cmp.Compare(a.Start, b.Start) }
 
 // adjustMentions carries spans across one change to the draft, from oldText to
 // newText. It returns a new slice and never touches spans: the model is

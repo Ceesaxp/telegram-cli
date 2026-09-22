@@ -421,3 +421,97 @@ func TestAnEditKeepsItsMentionsThroughAChatSwitch(t *testing.T) {
 	m, _ = press(t, m, "esc")
 	wantMentions(t, m, nadia)
 }
+
+// ---------------------------------------------------------------------------
+// Submit
+// ---------------------------------------------------------------------------
+
+func submitted(t *testing.T, m Model) (Model, MessageSubmittedMsg) {
+	t.Helper()
+	m, msg := press(t, m, "enter")
+	sub, ok := msg.(MessageSubmittedMsg)
+	if !ok {
+		t.Fatalf("got %T, want MessageSubmittedMsg", msg)
+	}
+	return m, sub
+}
+
+// The spans go out with the text, in order, and the next message starts
+// with none.
+func TestSubmitCarriesMentionsSortedAndClearsThem(t *testing.T) {
+	m := newFocused()
+	m.textarea.Value = "Nadia and Oleg"
+	first := MentionSpan{Start: 0, End: 5, UserID: 7, Label: "Nadia"}
+	second := MentionSpan{Start: 10, End: 14, UserID: 8, Label: "Oleg"}
+	m.mentions = []MentionSpan{second, first}
+
+	m, sub := submitted(t, m)
+	if want := []MentionSpan{first, second}; !slices.Equal(sub.Mentions, want) {
+		t.Errorf("Mentions = %+v, want %+v", sub.Mentions, want)
+	}
+	wantMentions(t, m)
+
+	m = typeInto(t, m, "next")
+	if _, sub = submitted(t, m); sub.Mentions != nil {
+		t.Errorf("the next message carried %+v", sub.Mentions)
+	}
+}
+
+func TestSubmitCarriesAMentionTypedTheUsualWay(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = chars(t, m, "ping")
+
+	_, sub := submitted(t, m)
+	if sub.Text != "hi Nadia ping" {
+		t.Fatalf("precondition: Text = %q", sub.Text)
+	}
+	if want := []MentionSpan{nadia}; !slices.Equal(sub.Mentions, want) {
+		t.Errorf("Mentions = %+v, want %+v", sub.Mentions, want)
+	}
+}
+
+// The caption of an attachment is the text, and its mentions go with it.
+func TestSubmitCarriesACaptionsMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m.SetAttachment("/tmp/paste-1.png", true)
+
+	_, sub := submitted(t, m)
+	if sub.Attachment != "/tmp/paste-1.png" {
+		t.Fatalf("precondition: Attachment = %q", sub.Attachment)
+	}
+	if want := []MentionSpan{nadia}; !slices.Equal(sub.Mentions, want) {
+		t.Errorf("Mentions = %+v, want %+v", sub.Mentions, want)
+	}
+}
+
+// Sending an edit sends the edit's mentions, then the displaced draft comes
+// back with its own.
+func TestSubmittingAnEditCarriesItsMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m.EnterEditMode(99, "ask ")
+	m = chars(t, m, "@ol")
+	m.InsertMention(4, 7, "Oleg", 8)
+
+	m, sub := submitted(t, m)
+	if sub.EditMessageId != 99 {
+		t.Fatalf("precondition: EditMessageId = %d", sub.EditMessageId)
+	}
+	oleg := MentionSpan{Start: 4, End: 8, UserID: 8, Label: "Oleg"}
+	if want := []MentionSpan{oleg}; !slices.Equal(sub.Mentions, want) {
+		t.Errorf("Mentions = %+v, want %+v", sub.Mentions, want)
+	}
+	wantMentions(t, m, nadia)
+}
+
+// The last line of defence: a span that has fallen out of step with the
+// text — however it got there — is not sent. A user ID on the wrong words is
+// worse than no mention at all.
+func TestSubmitNeverSendsASpanOverTheWrongText(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m.textarea.Value = "hi Oleg!! "
+
+	_, sub := submitted(t, m)
+	if len(sub.Mentions) != 0 {
+		t.Errorf("Mentions = %+v, want none: the text no longer says Nadia", sub.Mentions)
+	}
+}
