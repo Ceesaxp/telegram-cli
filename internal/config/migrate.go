@@ -885,6 +885,13 @@ func writeFilePrivate(path string, data []byte) error {
 // writeFileAtomic is [writeFilePrivate] at mode perm: a temp file beside the
 // resolved target, renamed over it.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return writeFileGuarded(path, data, perm, nil)
+}
+
+// writeFileGuarded is [writeFileAtomic] that asks guard, when it is not
+// nil, at the last moment before the rename — the new content written and
+// flushed — and writes nothing when guard says no.
+func writeFileGuarded(path string, data []byte, perm os.FileMode, guard func() error) error {
 	path = resolveTarget(path)
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
@@ -912,6 +919,11 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing config: %w", err)
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replacing config: %w", err)
