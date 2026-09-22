@@ -418,6 +418,14 @@ func (m Model) editKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	stroke := msg.Keystroke()
 
+	// An open picker comes first: the keys it owns mean something else to
+	// the composer, and it is the thing on screen asking for them.
+	if m.mention.active {
+		if next, ok := m.mentionKey(stroke); ok {
+			return next, nil
+		}
+	}
+
 	switch stroke {
 	case "esc":
 		return m.handleEsc()
@@ -627,10 +635,15 @@ func (m Model) IsEditing() bool { return m.mode == ModeEdit }
 
 // IsComposing reports whether Escape belongs to the composer rather than to
 // app.go's focus-back handler: reply/edit mode or a pending attachment needs
-// clearing first, and in vi mode an Escape pressed in insert mode has to
-// reach the composer so it can switch to normal mode.
+// clearing first, in vi mode an Escape pressed in insert mode has to reach
+// the composer so it can switch to normal mode, and an open mention picker
+// has to be closed.
 func (m Model) IsComposing() bool {
 	if m.editing == ModeVi && m.vi == viInsert {
+		return true
+	}
+	// The first Esc closes an open picker, and only the composer can do that.
+	if m.mention.active {
 		return true
 	}
 	return m.mode != ModeNormal || m.attachment != ""

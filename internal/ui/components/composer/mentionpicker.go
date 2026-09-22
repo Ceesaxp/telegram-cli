@@ -108,6 +108,22 @@ func (m Model) mentionQuery() (string, bool) {
 	return string(q), true
 }
 
+// mentionKey runs a key the open picker owns, and reports whether stroke was
+// one. Matched on Keystroke(), like every chord in handleKey.
+//
+// Esc closes the picker and does nothing else: the text stays as typed, a
+// reply stays a reply, and vi stays in insert mode. The composer's own
+// Escape is the next press. Closing forgets the token for good — only a
+// typed @ opens completion, so nothing can bring this one back.
+func (m Model) mentionKey(stroke string) (Model, bool) {
+	switch stroke {
+	case "esc":
+		m.closeMention()
+		return m, true
+	}
+	return m, false
+}
+
 // closeMention ends the completion, keeping only the generation: an answer
 // still on its way must not match whatever opens next.
 func (m *Model) closeMention() {

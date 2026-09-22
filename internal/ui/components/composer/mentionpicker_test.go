@@ -349,3 +349,74 @@ func TestReplacingTheDraftClosesCompletion(t *testing.T) {
 		t.Error("completion survived the external editor")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Esc
+// ---------------------------------------------------------------------------
+
+// Esc closes the picker and nothing else: the text stays as typed, and the
+// next Enter is an ordinary send.
+func TestEscClosesCompletionAndKeepsTheText(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+
+	m, _ = send(t, m, keyEsc)
+	if m.MentionActive() {
+		t.Fatal("Esc did not close completion")
+	}
+	if m.Draft() != "hi @na" {
+		t.Errorf("Draft = %q, want the text untouched", m.Draft())
+	}
+
+	_, msg := send(t, m, keyEnter)
+	sub, ok := msg.(MessageSubmittedMsg)
+	if !ok || sub.Text != "hi @na" {
+		t.Errorf("Enter after Esc produced %#v, want the draft sent as typed", msg)
+	}
+}
+
+// The first Esc belongs to the picker. The composer's own Escape — cancel the
+// reply, leave vi's insert mode — waits for the next one.
+func TestTheFirstEscOnlyClosesThePicker(t *testing.T) {
+	m := mentionComposer(t)
+	m.EnterReplyMode(5, "the message")
+	m = chars(t, m, "@na")
+	m, _ = send(t, m, keyEsc)
+	if m.mode != ModeReply {
+		t.Error("the Esc that closed the picker also cancelled the reply")
+	}
+
+	v := viComposer(t)
+	v.SetMentionsEnabled(true)
+	v = chars(t, v, "@na")
+	v, _ = send(t, v, keyEsc)
+	if v.MentionActive() || v.IsViNormalMode() {
+		t.Errorf("vi: after one Esc, open = %v and normal = %v, want the picker closed and still inserting",
+			v.MentionActive(), v.IsViNormalMode())
+	}
+}
+
+// The app gives Escape to the composer only while IsComposing says it is
+// the composer's. An open picker is.
+func TestAnOpenPickerIsComposing(t *testing.T) {
+	m := mentionComposer(t)
+	if m.IsComposing() {
+		t.Fatal("precondition: an idle emacs composer reports composing")
+	}
+	if m = chars(t, m, "@"); !m.IsComposing() {
+		t.Error("IsComposing = false with the picker open; the app would take Esc for itself")
+	}
+}
+
+// After Esc the token stays closed however much more of it is typed. Another
+// @ is another token, and opens.
+func TestAfterEscOnlyANewAtReopens(t *testing.T) {
+	m := chars(t, mentionComposer(t), "hi @na")
+	m, _ = send(t, m, keyEsc)
+
+	if m = chars(t, m, "dia"); m.MentionActive() {
+		t.Fatal("typing on in the dismissed token reopened it")
+	}
+	if m = chars(t, m, " @"); !m.MentionActive() {
+		t.Error("a new @ after a dismissed one did not open")
+	}
+}
