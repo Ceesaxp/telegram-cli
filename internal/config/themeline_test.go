@@ -144,7 +144,7 @@ func TestSetThemeLineEditsOnlyTheThemeLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := configFile(t, tt.before)
 
-			if err := SetThemeLine(path, tt.value); err != nil {
+			if err := SetThemeLine(path, tt.value, true); err != nil {
 				t.Fatalf("SetThemeLine: %v", err)
 			}
 			if got := readFile(t, path); got != tt.after {
@@ -188,7 +188,7 @@ func TestSetThemeLineRefusesWhatItCannotEditSafely(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := configFile(t, tt.body)
 
-			err := SetThemeLine(path, "gruvbox")
+			err := SetThemeLine(path, "gruvbox", true)
 			if err == nil {
 				t.Fatalf("SetThemeLine accepted %q:\n%s", tt.body, readFile(t, path))
 			}
@@ -212,7 +212,7 @@ func TestSetThemeLineCreatesAMissingFile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "tele-tui", "config.toml")
 
-	if err := SetThemeLine(path, "gruvbox"); err != nil {
+	if err := SetThemeLine(path, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 	if got, want := readFile(t, path), "[ui]\ntheme = 'gruvbox'\n"; got != want {
@@ -234,14 +234,14 @@ func TestSetThemeLineBacksUpFirst(t *testing.T) {
 	original := "[ui]\ntheme = \"dark\"  # mine\n"
 	path := configFile(t, original)
 
-	if err := SetThemeLine(path, "gruvbox"); err != nil {
+	if err := SetThemeLine(path, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 	if got := readFile(t, path+".bak"); got != original {
 		t.Errorf("the backup holds %q, want the original %q", got, original)
 	}
 
-	if err := SetThemeLine(path, "nord"); err != nil {
+	if err := SetThemeLine(path, "nord", true); err != nil {
 		t.Fatalf("second SetThemeLine: %v", err)
 	}
 	if got := readFile(t, path+".bak"); got != original {
@@ -267,7 +267,7 @@ func TestSetThemeLineKeepsTheFileMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetThemeLine(path, "gruvbox"); err != nil {
+	if err := SetThemeLine(path, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 	if info, err := os.Stat(path); err != nil {
@@ -292,7 +292,7 @@ func TestSetThemeLineWritesThroughASymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := SetThemeLine(link, "gruvbox"); err != nil {
+	if err := SetThemeLine(link, "gruvbox", true); err != nil {
 		t.Fatalf("SetThemeLine: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 			loadWritten = check
 			t.Cleanup(func() { loadWritten = loadFrom })
 
-			err := SetThemeLine(path, "gruvbox")
+			err := SetThemeLine(path, "gruvbox", true)
 			if err == nil {
 				t.Fatal("SetThemeLine reported success for a write that did not read back")
 			}
@@ -358,7 +358,7 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 		loadWritten = checks["the loader fails"]
 		t.Cleanup(func() { loadWritten = loadFrom })
 
-		if err := SetThemeLine(path, "gruvbox"); err == nil {
+		if err := SetThemeLine(path, "gruvbox", true); err == nil {
 			t.Fatal("SetThemeLine reported success for a write that did not read back")
 		}
 		if _, err := os.Stat(path); err == nil {

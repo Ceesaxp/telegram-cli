@@ -40,12 +40,14 @@ import (
 // ui.theme is anything but a string on a line of [ui], and when the file is
 // not TOML at all.
 //
-// Before writing it backs the file up with [BackupFile], and the write is
-// atomic, keeps the file's mode, and lands on a symlink's target rather than
-// replacing the link. The result is then read back with the real loader;
-// if it does not load, or does not say value, the original is put back
-// and the error returned.
-func SetThemeLine(path, value string) error {
+// With backup, the file is copied aside with [BackupFile] before it is
+// written — only once it is known there will be a write, so a refusal
+// leaves nothing behind. The write is atomic, keeps the file's mode, and
+// lands on a symlink's target rather than replacing the link. The result is
+// then read back with the real loader; if it does not load, or does not say
+// value, the original is put back and the error returned. That safety does
+// not depend on the backup: the original is the bytes read before the edit.
+func SetThemeLine(path, value string, backup bool) error {
 	original, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return createThemeFile(path, value)
@@ -63,9 +65,11 @@ func SetThemeLine(path, value string) error {
 		return fmt.Errorf("%s %w — edit it by hand", filepath.Base(path), err)
 	}
 
-	backup, err := BackupFile(path)
-	if err != nil {
-		return fmt.Errorf("backing up config: %w", err)
+	backupPath := ""
+	if backup {
+		if backupPath, err = BackupFile(path); err != nil {
+			return fmt.Errorf("backing up config: %w", err)
+		}
 	}
 	mode := info.Mode().Perm()
 	if err := writeFileAtomic(path, edited, mode); err != nil {
@@ -76,8 +80,11 @@ func SetThemeLine(path, value string) error {
 		// BackupFile copied, byte for byte, and nothing can have touched
 		// them since.
 		if restoreErr := writeFileAtomic(path, original, mode); restoreErr != nil {
+			if backupPath == "" {
+				return fmt.Errorf("%w, and restoring it failed too (%v)", err, restoreErr)
+			}
 			return fmt.Errorf("%w, and restoring it failed too (%v): the original is in %s",
-				err, restoreErr, backup)
+				err, restoreErr, backupPath)
 		}
 		return fmt.Errorf("%w; the file is as it was", err)
 	}

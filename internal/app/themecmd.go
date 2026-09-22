@@ -99,7 +99,7 @@ func (m Model) runTheme(arg string) (Model, tea.Cmd, string) {
 	// The running config says what is running, saved or not.
 	m.config.UI.Theme = name
 	var report commandReport
-	if err := config.SetThemeLine(m.config.Path(), name); err != nil {
+	if err := config.SetThemeLine(m.config.Path(), name, true); err != nil {
 		report.warn(fmt.Sprintf("theme: %s (not saved: %v)", name, err))
 	} else {
 		report.say("theme: " + name)
