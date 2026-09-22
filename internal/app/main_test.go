@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
@@ -21,7 +23,24 @@ import (
 // under a 256 profile a test asking "is the thread on bg and the list on
 // panel" cannot tell the two apart on a developer machine that reports
 // truecolour, and can on one that does not.
+//
+// It also points the config file and the default config directory at a
+// directory of the run's own. :theme lists the themes/ it finds there and
+// writes the file back, and a test that ran it without setting both would
+// otherwise read — and rewrite — the developer's real ~/.config/tele-tui.
+// A test that wants a config sets its own over these.
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	os.Exit(m.Run())
+
+	dir, err := os.MkdirTemp("", "tele-tui-app-test")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg"))
+	os.Setenv("TELETUI_CONFIG", filepath.Join(dir, "config.toml"))
+
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }

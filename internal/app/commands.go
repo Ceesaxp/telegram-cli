@@ -125,6 +125,14 @@ func (m Model) commandRegistry() []Command {
 			},
 		},
 		{
+			Name:          "theme",
+			Arg:           ArgOptional,
+			Placeholder:   "<name>",
+			Description:   "switch the colour theme, and save it",
+			ArgCandidates: Model.themeCandidates,
+			Run:           Model.runTheme,
+		},
+		{
 			Name:        "quit",
 			Arg:         ArgNone,
 			Description: "quit tele-tui",

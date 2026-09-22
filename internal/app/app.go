@@ -107,6 +107,13 @@ type Model struct {
 	height     int
 	myUserId   int64
 
+	// themeName is the theme on screen, by the name ui.theme would give
+	// it — see runningThemeName — and "" when the configured theme could
+	// not be used and dark stands in. :theme marks it in the palette and
+	// calls choosing it again "unchanged"; the stand-in is never marked,
+	// so `:theme dark` then saves dark over the name that did not work.
+	themeName string
+
 	// trueColor is the colour depth New resolved the palette at, from the
 	// environment. A theme applied later is resolved at the same depth
 	// rather than by asking again: the environment can have changed since,
@@ -363,6 +370,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer,
 	trueColor bool, roles theme.Roles, senderRamp []lipgloss.Color) Model {
 	m := Model{
+		themeName:  runningThemeName(cfg),
 		trueColor:  trueColor,
 		auth:       auth.New(roles, authorizer),
 		chatList:   chatlist.New(s, tg, roles),

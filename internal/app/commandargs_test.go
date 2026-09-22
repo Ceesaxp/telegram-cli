@@ -65,6 +65,8 @@ func TestPaletteItemsCarryTheCandidates(t *testing.T) {
 			if !reflect.DeepEqual(it.Candidates, fruits) {
 				t.Errorf("pick offers %+v, want %+v", it.Candidates, fruits)
 			}
+		case "theme":
+			// Its own: see themecmd_test.go.
 		default:
 			if it.Candidates != nil {
 				t.Errorf("%q offers %+v, but has no candidates", it.Name, it.Candidates)
