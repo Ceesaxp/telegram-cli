@@ -57,7 +57,40 @@ replaced by the default one. `[theme] name` is ignored. Either way the
 reason is printed as a `config:` line before the screen is taken, alongside
 any keybinding warnings — with control characters replaced, since a theme
 file is often somebody else's and must not be able to write escape
-sequences to your terminal. The theme is read once, at startup.
+sequences to your terminal.
+
+### Switching while running
+
+`:theme <name>` in the command palette switches the theme on the spot —
+`:theme ` lists what there is to choose, the builtins and every
+`themes/*.toml` in the two directories above — and saves the choice as
+`ui.theme`. Saving edits `config.toml` as text rather than rewriting it:
+only the value on the `theme` line under `[ui]` changes, and your comments,
+order, spacing, quoting and line endings stay as they were. A `[ui]` table
+without a `theme` line gets one under its header; a file without `[ui]` gets
+one at the end. Before the edit the file is copied to `config.toml.bak`
+(beside the real file, if `config.toml` is a symlink), and a later edit
+never overwrites that copy — it gets a timestamped one instead. The edited
+file is read back before `:theme` reports success; if it does not load, or
+does not say the new theme, the original is put back.
+
+`:theme` will not edit a `config.toml` that sets `ui` with dotted keys
+(`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
+or one that is not valid TOML: the theme still switches, the notice says
+"not saved" and why, and the file is left for you to edit by hand.
+
+A name that is not a usable theme — no such file, a file that does not
+parse — changes nothing: the theme on screen stays, rather than falling back
+to `dark` as startup does, and the notice gives the reason. A theme that
+loads with problems is applied, and the notice counts them and quotes the
+first.
+
+`:reload-config` reads `config.toml` again and applies its theme, re-reading
+the theme file as well — the way to see a theme you are editing without
+restarting. It writes nothing. Every other setting it finds changed is named
+in the notice ("restart to apply: ui.parse_markdown, keys.compose") and keeps
+its running value until the next start, so the client goes on behaving as
+one consistent config. A file that does not load changes nothing.
 
 ## Where files go
 

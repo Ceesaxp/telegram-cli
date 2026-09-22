@@ -25,7 +25,7 @@ Four findings from an outside review, each confirmed against the code first.
 - [x] Overlay: painted over the thread's bottom rows directly above the composer, at the thread's width, at most 6 rows and never over the thread header; closed, the frame is byte-identical
 - [x] Sends: spans reach text, edit, file caption and photo caption; "⚠ N mention(s) sent as plain text" when some were dropped; edit mode loads the message's own mentions (`MentionsIn`)
 - [x] Docs: help card, `docs/keys.md`, `docs/features.md` ("Mention completion"); README has no features list, so it is unchanged
-- [ ] Next, queued by Andrei: `:theme <name>` with fuzzy completion, plus `:reload-config` — theming Phase 2, done full and proper. `docs/theming.md` "Runtime behaviour" lists the five components that bake styles, and the grid cache
+- [x] Next, queued by Andrei: `:theme <name>` with fuzzy completion, plus `:reload-config` — theming Phase 2, done full and proper. Landed 2026-09-22 on feat/theme-command: see the theming section below
 - [ ] Every send still resolves the chat peer with one `messages.getChats` or `users.getUsers`, because the peers manager keeps no objects; it could build the peer from the stored access hash, as mention resolution now does
 - [ ] A self-mention can echo as user 0 on the `updateShortSentMessage` path
 - [ ] The palette and the composer each have a `subsequence` helper (`palette/model.go`, `composer/mentionrank.go`)
@@ -42,7 +42,11 @@ A theme is a TOML file a reader writes, read once at startup; `dark` and `light`
 - [x] Sender ramp: `SenderColourFrom` over the resolved ramp, `SetSenderRamp` on chatview and rail; the default ramp colours every pinned user as before, allocation-free
 - [x] `app.New` dispatches through `RolesForSpec`; `main` prints `theme.CheckSpec` with `StartupWarnings`, before `app.New`
 - [x] Nine example themes in `docs/themes/` from vim schemes (tokyonight, gruvbox, dracula, catppuccin-mocha, nord, onedark, kanagawa, rose-pine, everforest); three write `[colors256]`; a test loads every shipped theme with zero warnings
-- [ ] Phase 2, `theme <name>` + `reload-config`: see the remaining palette commands below
+- [x] Phase 2, `:theme [name]` + `:reload-config` (2026-09-22, branch feat/theme-command): every component has a `SetRoles` that re-derives its styles and drops its caches; `applyRoles` is the one path, pinned by `TestEveryComponentFollowsARetheme`, the palette included; `:theme` applies on Enter only, from a candidate list that opens on the current theme, and saves by rewriting just the `theme` line with `config.SetThemeLine` (backup, atomic, symlink-aware, read back and restored if it does not load); `:reload-config` applies the file's theme without saving and names every other changed setting as "restart to apply". Decisions in `docs/theming.md` "Runtime behaviour"
+- [ ] Follow-up: the loading screen's fixed 256-colour literals (`internal/app/app.go` ~2384–2407, `39`/`51`/`244` and a `39` border) ignore the palette, so a theme switch — or any theme — leaves them as they are
+- [ ] Follow-up, possible cleanup: the composer's textarea styles are set (and now re-set by `SetRoles`) but never drawn — the composer renders its own rows
+- [ ] Follow-up: `docs/tui-2.0.md` divergence 9 still says the palette navigates with `ctrl+n`/`ctrl+p`, which were removed (the palette's `Update` comment is fixed); its "Still to register" paragraph still lists `theme` and `reload-config`, and decision 8 still has reload-config confirm over a draft, which it does not need to — nothing a reload applies touches the composer
+- [ ] Follow-up: every `:theme` after the first leaves another timestamped `config.toml.bak.<time>` beside the first `.bak` (which is never touched), so they accumulate; two in one second share a name and the later wins. Pruning them, or one rolling backup for line edits, is a choice to make
 - [ ] Noticed (pre-existing): `internal/app` `TestTheSceneIsNotTheWallClock` fails whenever the UTC wall clock's HH:MM equals one of the golden scene's message times (20:44, 20:47, 20:52, 20:58, 21:01–21:04 UTC), i.e. 22:44–23:04 CEST; it compares against the whole rendered scene, not just the top bar
 - [ ] Noticed (pre-existing): with stdin closed, the setup wizard loops forever on "Invalid API ID" at EOF instead of exiting
 - [ ] Recorded out of scope in `docs/theming.md`: the splash screen's four colour literals, a hint-bar notice for theme warnings, a hand-tuned light theme
@@ -887,8 +891,8 @@ the primary checkout stays free for fixes against a working client.
 - [ ] **Remaining palette commands** ← **next, and each is a service, not a
       palette change.** All are authorised by D8; none are blocked on
       permission. `pin` / `unpin` shipped as a key rather than a command
-      (divergence 47); the four below are what remain, costed against the
-      code on 2026-09-02:
+      (divergence 47); the four below are what remained, costed against the
+      code on 2026-09-02 — `theme` and `reload-config` have since shipped:
 
       - `mute <duration>` / `unmute` — **the cheapest, and half-built.**
         Reading is live: `peerMuted` asks `account.getNotifySettings`,
@@ -901,7 +905,9 @@ the primary checkout stays free for fixes against a working client.
         the history call just hardcodes zero. The work is not the RPC, it is
         parsing what somebody types as a date and landing the scroll on a
         message the line index has never loaded.
-      - `theme <name>` — **theming Phase 2** (`docs/theming.md`). Decided:
+      - `theme <name>` — **shipped 2026-09-22 as `:theme [name]`, with
+        `reload-config`; see the theming section above.** As costed then —
+        **theming Phase 2** (`docs/theming.md`). Decided:
         a theme is a TOML file a reader writes, and Phase 1, theme files
         read at startup, has shipped; `theme.RolesForSpec` is the single
         entry point. What is missing is pushing a new palette into a
@@ -913,7 +919,8 @@ the primary checkout stays free for fixes against a working client.
         lines, and the sender ramp goes to the thread and the rail through
         `SetSenderRamp`. Either restore a uniform `SetRoles` or rebuild the
         component tree — that choice is the item.
-      - `reload-config` — **do it with `theme`, not before it.** A reload has
+      - `reload-config` — **shipped with `theme`.** As costed then — **do it
+        with `theme`, not before it.** A reload has
         to re-derive roles and push them through every component, which is
         the wiring `theme <name>` needs anyway. Its own share is D8's
         confirmation when the composer holds a draft or a staged attachment.

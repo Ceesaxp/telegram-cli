@@ -1,7 +1,8 @@
 # Theme configuration — spec
 
-Status: **Phase 1 implemented** (2026-09-21, issue #74); **Phase 2 is still
-a proposal**. Revised 2026-09-06 after the architectural review in
+Status: **Phase 1 implemented** (2026-09-21, issue #74); **Phase 2
+implemented** (2026-09-22): `:theme` and `:reload-config`. Revised
+2026-09-06 after the architectural review in
 `docs/theming-review.md` — the review's findings (G1–G12, Q3) are folded in
 below, and the spec stays normative for what was built: where the code and
 this page disagree, one of them is a bug. "As built" at the end says where
@@ -262,37 +263,78 @@ Phased, matching the `TODO.md` design notes:
 
 **Phase 1 — startup only. Implemented.** `config.Load()` → `LoadTheme` →
 `theme.RolesForSpec`, called once in `app.New` in place of `RolesFor`.
-Components receive `Roles` at construction exactly as before. `theme <name>` and
-`reload-config` remain unregistered. This phase is the whole spec's
-must-have; it already delivers "a TOML file a reader writes".
+Components receive `Roles` at construction exactly as before. This phase is
+the whole spec's must-have; it already delivers "a TOML file a reader
+writes".
 
-**Phase 2 — `theme <name>` + `reload-config`, together. Proposal, not
-built.** (The TODO is explicit that they share their wiring.) Requirements
-recorded there and in `docs/tui-2.0.md`:
+**Phase 2 — `theme <name>` + `reload-config`, together. Implemented.** The
+two share their wiring, as the TODO said they would:
 
-- Re-derive `Roles` and push through every component. Only composer,
-  attach, reactionpicker, rail and the message renderer still have a
-  `SetRoles` — most setters were deliberately removed (an older TODO line
-  claimed thirteen) — and the sender ramp now needs pushing too:
-  `SetSenderRamp` on the thread and the rail. Phase 2 either restores a
-  uniform `SetRoles` across components or rebuilds the component tree;
-  that choice is Phase 2's to make, not this spec's.
-- Invalidate the thread grid's cache of rendered (already-styled) lines —
-  a stated prerequisite in `docs/tui-2.0.md`.
-- `theme <name>` with no argument could cycle or list; suggestion: list
-  available themes (builtins + `themes/*.toml` stems) in the palette.
+- **Every component has a `SetRoles`**, and each re-derives inside it
+  whatever it built from the old palette: widget styles (a text input's, a
+  spinner's, a list's), bound row renderers, the notice already on the hint
+  bar, and the thread grid's cache of rendered lines, which is dropped. The
+  five components that used to bake styles in their constructors — chatlist,
+  auth, composer (textarea included), contacts and search — now build them
+  in a `restyle` their constructor and `SetRoles` both call. A palette
+  applied at runtime is the uniform-setter option, not a rebuilt component
+  tree: nothing is torn down, so no state (a draft, a scroll position, a
+  half-typed search) is at risk.
+- **`applyRoles` is the one path** (`internal/app/retheme.go`). It sets the
+  app's own copy of the roles, calls every component's `SetRoles`, tells an
+  open dialog, and hands the sender ramp to the thread and the rail. `New`
+  calls it once the components exist, and a switch calls it again, so
+  startup and a switch cannot reach different things. `applyThemeSpec`
+  resolves a spec through `RolesForSpec` at the colour depth `New` decided
+  — the environment is not consulted again, and the terminal never is —
+  and returns the palette half's warnings.
+- **The guard test** `TestEveryComponentFollowsARetheme`
+  (`internal/app/retheme_test.go`) draws every surface in one marker
+  palette, switches to a second, and draws it again: a surface with no
+  setter, a setter that leaves derived styles behind, or a cache serving old
+  lines all show up as a colour from the first. Adding a surface to the app
+  means adding it there.
 
-Phase 1 must not paint itself into a corner for Phase 2, and doesn't: the
-loader is pure (`name → Roles`), so calling it again later is free. But
-the loader being free is not Phase 2 being free — five components
-additionally **bake derived styles at construction** and have no
-`SetRoles` to refresh them: chatlist (empty-state style and the spinner),
-auth, composer (whose *existing* `SetRoles` does not refresh the textarea
-styles set in its constructor — the one component that looks re-themable
-is only half re-themable), contacts, and search (seven styles). Phase 2's
-real cost is making those constructors' derived styles re-derivable, which
-is the rebuild-the-component-tree option in disguise. Recorded here so
-Phase 2 is scoped honestly; Phase 1 is unaffected.
+Decisions made in Phase 2:
+
+- **`:theme` applies on Enter only.** There is no live preview while the
+  candidates are browsed. `:theme ` lists the builtins and every
+  `themes/*.toml` in the two search directories (`config.ListThemes`, over
+  the directories `config.Load` recorded — `Config.ThemeDirs`), opening on
+  the theme in use, marked "current", so Enter straight away reports
+  "unchanged" and writes nothing. `:theme` alone says which theme is on.
+- **A name that names nothing usable is not applied.** At startup the
+  loader falls back to `dark`, because there is nothing else to draw; at
+  runtime the theme on screen is working, so `:theme` and `:reload-config`
+  keep it and put the loader's reason in the notice. A theme that loads with
+  warnings is applied, and the notice counts them — the file half's and the
+  palette half's together — and quotes the first. This is also where theme
+  warnings reach the hint bar, which the out-of-scope list below asked for.
+- **`:theme` persists by editing one line** (`config.SetThemeLine`), never
+  through `config.Save`, which re-encodes the whole file and drops its
+  comments. The value of the `theme` key in `[ui]` is replaced in place —
+  found with go-toml's parser, so a `[ui]` inside a multi-line string is not
+  a table — keeping indentation, the key's spelling, the spacing around `=`
+  and a trailing comment; a `[ui]` without one gets a line under its header,
+  a file without `[ui]` gets the table appended, and a missing file is
+  created at 0600. CRLF and a missing final newline are kept. The file is
+  backed up first with `BackupFile`, written atomically through a symlink
+  with its own mode, and read back with the real loader; if it does not
+  load, or does not say the new value, the original is restored. It refuses,
+  and says to edit by hand, when `ui` is dotted keys or an inline table or
+  the file is not TOML: the theme still switches, and the notice says "not
+  saved" and why.
+- **`:reload-config` applies the theme and lists the rest.** It re-reads
+  the file `config.Load` read (`Config.Reload`) and applies its theme
+  through the path `:theme` takes, re-reading the theme file too, without
+  saving — the file is the source. Every other setting that changed is named
+  by its TOML key, found by walking the struct (`config.ChangedSettings`),
+  as "restart to apply: …", and keeps its running value, so the app goes on
+  behaving as one config rather than half of two. A file that does not load
+  changes nothing. `docs/tui-2.0.md` decision 8 has reload-config confirm
+  first when the composer holds a draft or an attachment; it does not,
+  because nothing a reload applies touches the composer — the theme is
+  pushed through `SetRoles`, not a rebuilt tree.
 
 ## Implementation notes
 
@@ -355,7 +397,8 @@ Phase 2 is scoped honestly; Phase 1 is unaffected.
   the program starts and the app does not use the alt screen, so they
   survive *above* the frame, but scroll away within seconds of use. For a
   cosmetic setting people will typo, a first-render hint-bar notice is
-  worth considering in Phase 2, when the hint bar is in the model anyway.
+  worth considering. Phase 2 puts the warnings of a theme applied at
+  runtime in the hint bar; the startup theme's still go to stderr only.
 - **Hand-tuned light palette** — light remains a mechanical inversion with
   a known `Ghost`/`Faint` legibility issue (`docs/tui-2.0.md`); a
   hand-tuned `light` is now just a theme file away, which is half the point
@@ -441,3 +484,19 @@ while TOML fixtures under `testdata/` are never scanned.
   `[colors256]` from their own cterm tables; the rest quantise. A test loads
   every file there through both halves and requires zero warnings, and at
   least one theme of each depth kind.
+
+## As built (Phase 2)
+
+- **Setters** — every component under `internal/ui/components` has a
+  `SetRoles`; `internal/app/retheme.go` holds `applyRoles` (the one path)
+  and `applyThemeSpec`; `internal/app/retheme_test.go` holds the guard.
+- **Commands** — `internal/app/themecmd.go` (`:theme`, its candidates, and
+  `applyTheme`, the resolve-and-apply step both commands share) and
+  `internal/app/reloadcmd.go` (`:reload-config`); both are registered in
+  `internal/app/commands.go`. The palette's `Arg.Current` marks the theme
+  in use and opens the list on it.
+- **Config** — `Config.ThemeDirs` and `Config.Path` (recorded by `Load`;
+  a Config `Load` did not build answers with `ConfigPath` and the default
+  directory), `Config.Reload` and `ChangedSettings`
+  (`internal/config/reload.go`), and `SetThemeLine`
+  (`internal/config/themeline.go`).
