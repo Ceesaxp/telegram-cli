@@ -345,6 +345,14 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// warnings are dropped: config.Load read the file, and main has already
 	// printed what theme.CheckSpec says about it.
 	roles, senderRamp, _ := theme.RolesForSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin(), theme.SupportsTrueColor())
+	return newModel(cfg, tg, s, authorizer, roles, senderRamp)
+}
+
+// newModel is New with the palette already chosen: everything New does
+// after resolving the theme. The tests build the app in a marker palette
+// through it, which no config can express.
+func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer,
+	roles theme.Roles, senderRamp []lipgloss.Color) Model {
 	m := Model{
 		auth:       auth.New(roles, authorizer),
 		chatList:   chatlist.New(s, tg, roles),
