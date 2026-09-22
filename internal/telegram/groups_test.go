@@ -139,6 +139,19 @@ func (f *memberInvoker) participantsRequests() []*tg.ChannelsGetParticipantsRequ
 	return out
 }
 
+// memberRequests counts the member lists the client asked for, of either
+// kind.
+func (f *memberInvoker) memberRequests() int {
+	n := 0
+	for _, req := range f.asked {
+		switch req.(type) {
+		case *tg.ChannelsGetParticipantsRequest, *tg.MessagesGetFullChatRequest:
+			n++
+		}
+	}
+	return n
+}
+
 // userIDs lists the users' IDs, in order.
 func userIDs(users []*User) []int64 {
 	out := make([]int64, len(users))
@@ -228,25 +241,87 @@ func TestSearchedMembersAreKnownAfterwards(t *testing.T) {
 	assertKnown(t, hashes, nadia)
 }
 
+// A basic group is small enough to hand over whole: every member comes back
+// whatever is typed, and the composer narrows them down itself as the query
+// grows, without asking again. The reader and whoever only invited
+// somebody are still not among them.
+func TestSearchChatMembersListsAllOfABasicGroup(t *testing.T) {
+	reader := member(1, "Me", "me")
+	reader.Self = true
+	nadia, bob, nate := member(4, "Nadia", "nadia"), member(8, "Bob", "bob"), member(3, "Nate", "")
+	inv := &memberInvoker{fullChat: &tg.MessagesChatFull{
+		FullChat: &tg.ChatFull{ID: 5, Participants: &tg.ChatParticipants{
+			ChatID: 5,
+			Participants: []tg.ChatParticipantClass{
+				&tg.ChatParticipantCreator{UserID: 8},
+				&tg.ChatParticipantAdmin{UserID: 4, InviterID: 8},
+				&tg.ChatParticipant{UserID: 1, InviterID: 3},
+			},
+		}},
+		Users: []tg.UserClass{reader, nadia, bob, nate},
+	}}
+	c, hashes := memberClient(inv)
+
+	got, err := c.SearchChatMembers(basicGroupID, "zz", 20)
+	if err != nil {
+		t.Fatalf("SearchChatMembers: %v", err)
+	}
+
+	if len(inv.asked) != 1 {
+		t.Fatalf("asked the server %d times, want once: %#v", len(inv.asked), inv.asked)
+	}
+	if req, ok := inv.asked[0].(*tg.MessagesGetFullChatRequest); !ok || req.ChatID != 5 {
+		t.Errorf("asked %#v, want the full chat 5", inv.asked[0])
+	}
+	if ids, want := userIDs(got), []int64{8, 4}; !slices.Equal(ids, want) {
+		t.Errorf("SearchChatMembers = %v, want %v", ids, want)
+	}
+	assertKnown(t, hashes, nadia)
+}
+
+// A basic group that no longer shows the reader its members, because the
+// reader was removed from it, has nobody to offer.
+func TestSearchChatMembersOffersNobodyFromAHiddenBasicGroup(t *testing.T) {
+	inv := &memberInvoker{fullChat: &tg.MessagesChatFull{
+		FullChat: &tg.ChatFull{ID: 5, Participants: &tg.ChatParticipantsForbidden{ChatID: 5}},
+	}}
+	c, _ := memberClient(inv)
+
+	got, err := c.SearchChatMembers(basicGroupID, "", 20)
+	if err != nil {
+		t.Fatalf("SearchChatMembers: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("SearchChatMembers = %v, want nobody", userIDs(got))
+	}
+}
+
 // A refusal is the caller's to handle, and a FLOOD_WAIT most of all: the
 // picker is typed into, and a lookup that waited out the flood here would
 // hold a stale query open for as long as the server asked. It is asked
 // once, and the answer says which call it was.
 func TestSearchChatMembersReturnsTheRefusal(t *testing.T) {
-	flood := tgerr.New(420, "FLOOD_WAIT_7")
-	inv := &memberInvoker{err: flood}
-	c, _ := memberClient(inv)
+	for name, chatID := range map[string]int64{
+		"a supergroup":  channelChatID(9),
+		"a basic group": basicGroupID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			flood := tgerr.New(420, "FLOOD_WAIT_7")
+			inv := &memberInvoker{err: flood}
+			c, _ := memberClient(inv)
 
-	_, err := c.SearchChatMembers(channelChatID(9), "na", 20)
+			_, err := c.SearchChatMembers(chatID, "na", 20)
 
-	if d, ok := tgerr.AsFloodWait(err); !ok || d != 7*time.Second {
-		t.Fatalf("SearchChatMembers error = %v, want the FLOOD_WAIT of 7s", err)
-	}
-	if !strings.HasPrefix(err.Error(), "search chat members: ") {
-		t.Errorf("error %q does not say which call failed", err)
-	}
-	if n := len(inv.participantsRequests()); n != 1 {
-		t.Errorf("asked for participants %d times, want once", n)
+			if d, ok := tgerr.AsFloodWait(err); !ok || d != 7*time.Second {
+				t.Fatalf("SearchChatMembers error = %v, want the FLOOD_WAIT of 7s", err)
+			}
+			if !strings.HasPrefix(err.Error(), "search chat members: ") {
+				t.Errorf("error %q does not say which call failed", err)
+			}
+			if n := inv.memberRequests(); n != 1 {
+				t.Errorf("asked for the members %d times, want once", n)
+			}
+		})
 	}
 }
 

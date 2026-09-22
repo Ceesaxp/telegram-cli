@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gotd/td/constant"
 	"github.com/gotd/td/tg"
 )
 
@@ -136,6 +137,13 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
+	if constant.TDLibPeerID(chatID).IsChat() {
+		users, err := c.basicGroupMembers(ctx, chatID)
+		if err != nil {
+			return nil, fmt.Errorf("search chat members: %w", err)
+		}
+		return users, nil
+	}
 	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
 	if err != nil {
 		return nil, fmt.Errorf("search chat members: %w", err)
@@ -165,6 +173,30 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 		}
 	}
 	return mentionable(ids, participants.Users), nil
+}
+
+// basicGroupMembers is every member of a basic group who can be mentioned.
+// A group that hides its members from the reader, which it does once the
+// reader has been removed, has nobody.
+func (c *Client) basicGroupMembers(ctx context.Context, chatID int64) ([]*User, error) {
+	res, err := c.api.MessagesGetFullChat(ctx, plainChatID(chatID))
+	if err != nil {
+		return nil, err
+	}
+	full, err := c.seededChatFull(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+	participants, ok := full.Participants.(*tg.ChatParticipants)
+	if !ok {
+		return nil, nil
+	}
+
+	ids := make([]int64, 0, len(participants.Participants))
+	for _, p := range participants.Participants {
+		ids = append(ids, p.GetUserID())
+	}
+	return mentionable(ids, res.Users), nil
 }
 
 // participantUserID is the user a supergroup participant is, if it is a
