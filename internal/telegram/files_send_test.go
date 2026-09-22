@@ -209,12 +209,12 @@ func TestOpenAllowedSendFileRefusesADirectory(t *testing.T) {
 // configuration, not something a caller can swap, so resolving it is not
 // the race that resolving the file would be.
 func TestOpenAllowedSendFileAcceptsARootThatIsASymlink(t *testing.T) {
-	real, _, _ := sendRoot(t)
+	target, _, _ := sendRoot(t)
 	root := filepath.Join(t.TempDir(), "root")
-	if err := os.Symlink(real, root); err != nil {
+	if err := os.Symlink(target, root); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := filepath.EvalSymlinks(real)
+	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		t.Fatal(err)
 	}

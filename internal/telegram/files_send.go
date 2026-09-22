@@ -137,8 +137,8 @@ func rootDirs(roots []string) []string {
 			continue
 		}
 		dirs = append(dirs, abs)
-		if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
-			dirs = append(dirs, real)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+			dirs = append(dirs, resolved)
 		}
 	}
 	return dirs
