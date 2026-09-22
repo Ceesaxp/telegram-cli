@@ -176,8 +176,11 @@ func (m *Model) applyEditorResult(msg editorFinishedMsg) {
 	}
 
 	// Editors add a trailing newline; a chat message should not carry one.
+	// The draft's own trailing newlines went to the editor and are trimmed
+	// with the editor's, so they are not a change: a draft that ended in a
+	// line break comes back the same words, and keeps its mentions.
 	text := strings.TrimRight(strings.ReplaceAll(msg.text, "\r\n", "\n"), "\n")
-	changed := text != m.textarea.Value
+	changed := text != strings.TrimRight(m.textarea.Value, "\n")
 	m.textarea.Value = text
 	m.textarea.Cursor = m.textarea.Len()
 	m.notice = ""

@@ -848,6 +848,33 @@ func TestAnUnchangedEditorRoundTripKeepsMentions(t *testing.T) {
 	}
 }
 
+// A draft ending in a line break goes to the editor with it, and comes back
+// without it: trailing newlines are trimmed on the way in, the draft's own
+// included. The words are the words that went, so the mentions in them stay.
+func TestAnUnchangedEditorRoundTripOfADraftEndingInANewlineKeepsMentions(t *testing.T) {
+	t.Setenv("VISUAL", stubEditor(t, `:`))
+	t.Setenv("EDITOR", "")
+	m := withNadia(t, newFocused())
+	m = typeSeq(t, m, "\n") // ctrl+j
+	if got := m.Draft(); got != "hi Nadia \n" {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+
+	var runErr error
+	m, _ = runEditor(t, m, &runErr)
+	if runErr != nil {
+		t.Fatalf("stub editor failed: %v", runErr)
+	}
+
+	if got := m.Draft(); got != "hi Nadia " {
+		t.Errorf("Draft = %q, want the trailing newline trimmed", got)
+	}
+	wantMentions(t, m, nadia)
+	if strings.Contains(m.View(), noticeMentionsDropped) {
+		t.Errorf("a notice about dropping mentions nothing dropped:\n%s", m.View())
+	}
+}
+
 // The trailing newline an editor adds is trimmed on the way back in, so a
 // file saved as-is still comes back as the same text.
 func TestAnEditorsTrailingNewlineIsNotAChange(t *testing.T) {
