@@ -15,49 +15,6 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-// ResolveAllowedSendPath returns the absolute, symlink-resolved form of
-// path if it exists and is the same as, or inside, one of roots.
-// Empty roots are ignored. The file itself must exist (a dangling last
-// component is rejected) so a symlink cannot later be swapped for a
-// path outside the jail.
-func ResolveAllowedSendPath(path string, roots ...string) (string, error) {
-	abs, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return "", fmt.Errorf("send file: %w", err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("send file: %w", err)
-	}
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		evalRoot, err := filepath.EvalSymlinks(absRoot)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(evalRoot, resolved)
-		if err != nil {
-			continue
-		}
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		return resolved, nil
-	}
-	// Name the roots. The caller here is an authenticated operator or the
-	// agent they configured, the set is already logged at startup and
-	// documented, and "outside the allowed directories" with no list is a
-	// dead end — the reader cannot tell a typo from a policy.
-	return "", fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
-		path, strings.Join(nonEmpty(roots), ", "))
-}
-
 // OpenAllowedSendFile opens path for a remote caller's send if it names a
 // regular file inside one of roots. The send then reads that descriptor
 // (see [Client.SendOpenedFileMessage]) and never goes back to the path.
@@ -100,7 +57,10 @@ func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
 	if found != nil {
 		return nil, found
 	}
-	// Name the roots, as ResolveAllowedSendPath does and for its reasons.
+	// Name the roots. The caller here is an authenticated operator or the
+	// agent they configured, the set is already logged at startup and
+	// documented, and "outside the allowed directories" with no list is a
+	// dead end — the reader cannot tell a typo from a policy.
 	return nil, fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
 		path, strings.Join(nonEmpty(roots), ", "))
 }
@@ -198,7 +158,7 @@ func within(dir, path string) (string, bool) {
 	return rel, true
 }
 
-// nonEmpty drops the blank roots ResolveAllowedSendPath skips, so the
+// nonEmpty drops the blank roots OpenAllowedSendFile skips, so the
 // error names the set that was actually searched. A caller that passes no
 // usable root gets "()" and rejects everything, which is the correct
 // fail-closed reading of an empty allowlist.
