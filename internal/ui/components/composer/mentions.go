@@ -1,5 +1,10 @@
 package composer
 
+import (
+	"cmp"
+	"slices"
+)
+
 // MentionSpan marks the runes of the draft that mention a user: the label the
 // picker inserted, and who it means.
 //
@@ -17,6 +22,42 @@ type MentionSpan struct {
 	// Label is the text the span covers. It is what the span is checked
 	// against after every edit, and a span that no longer covers it goes.
 	Label string
+}
+
+// InsertMention completes a mention: it replaces the runes [anchor, end) —
+// the "@query" being typed — with label and a space, and leaves the cursor
+// after the space, ready for the rest of the message.
+//
+// userID says who label means. A member with a username is mentioned by
+// typing it, so for them the label is "@username", userID is 0, and only the
+// text goes in. A member without one can only be mentioned by an entity
+// carrying their ID, so the label — their name — gets a span. The span covers
+// the label and not the space: the space is the composer's, not theirs, and
+// deleting it must not cost the mention.
+//
+// Mentions already in the draft stay in step with the replacement, the same
+// as after any other edit.
+func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
+	before := m.textarea.Value
+	n := m.textarea.Len()
+	anchor = min(max(anchor, 0), n)
+	end = min(max(end, anchor), n)
+
+	m.textarea.DeleteRange(anchor, end)
+	m.textarea.Cursor = anchor
+	m.textarea.InsertString(label + " ")
+
+	spans := adjustMentions(m.mentions, before, m.textarea.Value)
+	if userID != 0 && label != "" {
+		spans = append(spans, MentionSpan{
+			Start:  anchor,
+			End:    anchor + len([]rune(label)),
+			UserID: userID,
+			Label:  label,
+		})
+		slices.SortFunc(spans, func(a, b MentionSpan) int { return cmp.Compare(a.Start, b.Start) })
+	}
+	m.mentions = spans
 }
 
 // adjustMentions carries spans across one change to the draft, from oldText to

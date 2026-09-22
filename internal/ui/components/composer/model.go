@@ -101,6 +101,13 @@ type Model struct {
 	// the edit loaded, instead of leaving it in the composer as a draft
 	// nobody wrote.
 	editParked map[int64]draft
+
+	// mentions are the draft's mention spans (issue #41), in rune offsets
+	// of textarea.Value and sorted by Start. They describe that text and no
+	// other: every edit carries them across with adjustMentions, and
+	// whatever replaces the text wholesale replaces them with it. See
+	// mentions.go.
+	mentions []MentionSpan
 }
 
 // New creates a new composer model.
