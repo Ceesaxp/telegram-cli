@@ -36,7 +36,10 @@ func sendRootsHandlers(t *testing.T) (h *handlers, filesDir, outbox string) {
 		FilesDir:    filesDir,
 		SendDirs:    []string{outbox},
 	}}
-	return &handlers{tg: telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg))}, filesDir, outbox
+	roots, _ := telegram.OpenSendRoots(cfg.SendRoots()...)
+	t.Cleanup(func() { roots.Close() })
+	h = &handlers{tg: telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg)), roots: roots}
+	return h, filesDir, outbox
 }
 
 // This is the case issue #48 was really about: an MCP host started from a

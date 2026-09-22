@@ -111,14 +111,15 @@ type downloadMediaOut struct {
 }
 
 // New creates an MCP server exposing the Telegram client as tools.
-func New(client *telegram.Client) *Server {
+// send_file sends only from roots; with nil roots it refuses every path.
+func New(client *telegram.Client, roots *telegram.SendRoots) *Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "telegram-mcp",
 		Title:   "Telegram MCP",
 		Version: "0.1.0",
 	}, nil)
 
-	h := &handlers{tg: client, files: client}
+	h := &handlers{tg: client, files: client, roots: roots}
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_me",
@@ -190,6 +191,7 @@ type fileSender interface {
 type handlers struct {
 	tg    *telegram.Client
 	files fileSender
+	roots *telegram.SendRoots
 }
 
 func (h *handlers) getMe(ctx context.Context, _ *mcp.CallToolRequest, _ getMeIn) (*mcp.CallToolResult, getMeOut, error) {
@@ -272,7 +274,7 @@ func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in send
 	// Opened here, inside the roots, and sent from the descriptor: checking
 	// the path and sending it by name would let a file swapped in between
 	// be the one uploaded.
-	f, err := telegram.OpenAllowedSendFile(in.Path, h.tg.SendRoots()...)
+	f, err := h.roots.Open(in.Path)
 	if err != nil {
 		return nil, messageOut{}, err
 	}

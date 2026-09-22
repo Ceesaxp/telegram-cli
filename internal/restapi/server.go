@@ -33,6 +33,7 @@ type fileSender interface {
 type Server struct {
 	tg    *telegram.Client
 	files fileSender
+	roots *telegram.SendRoots
 	mux   *http.ServeMux
 
 	// token is the bearer token required on every route except
@@ -81,6 +82,13 @@ func New(client *telegram.Client, token string) *Server {
 	})
 	s.mux = mux
 	return s
+}
+
+// SetSendRoots sets the directories POST /api/send-file may send a file
+// from. Call it before serving requests. Until it is called there are none
+// and every path is refused: an allowlist nobody set must fail closed.
+func (s *Server) SetSendRoots(roots *telegram.SendRoots) {
+	s.roots = roots
 }
 
 // SetListenHost records the host portion of the address the server will
@@ -481,7 +489,7 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 	// Opened here, inside the roots, and sent from the descriptor: checking
 	// the path and sending it by name would let a file swapped in between
 	// be the one uploaded.
-	f, err := telegram.OpenAllowedSendFile(in.Path, s.tg.SendRoots()...)
+	f, err := s.roots.Open(in.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -15,24 +15,104 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-// OpenAllowedSendFile opens path for a remote caller's send if it names a
-// regular file inside one of roots. The send then reads that descriptor
-// (see [Client.SendOpenedFileMessage]) and never goes back to the path.
+// SendRoots is the set of directories a remote caller — the MCP send_file
+// tool, POST /api/send-file — may send a file from. The servers make one
+// when they start, from [config.Config.PrepareSendRoots], and open every
+// file through it; the TUI has none, because there the person choosing
+// the file is the person running the process.
+//
+// Every root is opened once, when the server starts, and held open until
+// it stops. Opening a root by name on each send would follow whatever the
+// name pointed at by then: with nested roots A and A/B, anyone who can
+// write to A swaps A/B for a link to ~/.ssh, and a root missing at the
+// start can be created later as a link to anywhere. A held root is the
+// directory it was, wherever its name points afterwards.
+//
+// A nil SendRoots has no roots and refuses every path.
+type SendRoots struct {
+	roots []*os.Root // held open, one per usable root
+	dirs  []string   // those roots as configured, for the refusal
+	names []rootName // every name a path may be matched under, in order
+}
+
+// rootName is one absolute name a held root answers to.
+type rootName struct {
+	name string
+	root *os.Root
+}
+
+// OpenSendRoots opens dirs, in the order they are to be searched, and
+// holds them open until Close. Blank entries are skipped. A directory that
+// cannot be opened — above all one that does not exist yet — is skipped
+// too, for as long as the SendRoots lives, and reported in errs so the
+// caller can say so.
+//
+// Each root answers to its name as written, made absolute, and to where it
+// really was when it was opened, so a root under /tmp on macOS also
+// matches the same path under /private/tmp. The names only choose a root;
+// what is opened is always inside the directory held here.
+func OpenSendRoots(dirs ...string) (roots *SendRoots, errs []error) {
+	roots = &SendRoots{}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("send root %s: %w", dir, err))
+			continue
+		}
+		root, err := os.OpenRoot(abs)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("send root %s: %w", dir, cause(err)))
+			continue
+		}
+		roots.roots = append(roots.roots, root)
+		roots.dirs = append(roots.dirs, dir)
+		roots.names = append(roots.names, rootName{abs, root})
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+			roots.names = append(roots.names, rootName{resolved, root})
+		}
+	}
+	return roots, errs
+}
+
+// Close releases the roots. Files already opened through them stay open;
+// Open refuses every path from now on.
+func (r *SendRoots) Close() error {
+	if r == nil {
+		return nil
+	}
+	var errs []error
+	for _, root := range r.roots {
+		errs = append(errs, root.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// Open opens path for a remote caller's send if it names a regular file
+// inside one of the roots. The send then reads that descriptor (see
+// [Client.SendOpenedFileMessage]) and never goes back to the path.
 //
 // That is the point of it. Checking a path and then opening it by name
 // leaves a gap in which anyone who can write to a root swaps the checked
 // file for a symlink to one outside, and the upload reads that instead.
-// Here the check is the open: path is made absolute and clean but not
-// resolved, taken relative to each root in turn, and opened through an
-// [os.Root], which follows a link only while it stays inside. Whatever the
-// name points at afterwards, what is sent is what was opened.
+// Here the check is the open: path is made absolute and clean, taken
+// relative to each root in turn (its directory may be resolved to choose
+// the root, see namesFor, but the open never relies on that), and opened
+// through an [os.Root], which follows a link only while it stays inside.
+// Whatever the name points at afterwards, what is sent is what was opened.
 //
-// Blank roots are skipped, and with no usable root everything is refused.
-// A root is matched as written and where it really is (see rootDirs), so
-// a root under /tmp on macOS also matches the same path under
-// /private/tmp. A link inside a root must be relative and stay inside:
-// os.Root refuses an absolute link even when it names a file in the root.
-func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
+// With no usable root everything is refused. A link inside a root must be
+// relative and stay inside: os.Root refuses an absolute link even when it
+// names a file in the root.
+func (r *SendRoots) Open(path string) (*os.File, error) {
+	if r == nil {
+		r = &SendRoots{}
+	}
+	if strings.ContainsRune(path, 0) {
+		return nil, fmt.Errorf("send file: %q: %w", path, errInvalidPath)
+	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("send file: %w", err)
@@ -41,17 +121,19 @@ func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
 	// outranks "outside": the path was inside, and saying otherwise would
 	// send the caller looking for a typo that is not there.
 	var found error
-	for _, dir := range rootDirs(roots) {
-		rel, ok := within(dir, abs)
-		if !ok {
-			continue
-		}
-		f, err := openInRoot(dir, rel)
-		if err == nil {
-			return f, nil
-		}
-		if found == nil && foundButUnsendable(err) {
-			found = fmt.Errorf("send file: %q: %w", path, cause(err))
+	for _, candidate := range namesFor(abs) {
+		for _, n := range r.names {
+			rel, ok := within(n.name, candidate)
+			if !ok {
+				continue
+			}
+			f, err := openRegular(n.root, rel)
+			if err == nil {
+				return f, nil
+			}
+			if why := whyInside(err); found == nil && why != nil {
+				found = fmt.Errorf("send file: %q: %w", path, why)
+			}
 		}
 	}
 	if found != nil {
@@ -60,9 +142,11 @@ func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
 	// Name the roots. The caller here is an authenticated operator or the
 	// agent they configured, the set is already logged at startup and
 	// documented, and "outside the allowed directories" with no list is a
-	// dead end — the reader cannot tell a typo from a policy.
+	// dead end — the reader cannot tell a typo from a policy. Only the
+	// roots actually held are named: one that could not be opened at the
+	// start was reported then, and is not searched.
 	return nil, fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
-		path, strings.Join(nonEmpty(roots), ", "))
+		path, strings.Join(r.dirs, ", "))
 }
 
 // errNotRegular refuses what is not a plain file: a directory, a fifo, a
@@ -70,21 +154,18 @@ func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
 // side effects or never ends.
 var errNotRegular = errors.New("not a regular file")
 
-// openInRoot opens name, relative to dir, without leaving dir, and only if
-// it is a regular file. An [os.Root] refuses a ".." or a symlink that
-// points outside it, checking each link as it follows it on the
-// descriptors it opens; the type is then asked of the descriptor, not of
-// the path, which may name something else by now.
-//
-// The root is closed on the way out. The file is not tied to it and stays
-// open, which is what [os.OpenInRoot] relies on too.
-func openInRoot(dir, name string) (*os.File, error) {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
+// errInvalidPath refuses a path no file can have: one with a NUL in it.
+var errInvalidPath = errors.New("invalid path")
 
+// openRegular opens name inside root, and only if it is a regular file.
+// An [os.Root] refuses a ".." or a symlink that points outside it,
+// checking each link as it follows it on the descriptors it opens; the
+// type is then asked of the descriptor, not of the path, which may name
+// something else by now.
+//
+// The file is not tied to the root: it stays open when the root is
+// closed, which is what [os.OpenInRoot] relies on too.
+func openRegular(root *os.Root, name string) (*os.File, error) {
 	f, err := root.OpenFile(name, sendOpenFlags, 0)
 	if err != nil {
 		return nil, err
@@ -100,15 +181,20 @@ func openInRoot(dir, name string) (*os.File, error) {
 	return f, nil
 }
 
-// foundButUnsendable reports whether err, from opening a path inside a
-// root, says the file is there (or ought to be) and cannot be sent, as
-// opposed to lying outside. Anything else — above all os.Root's refusal
-// of a path that leaves it, which has no exported error of its own — reads
-// as outside.
-func foundButUnsendable(err error) bool {
-	return errors.Is(err, errNotRegular) ||
+// whyInside is why a path inside a root cannot be sent, given the error
+// opening it: the file is not regular, is missing or unreadable, or the
+// way to it breaks inside the root (see whyInsideOS). It is nil for
+// anything else — above all os.Root's refusal of a path that leaves it,
+// which has no exported error of its own — and the path then reads as
+// outside.
+func whyInside(err error) error {
+	err = cause(err)
+	if errors.Is(err, errNotRegular) ||
 		errors.Is(err, fs.ErrNotExist) ||
-		errors.Is(err, fs.ErrPermission)
+		errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	return whyInsideOS(err)
 }
 
 // cause is err without the path os.Root put on it, which is relative to
@@ -121,27 +207,26 @@ func cause(err error) error {
 	return err
 }
 
-// rootDirs is every directory a path may be named under: each root as
-// written, made absolute, and also where it really is when that differs.
-// A root is configuration, not something a caller can swap, so resolving
-// its links here is safe in a way that resolving the file's would not be.
-// Blank roots are skipped, as is one that cannot be made absolute.
-func rootDirs(roots []string) []string {
-	dirs := make([]string, 0, len(roots))
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		dirs = append(dirs, abs)
-		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
-			dirs = append(dirs, resolved)
-		}
+// namesFor is abs as given and, when its directory resolves somewhere
+// else, the same name in the resolved directory: a caller's /var/... names
+// what a root written /private/var/... holds on macOS.
+//
+// This only chooses the root and the path within it. Resolving the parent
+// here is not the race it would be for the open itself, because the open
+// still happens inside a held root, which refuses anything that leaves it
+// whatever the parent resolved to; a parent swapped in between can at most
+// pick a different file inside a root. The file's own name is never
+// resolved, so a final link is still os.Root's to judge.
+func namesFor(abs string) []string {
+	names := []string{abs}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return names
 	}
-	return dirs
+	if resolved := filepath.Join(dir, filepath.Base(abs)); resolved != abs {
+		names = append(names, resolved)
+	}
+	return names
 }
 
 // within returns path relative to dir, if path is dir or lies beneath it.
@@ -156,20 +241,6 @@ func within(dir, path string) (string, bool) {
 		return "", false
 	}
 	return rel, true
-}
-
-// nonEmpty drops the blank roots OpenAllowedSendFile skips, so the
-// error names the set that was actually searched. A caller that passes no
-// usable root gets "()" and rejects everything, which is the correct
-// fail-closed reading of an empty allowlist.
-func nonEmpty(roots []string) []string {
-	out := make([]string, 0, len(roots))
-	for _, r := range roots {
-		if r != "" {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // SendFileMessage uploads a local file and sends it as a document,
@@ -202,7 +273,7 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 }
 
 // SendOpenedFileMessage is SendFileMessage for a file that is already open,
-// normally by [OpenAllowedSendFile]: it uploads from f and never opens
+// normally by [SendRoots.Open]: it uploads from f and never opens
 // anything by name, so what is sent is what was checked. f is closed when
 // the send is over, whether or not it succeeded.
 func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
@@ -215,7 +286,7 @@ func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string,
 // is for a send by path.
 //
 // The chat shows the file under the base of the name it was opened by,
-// which for [OpenAllowedSendFile] is the path the caller asked for — a
+// which for [SendRoots.Open] is the path the caller asked for — a
 // link's own name, not its target's.
 func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	defer f.Close()
