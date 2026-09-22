@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // themeItems is testItems plus a command that offers its argument's values,
@@ -306,13 +307,14 @@ func TestNoMatchingValueSaysSo(t *testing.T) {
 }
 
 // TestValueRowsAreExactlyWide is the frame-integrity property for the new
-// rows: a long description, a wide-rune one, and a value too long for the
-// row on its own must all come out exactly as wide as every other row.
+// rows: a long description, a wide-rune one — on the current row, beside
+// its mark — and a value too long for the row on its own must all come out
+// exactly as wide as every other row.
 func TestValueRowsAreExactlyWide(t *testing.T) {
 	m := New(theme.DarkRoles(false))
 	m.SetItems([]Item{{Name: "theme", Args: "<name>", Candidates: []Arg{
 		{Value: "dark", Description: strings.Repeat("a long description ", 10)},
-		{Value: "四季", Description: strings.Repeat("四", 60)},
+		{Value: "四季", Description: strings.Repeat("四", 60), Current: true},
 		{Value: strings.Repeat("very-long-theme-name-", 5), Description: "builtin"},
 		{Value: strings.Repeat("長", 40)},
 	}}})
@@ -379,4 +381,98 @@ func TestDeletingIntoTheCommandWordListsCommandsAgain(t *testing.T) {
 	if got := names(m.Matches()); len(got) != 1 || got[0] != "theme" {
 		t.Errorf("%q matched %v, want [theme]", m.Query(), got)
 	}
+}
+
+// --- The current value ----------------------------------------------------
+
+// withCurrent is themeItems with one value marked as the one in use.
+func withCurrent(value string) []Item {
+	items := themeItems()
+	cmd := &items[len(items)-1]
+	for i := range cmd.Candidates {
+		cmd.Candidates[i].Current = cmd.Candidates[i].Value == value
+	}
+	return items
+}
+
+func openWithCurrent(t *testing.T, value string) Model {
+	t.Helper()
+	m := New(theme.DarkRoles(false))
+	m.SetItems(withCurrent(value))
+	m.Open()
+	return m
+}
+
+// TestTheListOpensOnTheCurrentValue: the command word and a space, and the
+// highlight is on the value in use rather than on the first row. Enter
+// straight away then keeps what is there, instead of switching to whatever
+// happens to be listed first.
+func TestTheListOpensOnTheCurrentValue(t *testing.T) {
+	m := typeString(t, openWithCurrent(t, "dracula"), "theme ")
+
+	if got, ok := m.SelectedArg(); !ok || got.Value != "dracula" {
+		t.Errorf("selected %q (ok=%v) with nothing typed, want the current dracula", got.Value, ok)
+	}
+	if got := m.Line(); got != "theme dracula" {
+		t.Errorf("Line() = %q, want %q", got, "theme dracula")
+	}
+}
+
+// TestAFilterHighlightsTheBestMatchNotTheCurrentValue: once a letter is
+// typed the user is choosing, and the best match is what they are choosing —
+// the current value is not kept highlighted behind it.
+func TestAFilterHighlightsTheBestMatchNotTheCurrentValue(t *testing.T) {
+	m := typeString(t, openWithCurrent(t, "dark"), "theme dr")
+
+	if got, ok := m.SelectedArg(); !ok || got.Value != "dracula" {
+		t.Errorf("selected %q (ok=%v) for %q, want the prefix match dracula", got.Value, ok, m.Query())
+	}
+}
+
+// TestClearingTheFilterReturnsToTheCurrentValue: back to nothing typed is
+// back to the list as it opened.
+func TestClearingTheFilterReturnsToTheCurrentValue(t *testing.T) {
+	m := typeString(t, openWithCurrent(t, "gruvbox"), "theme l")
+	m, _ = m.Update(decodeKey(t, "\x7f"))
+
+	if got, ok := m.SelectedArg(); !ok || got.Value != "gruvbox" {
+		t.Errorf("selected %q (ok=%v) after deleting the filter, want the current gruvbox", got.Value, ok)
+	}
+}
+
+// TestWithNoCurrentValueTheListOpensAtTheTop: nothing is marked when the
+// theme in use is not one the list can name — a file named by its path, say.
+func TestWithNoCurrentValueTheListOpensAtTheTop(t *testing.T) {
+	m := typeString(t, openWithCandidates(t), "theme ")
+
+	if got, ok := m.SelectedArg(); !ok || got.Value != "dark" {
+		t.Errorf("selected %q (ok=%v), want the first row", got.Value, ok)
+	}
+}
+
+// TestTheCurrentValueIsMarked: the row in use says so, in the dim of the
+// description beside it, and no other row does.
+func TestTheCurrentValueIsMarked(t *testing.T) {
+	r := theme.DarkRoles(true)
+	m := New(r)
+	m.SetItems(withCurrent("dracula"))
+	m.Open()
+	m = typeString(t, m, "theme ")
+	m, _ = m.Update(decodeKey(t, "\x1b[B")) // off it, so it is drawn unselected
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		plain := ansi.Strip(line)
+		marked := strings.Contains(plain, "current")
+		switch {
+		case strings.Contains(plain, "dracula") && !marked:
+			t.Errorf("the current row is not marked: %q", plain)
+		case !strings.Contains(plain, "dracula") && marked:
+			t.Errorf("a row that is not current is marked: %q", plain)
+		}
+	}
+	if want := theme.OverlayMuted(r).Render("current"); !strings.Contains(m.View(), want) {
+		t.Errorf("the mark is not drawn muted; want %q in:\n%s",
+			want, strings.ReplaceAll(m.View(), "\x1b", "ESC"))
+	}
+	assertUniformWidth(t, m.View())
 }

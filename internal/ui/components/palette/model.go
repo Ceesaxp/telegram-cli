@@ -55,6 +55,11 @@ type Arg struct {
 	Value string
 	// Description is the dim note beside it — where a theme lives, say.
 	Description string
+	// Current marks the value in use: the theme on screen, say. The list
+	// opens with it highlighted, so Enter with nothing typed keeps what is
+	// there rather than switching to whatever is listed first, and its row
+	// says "current". At most one value should be.
+	Current bool
 }
 
 // Action is what a keypress asked the app to do.
@@ -303,14 +308,32 @@ func (m *Model) complete() {
 // selection resets to the top on every edit: after typing another character
 // the old highlighted row is usually gone, and holding a stale index would
 // run a command the user is no longer looking at.
+//
+// The one exception is an argument's values with nothing typed yet, which
+// open on the value in use: nothing has been chosen, and the top row is not
+// a choice anybody made.
 func (m *Model) refilter() {
 	name, partial := SplitQuery(m.query)
 	m.filtered = rank(len(m.items), func(i int) string { return m.items[i].Name }, name)
 	m.arg, m.argHits = m.argTarget(name), nil
+	m.cursor = 0
 	if m.choosingArg() {
 		m.argHits = rankArgs(m.arg.Candidates, partial)
+		if partial == "" {
+			m.cursor = m.currentHit()
+		}
 	}
-	m.cursor = 0
+}
+
+// currentHit is the row of the value marked Current, or the top row when
+// none is listed.
+func (m Model) currentHit() int {
+	for row, i := range m.argHits {
+		if m.arg.Candidates[i].Current {
+			return row
+		}
+	}
+	return 0
 }
 
 // argTarget is the command whose argument the query has moved on to: the
@@ -486,18 +509,38 @@ func (m Model) itemLine(it Item, selected bool, nameStyle, descStyle, keyStyle l
 	return m.finishRow(line, selected)
 }
 
-// argLine renders one value row: marker, value, and its description dim
-// beside it. The value is cut only when it cannot fit on its own; the
-// description takes what is left, or is left off.
+// currentMark is what the value in use says at the end of its row.
+const currentMark = "current"
+
+// argLine renders one value row: marker, value, its description dim beside
+// it, and — on the value in use — a dim "current" right-aligned, where a
+// command row keeps its key. The value is cut only when it cannot fit on its
+// own; the description takes what is left, or is left off, and so does the
+// mark after it.
 func (m Model) argLine(a Arg, selected bool, valueStyle, descStyle lipgloss.Style) string {
 	marker := rowMarker(selected)
 
 	value := cell.Truncate(a.Value, Width-cell.Width(marker))
 	line := marker + valueStyle.Render(value)
 
-	// Budget: marker + value + gap + description.
-	if descBudget := Width - cell.Width(marker) - cell.Width(value) - 2; descBudget > 0 && a.Description != "" {
+	mark := ""
+	if a.Current {
+		mark = currentMark
+	}
+
+	// Budget: marker + value + gap + description, and gap + mark.
+	descBudget := Width - cell.Width(marker) - cell.Width(value) - 2
+	if mark != "" {
+		descBudget -= 2 + cell.Width(mark)
+	}
+	if descBudget > 0 && a.Description != "" {
 		line += "  " + descStyle.Render(cell.Truncate(a.Description, descBudget))
+	}
+
+	if mark != "" {
+		if pad := Width - cell.Width(line) - cell.Width(mark); pad >= 2 {
+			line += strings.Repeat(" ", pad) + descStyle.Render(mark)
+		}
 	}
 
 	return m.finishRow(line, selected)
