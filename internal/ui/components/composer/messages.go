@@ -1,5 +1,7 @@
 package composer
 
+import "github.com/Ceesaxp/telegram-cli/internal/telegram"
+
 // MessageSubmittedMsg is emitted when the user submits a message.
 type MessageSubmittedMsg struct {
 	ChatId        int64
@@ -54,4 +56,22 @@ type MentionQueryMsg struct {
 	Anchor int
 	Query  string
 	Gen    uint64
+}
+
+// MentionResultsMsg answers a MentionQueryMsg: the members the search found,
+// or why it failed (issue #41). ChatID, Anchor, Query and Gen are the
+// query's, copied back.
+//
+// The composer applies it only while all four still describe the completion
+// on screen, and drops it silently otherwise — so an answer that arrives
+// late can neither overwrite a newer query's nor reopen a picker that has
+// closed. An Err keeps whatever the picker already had to offer, and says
+// the search failed.
+type MentionResultsMsg struct {
+	ChatID int64
+	Anchor int
+	Query  string
+	Gen    uint64
+	Users  []*telegram.User
+	Err    error
 }

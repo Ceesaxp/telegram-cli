@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
@@ -119,6 +120,11 @@ type Model struct {
 	// and a private chat has one. It is a property of the chat, so
 	// switching chats switches it off again. See mentionpicker.go.
 	mentionsEnabled bool
+
+	// mentionCandidates are the open chat's members the host already knows
+	// about, most recent first — the picker's offer before the member
+	// search answers. See SetMentionCandidates.
+	mentionCandidates []*telegram.User
 
 	// mention is the @-completion in progress, if any.
 	mention mentionState
@@ -340,6 +346,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	// would lose the user's edits and leak the temp file.
 	if fin, ok := msg.(editorFinishedMsg); ok {
 		m.applyEditorResult(fin)
+		return m, nil
+	}
+	// An answer from the member search is judged by the completion alone,
+	// which losing focus has already closed.
+	if res, ok := msg.(MentionResultsMsg); ok {
+		m.applyMentionResults(res)
 		return m, nil
 	}
 

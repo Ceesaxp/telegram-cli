@@ -51,6 +51,7 @@ func (m *Model) SetChatId(chatID int64) string {
 	// applies at all is for the host to say about the next one.
 	m.closeMention()
 	m.mentionsEnabled = false
+	m.mentionCandidates = nil
 	m.parkDraft()
 	m.chatID = chatID
 	m.restoreDraft(chatID)

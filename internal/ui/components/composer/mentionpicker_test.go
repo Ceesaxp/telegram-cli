@@ -1,9 +1,12 @@
 package composer
 
 import (
+	"errors"
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // mentionComposer is a focused emacs composer in a chat where the host has
@@ -418,5 +421,178 @@ func TestAfterEscOnlyANewAtReopens(t *testing.T) {
 	}
 	if m = chars(t, m, " @"); !m.MentionActive() {
 		t.Error("a new @ after a dismissed one did not open")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Candidates and results
+// ---------------------------------------------------------------------------
+
+var (
+	nadiaUser = user(1, "nadia", "Nadia", "Petrova")
+	nadiaS    = user(2, "", "Nadia", "S.")
+	olegUser  = user(3, "", "Oleg", "")
+)
+
+// shown is the IDs the picker is offering, best first.
+func shown(m Model) []int64 { return ids(m.mention.results) }
+
+// The local candidates are offered the moment the @ is typed, before any
+// answer from the server — and narrowed as the query grows.
+func TestLocalCandidatesShowImmediately(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{olegUser, nadiaS, nadiaUser})
+
+	if m = chars(t, m, "@"); !slices.Equal(shown(m), []int64{3, 2, 1}) {
+		t.Errorf("after @: showing %v, want every candidate in recency order", shown(m))
+	}
+	if m = chars(t, m, "na"); !slices.Equal(shown(m), []int64{1, 2}) {
+		t.Errorf("after @na: showing %v, want the username prefix first", shown(m))
+	}
+}
+
+// Candidates arriving while the picker is open are offered at once.
+func TestCandidatesArrivingWhileOpenAreShown(t *testing.T) {
+	m := chars(t, mentionComposer(t), "@na")
+	m.SetMentionCandidates(42, []*telegram.User{nadiaUser})
+	if !slices.Equal(shown(m), []int64{1}) {
+		t.Errorf("showing %v, want the candidate that just arrived", shown(m))
+	}
+}
+
+// Candidates are per chat. Another chat's are not these members, and a chat
+// switch forgets the old chat's.
+func TestCandidatesBelongToTheirChat(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(43, []*telegram.User{nadiaUser})
+	if m = chars(t, m, "@"); len(shown(m)) != 0 {
+		t.Errorf("showing %v, candidates for another chat", shown(m))
+	}
+
+	m = mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaUser})
+	m.SetChatId(43)
+	m.SetChatId(42)
+	m.SetMentionsEnabled(true)
+	if m = chars(t, m, " @"); len(shown(m)) != 0 {
+		t.Errorf("showing %v after switching away and back, want the host to supply them again", shown(m))
+	}
+}
+
+// answer is the MentionResultsMsg the host would send back for q.
+func answer(q MentionQueryMsg, users ...*telegram.User) MentionResultsMsg {
+	return MentionResultsMsg{ChatID: q.ChatID, Anchor: q.Anchor, Query: q.Query, Gen: q.Gen, Users: users}
+}
+
+// openAt types s and returns the composer with the last query it asked.
+func openAt(t *testing.T, m Model, s string) (Model, MentionQueryMsg) {
+	t.Helper()
+	var last MentionQueryMsg
+	for _, r := range s {
+		var msg tea.Msg
+		m, msg = send(t, m, string(r))
+		if q, ok := queryIn(msg); ok {
+			last = q
+		}
+	}
+	if !m.MentionActive() {
+		t.Fatalf("precondition: typing %q did not leave completion open", s)
+	}
+	return m, last
+}
+
+// The answer to the current query is merged with the local candidates.
+func TestTheAnswerToTheCurrentQueryIsShown(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaS})
+	m, q := openAt(t, m, "@na")
+	if !m.mention.loading {
+		t.Error("loading = false while the query is unanswered")
+	}
+
+	m, _ = m.Update(answer(q, nadiaUser, nadiaS))
+	if !slices.Equal(shown(m), []int64{1, 2}) {
+		t.Errorf("showing %v, want the server's @nadia merged in first", shown(m))
+	}
+	if m.mention.loading {
+		t.Error("loading = true after the answer arrived")
+	}
+}
+
+// An answer to anything but the current query is dropped, whatever it
+// disagrees about: the generation, the query, the @ or the chat.
+func TestAStaleAnswerIsDropped(t *testing.T) {
+	stale := map[string]func(*MentionResultsMsg){
+		"an older generation": func(r *MentionResultsMsg) { r.Gen-- },
+		"another query":       func(r *MentionResultsMsg) { r.Query = "n" },
+		"another @":           func(r *MentionResultsMsg) { r.Anchor = 7 },
+		"another chat":        func(r *MentionResultsMsg) { r.ChatID = 43 },
+	}
+	for name, spoil := range stale {
+		t.Run(name, func(t *testing.T) {
+			m, q := openAt(t, mentionComposer(t), "@na")
+			res := answer(q, nadiaUser)
+			spoil(&res)
+
+			m, _ = m.Update(res)
+			if len(shown(m)) != 0 {
+				t.Errorf("showing %v from a stale answer", shown(m))
+			}
+			if !m.mention.loading {
+				t.Error("a stale answer ended the wait for the real one")
+			}
+		})
+	}
+}
+
+// Nor can an answer reopen a picker that closed while it was on its way —
+// after "@ ", after the cursor left, after a chat switch.
+func TestALateAnswerDoesNotReopen(t *testing.T) {
+	closers := map[string]func(Model) Model{
+		"a space":        func(m Model) Model { return chars(t, m, " ") },
+		"the cursor out": func(m Model) Model { return typeSeq(t, m, keyLeft, keyLeft, keyLeft) },
+		"Esc":            func(m Model) Model { return typeSeq(t, m, keyEsc) },
+		"a chat switch": func(m Model) Model {
+			m.SetChatId(43)
+			m.SetChatId(42)
+			m.SetMentionsEnabled(true)
+			return m
+		},
+	}
+	for name, leave := range closers {
+		t.Run(name, func(t *testing.T) {
+			m, q := openAt(t, mentionComposer(t), "@na")
+			m = leave(m)
+
+			m, _ = m.Update(answer(q, nadiaUser))
+			if m.MentionActive() || len(shown(m)) != 0 {
+				t.Errorf("the late answer reopened the picker: open = %v, showing %v",
+					m.MentionActive(), shown(m))
+			}
+		})
+	}
+}
+
+// A failed search leaves the local candidates usable and says it failed.
+func TestAFailedSearchKeepsTheLocalCandidates(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaUser})
+	m, q := openAt(t, m, "@na")
+
+	res := answer(q)
+	res.Err = errors.New("FLOOD_WAIT_5")
+	m, _ = m.Update(res)
+
+	if !slices.Equal(shown(m), []int64{1}) {
+		t.Errorf("showing %v, want the local @nadia still offered", shown(m))
+	}
+	if !m.mention.failed || m.mention.loading {
+		t.Errorf("failed = %v, loading = %v; want failed and no longer loading",
+			m.mention.failed, m.mention.loading)
+	}
+
+	// The next query is a new search, and has not failed yet.
+	if m, _ = send(t, m, "d"); m.mention.failed {
+		t.Error("the failure outlived the query it was about")
 	}
 }

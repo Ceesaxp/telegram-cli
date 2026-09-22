@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
 // @-completion (issue #41).
@@ -29,6 +30,17 @@ type mentionState struct {
 	// never reused — closing keeps it — so an answer to any earlier query,
 	// in this completion or another, cannot pass for an answer to this one.
 	gen uint64
+
+	// results are what the picker offers, best first: the local candidates
+	// and server merged and ranked against query. See rankMentions.
+	results []*telegram.User
+	// server is the member search's latest answer. It is kept when the
+	// query changes: its members are still this chat's, and ranking
+	// against the new query sorts out which of them still match.
+	server []*telegram.User
+	// loading is whether the current query is still unanswered, and failed
+	// whether its search failed.
+	loading, failed bool
 }
 
 // SetMentionsEnabled says whether a typed @ may open completion here. The
@@ -41,6 +53,24 @@ func (m *Model) SetMentionsEnabled(on bool) {
 	m.mentionsEnabled = on
 	if !on {
 		m.closeMention()
+	}
+}
+
+// SetMentionCandidates supplies the members of chatID the host already
+// knows — recent senders, a basic group's member list — most recent first.
+// The picker offers them the moment an @ is typed, ahead of the member
+// search's answer, and goes on offering them if the search fails.
+//
+// They are kept until the chat changes, so the host can supply them once
+// when the chat opens and again whenever it learns more. Candidates for any
+// chat but the open one are ignored.
+func (m *Model) SetMentionCandidates(chatID int64, users []*telegram.User) {
+	if chatID != m.chatID {
+		return
+	}
+	m.mentionCandidates = users
+	if m.mention.active {
+		m.rankMention()
 	}
 }
 
@@ -124,6 +154,28 @@ func (m Model) mentionKey(stroke string) (Model, bool) {
 	return m, false
 }
 
+// applyMentionResults takes the member search's answer, if it is the answer
+// to the query on screen. See MentionResultsMsg.
+func (m *Model) applyMentionResults(res MentionResultsMsg) {
+	s := m.mention
+	if !s.active || res.ChatID != s.chatID || res.Anchor != s.anchor ||
+		res.Query != s.query || res.Gen != s.gen {
+		return
+	}
+	m.mention.loading = false
+	if res.Err != nil {
+		m.mention.failed = true
+	} else {
+		m.mention.server = res.Users
+	}
+	m.rankMention()
+}
+
+// rankMention recomputes what the picker offers.
+func (m *Model) rankMention() {
+	m.mention.results = rankMentions(m.mention.query, m.mentionCandidates, m.mention.server)
+}
+
 // closeMention ends the completion, keeping only the generation: an answer
 // still on its way must not match whatever opens next.
 func (m *Model) closeMention() {
@@ -179,6 +231,9 @@ func (m *Model) openMention(anchor int) tea.Cmd {
 func (m *Model) queryMention(q string) tea.Cmd {
 	m.mention.query = q
 	m.mention.gen++
+	m.mention.loading = true
+	m.mention.failed = false
+	m.rankMention()
 	ask := MentionQueryMsg{
 		ChatID: m.mention.chatID,
 		Anchor: m.mention.anchor,
