@@ -119,7 +119,7 @@ func TestPrepareSendRootsCreatesTheOutbox(t *testing.T) {
 }
 
 // An operator's own directory is never created. Making a typo real is
-// worse than reporting it, and ResolveAllowedSendPath skips a root it
+// worse than reporting it, and OpenAllowedSendFile skips a root it
 // cannot resolve — silently, which is why the warning has to come from
 // here.
 func TestPrepareSendRootsReportsMissingOperatorDirs(t *testing.T) {

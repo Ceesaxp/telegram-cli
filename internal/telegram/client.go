@@ -455,7 +455,7 @@ func (c *Client) FilesDir() string {
 
 // SendRoots is the set of directories a remote caller may send a file
 // from — see [config.Config.SendRoots]. Pass it to
-// [ResolveAllowedSendPath] in the MCP and REST send handlers; the TUI does
+// [OpenAllowedSendFile] in the MCP and REST send handlers; the TUI does
 // not use it, because there the person choosing the file is the person
 // running the process.
 func (c *Client) SendRoots() []string {

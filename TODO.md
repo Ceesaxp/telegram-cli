@@ -1,5 +1,17 @@
 # TODO
 
+## Performance and safety wave (2026-09-22) — branch fix/perf-wave, closes #33
+
+Four findings from an outside review, each confirmed against the code first.
+
+- [x] Send roots: REST and MCP open a file once through `os.Root` (`OpenAllowedSendFile`, replacing `ResolveAllowedSendPath`) and upload from that descriptor, so a file swapped for a symlink after the check cannot redirect the upload. Narrower than before: absolute symlinks are refused even inside a root, directories and fifos fail at open, a link is sent under its own name
+- [x] Message store: shrinking mutations (delete, Prepend's cap) release what they drop; an ID index (`GetByID`) replaces the copy-and-scan the reply row, `hasMessage` and `loadedPending` did per call — reply rows at 5000 messages went from 8 ms / 22 MB to 3 ms / 2 MB per redraw
+- [x] File registry and file store (#33): LRU-bounded at 4096 entries each; entries mid-transfer are never evicted; a download whose entry was evicted refetches its message (`DownloadMessageFile`) and an avatar re-resolves its chat, so nothing on screen breaks
+- [ ] Follow-up: the app's per-action by-ID scans (reply preview, edit, `chosenReaction`, `isPinned` in app.go; forward.go) could use `GetByID`
+- [ ] Follow-up: REST and MCP downloads could use `DownloadMessageFile` instead of relying on `GetMessage` re-registering just before
+- [ ] Follow-up: the two LRUs are near-duplicates — a shared `internal/lru` would remove that; `FileState` has no failed/in-progress distinction, so a failure stored as incomplete would never be evicted
+- [ ] Known limit: `os.Root` does not stop a hard link inside a send root to a file elsewhere on the same filesystem (the old check did not either)
+
 ## Mention autocomplete wave (2026-09-22) — branch feat/mention-autocomplete, issue #41
 
 `@` in a group completes a member's name; a member without a username is mentioned by name through an entity carrying their ID. Waves 1A–1C and 2A built the telegram and composer halves; 2B wired the app.
