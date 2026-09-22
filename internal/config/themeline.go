@@ -189,6 +189,14 @@ type themeSite struct {
 // than by matching lines, so a "[ui]" or a "theme =" inside a multi-line
 // string is not taken for one. The error is a refusal: ui written some way a
 // one-line edit cannot safely change.
+//
+// Tables and keys are matched whatever their case, because the loader
+// matches them so: go-toml fills a struct field from a key that differs from
+// its tag only in case, so `[UI]` and `Theme =` are the setting too. Matched
+// by case here, a `Theme` line would be missed and a second `theme` added
+// beside it, which the loader might read or might not. Two spellings of the
+// one table, or of the one key, are TOML's distinct keys and the loader's
+// one setting, and which of them wins is not something to guess at.
 func findThemeSite(data []byte) (themeSite, error) {
 	// The parser below reads syntax only; this also catches a key or a
 	// table defined twice, which the loader would reject.
@@ -206,31 +214,36 @@ func findThemeSite(data []byte) (themeSite, error) {
 		switch expr.Kind {
 		case unstable.Table, unstable.ArrayTable:
 			table = keyParts(expr.Key())
-			if table[0] != "ui" {
+			if !isKey(table[0], "ui") {
 				continue
 			}
 			switch {
 			case expr.Kind == unstable.ArrayTable:
 				return themeSite{}, errors.New("has an array of [[ui]] tables")
+			case len(table) == 1 && site.hasHeader:
+				return themeSite{}, errors.New("has more than one [ui] table, told apart only by case")
 			case len(table) == 1:
 				site.hasHeader = true
 				site.headerEnd = lineEnd(data, headerOffset(expr))
-			case table[1] == "theme":
+			case isKey(table[1], "theme"):
 				return themeSite{}, errors.New("sets ui.theme as a table")
 			}
 		case unstable.KeyValue:
 			key := keyParts(expr.Key())
+			atRoot, inUI := len(table) == 0, len(table) == 1 && isKey(table[0], "ui")
 			switch {
-			case len(table) == 0 && key[0] == "ui" && len(key) > 1:
+			case atRoot && isKey(key[0], "ui") && len(key) > 1:
 				return themeSite{}, errors.New("sets ui with dotted keys, not a [ui] table")
-			case len(table) == 0 && key[0] == "ui" && expr.Value().Kind == unstable.InlineTable:
+			case atRoot && isKey(key[0], "ui") && expr.Value().Kind == unstable.InlineTable:
 				return themeSite{}, errors.New("sets ui as an inline table, not a [ui] table")
-			case len(table) == 0 && key[0] == "ui":
+			case atRoot && isKey(key[0], "ui"):
 				return themeSite{}, errors.New("sets ui to something that is not a table")
-			case len(table) != 1 || table[0] != "ui" || key[0] != "theme":
+			case !inUI || !isKey(key[0], "theme"):
 				continue
 			case len(key) > 1:
 				return themeSite{}, errors.New("sets ui.theme with a dotted key")
+			case site.hasValue:
+				return themeSite{}, errors.New("sets ui.theme more than once, told apart only by case")
 			}
 			v := expr.Value()
 			if v.Kind != unstable.String {
@@ -246,6 +259,10 @@ func findThemeSite(data []byte) (themeSite, error) {
 	}
 	return site, nil
 }
+
+// isKey reports whether a key part is name as the loader reads it: in any
+// case.
+func isKey(part, name string) bool { return strings.EqualFold(part, name) }
 
 // keyParts is a key's parts, decoded: `"ui" . theme` is [ui theme].
 func keyParts(it unstable.Iterator) []string {
