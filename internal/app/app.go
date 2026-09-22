@@ -579,7 +579,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case palette.ActionCancel:
 					m.palette.Close()
 				case palette.ActionRun:
-					line := m.palette.Query()
+					line := m.palette.Line()
 					m.palette.Close()
 					updated, cmd, notice := m.runCommandLine(line)
 					m = updated
@@ -780,7 +780,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// distinction honest.
 			if key.Matches(":") && noOverlay &&
 				(m.Mode() == ModeNormal || m.Mode() == ModeVi) {
-				m.palette.Open()
+				m.openPalette()
 				return m, nil
 			}
 
