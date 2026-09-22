@@ -836,6 +836,12 @@ func SaveTo(path string, cfg *Config) error {
 // beside that resolved target so the rename stays within one filesystem —
 // across filesystems it fails outright.
 func writeFilePrivate(path string, data []byte) error {
+	return writeFileAtomic(path, data, 0o600)
+}
+
+// writeFileAtomic is [writeFilePrivate] at mode perm: a temp file beside the
+// resolved target, renamed over it.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	path = resolveTarget(path)
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
@@ -847,7 +853,7 @@ func writeFilePrivate(path string, data []byte) error {
 	// to remove, and the error from that case is not interesting.
 	defer os.Remove(tmpName)
 
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
 		tmp.Close()
 		return fmt.Errorf("setting permissions: %w", err)
 	}
