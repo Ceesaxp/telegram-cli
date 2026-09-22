@@ -327,3 +327,97 @@ func TestViDeletingAnotherLineShiftsAMention(t *testing.T) {
 	}
 	wantMentions(t, m, nadia)
 }
+
+// ---------------------------------------------------------------------------
+// Spans are part of the draft
+// ---------------------------------------------------------------------------
+
+// A parked draft is all of the work, and a mention is part of it. The words
+// coming back without it would send a name that pings nobody.
+func TestMentionsSurviveAChatSwitch(t *testing.T) {
+	m := withNadia(t, newFocused())
+
+	m.SetChatId(43)
+	wantMentions(t, m)
+
+	m.SetChatId(42)
+	if got := m.Draft(); got != "hi Nadia " {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m, nadia)
+}
+
+// The chat switched to must not inherit the spans of the one left behind,
+// even when it has a draft of its own to restore.
+func TestMentionsStayWithTheirOwnChat(t *testing.T) {
+	m := newFocused()
+	m.SetChatId(43)
+	m = typeInto(t, m, "hi there")
+	m.SetChatId(42)
+	m = withNadia(t, m)
+
+	m.SetChatId(43)
+	if got := m.Draft(); got != "hi there" {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m)
+}
+
+// Replying changes what the message answers, not what it says.
+func TestReplyModeKeepsMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+
+	m.EnterReplyMode(5, "oleg: who's on call?")
+	wantMentions(t, m, nadia)
+
+	m, _ = press(t, m, "esc") // cancel the reply, keep the words
+	wantMentions(t, m, nadia)
+}
+
+// With an attachment staged the text is its caption — the same text, so the
+// same spans.
+func TestAnAttachmentCaptionKeepsMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+
+	m.SetAttachment("/tmp/paste-1.png", true)
+	wantMentions(t, m, nadia)
+
+	m, _ = press(t, m, "esc") // unstage the file, keep the caption
+	wantMentions(t, m, nadia)
+}
+
+// Editing a message parks the draft on screen, spans and all, and puts it
+// back when the edit is cancelled.
+func TestEditModeParksMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+
+	m.EnterEditMode(99, "the old message")
+	wantMentions(t, m)
+
+	m, _ = press(t, m, "esc")
+	if got := m.Draft(); got != "hi Nadia " {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m, nadia)
+}
+
+// A mention added while editing belongs to the edit, and travels with it
+// through a chat switch; the draft the edit displaced keeps its own.
+func TestAnEditKeepsItsMentionsThroughAChatSwitch(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m.EnterEditMode(99, "ask ")
+	m = chars(t, m, "@ol")
+	m.InsertMention(4, 7, "Oleg", 8)
+	oleg := MentionSpan{Start: 4, End: 8, UserID: 8, Label: "Oleg"}
+	wantMentions(t, m, oleg)
+
+	m.SetChatId(43)
+	m.SetChatId(42)
+	if !m.IsEditing() {
+		t.Fatal("precondition: the edit did not come back with the chat")
+	}
+	wantMentions(t, m, oleg)
+
+	m, _ = press(t, m, "esc")
+	wantMentions(t, m, nadia)
+}

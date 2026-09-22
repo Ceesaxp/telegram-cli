@@ -210,6 +210,9 @@ func (m *Model) EnterEditMode(messageID int64, currentText string) string {
 	m.editMsgID = messageID
 	m.textarea.Value = currentText
 	m.textarea.Cursor = len([]rune(currentText))
+	// The draft's mentions were parked with it; the message loaded in its
+	// place starts with none of its own.
+	m.mentions = nil
 	if discarded != "" {
 		m.notice = noticeEditDiscard
 	}
@@ -233,6 +236,7 @@ func (m *Model) parkEdit() {
 		mode:      m.mode,
 		replyToID: m.replyToID,
 		replyText: m.replyText,
+		mentions:  m.mentions,
 	}
 }
 
@@ -252,6 +256,7 @@ func (m *Model) unparkEdit() bool {
 	m.textarea.Reset()
 	m.textarea.Value = d.text
 	m.textarea.Cursor = min(max(d.cursor, 0), len([]rune(d.text)))
+	m.mentions = d.mentions
 	m.mode = d.mode
 	m.replyToID = d.replyToID
 	m.editMsgID = 0
@@ -286,6 +291,7 @@ func (m *Model) clearContext() {
 // Reset clears the composer state, text included.
 func (m *Model) Reset() {
 	m.textarea.Reset()
+	m.mentions = nil
 	m.clearContext()
 	// A cleared composer is ready to be typed into; vi's normal mode is
 	// restored explicitly by the Escape-cancel path, which is the only
