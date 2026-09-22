@@ -205,11 +205,19 @@ func (c *Client) registerPhotoSize(p *tg.Photo, thumbType string, size int64) *F
 
 // registerAvatar registers a peer avatar; key "avatar:<chatID>".
 func (c *Client) registerAvatar(chatID, photoID int64) *File {
-	key := fmt.Sprintf("avatar:%d", chatID)
+	key := avatarKey(chatID)
 	return c.files.put(key, &fileEntry{
 		avatar: &avatarRef{chatID: chatID, photoID: photoID},
 		name:   strings.ReplaceAll(key, ":", "_") + ".jpg",
 	})
+}
+
+// avatarPrefix begins every avatar key; the chat ID follows it.
+const avatarPrefix = "avatar:"
+
+// avatarKey is the registry key of a chat's avatar.
+func avatarKey(chatID int64) string {
+	return fmt.Sprintf("%s%d", avatarPrefix, chatID)
 }
 
 // DownloadFileSync downloads a registered file to the files dir
@@ -221,59 +229,65 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown file %q", key)
 		}
-
-		if snap.done && snap.path != "" {
-			if _, err := os.Stat(snap.path); err == nil {
-				return &File{ID: key, Path: snap.path, Size: snap.size, Downloaded: true}, nil
-			}
-		}
-
-		// The cache outlives the process. done is in-memory and starts
-		// false in every one, so without this a restart re-downloads every
-		// thumbnail, avatar and document already sitting in files_dir —
-		// which the config calls "the media CACHE" and which held only
-		// within one process lifetime.
-		//
-		// The path is deterministic and the content behind a key never
-		// changes: a document ID, a photo ID and a size identify bytes, not
-		// a version of them.
-		path := c.cachePath(key, snap)
-		if cached, ok := usableCache(path, snap.size); ok {
-			c.files.markDone(key, path)
-			return &File{ID: key, Path: cached, Size: snap.size, Downloaded: true}, nil
-		}
-
-		ctx, cancel := transferCtx()
-		defer cancel()
-
-		location := snap.location
-		if location == nil && snap.avatar != nil {
-			peer, err := c.inputPeer(ctx, snap.avatar.chatID)
-			if err != nil {
-				return nil, fmt.Errorf("download %s: %w", key, err)
-			}
-			location = &tg.InputPeerPhotoFileLocation{
-				Peer:    peer,
-				PhotoID: snap.avatar.photoID,
-			}
-		}
-		if location == nil {
-			return nil, fmt.Errorf("file %q has no location", key)
-		}
-
-		if err := downloadToPath(ctx, c.api, location, path); err != nil {
-			return nil, fmt.Errorf("download %s: %w", key, err)
-		}
-
-		c.files.markDone(key, path)
-		file := &File{ID: key, Path: path, Size: snap.size, Downloaded: true}
-		c.send(FileUpdateMsg{File: file})
-		return file, nil
+		return c.fetch(key, snap)
 	})
 	if err != nil {
 		return nil, err
 	}
 	file, _ := v.(*File)
+	return file, nil
+}
+
+// fetch brings the bytes behind a registered key onto disk: from memory if
+// this process already has them, from the cache if an earlier one did, and
+// from the server otherwise.
+func (c *Client) fetch(key string, snap fileSnap) (*File, error) {
+	if snap.done && snap.path != "" {
+		if _, err := os.Stat(snap.path); err == nil {
+			return &File{ID: key, Path: snap.path, Size: snap.size, Downloaded: true}, nil
+		}
+	}
+
+	// The cache outlives the process. done is in-memory and starts
+	// false in every one, so without this a restart re-downloads every
+	// thumbnail, avatar and document already sitting in files_dir —
+	// which the config calls "the media CACHE" and which held only
+	// within one process lifetime.
+	//
+	// The path is deterministic and the content behind a key never
+	// changes: a document ID, a photo ID and a size identify bytes, not
+	// a version of them.
+	path := c.cachePath(key, snap)
+	if cached, ok := usableCache(path, snap.size); ok {
+		c.files.markDone(key, path)
+		return &File{ID: key, Path: cached, Size: snap.size, Downloaded: true}, nil
+	}
+
+	ctx, cancel := transferCtx()
+	defer cancel()
+
+	location := snap.location
+	if location == nil && snap.avatar != nil {
+		peer, err := c.inputPeer(ctx, snap.avatar.chatID)
+		if err != nil {
+			return nil, fmt.Errorf("download %s: %w", key, err)
+		}
+		location = &tg.InputPeerPhotoFileLocation{
+			Peer:    peer,
+			PhotoID: snap.avatar.photoID,
+		}
+	}
+	if location == nil {
+		return nil, fmt.Errorf("file %q has no location", key)
+	}
+
+	if err := downloadToPath(ctx, c.api, location, path); err != nil {
+		return nil, fmt.Errorf("download %s: %w", key, err)
+	}
+
+	c.files.markDone(key, path)
+	file := &File{ID: key, Path: path, Size: snap.size, Downloaded: true}
+	c.send(FileUpdateMsg{File: file})
 	return file, nil
 }
 
