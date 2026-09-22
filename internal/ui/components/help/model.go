@@ -52,6 +52,10 @@ func New(r theme.Roles) Model {
 	return Model{roles: r}
 }
 
+// SetRoles replaces the palette. Every style the card draws with is built
+// while drawing, so there is nothing else to re-derive.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 // SetSections replaces the sections shown, in the order given. Resets
 // scroll to the top, since a previous scroll offset is unlikely to still
 // make sense against different content.
