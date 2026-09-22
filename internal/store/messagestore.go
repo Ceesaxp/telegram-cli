@@ -86,13 +86,11 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 	combined = append(combined, toAdd...)
 	combined = append(combined, existing...)
 
-	dropped := 0
-	if chatID != s.activeChatID && len(combined) > s.maxSize {
-		dropped = len(combined) - s.maxSize
-		combined = combined[dropped:]
-	}
-
-	s.messages[chatID] = combined
+	// The cap goes through storeLocked like every other write: cutting the
+	// oldest off the front by reslicing would keep them in the array ahead
+	// of the slice, unseen and uncollected.
+	s.storeLocked(chatID, combined)
+	dropped := len(combined) - len(s.messages[chatID])
 	if dropped >= len(toAdd) {
 		return nil
 	}
@@ -215,7 +213,30 @@ func (s *MessageStore) deleteLocked(chatID int64, messageIDs []int64) {
 			filtered = append(filtered, m)
 		}
 	}
-	s.storeLocked(chatID, filtered)
+	s.storeLocked(chatID, shrunk(msgs, len(filtered)))
+}
+
+// shrunk is msgs after an in-place filter has packed the survivors into its
+// first n slots, with nothing left behind.
+//
+// Filtering in place moves the survivors down and leaves the tail of the
+// array exactly as it was, so every message the filter dropped would still
+// be reachable from it — invisible past the slice's length, and never
+// collected. Those slots are cleared. And once the survivors fill less than
+// a quarter of the array, the array itself goes: the open chat is never
+// trimmed, and a history that was thousands long should not keep that room
+// after being cut to a handful.
+func shrunk(msgs []*telegram.Message, n int) []*telegram.Message {
+	clear(msgs[n:])
+	if n >= cap(msgs)/4 {
+		return msgs[:n]
+	}
+	if n == 0 {
+		return nil
+	}
+	kept := make([]*telegram.Message, n)
+	copy(kept, msgs)
+	return kept
 }
 
 // Clear removes all cached messages for a chat.
