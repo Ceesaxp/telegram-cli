@@ -38,15 +38,30 @@ func (m Model) currentTheme() string {
 // themeCandidates are the themes :theme can switch to, for the palette to
 // list: the builtins, then every themes/*.toml in the directories config.Load
 // searched, the one on screen marked.
+//
+// The theme on screen is listed even when no list entry names it — one set
+// by its path, or a themes/ file removed since it was loaded — first, and
+// marked. Left out, nothing would be current, the highlight would open on
+// dark, and Enter straight away would switch to it and save it.
 func (m Model) themeCandidates() []palette.Arg {
 	entries := config.ListThemes(m.config.ThemeDirs())
-	args := make([]palette.Arg, 0, len(entries))
+	args := make([]palette.Arg, 0, len(entries)+1)
+	listed := false
 	for _, e := range entries {
 		where := "built in"
 		if e.Kind == config.ThemeKindFile {
 			where = homeRelative(e.Dir)
 		}
-		args = append(args, palette.Arg{Value: e.Name, Description: where, Current: e.Name == m.themeName})
+		current := e.Name == m.themeName
+		listed = listed || current
+		args = append(args, palette.Arg{Value: e.Name, Description: where, Current: current})
+	}
+	if m.themeName != "" && !listed {
+		where := "not in themes/"
+		if config.ResolveThemeName(m.themeName, "", "").Form == config.ThemeFormPath {
+			where = "by path"
+		}
+		args = append([]palette.Arg{{Value: m.themeName, Description: where, Current: true}}, args...)
 	}
 	return args
 }

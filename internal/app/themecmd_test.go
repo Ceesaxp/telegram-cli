@@ -420,3 +420,61 @@ func TestASaveThatDidNotHappenDoesNotUseUpTheBackup(t *testing.T) {
 		t.Errorf("backups %v; want one, holding the file the save found", backups)
 	}
 }
+
+// TestAThemeTheListCannotNameIsListedAsCurrent: a theme set by its path is
+// not a themes/ file, and neither is one whose file has gone since it was
+// loaded, so neither is among the names the list is built from. It is
+// listed anyway, first, as the current theme — otherwise the highlight
+// opens on dark, and Enter straight away switches to it and saves it.
+func TestAThemeTheListCannotNameIsListedAsCurrent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "mine.toml")
+	writeFile(t, path, nordTheme)
+
+	tests := []struct {
+		name, config, current, where string
+		after                        func(w themeWorld)
+	}{
+		{name: "a path", config: "[ui]\ntheme = \"" + path + "\"  # mine\n", current: path, where: "by path"},
+		{name: "a theme file removed since", config: "[ui]\ntheme = \"nord\"\n", current: "nord",
+			where: "not in themes/",
+			after: func(w themeWorld) {
+				if err := os.Remove(filepath.Join(w.themesDir, "nord.toml")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newThemeWorld(t, tt.config, map[string]string{"nord": nordTheme, "amber": nordTheme})
+			m := w.app(t)
+			if tt.after != nil {
+				tt.after(w)
+			}
+			original := w.file(t)
+
+			m = update(t, m, ":")
+			m = typeKeys(t, m, "theme ")
+			listed := m.palette.ArgMatches()
+			if len(listed) == 0 || listed[0].Value != tt.current || !listed[0].Current || listed[0].Description != tt.where {
+				t.Fatalf("the list starts %+v, want %q, current, %q", listed, tt.current, tt.where)
+			}
+			if got, _ := m.palette.SelectedArg(); got.Value != tt.current {
+				t.Errorf("the highlight is on %q, want %q", got.Value, tt.current)
+			}
+
+			m = update(t, m, "\r")
+
+			m.hintBar.SetWidth(400)
+			if !strings.Contains(m.hintBar.View(), "(unchanged)") {
+				t.Errorf("Enter straight away was not a no-op:\n%s", m.hintBar.View())
+			}
+			if m.themeName != tt.current {
+				t.Errorf("the theme is %q now, want %q still", m.themeName, tt.current)
+			}
+			if got := w.file(t); got != original || w.backedUp() {
+				t.Errorf("config.toml was written: %q", got)
+			}
+		})
+	}
+}
