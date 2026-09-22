@@ -192,29 +192,38 @@ type Model struct {
 func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	ta := widgets.NewTextArea()
 	ta.Placeholder = "Search..."
-	ta.Style = theme.OverlayInput(r)
-	ta.StylePlaceholder = theme.OverlayMuted(r)
 	ta.Focused = true
 
-	tabs := widgets.NewTabs([]string{"Chats", "Messages", "Global"})
-	tabs.StyleTab = theme.OverlayMuted(r)
-	tabs.StyleTabActive = theme.OverlaySelected(r)
-
-	l := widgets.NewList()
-	l.StyleNormal = theme.OverlayBody(r)
-	l.StyleActive = theme.OverlaySelected(r)
-	l.StyleTitle = theme.OverlayBody(r)
-	l.StyleSub = lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
-	l.StyleEmpty = theme.OverlayMuted(r)
-
-	return Model{
+	m := Model{
 		input: ta,
-		tabs:  tabs,
-		list:  l,
+		tabs:  widgets.NewTabs([]string{"Chats", "Messages", "Global"}),
+		list:  widgets.NewList(),
 		store: s,
 		tg:    tg,
 		roles: r,
 	}
+	m.restyle()
+	return m
+}
+
+// restyle derives from the palette what is styled ahead of drawing rather
+// than while drawing: the styles the input, the tabs and the result list
+// hold. Whatever replaces the palette has to call it too, or they keep the
+// colours they were built with.
+func (m *Model) restyle() {
+	r := m.roles
+
+	m.input.Style = theme.OverlayInput(r)
+	m.input.StylePlaceholder = theme.OverlayMuted(r)
+
+	m.tabs.StyleTab = theme.OverlayMuted(r)
+	m.tabs.StyleTabActive = theme.OverlaySelected(r)
+
+	m.list.StyleNormal = theme.OverlayBody(r)
+	m.list.StyleActive = theme.OverlaySelected(r)
+	m.list.StyleTitle = theme.OverlayBody(r)
+	m.list.StyleSub = lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
+	m.list.StyleEmpty = theme.OverlayMuted(r)
 }
 
 // SetSize sets the component dimensions. width/height are the FULL window
