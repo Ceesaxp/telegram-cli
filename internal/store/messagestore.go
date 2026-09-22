@@ -193,12 +193,31 @@ func (s *MessageStore) UpdateMessage(chatID int64, messageID int64, newMsg *tele
 	defer s.mu.Unlock()
 
 	msgs := s.messages[chatID]
-	if i, ok := s.positionLocked(chatID, messageID); ok {
-		old := msgs[i]
-		msgs[i] = newMsg
-		s.forgetLocked(chatID, []*telegram.Message{old}, msgs)
-		s.indexLocked(chatID, newMsg)
+	i, ok := s.positionLocked(chatID, messageID)
+	if !ok {
+		s.storeLocked(chatID, msgs)
+		return
 	}
+	old := msgs[i]
+
+	// newMsg names the message it is, and that need not be messageID. If
+	// another row already carries its ID, swapping it in at i would show
+	// the message twice, with only one of the two in the index. So, as in
+	// ReplaceMessageId, the row already in the right place for that ID
+	// takes the new copy and the one at i goes.
+	if j, taken := s.positionLocked(chatID, newMsg.ID); taken && j != i {
+		other := msgs[j]
+		msgs[j] = newMsg
+		kept := append(msgs[:i:i], msgs[i+1:]...)
+		s.forgetLocked(chatID, []*telegram.Message{old, other}, kept)
+		s.indexLocked(chatID, newMsg)
+		s.storeLocked(chatID, kept)
+		return
+	}
+
+	msgs[i] = newMsg
+	s.forgetLocked(chatID, []*telegram.Message{old}, msgs)
+	s.indexLocked(chatID, newMsg)
 	s.storeLocked(chatID, msgs)
 }
 
