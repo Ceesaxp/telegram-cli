@@ -1,8 +1,10 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/gotd/td/constant"
 	"github.com/gotd/td/tg"
 )
 
@@ -62,28 +64,19 @@ func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*Cha
 	if !ok {
 		return nil, fmt.Errorf("chat %d is not a channel", chatID)
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 200
-	}
 
 	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
 		Channel: inputChannel,
 		Filter:  &tg.ChannelParticipantsRecent{},
 		Offset:  int(offset),
-		Limit:   int(limit),
+		Limit:   participantsLimit(int(limit)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup members: %w", err)
 	}
-
-	participants, ok := res.(*tg.ChannelsChannelParticipants)
-	if !ok {
-		return nil, fmt.Errorf("unexpected participants type %T", res)
-	}
-
-	// Seed the peers manager with member users.
-	if err := c.peers.Apply(ctx, participants.Users, nil); err != nil {
-		return nil, fmt.Errorf("apply peers: %w", err)
+	participants, err := c.seededParticipants(ctx, res)
+	if err != nil {
+		return nil, err
 	}
 
 	members := make([]*ChatMember, 0, len(participants.Participants))
@@ -103,15 +96,9 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 	if err != nil {
 		return nil, fmt.Errorf("get basic group full info: %w", err)
 	}
-
-	full, ok := res.FullChat.(*tg.ChatFull)
-	if !ok {
-		return nil, fmt.Errorf("unexpected full chat type %T", res.FullChat)
-	}
-
-	// Seed the peers manager with member users.
-	if err := c.peers.Apply(ctx, res.Users, res.Chats); err != nil {
-		return nil, fmt.Errorf("apply peers: %w", err)
+	full, err := c.seededChatFull(ctx, res)
+	if err != nil {
+		return nil, err
 	}
 
 	info := &BasicGroupFullInfo{}
@@ -140,6 +127,201 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 		}
 	}
 	return info, nil
+}
+
+// SearchChatMembers finds the members of a chat whom the @-mention picker
+// can offer for query, the text typed after the @.
+//
+// What it asks depends on the kind of chat:
+//
+//   - A supergroup is searched on the server for query, or asked for its
+//     recent members when query is empty. At most limit members come back,
+//     in the server's order. As for [Client.GetSupergroupMembers], no limit
+//     or one past the server's cap of 200 asks for the cap.
+//   - A basic group returns ALL its members, and query and limit are
+//     ignored. A basic group is small, so the composer filters the list
+//     locally as the query grows and does not ask again.
+//   - A private chat or a broadcast channel returns nil with no error, and
+//     no member list is asked for. The picker is not offered there.
+//
+// Either way each user comes back once. The reader's own account and
+// deleted accounts are left out. So is anyone who has left or been removed,
+// and anyone the answer names only as someone's inviter, promoter or
+// remover. A restricted member is still a member and stays in. Every user
+// in the answer is handed to the peers manager before this returns, so a
+// mention of the one picked has the access hash a send needs to name them
+// by ID.
+//
+// A refusal from the server is wrapped and returned. A FLOOD_WAIT is not
+// waited out here: the caller is a picker being typed into, and it decides
+// whether a later query is worth asking.
+func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	var (
+		users []*User
+		err   error
+	)
+	switch id := constant.TDLibPeerID(chatID); {
+	case id.IsChat():
+		users, err = c.basicGroupMembers(ctx, chatID)
+	case id.IsChannel():
+		users, err = c.supergroupMembers(ctx, chatID, query, limit)
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("search chat members: %w", err)
+	}
+	return users, nil
+}
+
+// supergroupMembers is the members of a supergroup who match query and can
+// be mentioned, at most limit of them (clamped by [participantsLimit]), in
+// the server's order. An empty query lists the recent members.
+func (c *Client) supergroupMembers(ctx context.Context, chatID int64, query string, limit int) ([]*User, error) {
+	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
+	if err != nil {
+		return nil, err
+	}
+	if channel.IsBroadcast() {
+		return nil, nil
+	}
+
+	var filter tg.ChannelParticipantsFilterClass = &tg.ChannelParticipantsSearch{Q: query}
+	if query == "" {
+		filter = &tg.ChannelParticipantsRecent{}
+	}
+	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
+		Channel: channel.InputChannel(),
+		Filter:  filter,
+		Limit:   participantsLimit(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	participants, err := c.seededParticipants(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]int64, 0, len(participants.Participants))
+	for _, p := range participants.Participants {
+		if id, ok := participantUserID(p); ok {
+			ids = append(ids, id)
+		}
+	}
+	return mentionable(ids, participants.Users), nil
+}
+
+// basicGroupMembers is every member of a basic group who can be mentioned.
+// A group that hides its members from the reader, which it does once the
+// reader has been removed, has nobody.
+func (c *Client) basicGroupMembers(ctx context.Context, chatID int64) ([]*User, error) {
+	res, err := c.api.MessagesGetFullChat(ctx, plainChatID(chatID))
+	if err != nil {
+		return nil, err
+	}
+	full, err := c.seededChatFull(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+	participants, ok := full.Participants.(*tg.ChatParticipants)
+	if !ok {
+		return nil, nil
+	}
+
+	ids := make([]int64, 0, len(participants.Participants))
+	for _, p := range participants.Participants {
+		ids = append(ids, p.GetUserID())
+	}
+	return mentionable(ids, res.Users), nil
+}
+
+// participantUserID is the user a supergroup participant is, if it is a
+// user still in the group. A restricted member is listed as banned without
+// having left, and is still there to be mentioned.
+func participantUserID(p tg.ChannelParticipantClass) (int64, bool) {
+	switch v := p.(type) {
+	case *tg.ChannelParticipant:
+		return v.UserID, true
+	case *tg.ChannelParticipantSelf:
+		return v.UserID, true
+	case *tg.ChannelParticipantCreator:
+		return v.UserID, true
+	case *tg.ChannelParticipantAdmin:
+		return v.UserID, true
+	case *tg.ChannelParticipantBanned:
+		if u, ok := v.Peer.(*tg.PeerUser); ok && !v.Left {
+			return u.UserID, true
+		}
+	}
+	return 0, false
+}
+
+// mentionable is the users behind the member IDs an answer lists, in the
+// order listed, as the picker offers them: each once, and neither the reader
+// nor a deleted account.
+//
+// It goes by the IDs rather than the answer's users because those are more
+// than the members. They include whoever invited, promoted or removed a
+// listed member, and that person may have left long ago. The reader is the
+// user the server flags as self, which needs no lookup of its own.
+func mentionable(memberIDs []int64, users []tg.UserClass) []*User {
+	byID := tg.UserClassArray(users).NotEmptyToMap()
+	seen := make(map[int64]bool, len(memberIDs))
+	out := make([]*User, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		u, ok := byID[id]
+		if !ok || u.Self || u.Deleted || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, userFromTG(u))
+	}
+	return out
+}
+
+// maxParticipantsPage is the most members channels.getParticipants answers
+// with in one call.
+const maxParticipantsPage = 200
+
+// participantsLimit is the page size to ask channels.getParticipants for:
+// limit, or the server's cap when there is no limit or it is past the cap.
+func participantsLimit(limit int) int {
+	if limit <= 0 || limit > maxParticipantsPage {
+		return maxParticipantsPage
+	}
+	return limit
+}
+
+// seededParticipants reads a channels.getParticipants answer and seeds the
+// peers manager with the users it carries, so every member it names has
+// the access hash that acting on them takes.
+func (c *Client) seededParticipants(ctx context.Context, res tg.ChannelsChannelParticipantsClass) (*tg.ChannelsChannelParticipants, error) {
+	participants, ok := res.(*tg.ChannelsChannelParticipants)
+	if !ok {
+		return nil, fmt.Errorf("unexpected participants type %T", res)
+	}
+	if err := c.peers.Apply(ctx, participants.Users, nil); err != nil {
+		return nil, fmt.Errorf("apply peers: %w", err)
+	}
+	return participants, nil
+}
+
+// seededChatFull reads a messages.getFullChat answer and seeds the peers
+// manager with its users and chats, for the reason [seededParticipants]
+// does.
+func (c *Client) seededChatFull(ctx context.Context, res *tg.MessagesChatFull) (*tg.ChatFull, error) {
+	full, ok := res.FullChat.(*tg.ChatFull)
+	if !ok {
+		return nil, fmt.Errorf("unexpected full chat type %T", res.FullChat)
+	}
+	if err := c.peers.Apply(ctx, res.Users, res.Chats); err != nil {
+		return nil, fmt.Errorf("apply peers: %w", err)
+	}
+	return full, nil
 }
 
 // CreatePrivateChat returns a (synthetic) private chat entry for a user.
