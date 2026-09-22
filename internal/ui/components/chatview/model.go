@@ -372,9 +372,8 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	}
 	// The palette reaches the renderer too: the grid draws the gutter and
 	// the body draws the message, and they have to agree about what amber
-	// is.
-	m.roles = r
-	m.renderer.SetRoles(r)
+	// is. SetRoles is what does that, here and on every later switch.
+	m.SetRoles(r)
 	m.SetKeys(Keys{})
 	return m
 }
@@ -403,6 +402,17 @@ func hyperlinksEnabled(policy string) bool {
 	default:
 		return theme.SupportsHyperlinks()
 	}
+}
+
+// SetRoles replaces the palette the thread is drawn in: the grid's copy,
+// the renderer's copy — the body and the gutter have to agree about what
+// amber is — and every line already drawn in the old one. Those are cached,
+// and a cache hit would serve the old colours back until each message
+// happened to change.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.renderer.SetRoles(r)
+	m.cache.clear()
 }
 
 // SetSenderRamp sets the colours other people's names are drawn from: the

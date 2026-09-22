@@ -73,6 +73,10 @@ func New(roles theme.Roles) Model {
 	return Model{roles: roles, width: 80, height: 24}
 }
 
+// SetRoles replaces the palette the overlay's chrome is drawn in. The art is
+// left as it is: it is the picture's colours, not the palette's.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 // SetSize sets the overlay to the whole frame.
 //
 // The renderer is rebuilt on every resize rather than being told the new

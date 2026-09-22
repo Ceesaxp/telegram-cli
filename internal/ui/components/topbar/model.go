@@ -56,6 +56,10 @@ func New(roles theme.Roles) Model {
 	return Model{roles: roles, status: "connecting"}
 }
 
+// SetRoles replaces the palette. Every style on the row is built while
+// drawing it, so there is nothing else to re-derive.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 func (m *Model) SetWidth(w int)        { m.width = w }
 func (m *Model) SetFolders(f []Folder) { m.folders = f }
 func (m *Model) SetClock(s string)     { m.clock = s }

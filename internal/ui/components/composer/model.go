@@ -134,8 +134,6 @@ type Model struct {
 func New(r theme.Roles) Model {
 	ta := widgets.NewTextArea()
 	ta.Placeholder = "Type a message..."
-	ta.Style = lipgloss.NewStyle().Foreground(r.Fg).Background(r.Panel)
-	ta.StylePlaceholder = lipgloss.NewStyle().Foreground(r.Dim).Background(r.Panel)
 	// A message can hold line breaks (ctrl+j / shift+enter, vi o/O). This is
 	// declared here rather than inferred from Height so it holds before the
 	// first WindowSizeMsg and on a terminal too short to give the composer
@@ -143,7 +141,7 @@ func New(r theme.Roles) Model {
 	// transient layout number.
 	ta.MultiLine = true
 
-	return Model{
+	m := Model{
 		textarea: ta,
 		height:   3,
 		// A placeholder width until the first WindowSizeMsg. Every row this
@@ -155,6 +153,17 @@ func New(r theme.Roles) Model {
 		drafts:     make(map[int64]draft),
 		editParked: make(map[int64]draft),
 	}
+	m.restyle()
+	return m
+}
+
+// restyle derives from the palette what is styled ahead of drawing rather
+// than while drawing: the textarea's two styles, which the widget holds.
+// Whatever replaces the palette has to call it too, or they keep the colours
+// they were built with.
+func (m *Model) restyle() {
+	m.textarea.Style = lipgloss.NewStyle().Foreground(m.roles.Fg).Background(m.roles.Panel)
+	m.textarea.StylePlaceholder = lipgloss.NewStyle().Foreground(m.roles.Dim).Background(m.roles.Panel)
 }
 
 // SetSize sets the component dimensions.
