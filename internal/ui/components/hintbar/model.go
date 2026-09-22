@@ -40,8 +40,12 @@ type Model struct {
 	// notice, when set, owns the whole row. A transient error or progress
 	// message is more important than a hint the user already knows, and the
 	// design gives it the row for four seconds (docs/tui-2.0.md).
-	notice      string
-	noticeStyle lipgloss.Style
+	//
+	// noticeKind is kept rather than the style it selects, so the colour is
+	// the palette's as it stands when the row is drawn — not as it stood
+	// when the notice was raised.
+	notice     string
+	noticeKind string
 }
 
 func New(roles theme.Roles) Model {
@@ -57,11 +61,17 @@ func (m *Model) ClearNotice()      { m.notice = "" }
 // "error" is red, anything else amber for progress.
 func (m *Model) SetNotice(text, kind string) {
 	m.notice = text
+	m.noticeKind = kind
+}
+
+// noticeStyle is the notice's colour on the chrome row: red for an error,
+// amber for anything else.
+func (m Model) noticeStyle() lipgloss.Style {
 	colour := m.roles.Amber
-	if kind == "error" {
+	if m.noticeKind == "error" {
 		colour = m.roles.Red
 	}
-	m.noticeStyle = lipgloss.NewStyle().Foreground(colour).Background(m.roles.Chrome)
+	return lipgloss.NewStyle().Foreground(colour).Background(m.roles.Chrome)
 }
 
 // View renders the row at exactly the configured width.
@@ -82,7 +92,7 @@ func (m Model) View() string {
 	}
 
 	if m.notice != "" {
-		return cell.FitLine(m.noticeStyle, " "+m.notice, m.width)
+		return cell.FitLine(m.noticeStyle(), " "+m.notice, m.width)
 	}
 
 	// No background on any of these: chrome is this row's surface and the
