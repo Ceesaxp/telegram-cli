@@ -36,6 +36,64 @@ func (m *Model) prepareMentions(chatID int64) {
 	}
 }
 
+// mentionsAllowed reports whether an @ in chatID can name its members: a
+// basic group or a supergroup. A private chat has one person to mention,
+// who is already reading; a broadcast channel's members cannot be named at
+// all. A chat the store has not described yet is neither, until it is.
+func (m Model) mentionsAllowed(chatID int64) bool {
+	kind, ok := m.chatType(chatID)
+	return ok && (kind == telegram.ChatTypeBasicGroup || kind == telegram.ChatTypeSupergroup)
+}
+
+// chatType is what kind of chat the store says chatID is, and false when it
+// has not said.
+func (m Model) chatType(chatID int64) (telegram.ChatType, bool) {
+	entry, ok := m.store.Chats.Get(chatID)
+	if !ok || entry.Chat == nil {
+		return 0, false
+	}
+	return entry.Chat.Type, true
+}
+
+// offerMentionCandidates hands the composer the members of chatID already
+// known here. The composer ignores them for any chat but its own.
+func (m *Model) offerMentionCandidates(chatID int64) {
+	m.composer.SetMentionCandidates(chatID, m.mentionCandidates(chatID))
+}
+
+// mentionCandidates are the members of chatID an @ can offer before any
+// search answers: the people who have been talking in it, most recent
+// first, and then the members earlier searches turned up — each once.
+//
+// Only people. The reader is left out — a mention of yourself notifies
+// nobody — and so is a channel or a group posting in the chat, which is not
+// a member and cannot be mentioned. A sender the store has no user for is
+// left to the search: there is no name to show or insert for them.
+func (m Model) mentionCandidates(chatID int64) []*telegram.User {
+	seen := map[int64]bool{m.myUserId: true}
+	var out []*telegram.User
+	offer := func(u *telegram.User) {
+		if !seen[u.ID] {
+			seen[u.ID] = true
+			out = append(out, u)
+		}
+	}
+	msgs := m.store.Messages.Get(chatID)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		sender, ok := msgs[i].SenderID.(*telegram.MessageSenderUser)
+		if !ok {
+			continue
+		}
+		if u, ok := m.store.Users.Get(sender.UserID); ok {
+			offer(u)
+		}
+	}
+	for _, u := range m.mentionMembers[chatID].users {
+		offer(u)
+	}
+	return out
+}
+
 // mentionSearchDebounce is how long a query waits before it reaches the
 // member search: the forward picker's wait, for the forward picker's
 // reason. Typing a name is one request rather than one per letter, and a
@@ -219,64 +277,6 @@ func answerMention(q composer.MentionQueryMsg, users []*telegram.User, err error
 			Err:    err,
 		}
 	}
-}
-
-// offerMentionCandidates hands the composer the members of chatID already
-// known here. The composer ignores them for any chat but its own.
-func (m *Model) offerMentionCandidates(chatID int64) {
-	m.composer.SetMentionCandidates(chatID, m.mentionCandidates(chatID))
-}
-
-// mentionsAllowed reports whether an @ in chatID can name its members: a
-// basic group or a supergroup. A private chat has one person to mention,
-// who is already reading; a broadcast channel's members cannot be named at
-// all. A chat the store has not described yet is neither, until it is.
-func (m Model) mentionsAllowed(chatID int64) bool {
-	kind, ok := m.chatType(chatID)
-	return ok && (kind == telegram.ChatTypeBasicGroup || kind == telegram.ChatTypeSupergroup)
-}
-
-// chatType is what kind of chat the store says chatID is, and false when it
-// has not said.
-func (m Model) chatType(chatID int64) (telegram.ChatType, bool) {
-	entry, ok := m.store.Chats.Get(chatID)
-	if !ok || entry.Chat == nil {
-		return 0, false
-	}
-	return entry.Chat.Type, true
-}
-
-// mentionCandidates are the members of chatID an @ can offer before any
-// search answers: the people who have been talking in it, most recent
-// first, and then the members earlier searches turned up — each once.
-//
-// Only people. The reader is left out — a mention of yourself notifies
-// nobody — and so is a channel or a group posting in the chat, which is not
-// a member and cannot be mentioned. A sender the store has no user for is
-// left to the search: there is no name to show or insert for them.
-func (m Model) mentionCandidates(chatID int64) []*telegram.User {
-	seen := map[int64]bool{m.myUserId: true}
-	var out []*telegram.User
-	offer := func(u *telegram.User) {
-		if !seen[u.ID] {
-			seen[u.ID] = true
-			out = append(out, u)
-		}
-	}
-	msgs := m.store.Messages.Get(chatID)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		sender, ok := msgs[i].SenderID.(*telegram.MessageSenderUser)
-		if !ok {
-			continue
-		}
-		if u, ok := m.store.Users.Get(sender.UserID); ok {
-			offer(u)
-		}
-	}
-	for _, u := range m.mentionMembers[chatID].users {
-		offer(u)
-	}
-	return out
 }
 
 // mentionPickerRows is the most rows the picker is given: five members and
