@@ -447,10 +447,7 @@ func (m Model) View() string {
 // and the right-aligned key equivalent. The description absorbs all the
 // shrink, since the name and key are what the row exists to show.
 func (m Model) itemLine(it Item, selected bool, nameStyle, descStyle, keyStyle lipgloss.Style) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
+	marker := rowMarker(selected)
 
 	label := it.Name
 	if it.Args != "" {
@@ -479,25 +476,14 @@ func (m Model) itemLine(it Item, selected bool, nameStyle, descStyle, keyStyle l
 		}
 	}
 
-	// Fit to the exact width FIRST, then colour. Rendering through a padded
-	// style instead would spend part of the budget on the style's own frame
-	// and truncate the tail — which is precisely the right-aligned key
-	// equivalent, the one thing on the row that must not be cut.
-	line = cell.Fit(line, Width)
-	if selected {
-		return theme.OverlaySelected(m.roles).Render(line)
-	}
-	return line
+	return m.finishRow(line, selected)
 }
 
 // argLine renders one value row: marker, value, and its description dim
 // beside it. The value is cut only when it cannot fit on its own; the
 // description takes what is left, or is left off.
 func (m Model) argLine(a Arg, selected bool, valueStyle, descStyle lipgloss.Style) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
+	marker := rowMarker(selected)
 
 	value := cell.Truncate(a.Value, Width-cell.Width(marker))
 	line := marker + valueStyle.Render(value)
@@ -507,6 +493,25 @@ func (m Model) argLine(a Arg, selected bool, valueStyle, descStyle lipgloss.Styl
 		line += "  " + descStyle.Render(cell.Truncate(a.Description, descBudget))
 	}
 
+	return m.finishRow(line, selected)
+}
+
+// rowMarker is the gutter a row starts with: a bar on the highlighted one.
+func rowMarker(selected bool) string {
+	if selected {
+		return "▌ "
+	}
+	return "  "
+}
+
+// finishRow fits an assembled row to exactly [Width] and highlights it when
+// it is the selected one.
+//
+// Fit to the exact width FIRST, then colour. Rendering through a padded
+// style instead would spend part of the budget on the style's own frame and
+// truncate the tail — which on a command row is precisely the right-aligned
+// key equivalent, the one thing on the row that must not be cut.
+func (m Model) finishRow(line string, selected bool) string {
 	line = cell.Fit(line, Width)
 	if selected {
 		return theme.OverlaySelected(m.roles).Render(line)
