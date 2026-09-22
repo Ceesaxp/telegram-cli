@@ -690,7 +690,7 @@ func Load() (*Config, error) {
 // is the operator's list.
 //
 // Blank entries are dropped rather than ignored downstream: an empty root
-// means "no root" to [telegram.OpenAllowedSendFile], and a list of
+// means "no root" to [telegram.SendRoots], and a list of
 // nothing but blanks must reject every path rather than accept one.
 func (c *Config) SendRoots() []string {
 	roots := make([]string, 0, len(c.Storage.SendDirs)+2)
@@ -717,7 +717,7 @@ func (c *Config) SendRoots() []string {
 // PrepareSendRoots returns [Config.SendRoots] ready to use, creating the
 // default outbox when it is one of them and does not exist yet. Roots that
 // are still missing are returned in missing so the caller can say so:
-// [telegram.OpenAllowedSendFile] silently skips a root it cannot
+// [telegram.SendRoots] silently skips a root it cannot
 // resolve, so an operator who typo'd a send_dirs entry would otherwise see
 // only "outside the allowed directories" on every send.
 //

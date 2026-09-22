@@ -15,9 +15,26 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-// OpenAllowedSendFile opens path for a remote caller's send if it names a
-// regular file inside one of roots. The send then reads that descriptor
-// (see [Client.SendOpenedFileMessage]) and never goes back to the path.
+// SendRoots is the set of directories a remote caller — the MCP send_file
+// tool, POST /api/send-file — may send a file from. The servers make one
+// when they start, from [config.Config.PrepareSendRoots], and open every
+// file through it; the TUI has none, because there the person choosing
+// the file is the person running the process.
+//
+// A nil SendRoots has no roots and refuses every path.
+type SendRoots struct {
+	dirs []string
+}
+
+// OpenSendRoots makes the SendRoots for dirs, in the order they are
+// searched. Blank entries are skipped.
+func OpenSendRoots(dirs ...string) *SendRoots {
+	return &SendRoots{dirs: dirs}
+}
+
+// Open opens path for a remote caller's send if it names a regular file
+// inside one of the roots. The send then reads that descriptor (see
+// [Client.SendOpenedFileMessage]) and never goes back to the path.
 //
 // That is the point of it. Checking a path and then opening it by name
 // leaves a gap in which anyone who can write to a root swaps the checked
@@ -27,12 +44,16 @@ import (
 // [os.Root], which follows a link only while it stays inside. Whatever the
 // name points at afterwards, what is sent is what was opened.
 //
-// Blank roots are skipped, and with no usable root everything is refused.
-// A root is matched as written and where it really is (see rootDirs), so
-// a root under /tmp on macOS also matches the same path under
-// /private/tmp. A link inside a root must be relative and stay inside:
-// os.Root refuses an absolute link even when it names a file in the root.
-func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
+// With no usable root everything is refused. A root is matched as written
+// and where it really is (see rootDirs), so a root under /tmp on macOS
+// also matches the same path under /private/tmp. A link inside a root must
+// be relative and stay inside: os.Root refuses an absolute link even when
+// it names a file in the root.
+func (r *SendRoots) Open(path string) (*os.File, error) {
+	var roots []string
+	if r != nil {
+		roots = r.dirs
+	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("send file: %w", err)
@@ -158,7 +179,7 @@ func within(dir, path string) (string, bool) {
 	return rel, true
 }
 
-// nonEmpty drops the blank roots OpenAllowedSendFile skips, so the
+// nonEmpty drops the blank roots SendRoots.Open skips, so the
 // error names the set that was actually searched. A caller that passes no
 // usable root gets "()" and rejects everything, which is the correct
 // fail-closed reading of an empty allowlist.
@@ -202,7 +223,7 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 }
 
 // SendOpenedFileMessage is SendFileMessage for a file that is already open,
-// normally by [OpenAllowedSendFile]: it uploads from f and never opens
+// normally by [SendRoots.Open]: it uploads from f and never opens
 // anything by name, so what is sent is what was checked. f is closed when
 // the send is over, whether or not it succeeded.
 func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
@@ -215,7 +236,7 @@ func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string,
 // is for a send by path.
 //
 // The chat shows the file under the base of the name it was opened by,
-// which for [OpenAllowedSendFile] is the path the caller asked for — a
+// which for [SendRoots.Open] is the path the caller asked for — a
 // link's own name, not its target's.
 func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	defer f.Close()

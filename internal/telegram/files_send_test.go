@@ -36,6 +36,12 @@ func sendRoot(t *testing.T) (root, file, secret string) {
 	return root, file, secret
 }
 
+// openAllowed opens path through a SendRoots made from roots, the way a
+// server that started with those roots would.
+func openAllowed(path string, roots ...string) (*os.File, error) {
+	return OpenSendRoots(roots...).Open(path)
+}
+
 // contents reads what f holds and closes it.
 func contents(t *testing.T, f *os.File) string {
 	t.Helper()
@@ -47,12 +53,12 @@ func contents(t *testing.T, f *os.File) string {
 	return string(b)
 }
 
-func TestOpenAllowedSendFileOpensAFileInsideARoot(t *testing.T) {
+func TestSendRootsOpensAFileInsideARoot(t *testing.T) {
 	root, file, _ := sendRoot(t)
 
-	f, err := OpenAllowedSendFile(file, root)
+	f, err := openAllowed(file, root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile(%s): %v", file, err)
+		t.Fatalf("Open(%s): %v", file, err)
 	}
 	// The os.Root it was opened through is closed by now, and the file
 	// still reads: it is not tied to the root.
@@ -63,12 +69,12 @@ func TestOpenAllowedSendFileOpensAFileInsideARoot(t *testing.T) {
 
 // Every root is searched, in order, past a blank one and past one that
 // does not hold the path.
-func TestOpenAllowedSendFileSearchesEveryRoot(t *testing.T) {
+func TestSendRootsSearchesEveryRoot(t *testing.T) {
 	root, file, _ := sendRoot(t)
 
-	f, err := OpenAllowedSendFile(file, "", t.TempDir(), root)
+	f, err := openAllowed(file, "", t.TempDir(), root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile(%s): %v", file, err)
+		t.Fatalf("Open(%s): %v", file, err)
 	}
 	if got := contents(t, f); got != "the file" {
 		t.Fatalf("read %q, want %q", got, "the file")
@@ -99,18 +105,18 @@ func wantRefused(t *testing.T, f *os.File, err error, path string, roots ...stri
 	}
 }
 
-func TestOpenAllowedSendFileRefusesAPathOutsideEveryRoot(t *testing.T) {
+func TestSendRootsRefusesAPathOutsideEveryRoot(t *testing.T) {
 	root, _, secret := sendRoot(t)
 	other := t.TempDir()
 
-	f, err := OpenAllowedSendFile(secret, root, "", other)
+	f, err := openAllowed(secret, root, "", other)
 
 	wantRefused(t, f, err, secret, root, other)
 }
 
 // A link is a name inside the root for a file outside it. Written either
 // way — absolute, or relative and climbing out — it must not be followed.
-func TestOpenAllowedSendFileRefusesASymlinkThatLeavesTheRoot(t *testing.T) {
+func TestSendRootsRefusesASymlinkThatLeavesTheRoot(t *testing.T) {
 	root, _, secret := sendRoot(t)
 	relative, err := filepath.Rel(root, secret)
 	if err != nil {
@@ -124,7 +130,7 @@ func TestOpenAllowedSendFileRefusesASymlinkThatLeavesTheRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			f, err := OpenAllowedSendFile(link, root)
+			f, err := openAllowed(link, root)
 
 			wantRefused(t, f, err, link, root)
 		})
@@ -133,7 +139,7 @@ func TestOpenAllowedSendFileRefusesASymlinkThatLeavesTheRoot(t *testing.T) {
 
 // A relative link that stays inside the root is followed, through a
 // subdirectory and back out of it.
-func TestOpenAllowedSendFileFollowsASymlinkThatStaysInside(t *testing.T) {
+func TestSendRootsFollowsASymlinkThatStaysInside(t *testing.T) {
 	root, _, _ := sendRoot(t)
 	sub := filepath.Join(root, "sub")
 	if err := os.Mkdir(sub, 0o700); err != nil {
@@ -144,9 +150,9 @@ func TestOpenAllowedSendFileFollowsASymlinkThatStaysInside(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f, err := OpenAllowedSendFile(link, root)
+	f, err := openAllowed(link, root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile(%s): %v", link, err)
+		t.Fatalf("Open(%s): %v", link, err)
 	}
 	if got := contents(t, f); got != "the file" {
 		t.Fatalf("read %q, want %q", got, "the file")
@@ -156,14 +162,14 @@ func TestOpenAllowedSendFileFollowsASymlinkThatStaysInside(t *testing.T) {
 // os.Root refuses every absolute link, including one that names a file
 // inside the root. That is its rule rather than this function's, and it
 // is pinned here so the narrowing is a decision rather than a surprise.
-func TestOpenAllowedSendFileRefusesAnAbsoluteSymlinkEvenIntoTheRoot(t *testing.T) {
+func TestSendRootsRefusesAnAbsoluteSymlinkEvenIntoTheRoot(t *testing.T) {
 	root, file, _ := sendRoot(t)
 	link := filepath.Join(root, "link.txt")
 	if err := os.Symlink(file, link); err != nil {
 		t.Fatal(err)
 	}
 
-	f, err := OpenAllowedSendFile(link, root)
+	f, err := openAllowed(link, root)
 
 	wantRefused(t, f, err, link, root)
 }
@@ -186,7 +192,7 @@ func wantNotRegular(t *testing.T, f *os.File, err error, path string) {
 
 // Only a regular file can be sent. A directory used to pass the root check
 // and fail later, at the upload; now it fails where the file is opened.
-func TestOpenAllowedSendFileRefusesADirectory(t *testing.T) {
+func TestSendRootsRefusesADirectory(t *testing.T) {
 	root, _, _ := sendRoot(t)
 	sub := filepath.Join(root, "sub")
 	if err := os.Mkdir(sub, 0o700); err != nil {
@@ -195,7 +201,7 @@ func TestOpenAllowedSendFileRefusesADirectory(t *testing.T) {
 
 	for name, path := range map[string]string{"a subdirectory": sub, "the root itself": root} {
 		t.Run(name, func(t *testing.T) {
-			f, err := OpenAllowedSendFile(path, root)
+			f, err := openAllowed(path, root)
 
 			wantNotRegular(t, f, err, path)
 		})
@@ -208,7 +214,7 @@ func TestOpenAllowedSendFileRefusesADirectory(t *testing.T) {
 // shell, or by EvalSymlinks) still means the same directory. The root is
 // configuration, not something a caller can swap, so resolving it is not
 // the race that resolving the file would be.
-func TestOpenAllowedSendFileAcceptsARootThatIsASymlink(t *testing.T) {
+func TestSendRootsAcceptsARootThatIsASymlink(t *testing.T) {
 	target, _, _ := sendRoot(t)
 	root := filepath.Join(t.TempDir(), "root")
 	if err := os.Symlink(target, root); err != nil {
@@ -224,9 +230,9 @@ func TestOpenAllowedSendFileAcceptsARootThatIsASymlink(t *testing.T) {
 		"under where it really is":     filepath.Join(resolved, "file.txt"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			f, err := OpenAllowedSendFile(path, root)
+			f, err := openAllowed(path, root)
 			if err != nil {
-				t.Fatalf("OpenAllowedSendFile(%s): %v", path, err)
+				t.Fatalf("Open(%s): %v", path, err)
 			}
 			if got := contents(t, f); got != "the file" {
 				t.Fatalf("read %q, want %q", got, "the file")
@@ -238,11 +244,11 @@ func TestOpenAllowedSendFileAcceptsARootThatIsASymlink(t *testing.T) {
 // An allowlist with nothing usable in it must refuse everything. The
 // opposite reading — no roots means no restriction — is the failure mode
 // issue #48 is about, and it would arrive silently.
-func TestOpenAllowedSendFileWithNoUsableRootRefusesEveryPath(t *testing.T) {
+func TestSendRootsWithNoUsableRootRefusesEveryPath(t *testing.T) {
 	_, file, _ := sendRoot(t)
 
 	for _, roots := range [][]string{nil, {""}, {"", ""}} {
-		f, err := OpenAllowedSendFile(file, roots...)
+		f, err := openAllowed(file, roots...)
 
 		wantRefused(t, f, err, file)
 		if !strings.HasSuffix(err.Error(), "()") {
@@ -253,11 +259,11 @@ func TestOpenAllowedSendFileWithNoUsableRootRefusesEveryPath(t *testing.T) {
 
 // A missing file inside a root is missing, not outside: the caller named
 // the right directory, and the error has to say what is actually wrong.
-func TestOpenAllowedSendFileSaysAMissingFileIsMissing(t *testing.T) {
+func TestSendRootsSaysAMissingFileIsMissing(t *testing.T) {
 	root, _, _ := sendRoot(t)
 	path := filepath.Join(root, "nope.bin")
 
-	f, err := OpenAllowedSendFile(path, root)
+	f, err := openAllowed(path, root)
 	if err == nil {
 		f.Close()
 		t.Fatalf("opened %s, want it refused", path)
@@ -322,9 +328,9 @@ func TestSendOpenedFileMessageUploadsTheFileThatWasOpened(t *testing.T) {
 	root, file, secret := sendRoot(t)
 	c, inv := uploadClient(t)
 
-	f, err := OpenAllowedSendFile(file, root)
+	f, err := openAllowed(file, root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	if err := os.Remove(file); err != nil {
 		t.Fatal(err)
@@ -354,9 +360,9 @@ func TestSendOpenedFileMessageClosesTheFile(t *testing.T) {
 			c, inv := uploadClient(t)
 			inv.failUpload = failUpload
 
-			f, err := OpenAllowedSendFile(file, root)
+			f, err := openAllowed(file, root)
 			if err != nil {
-				t.Fatalf("OpenAllowedSendFile: %v", err)
+				t.Fatalf("Open: %v", err)
 			}
 			_, sendErr := c.SendOpenedFileMessage(basicGroupID, f, "", 0, 0)
 			if failed := sendErr != nil; failed != failUpload {
@@ -381,9 +387,9 @@ func TestSendOpenedFileMessageNamesTheFileAsTheCallerDid(t *testing.T) {
 	}
 	c, inv := uploadClient(t)
 
-	f, err := OpenAllowedSendFile(link, root)
+	f, err := openAllowed(link, root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	if _, err := c.SendOpenedFileMessage(basicGroupID, f, "", 0, 0); err != nil {
 		t.Fatalf("SendOpenedFileMessage: %v", err)
@@ -414,9 +420,9 @@ func TestSendOpenedFileMessageCarriesCaptionMentionsAndReply(t *testing.T) {
 	root, file, _ := sendRoot(t)
 	c, inv := uploadClient(t)
 
-	f, err := OpenAllowedSendFile(file, root)
+	f, err := openAllowed(file, root)
 	if err != nil {
-		t.Fatalf("OpenAllowedSendFile: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	_, dropped, err := c.SendOpenedFileMessageWithMentions(basicGroupID, f, "hi Nadia",
 		[]MentionSpan{{Offset: 3, Length: 5, UserID: nadia}}, 42, 0)
@@ -450,7 +456,7 @@ func unclean(parts ...string) string {
 
 // ".." is refused whether it is spelled out in the path or hidden behind a
 // directory link partway along it.
-func TestOpenAllowedSendFileRefusesDotDotEscapes(t *testing.T) {
+func TestSendRootsRefusesDotDotEscapes(t *testing.T) {
 	root, _, secret := sendRoot(t)
 	outside := filepath.Dir(secret)
 	sub := filepath.Join(root, "sub")
@@ -470,7 +476,7 @@ func TestOpenAllowedSendFileRefusesDotDotEscapes(t *testing.T) {
 		"behind a directory link": filepath.Join(root, "up", "secret.txt"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			f, err := OpenAllowedSendFile(path, root)
+			f, err := openAllowed(path, root)
 
 			wantRefused(t, f, err, path, root)
 		})
@@ -479,9 +485,9 @@ func TestOpenAllowedSendFileRefusesDotDotEscapes(t *testing.T) {
 	// And one that climbs but never leaves is just a path.
 	t.Run("staying inside", func(t *testing.T) {
 		path := unclean(sub, "..", "file.txt")
-		f, err := OpenAllowedSendFile(path, root)
+		f, err := openAllowed(path, root)
 		if err != nil {
-			t.Fatalf("OpenAllowedSendFile(%s): %v", path, err)
+			t.Fatalf("Open(%s): %v", path, err)
 		}
 		if got := contents(t, f); got != "the file" {
 			t.Fatalf("read %q, want %q", got, "the file")

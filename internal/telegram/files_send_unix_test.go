@@ -15,7 +15,7 @@ import (
 
 // A file the process cannot read is unreadable, not outside: as with a
 // missing one, the caller named the right directory.
-func TestOpenAllowedSendFileSaysAnUnreadableFileIsUnreadable(t *testing.T) {
+func TestSendRootsSaysAnUnreadableFileIsUnreadable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file")
 	}
@@ -24,7 +24,7 @@ func TestOpenAllowedSendFileSaysAnUnreadableFileIsUnreadable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f, err := OpenAllowedSendFile(file, root)
+	f, err := openAllowed(file, root)
 	if err == nil {
 		f.Close()
 		t.Fatalf("opened %s, want it refused", file)
@@ -41,7 +41,7 @@ func TestOpenAllowedSendFileSaysAnUnreadableFileIsUnreadable(t *testing.T) {
 // writer, so an open that asks the path first and the type second hangs
 // the handler until someone writes — which is anyone who can write to the
 // root.
-func TestOpenAllowedSendFileRefusesAFifoWithoutWaitingForAWriter(t *testing.T) {
+func TestSendRootsRefusesAFifoWithoutWaitingForAWriter(t *testing.T) {
 	root, _, _ := sendRoot(t)
 	fifo := filepath.Join(root, "pipe")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -54,7 +54,7 @@ func TestOpenAllowedSendFileRefusesAFifoWithoutWaitingForAWriter(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		f, err := OpenAllowedSendFile(fifo, root)
+		f, err := openAllowed(fifo, root)
 		done <- result{f, err}
 	}()
 

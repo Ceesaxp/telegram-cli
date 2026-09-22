@@ -59,7 +59,7 @@ func TestSendFileRejectsPathUnderWorkingDirectory(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"chat_id": 1, "path": inCwd})
 	w := httptest.NewRecorder()
-	New(client, testToken).Handler().ServeHTTP(w, authedRequest(http.MethodPost, "/api/send-file", string(body)))
+	sendRootsServer(t, client).Handler().ServeHTTP(w, authedRequest(http.MethodPost, "/api/send-file", string(body)))
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusBadRequest, w.Body.String())
@@ -98,11 +98,20 @@ func (f *fakeFileSender) SendOpenedFileMessage(chatID int64, file *os.File, capt
 	return &telegram.Message{ID: 100, ChatID: chatID}, nil
 }
 
+// sendRootsServer is the REST server as telegram-api starts it: bound to
+// client, with the send roots client's config names.
+func sendRootsServer(t *testing.T, client *telegram.Client) *Server {
+	t.Helper()
+	srv := New(client, testToken)
+	srv.SetSendRoots(telegram.OpenSendRoots(client.SendRoots()...))
+	return srv
+}
+
 // postSendFile drives POST /api/send-file through the real handler, with
 // sender standing in for Telegram.
 func postSendFile(t *testing.T, client *telegram.Client, sender fileSender, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
-	srv := New(client, testToken)
+	srv := sendRootsServer(t, client)
 	srv.files = sender
 	raw, _ := json.Marshal(body)
 	w := httptest.NewRecorder()

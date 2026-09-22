@@ -298,9 +298,9 @@ func runServe(cfg *config.Config) {
 		os.Exit(1)
 	}
 
-	logSendRoots(cfg)
+	roots := openSendRoots(cfg)
 
-	srv := mcpserver.New(client)
+	srv := mcpserver.New(client, roots)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -310,22 +310,23 @@ func runServe(cfg *config.Config) {
 	}
 }
 
-// logSendRoots reports the directories send_file will accept a path from,
-// creating the default outbox if it is one of them. The set used to be
-// files_dir plus whatever directory the process happened to start in,
-// which nobody chose and nothing printed; logging it is half of making it
-// a decision (see issue #48).
+// openSendRoots returns the directories send_file will accept a path
+// from, creating the default outbox if it is one of them, and reports
+// them. The set used to be files_dir plus whatever directory the process
+// happened to start in, which nobody chose and nothing printed; logging it
+// is half of making it a decision (see issue #48).
 //
 // This function is deliberately identical in cmd/telegram-api: the two
 // frontends must describe the same policy in the same words, and they
 // share no package to put it in.
-func logSendRoots(cfg *config.Config) {
-	roots, missing, err := cfg.PrepareSendRoots()
+func openSendRoots(cfg *config.Config) *telegram.SendRoots {
+	dirs, missing, err := cfg.PrepareSendRoots()
 	if err != nil {
 		log.Printf("WARNING: %v", err)
 	}
-	log.Printf("send_file roots: %s", strings.Join(roots, ", "))
+	log.Printf("send_file roots: %s", strings.Join(dirs, ", "))
 	for _, dir := range missing {
 		log.Printf("WARNING: send_file root %s does not exist; files under it cannot be sent", dir)
 	}
+	return telegram.OpenSendRoots(dirs...)
 }
