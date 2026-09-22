@@ -82,24 +82,22 @@ func (p *mdParser) run() {
 		if p.tryMarker() {
 			continue
 		}
-		p.emit(p.src[p.pos])
+		p.emitRange(p.pos, p.pos+1)
 		p.pos++
 	}
 }
 
-// emit appends one rune to the output and advances the UTF-16 cursor.
-func (p *mdParser) emit(r rune) {
-	p.out.WriteRune(r)
-	p.utf16Len += utf16RuneLen(r)
-}
-
-// emitSpan appends runes verbatim and returns their UTF-16 length.
-func (p *mdParser) emitSpan(runes []rune) int32 {
-	start := p.utf16Len
-	for _, r := range runes {
-		p.emit(r)
+// emitRange appends src[start:end] verbatim, advancing the UTF-16 cursor,
+// and returns the UTF-16 length it added. Output is only ever copied from
+// a source range, never from loose runes, so every output rune has a
+// known source index.
+func (p *mdParser) emitRange(start, end int) int32 {
+	before := p.utf16Len
+	for _, r := range p.src[start:end] {
+		p.out.WriteRune(r)
+		p.utf16Len += utf16RuneLen(r)
 	}
-	return p.utf16Len - start
+	return p.utf16Len - before
 }
 
 // emitLiteral copies src[p.pos:end] verbatim and consumes it. Used for
@@ -107,7 +105,7 @@ func (p *mdParser) emitSpan(runes []rune) int32 {
 // consuming them is what stops their markers being re-scanned as some
 // other, smaller construct.
 func (p *mdParser) emitLiteral(end int) {
-	p.emitSpan(p.src[p.pos:end])
+	p.emitRange(p.pos, end)
 	p.pos = end
 }
 
@@ -194,7 +192,7 @@ func (p *mdParser) takeSimple(marker string, mk func() tg.MessageEntityClass) bo
 	}
 
 	offset := p.utf16Len
-	length := p.emitSpan(p.src[contentStart:closer])
+	length := p.emitRange(contentStart, closer)
 	p.addEntity(mk(), offset, length)
 	p.pos = closer + n
 	return true
@@ -240,7 +238,7 @@ func (p *mdParser) takeFence() bool {
 	}
 
 	offset := p.utf16Len
-	length := p.emitSpan(p.src[body:closer])
+	length := p.emitRange(body, closer)
 	if language != "" {
 		p.addEntity(&tg.MessageEntityPre{Language: language}, offset, length)
 	} else {
@@ -282,7 +280,7 @@ func (p *mdParser) takeLink() bool {
 	}
 
 	offset := p.utf16Len
-	length := p.emitSpan(p.src[textStart:closeBracket])
+	length := p.emitRange(textStart, closeBracket)
 	p.addEntity(&tg.MessageEntityTextURL{URL: url}, offset, length)
 	p.pos = closeParen + 1
 	return true
