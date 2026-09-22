@@ -11,8 +11,15 @@ const defaultMessageBufferSize = 200
 
 // MessageStore caches messages per chat.
 type MessageStore struct {
-	mu           sync.RWMutex
-	messages     map[int64][]*telegram.Message // chatID -> messages (newest last)
+	mu       sync.RWMutex
+	messages map[int64][]*telegram.Message // chatID -> messages (newest last)
+
+	// byID indexes the same messages by ID, chatID -> message ID -> message,
+	// so one message can be found without copying and walking the history.
+	// It holds exactly what messages holds: every write that puts a message
+	// into a chat's history or takes one out does the same here.
+	byID map[int64]map[int64]*telegram.Message
+
 	maxSize      int
 	activeChatID int64
 }
@@ -20,6 +27,7 @@ type MessageStore struct {
 func NewMessageStore() *MessageStore {
 	return &MessageStore{
 		messages: make(map[int64][]*telegram.Message),
+		byID:     make(map[int64]map[int64]*telegram.Message),
 		maxSize:  defaultMessageBufferSize,
 	}
 }
@@ -33,11 +41,12 @@ func (s *MessageStore) Activate(chatID int64) {
 	if s.activeChatID == chatID {
 		return
 	}
-	if s.activeChatID != 0 {
-		previous := s.activeChatID
-		s.messages[previous] = trimNewest(s.messages[previous], s.maxSize)
-	}
+	previous := s.activeChatID
 	s.activeChatID = chatID
+	if previous != 0 {
+		// No longer the active chat, so storing it again is what trims it.
+		s.storeLocked(previous, s.messages[previous])
+	}
 }
 
 // Append adds a new message to the end of the chat's message list.
@@ -51,12 +60,14 @@ func (s *MessageStore) Append(chatID int64, msg *telegram.Message) {
 	for i, m := range msgs {
 		if m.ID == msg.ID {
 			msgs[i] = msg
+			s.indexLocked(chatID, msg)
 			s.storeLocked(chatID, msgs)
 			return
 		}
 	}
 
 	msgs = append(msgs, msg)
+	s.indexLocked(chatID, msg)
 	s.storeLocked(chatID, msgs)
 }
 
@@ -85,6 +96,7 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 	combined := make([]*telegram.Message, 0, len(toAdd)+len(existing))
 	combined = append(combined, toAdd...)
 	combined = append(combined, existing...)
+	s.indexLocked(chatID, toAdd...)
 
 	// The cap goes through storeLocked like every other write: cutting the
 	// oldest off the front by reslicing would keep them in the array ahead
@@ -130,12 +142,14 @@ func (s *MessageStore) Merge(chatID int64, msgs []*telegram.Message) []*telegram
 		if i, ok := index[m.ID]; ok {
 			if i >= 0 {
 				existing[i] = m
+				s.indexLocked(chatID, m)
 			}
 			continue
 		}
 		index[m.ID] = -1 // seen, but not in existing
 		added = append(added, m)
 	}
+	s.indexLocked(chatID, added...)
 	if len(added) == 0 {
 		s.storeLocked(chatID, existing)
 		return nil
@@ -167,6 +181,17 @@ func (s *MessageStore) Get(chatID int64) []*telegram.Message {
 	return result
 }
 
+// GetByID returns one cached message by its ID, and whether the chat holds
+// it. It neither copies the history nor walks it, which is the point: a
+// caller after a single message — the one a reply quotes, say — used to pay
+// for [Get]'s copy of the whole chat to find it.
+func (s *MessageStore) GetByID(chatID, messageID int64) (*telegram.Message, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, ok := s.byID[chatID][messageID]
+	return m, ok
+}
+
 // UpdateMessage replaces a message in the store (for edits).
 func (s *MessageStore) UpdateMessage(chatID int64, messageID int64, newMsg *telegram.Message) {
 	s.mu.Lock()
@@ -176,6 +201,8 @@ func (s *MessageStore) UpdateMessage(chatID int64, messageID int64, newMsg *tele
 	for i, m := range msgs {
 		if m.ID == messageID {
 			msgs[i] = newMsg
+			s.forgetLocked(chatID, []*telegram.Message{m}, msgs)
+			s.indexLocked(chatID, newMsg)
 			s.storeLocked(chatID, msgs)
 			return
 		}
@@ -207,13 +234,18 @@ func (s *MessageStore) deleteLocked(chatID int64, messageIDs []int64) {
 		idSet[id] = struct{}{}
 	}
 
+	var gone []*telegram.Message
 	filtered := msgs[:0]
 	for _, m := range msgs {
-		if _, del := idSet[m.ID]; !del {
+		if _, del := idSet[m.ID]; del {
+			gone = append(gone, m)
+		} else {
 			filtered = append(filtered, m)
 		}
 	}
-	s.storeLocked(chatID, shrunk(msgs, len(filtered)))
+	kept := shrunk(msgs, len(filtered))
+	s.forgetLocked(chatID, gone, kept)
+	s.storeLocked(chatID, kept)
 }
 
 // shrunk is msgs after an in-place filter has packed the survivors into its
@@ -244,6 +276,7 @@ func (s *MessageStore) Clear(chatID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.messages, chatID)
+	delete(s.byID, chatID)
 	if s.activeChatID == chatID {
 		s.activeChatID = 0
 	}
@@ -276,10 +309,14 @@ func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *teleg
 		if alreadyThere {
 			// The dispatcher won the race. Remove the placeholder row and
 			// keep the copy that is already in the right place.
-			s.storeLocked(chatID, append(msgs[:i:i], msgs[i+1:]...))
+			kept := append(msgs[:i:i], msgs[i+1:]...)
+			s.forgetLocked(chatID, []*telegram.Message{m}, kept)
+			s.storeLocked(chatID, kept)
 			return
 		}
 		msgs[i] = newMsg
+		s.forgetLocked(chatID, []*telegram.Message{m}, msgs)
+		s.indexLocked(chatID, newMsg)
 		s.storeLocked(chatID, msgs)
 		return
 	}
@@ -290,6 +327,7 @@ func (s *MessageStore) ReplaceMessageId(chatID int64, oldID int64, newMsg *teleg
 		s.storeLocked(chatID, msgs)
 		return
 	}
+	s.indexLocked(chatID, newMsg)
 	s.storeLocked(chatID, append(msgs, newMsg))
 }
 
@@ -314,9 +352,54 @@ func (s *MessageStore) MarkSendFailed(chatID int64, messageID int64) bool {
 	return false
 }
 
+// indexLocked records messages that have just gone into chatID's history.
+func (s *MessageStore) indexLocked(chatID int64, msgs ...*telegram.Message) {
+	if len(msgs) == 0 {
+		return
+	}
+	index := s.byID[chatID]
+	if index == nil {
+		index = make(map[int64]*telegram.Message)
+		s.byID[chatID] = index
+	}
+	for _, m := range msgs {
+		index[m.ID] = m
+	}
+}
+
+// forgetLocked takes messages that have just left chatID's history out of
+// its index; kept is the history they left.
+//
+// An entry goes only if it is still that very message, so a swap that
+// indexes the incoming message before forgetting the outgoing one under the
+// same ID cannot lose it. And when more went than stayed, the index is built
+// again from what is left instead: a Go map never gives back the room it
+// grew into, and an index sized for a history paged thousands deep should
+// not outlive it.
+func (s *MessageStore) forgetLocked(chatID int64, gone, kept []*telegram.Message) {
+	if len(gone) == 0 {
+		return
+	}
+	if len(gone) > len(kept) {
+		delete(s.byID, chatID)
+		s.indexLocked(chatID, kept...)
+		return
+	}
+	index := s.byID[chatID]
+	for _, m := range gone {
+		if index[m.ID] == m {
+			delete(index, m.ID)
+		}
+	}
+}
+
+// storeLocked makes msgs chatID's history, trimmed to the background cap
+// unless it is the chat being read.
 func (s *MessageStore) storeLocked(chatID int64, msgs []*telegram.Message) {
 	if chatID != s.activeChatID {
-		msgs = trimNewest(msgs, s.maxSize)
+		kept := trimNewest(msgs, s.maxSize)
+		s.forgetLocked(chatID, msgs[:len(msgs)-len(kept)], kept)
+		msgs = kept
 	}
 	s.messages[chatID] = msgs
 }
