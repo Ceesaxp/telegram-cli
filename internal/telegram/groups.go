@@ -131,6 +131,82 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 	return info, nil
 }
 
+// SearchChatMembers finds the members of a chat whose names match query,
+// for the @-mention picker.
+func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
+	ctx, cancel := opCtx()
+	defer cancel()
+	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
+	if err != nil {
+		return nil, fmt.Errorf("search chat members: %w", err)
+	}
+
+	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
+		Channel: channel.InputChannel(),
+		Filter:  &tg.ChannelParticipantsSearch{Q: query},
+		Limit:   limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search chat members: %w", err)
+	}
+	participants, err := c.seededParticipants(ctx, res)
+	if err != nil {
+		return nil, fmt.Errorf("search chat members: %w", err)
+	}
+
+	ids := make([]int64, 0, len(participants.Participants))
+	for _, p := range participants.Participants {
+		if id, ok := participantUserID(p); ok {
+			ids = append(ids, id)
+		}
+	}
+	return mentionable(ids, participants.Users), nil
+}
+
+// participantUserID is the user a supergroup participant is, if it is a
+// user still in the group. A restricted member is listed as banned without
+// having left, and is still there to be mentioned.
+func participantUserID(p tg.ChannelParticipantClass) (int64, bool) {
+	switch v := p.(type) {
+	case *tg.ChannelParticipant:
+		return v.UserID, true
+	case *tg.ChannelParticipantSelf:
+		return v.UserID, true
+	case *tg.ChannelParticipantCreator:
+		return v.UserID, true
+	case *tg.ChannelParticipantAdmin:
+		return v.UserID, true
+	case *tg.ChannelParticipantBanned:
+		if u, ok := v.Peer.(*tg.PeerUser); ok && !v.Left {
+			return u.UserID, true
+		}
+	}
+	return 0, false
+}
+
+// mentionable is the users behind the member IDs an answer lists, in the
+// order listed, as the picker offers them: each once, and neither the reader
+// nor a deleted account.
+//
+// It goes by the IDs rather than the answer's users because those are more
+// than the members. They include whoever invited, promoted or removed a
+// listed member, and that person may have left long ago. The reader is the
+// user the server flags as self, which needs no lookup of its own.
+func mentionable(memberIDs []int64, users []tg.UserClass) []*User {
+	byID := tg.UserClassArray(users).NotEmptyToMap()
+	seen := make(map[int64]bool, len(memberIDs))
+	out := make([]*User, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		u, ok := byID[id]
+		if !ok || u.Self || u.Deleted || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, userFromTG(u))
+	}
+	return out
+}
+
 // seededParticipants reads a channels.getParticipants answer and seeds the
 // peers manager with the users it carries, so every member it names has
 // the access hash that acting on them takes.
