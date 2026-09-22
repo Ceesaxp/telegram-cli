@@ -372,9 +372,8 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	}
 	// The palette reaches the renderer too: the grid draws the gutter and
 	// the body draws the message, and they have to agree about what amber
-	// is.
-	m.roles = r
-	m.renderer.SetRoles(r)
+	// is. SetRoles is what does that, here and on every later switch.
+	m.SetRoles(r)
 	m.SetKeys(Keys{})
 	return m
 }
