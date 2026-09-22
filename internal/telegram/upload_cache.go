@@ -151,16 +151,21 @@ func (c *Client) CancelUpload(path string) {
 	c.uploads.cancel(path)
 }
 
-// uploadFile puts path on Telegram's servers, reporting progress as it goes.
+// newUploader is the uploader every send uses.
 //
 // gotd defaults to 1 upload thread and 128 KiB parts, which leaves both the
 // network and Telegram's part-based protocol underused. 512 KiB is the
 // largest part size Telegram accepts, and uploading with several threads
 // lets those parts go out in parallel.
+func (c *Client) newUploader() *uploader.Uploader {
+	return uploader.NewUploader(c.api).
+		WithPartSize(512 * 1024).
+		WithThreads(4)
+}
+
+// uploadFile puts path on Telegram's servers, reporting progress as it goes.
 func (c *Client) uploadFile(ctx context.Context, path string, generation uint64) (tg.InputFileClass, error) {
-	file, err := uploader.NewUploader(c.api).
-		WithPartSize(512*1024).
-		WithThreads(4).
+	file, err := c.newUploader().
 		WithProgress(&uploadProgress{client: c, path: path, generation: generation, last: -1}).
 		FromPath(ctx, path)
 	if err != nil {

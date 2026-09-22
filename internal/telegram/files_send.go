@@ -2,60 +2,163 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
 	"mime"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 )
 
-// ResolveAllowedSendPath returns the absolute, symlink-resolved form of
-// path if it exists and is the same as, or inside, one of roots.
-// Empty roots are ignored. The file itself must exist (a dangling last
-// component is rejected) so a symlink cannot later be swapped for a
-// path outside the jail.
-func ResolveAllowedSendPath(path string, roots ...string) (string, error) {
+// OpenAllowedSendFile opens path for a remote caller's send if it names a
+// regular file inside one of roots. The send then reads that descriptor
+// (see [Client.SendOpenedFileMessage]) and never goes back to the path.
+//
+// That is the point of it. Checking a path and then opening it by name
+// leaves a gap in which anyone who can write to a root swaps the checked
+// file for a symlink to one outside, and the upload reads that instead.
+// Here the check is the open: path is made absolute and clean but not
+// resolved, taken relative to each root in turn, and opened through an
+// [os.Root], which follows a link only while it stays inside. Whatever the
+// name points at afterwards, what is sent is what was opened.
+//
+// Blank roots are skipped, and with no usable root everything is refused.
+// A root is matched as written and where it really is (see rootDirs), so
+// a root under /tmp on macOS also matches the same path under
+// /private/tmp. A link inside a root must be relative and stay inside:
+// os.Root refuses an absolute link even when it names a file in the root.
+func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
-		return "", fmt.Errorf("send file: %w", err)
+		return nil, fmt.Errorf("send file: %w", err)
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("send file: %w", err)
+	// found is why a root that holds the path could not send it. It
+	// outranks "outside": the path was inside, and saying otherwise would
+	// send the caller looking for a typo that is not there.
+	var found error
+	for _, dir := range rootDirs(roots) {
+		rel, ok := within(dir, abs)
+		if !ok {
+			continue
+		}
+		f, err := openInRoot(dir, rel)
+		if err == nil {
+			return f, nil
+		}
+		if found == nil && foundButUnsendable(err) {
+			found = fmt.Errorf("send file: %q: %w", path, cause(err))
+		}
 	}
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		evalRoot, err := filepath.EvalSymlinks(absRoot)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(evalRoot, resolved)
-		if err != nil {
-			continue
-		}
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		return resolved, nil
+	if found != nil {
+		return nil, found
 	}
 	// Name the roots. The caller here is an authenticated operator or the
 	// agent they configured, the set is already logged at startup and
 	// documented, and "outside the allowed directories" with no list is a
 	// dead end — the reader cannot tell a typo from a policy.
-	return "", fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
+	return nil, fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
 		path, strings.Join(nonEmpty(roots), ", "))
 }
 
-// nonEmpty drops the blank roots ResolveAllowedSendPath skips, so the
+// errNotRegular refuses what is not a plain file: a directory, a fifo, a
+// device. There is nothing in one to send, and reading some of them has
+// side effects or never ends.
+var errNotRegular = errors.New("not a regular file")
+
+// openInRoot opens name, relative to dir, without leaving dir, and only if
+// it is a regular file. An [os.Root] refuses a ".." or a symlink that
+// points outside it, checking each link as it follows it on the
+// descriptors it opens; the type is then asked of the descriptor, not of
+// the path, which may name something else by now.
+//
+// The root is closed on the way out. The file is not tied to it and stays
+// open, which is what [os.OpenInRoot] relies on too.
+func openInRoot(dir, name string) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	f, err := root.OpenFile(name, sendOpenFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errNotRegular
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// foundButUnsendable reports whether err, from opening a path inside a
+// root, says the file is there (or ought to be) and cannot be sent, as
+// opposed to lying outside. Anything else — above all os.Root's refusal
+// of a path that leaves it, which has no exported error of its own — reads
+// as outside.
+func foundButUnsendable(err error) bool {
+	return errors.Is(err, errNotRegular) ||
+		errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, fs.ErrPermission)
+}
+
+// cause is err without the path os.Root put on it, which is relative to
+// the root; the caller's error names the path as they gave it instead.
+func cause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
+}
+
+// rootDirs is every directory a path may be named under: each root as
+// written, made absolute, and also where it really is when that differs.
+// A root is configuration, not something a caller can swap, so resolving
+// its links here is safe in a way that resolving the file's would not be.
+// Blank roots are skipped, as is one that cannot be made absolute.
+func rootDirs(roots []string) []string {
+	dirs := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		dirs = append(dirs, abs)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+			dirs = append(dirs, resolved)
+		}
+	}
+	return dirs
+}
+
+// within returns path relative to dir, if path is dir or lies beneath it.
+// Both must be absolute and clean. It reads nothing from disk: a symlink
+// on the way is the open's business, not this.
+func within(dir, path string) (string, bool) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
+// nonEmpty drops the blank roots OpenAllowedSendFile skips, so the
 // error names the set that was actually searched. A caller that passes no
 // usable root gets "()" and rejects everything, which is the correct
 // fail-closed reading of an empty allowlist.
@@ -91,24 +194,76 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
 
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, path), caption, mentions, replyToMessageID, placeholderID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	return msg, dropped, nil
+}
+
+// SendOpenedFileMessage is SendFileMessage for a file that is already open,
+// normally by [OpenAllowedSendFile]: it uploads from f and never opens
+// anything by name, so what is sent is what was checked. f is closed when
+// the send is over, whether or not it succeeded.
+func (c *Client) SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
+	msg, _, err := c.SendOpenedFileMessageWithMentions(chatID, f, caption, nil, replyToMessageID, placeholderID)
+	return msg, err
+}
+
+// SendOpenedFileMessageWithMentions is SendOpenedFileMessage for a caption
+// that mentions users without a username, as SendFileMessageWithMentions
+// is for a send by path.
+//
+// The chat shows the file under the base of the name it was opened by,
+// which for [OpenAllowedSendFile] is the path the caller asked for — a
+// link's own name, not its target's.
+func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
+	defer f.Close()
+	ctx, cancel := transferCtx()
+	defer cancel()
+
+	peer, err := c.inputPeer(ctx, chatID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	name := filepath.Base(f.Name())
+	inputFile, err := c.uploadOpened(ctx, f, name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: upload %q: %w", name, err)
+	}
+
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, name), caption, mentions, replyToMessageID, placeholderID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	return msg, dropped, nil
+}
+
+// uploadOpened puts f on Telegram's servers as name, reading only from f.
+// The size comes from the descriptor as well, never from a path.
+func (c *Client) uploadOpened(ctx context.Context, f *os.File, name string) (tg.InputFileClass, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return c.newUploader().Upload(ctx, uploader.NewUpload(name, f, info.Size()))
+}
+
+// documentMedia is an uploaded file as a document named for path: its base
+// name is the file name the chat shows, and its extension picks the MIME
+// type.
+func documentMedia(file tg.InputFileClass, path string) *tg.InputMediaUploadedDocument {
 	mimeType := mime.TypeByExtension(filepath.Ext(path))
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-
-	media := &tg.InputMediaUploadedDocument{
-		File:     inputFile,
+	return &tg.InputMediaUploadedDocument{
+		File:     file,
 		MimeType: mimeType,
 		Attributes: []tg.DocumentAttributeClass{
 			&tg.DocumentAttributeFilename{FileName: filepath.Base(path)},
 		},
 	}
-
-	msg, dropped, err := c.sendUploadedMedia(ctx, peer, media, caption, mentions, replyToMessageID, placeholderID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("send file: %w", err)
-	}
-	return msg, dropped, nil
 }
 
 // photoSizeLimit is the largest file Telegram accepts as an uploaded
