@@ -15,6 +15,7 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	t.Setenv("TELETUI_CONFIG", path)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	return path
 }
 

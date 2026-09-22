@@ -1,0 +1,33 @@
+# Kanagawa (wave) for tele-tui.
+# Palette: rebelot/kanagawa.nvim — lua/kanagawa/colors.lua, themes.lua.
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "kanagawa"  in config.toml.
+
+[theme]
+name    = "kanagawa"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#1f1f28"
+panel     = "#16161d"
+chrome    = "#16161d"
+sel       = "#223249"
+cur_line  = "#363646"
+rule      = "#2a2a37"
+rule_soft = "#2a2a37"
+border    = "#54546d"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#54546d"
+faint     = "#727169"
+dim       = "#c8c093"
+fg        = "#dcd7ba"
+bright    = "#dcd7ba"
+
+# Semantic accents.
+cyan      = "#7aa89f"
+amber     = "#e6c384"
+green     = "#98bb6c"
+mauve     = "#957fb8"
+blue      = "#7e9cd8"
+red       = "#e82424"

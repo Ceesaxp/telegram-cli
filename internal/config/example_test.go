@@ -94,6 +94,7 @@ func TestTheExampleParses(t *testing.T) {
 	// Through Load itself rather than the decoder underneath it, so
 	// anything the real path does after unmarshalling is exercised too.
 	t.Setenv("TELETUI_CONFIG", "../../config.example.toml")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("config.example.toml does not load: %v", err)

@@ -9,6 +9,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"time"
 )
@@ -264,6 +265,53 @@ func TestSenderColoursAreStableAndSpread(t *testing.T) {
 		if n < 8 {
 			t.Errorf("colour %s got only %d of 64 consecutive IDs", colour, n)
 		}
+	}
+}
+
+// TestSenderColoursComeFromTheRampItWasGiven: a theme can choose the colours
+// names are hashed into, and the thread has to draw from the ramp it was
+// handed rather than the default one — while "you" stays green, because
+// that is a role and not a bucket.
+func TestSenderColoursComeFromTheRampItWasGiven(t *testing.T) {
+	m := gridModel(t, 67)
+	m.SetSenderRamp([]lipgloss.Color{m.roles.Red})
+
+	for _, sender := range []int64{200, 201} {
+		if _, colour := m.senderFor(textMessage(9, sender, "hi")); colour != m.roles.Red {
+			t.Errorf("sender %d is %q, want red, the only colour on the ramp", sender, colour)
+		}
+	}
+	if _, colour := m.senderFor(textMessage(8, 100, "mine")); colour != m.roles.Green {
+		t.Errorf("own messages are %q under a theme's ramp, want green", colour)
+	}
+}
+
+// TestANewRampRepaintsLinesAlreadyDrawn: the grid caches rendered lines,
+// sender colour included, so a ramp that arrived after the first frame
+// would otherwise show only on messages that had not been drawn yet.
+func TestANewRampRepaintsLinesAlreadyDrawn(t *testing.T) {
+	m := gridModel(t, 67)
+	red := lipgloss.NewStyle().Foreground(m.roles.Red).Render("x")
+	red = red[:strings.Index(red, "x")]
+	if red == "" {
+		t.Fatal("precondition: red renders no escape under this profile")
+	}
+	nadia := func(view string) string {
+		for _, line := range strings.Split(view, "\n") {
+			if strings.Contains(ansi.Strip(line), "nadia  Rollout") {
+				return line
+			}
+		}
+		t.Fatalf("nadia's first line is not on screen:\n%s", ansi.Strip(view))
+		return ""
+	}
+	if strings.Contains(nadia(m.View()), red) {
+		t.Fatal("precondition: nadia is already red on the default ramp")
+	}
+
+	m.SetSenderRamp([]lipgloss.Color{m.roles.Red})
+	if !strings.Contains(nadia(m.View()), red) {
+		t.Error("nadia's name kept its old colour after the ramp changed")
 	}
 }
 

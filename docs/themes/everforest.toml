@@ -1,0 +1,55 @@
+# Everforest (dark, medium) for tele-tui.
+# Palette: sainnhe/everforest — autoload/everforest.vim (hex and cterm).
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "everforest"  in config.toml.
+
+[theme]
+name    = "everforest"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#2d353b"
+panel     = "#232a2e"
+chrome    = "#3d484d"
+sel       = "#543a48"
+cur_line  = "#343f44"
+rule      = "#4f585e"
+rule_soft = "#3d484d"
+border    = "#56635f"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#4f585e"
+faint     = "#859289"
+dim       = "#9da9a0"
+fg        = "#d3c6aa"
+bright    = "#d3c6aa"
+
+# Semantic accents.
+cyan      = "#83c092"
+amber     = "#dbbc7f"
+green     = "#a7c080"
+mauve     = "#d699b6"
+blue      = "#7fbbb3"
+red       = "#e67e80"
+
+# Hand-picked xterm-256 values, from the scheme's own cterm table.
+[colors256]
+bg        = "235"
+panel     = "233"
+chrome    = "237"
+sel       = "52"
+cur_line  = "236"
+rule      = "239"
+rule_soft = "237"
+border    = "240"
+ghost     = "239"
+faint     = "245"
+dim       = "247"
+fg        = "223"
+bright    = "223"
+cyan      = "108"
+amber     = "214"
+green     = "142"
+mauve     = "175"
+blue      = "109"
+red       = "167"

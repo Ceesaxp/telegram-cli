@@ -195,8 +195,39 @@ func RolesFor(name string, trueColor bool) Roles {
 // that can stop agreeing, and a person shown mauve in the thread and blue in
 // the rail beside it is two people as far as the reader is concerned.
 func SenderColour(id int64, r Roles) lipgloss.Color {
-	palette := [...]lipgloss.Color{r.Mauve, r.Cyan, r.Blue, r.Amber}
+	ramp := defaultRamp(r)
+	return ramp[senderHash(id)%uint64(len(ramp))]
+}
 
+// SenderColourFrom is [SenderColour] over the ramp a theme resolved, by the
+// same hash. An empty ramp is the default one, so a component that was
+// never handed a ramp colours people exactly as SenderColour does.
+//
+// The ramp is resolved once, at load, and held by the component: this runs
+// for every sender on every rendered line, and allocates nothing.
+func SenderColourFrom(id int64, ramp []lipgloss.Color, r Roles) lipgloss.Color {
+	if len(ramp) == 0 {
+		return SenderColour(id, r)
+	}
+	return ramp[senderHash(id)%uint64(len(ramp))]
+}
+
+// DefaultSenderRamp is the ramp of a theme that names none of its own.
+func DefaultSenderRamp(r Roles) []lipgloss.Color {
+	ramp := defaultRamp(r)
+	return ramp[:]
+}
+
+// defaultRamp is the default ramp as an array, so SenderColour can index
+// it without a slice escaping to the heap on every call.
+func defaultRamp(r Roles) [4]lipgloss.Color {
+	return [...]lipgloss.Color{r.Mauve, r.Cyan, r.Blue, r.Amber}
+}
+
+// senderHash is FNV-1a over the eight bytes of a user ID, low byte first.
+// Every person's colour is this modulo the length of a ramp, so it must
+// never change: a different hash is everybody changing colour at once.
+func senderHash(id int64) uint64 {
 	const (
 		offset64 = uint64(14695981039346656037)
 		prime64  = uint64(1099511628211)
@@ -208,5 +239,5 @@ func SenderColour(id int64, r Roles) lipgloss.Color {
 		h *= prime64
 		u >>= 8
 	}
-	return palette[h%uint64(len(palette))]
+	return h
 }

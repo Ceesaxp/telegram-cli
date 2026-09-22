@@ -1,0 +1,56 @@
+# Dracula for tele-tui.
+# Palette: dracula/dracula-theme (spec) and dracula/vim — autoload/dracula.vim (hex and cterm).
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "dracula"  in config.toml.
+# Dracula has no blue: purple takes the blue role and pink the mauve role.
+
+[theme]
+name    = "dracula"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#282a36"
+panel     = "#21222c"
+chrome    = "#191a21"
+sel       = "#44475a"
+cur_line  = "#424450"
+rule      = "#44475a"
+rule_soft = "#343746"
+border    = "#6272a4"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#44475a"
+faint     = "#6272a4"
+dim       = "#6272a4"
+fg        = "#f8f8f2"
+bright    = "#f8f8f2"
+
+# Semantic accents.
+cyan      = "#8be9fd"
+amber     = "#f1fa8c"
+green     = "#50fa7b"
+mauve     = "#ff79c6"
+blue      = "#bd93f9"
+red       = "#ff5555"
+
+# Hand-picked xterm-256 values, from the scheme's own cterm table.
+[colors256]
+bg        = "236"
+panel     = "235"
+chrome    = "234"
+sel       = "239"
+cur_line  = "238"
+rule      = "239"
+rule_soft = "237"
+border    = "61"
+ghost     = "239"
+faint     = "61"
+dim       = "61"
+fg        = "253"
+bright    = "253"
+cyan      = "117"
+amber     = "228"
+green     = "84"
+mauve     = "212"
+blue      = "141"
+red       = "203"

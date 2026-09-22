@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -222,6 +223,11 @@ type Model struct {
 	// a component with two behaviours.
 	roles theme.Roles
 
+	// senderRamp is the colours other people's names are hashed into, as
+	// the theme resolved them. Nil is the default ramp of roles, which is
+	// what a Model nobody handed a ramp to draws.
+	senderRamp []lipgloss.Color
+
 	// unreadFromID is the first message that was unread when the chat
 	// opened, and unreadCount how many there were. The divider is drawn
 	// from these rather than from the live marker so that it STAYS where
@@ -397,6 +403,15 @@ func hyperlinksEnabled(policy string) bool {
 	default:
 		return theme.SupportsHyperlinks()
 	}
+}
+
+// SetSenderRamp sets the colours other people's names are drawn from: the
+// ramp the theme resolved alongside the palette. Nil or empty is the
+// palette's default ramp. Lines already rendered carry the old colours, so
+// the cache goes with it.
+func (m *Model) SetSenderRamp(ramp []lipgloss.Color) {
+	m.senderRamp = slices.Clone(ramp)
+	m.cache.clear()
 }
 
 // ApplyStorage takes the [storage] settings this panel needs: where `s`

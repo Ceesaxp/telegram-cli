@@ -35,7 +35,15 @@ send_dirs = ["~/.local/share/tele-tui/outbox"]
 
 # UI preferences
 [ui]
-theme = "dark"               # "dark" or "light"
+# The palette: "dark" or "light", which are built in, or a theme file you
+# write. Any other plain name means themes/<name>.toml, looked for next to
+# this file and then in ~/.config/tele-tui/; a value holding a "/" or ending
+# in .toml is the path to the file itself. A theme names only the colours it
+# changes and inherits the rest from dark or light. Examples to copy into
+# place are in docs/themes/ in the repository, and the format is in
+# docs/theming.md. A theme that cannot be used falls back to dark, and
+# startup says why.
+theme = "dark"               # "dark", "light", or a theme file's name
 
 # INERT. Both are read back and written out so an existing config
 # round-trips, and nothing consults either one.

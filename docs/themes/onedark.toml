@@ -1,0 +1,34 @@
+# One Dark (dark style) for tele-tui.
+# Palette: navarasu/onedark.nvim — lua/onedark/palette.lua, highlights.lua.
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "onedark"  in config.toml.
+# ghost is the gutter grey of the original joshdick/onedark.vim; bg3 is too faint for glyphs.
+
+[theme]
+name    = "onedark"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#282c34"
+panel     = "#21252b"
+chrome    = "#393f4a"
+sel       = "#3b3f4c"
+cur_line  = "#31353f"
+rule      = "#3b3f4c"
+rule_soft = "#31353f"
+border    = "#5c6370"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#4b5263"
+faint     = "#5c6370"
+dim       = "#848b98"
+fg        = "#abb2bf"
+bright    = "#abb2bf"
+
+# Semantic accents.
+cyan      = "#56b6c2"
+amber     = "#e5c07b"
+green     = "#98c379"
+mauve     = "#c678dd"
+blue      = "#61afef"
+red       = "#e86671"

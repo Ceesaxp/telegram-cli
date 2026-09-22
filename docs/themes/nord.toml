@@ -1,0 +1,34 @@
+# Nord for tele-tui.
+# Palette: nordtheme/nord — src/nord.css; nordtheme/vim — colors/nord.vim.
+# Copy into ~/.config/tele-tui/themes/ and set  ui.theme = "nord"  in config.toml.
+# faint is nord-vim's brightened comment grey; dim is the nord3/nord4 midpoint, derived because Nord has nothing between them.
+
+[theme]
+name    = "nord"
+inherit = "dark"
+
+[colors]
+# Surfaces, darkest context first.
+bg        = "#2e3440"
+panel     = "#2e3440"
+chrome    = "#3b4252"
+sel       = "#434c5e"
+cur_line  = "#3b4252"
+rule      = "#434c5e"
+rule_soft = "#3b4252"
+border    = "#4c566a"
+
+# Text ramp, dimmest to brightest.
+ghost     = "#4c566a"
+faint     = "#616e88"
+dim       = "#929aaa"
+fg        = "#d8dee9"
+bright    = "#eceff4"
+
+# Semantic accents.
+cyan      = "#88c0d0"
+amber     = "#ebcb8b"
+green     = "#a3be8c"
+mauve     = "#b48ead"
+blue      = "#81a1c1"
+red       = "#bf616a"
