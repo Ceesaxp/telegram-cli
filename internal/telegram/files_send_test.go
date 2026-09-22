@@ -173,6 +173,32 @@ func TestSendRootsMatchAPathThroughItsResolvedDirectory(t *testing.T) {
 	}
 }
 
+// Resolving a caller's path touches the filesystem it names, before any
+// root has been matched. On Windows a path on a network share makes that
+// an SMB connection to whatever host the caller chose, which hands it the
+// user's NTLM hash; a prompt-injected MCP caller can name one. Only a
+// local volume — none, on unix, or a drive letter — is ever resolved.
+// filepath.VolumeName is "" for all of these off Windows, so the decision
+// is tested on the strings it would return there.
+func TestOnlyALocalVolumeIsEverResolved(t *testing.T) {
+	for volume, want := range map[string]bool{
+		"":                           true, // unix, and a rooted path with no drive on Windows
+		"C:":                         true,
+		"z:":                         true,
+		`\\attacker.example\s`:       false, // UNC
+		`//attacker.example/s`:       false, // UNC, written with slashes
+		`\\?\UNC\attacker.example\s`: false, // long UNC
+		`\\.\UNC\attacker.example\s`: false, // device-namespace UNC
+		`\??\UNC\attacker.example\s`: false, // NT namespace, passed through as is
+		`\\?\C:`:                     false, // a local drive, but a device path
+		`\\.\pipe`:                   false, // a device
+	} {
+		if got := resolvableVolume(volume); got != want {
+			t.Errorf("resolvableVolume(%q) = %v, want %v", volume, got, want)
+		}
+	}
+}
+
 // A NUL cannot be in a file name, so a path with one is invalid rather
 // than outside.
 func TestSendRootsCallAPathWithANulInvalid(t *testing.T) {

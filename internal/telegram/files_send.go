@@ -216,9 +216,14 @@ func cause(err error) error {
 // still happens inside a held root, which refuses anything that leaves it
 // whatever the parent resolved to; a parent swapped in between can at most
 // pick a different file inside a root. The file's own name is never
-// resolved, so a final link is still os.Root's to judge.
+// resolved, so a final link is still os.Root's to judge. A path that is not
+// on a local volume is never resolved at all (see resolvableVolume): this
+// runs before any root is matched, on whatever path the caller sent.
 func namesFor(abs string) []string {
 	names := []string{abs}
+	if !resolvableVolume(filepath.VolumeName(abs)) {
+		return names
+	}
 	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
 	if err != nil {
 		return names
@@ -227,6 +232,23 @@ func namesFor(abs string) []string {
 		names = append(names, resolved)
 	}
 	return names
+}
+
+// resolvableVolume reports whether a caller's path on volume, as
+// [filepath.VolumeName] gives it, may be resolved before a root is
+// matched. Resolving touches the filesystem the path names, and on Windows
+// a path on a network share — \\host\share, //host/share, \\?\UNC\...,
+// \\.\UNC\..., or \??\UNC\..., which Windows passes to the NT namespace as
+// it is — makes that an SMB connection to a host the caller chose, which
+// hands it the user's NTLM hash. So only a local volume is resolved: none,
+// which is every path on unix, or a bare drive letter. Anything else is
+// matched as written, which a root on a share still does; device paths
+// such as \\?\C:\ lose only the match through a linked directory.
+//
+// A string test rather than a question put to the OS, so that it can be
+// tested with Windows volumes on any platform.
+func resolvableVolume(volume string) bool {
+	return volume == "" || (len(volume) == 2 && volume[1] == ':')
 }
 
 // within returns path relative to dir, if path is dir or lies beneath it.
