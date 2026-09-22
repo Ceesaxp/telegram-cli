@@ -52,6 +52,14 @@ func New(r theme.Roles, authorizer *telegram.TUIAuthorizer) Model {
 	return m
 }
 
+// SetRoles replaces the palette, and everything New derived from it: a
+// field left in the old palette on a screen drawn in the new one is what
+// swapping the palette alone would give.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.restyle()
+}
+
 // restyle derives from the palette what is styled ahead of drawing rather
 // than while drawing: the input field's two styles, which the widget holds.
 // Whatever replaces the palette has to call it too, or the field keeps the
