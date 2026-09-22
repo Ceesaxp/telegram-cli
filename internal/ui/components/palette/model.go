@@ -192,7 +192,7 @@ func (m Model) choosingArg() bool { return len(m.arg.Candidates) > 0 }
 
 // Update handles a keypress while the palette owns input.
 //
-// Navigation is arrows and ctrl+n/ctrl+p only — NOT j/k. The handoff
+// Navigation is the arrows only — NOT j/k. The handoff
 // specified j/k, but the palette is a text surface: every printable key has
 // to reach the query or commands like ":jump" and ":keymap" could not be
 // typed at all. See docs/tui-2.0.md, "Divergences from the handoff prose".
