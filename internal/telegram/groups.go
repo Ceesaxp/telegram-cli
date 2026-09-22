@@ -147,10 +147,12 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 //     no member list is asked for. The picker is not offered there.
 //
 // Either way each user comes back once. The reader's own account and
-// deleted accounts are left out, and so is anyone the answer names only as
-// someone's inviter or promoter. Every user in the answer is handed to the
-// peers manager before this returns, so a mention of the one picked has the
-// access hash a send needs to name them by ID.
+// deleted accounts are left out. So is anyone who has left or been removed,
+// and anyone the answer names only as someone's inviter, promoter or
+// remover. A restricted member is still a member and stays in. Every user
+// in the answer is handed to the peers manager before this returns, so a
+// mention of the one picked has the access hash a send needs to name them
+// by ID.
 //
 // A refusal from the server is wrapped and returned. A FLOOD_WAIT is not
 // waited out here: the caller is a picker being typed into, and it decides
