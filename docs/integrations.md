@@ -67,6 +67,9 @@ Both servers accept a `path` only if it resolves inside one of their **send
 roots**: the media cache (`files_dir`) plus `[storage] send_dirs`, which
 defaults to `~/.local/share/tele-tui/outbox`. The effective set is logged at
 startup, and anything else is rejected with an error naming the roots.
+The file is opened once, inside the allowed directories, and the upload reads
+that open file, so swapping it afterwards (for a symlink to somewhere else,
+say) cannot redirect what is sent.
 
 This is deliberately narrow for MCP: the caller there is a model reading
 messages from strangers, and a message asking it to send a private key should

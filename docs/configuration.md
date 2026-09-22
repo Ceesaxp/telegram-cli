@@ -105,8 +105,10 @@ The effective set is `files_dir` plus everything in `send_dirs`:
   the client just named would be incoherent.
 - **`send_dirs` defaults to a single outbox**, `~/.local/share/tele-tui/outbox`,
   created on first start of either server.
-- Paths are resolved and symlinks followed **before** the check, so neither
-  `../` nor a symlink pointing out of a root gets past it.
+- A path is opened **inside** its root rather than resolved and then checked,
+  so neither `../` nor a symlink pointing out of a root gets past it. A
+  symlink inside a root is followed only if it is relative and stays inside.
+  Only regular files are sent: not directories, fifos or devices.
 
 Both servers log the effective set at startup, and warn about a listed
 directory that does not exist:
