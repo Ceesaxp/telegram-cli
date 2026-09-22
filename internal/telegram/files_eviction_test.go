@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,15 +17,14 @@ import (
 )
 
 // fileServer stands in for the server a download talks to. It answers
-// messages.getMessages with messages, channels.getChannels with channels
-// and upload.getFile with payload, and counts what it was asked.
+// messages.getMessages with messages and upload.getFile with payload, and
+// counts what it was asked.
 //
 // When gate is set, upload.getFile announces itself on started and then
 // waits for gate to close: a transfer held open for as long as a test needs
 // one in flight.
 type fileServer struct {
 	messages []tg.MessageClass
-	channels []tg.ChatClass
 	payload  []byte
 
 	started chan struct{}
@@ -44,9 +42,6 @@ func (f *fileServer) Invoke(ctx context.Context, input bin.Encoder, output bin.D
 		f.refetched = append(f.refetched, req.ID)
 		f.mu.Unlock()
 		output.(*tg.MessagesMessagesBox).Messages = &tg.MessagesMessages{Messages: f.messages}
-		return nil
-	case *tg.ChannelsGetChannelsRequest:
-		output.(*tg.MessagesChatsBox).Chats = &tg.MessagesChats{Chats: f.channels}
 		return nil
 	case *tg.UploadGetFileRequest:
 		f.mu.Lock()
@@ -177,35 +172,6 @@ func TestADownloadForAPendingSendDoesNotAskTheServer(t *testing.T) {
 	}
 	if got := srv.refetches(); len(got) != 0 {
 		t.Errorf("asked the server for a pending send %d times", len(got))
-	}
-}
-
-// An avatar's key names its chat, so an avatar needs no message to come
-// back: asking for the chat again registers its current photo.
-func TestAnAvatarWhoseEntryIsGoneIsRegisteredAgain(t *testing.T) {
-	payload := []byte("jpeg")
-	srv := &fileServer{
-		channels: []tg.ChatClass{&tg.Channel{
-			ID: 11, AccessHash: 110, Title: "c", Broadcast: true,
-			Photo: &tg.ChatPhoto{PhotoID: 77},
-		}},
-		payload: payload,
-	}
-	c := serverClient(t, srv, newFileRegistry())
-
-	file, err := c.DownloadFileSync(avatarKey(channelChatID(11)))
-	if err != nil {
-		t.Fatalf("DownloadFileSync on an avatar with its entry gone: %v", err)
-	}
-	if !file.Downloaded {
-		t.Error("the avatar came back as not downloaded")
-	}
-	// The generation it was fetched under is the one the server has now.
-	if !strings.Contains(file.Path, "_77_") {
-		t.Errorf("path = %q, want it to carry photo 77", file.Path)
-	}
-	if n := srv.transferCount(); n != 1 {
-		t.Errorf("%d transfers, want 1", n)
 	}
 }
 
@@ -371,30 +337,6 @@ func TestAnEvictedDownloadIsServedFromTheCache(t *testing.T) {
 	}
 	if n := srv.transferCount(); n != 1 {
 		t.Errorf("%d transfers, want the first one only", n)
-	}
-}
-
-// An avatar pushed out of the registry comes back from its chat.
-func TestAnEvictedAvatarIsRegisteredAgain(t *testing.T) {
-	channel := &tg.Channel{
-		ID: 11, AccessHash: 110, Title: "c", Broadcast: true,
-		Photo: &tg.ChatPhoto{PhotoID: 77},
-	}
-	srv := &fileServer{channels: []tg.ChatClass{channel}, payload: []byte("jpeg")}
-	c := serverClient(t, srv, newFileRegistryOf(4))
-
-	key := c.registerAvatar(channelChatID(channel.ID), 77).ID
-	pushOut(c.files)
-	if c.files.holds(key) {
-		t.Fatal("the setup did not evict the avatar")
-	}
-
-	file, err := c.DownloadFileSync(key)
-	if err != nil {
-		t.Fatalf("DownloadFileSync on an evicted avatar: %v", err)
-	}
-	if !file.Downloaded {
-		t.Error("the avatar came back as not downloaded")
 	}
 }
 
