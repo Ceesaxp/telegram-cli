@@ -3,6 +3,7 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,18 +19,20 @@ import (
 )
 
 // fileServer stands in for the server a download talks to. It answers
-// messages.getMessages with messages and upload.getFile with payload, and
-// counts what it was asked.
+// messages.getMessages with messages, or with refetchErr when that is set,
+// and upload.getFile with payload, and counts what it was asked.
 //
 // When gate is set, upload.getFile announces itself on started and then
 // waits for gate to close: a transfer held open for as long as a test needs
-// one in flight.
+// one in flight. refetchStarted and refetchGate do the same for
+// messages.getMessages.
 type fileServer struct {
-	messages []tg.MessageClass
-	payload  []byte
+	messages   []tg.MessageClass
+	refetchErr error
+	payload    []byte
 
-	started chan struct{}
-	gate    chan struct{}
+	started, gate               chan struct{}
+	refetchStarted, refetchGate chan struct{}
 
 	mu        sync.Mutex
 	refetched [][]tg.InputMessageClass
@@ -42,24 +45,44 @@ func (f *fileServer) Invoke(ctx context.Context, input bin.Encoder, output bin.D
 		f.mu.Lock()
 		f.refetched = append(f.refetched, req.ID)
 		f.mu.Unlock()
+		if err := holdAt(ctx, f.refetchStarted, f.refetchGate); err != nil {
+			return err
+		}
+		if f.refetchErr != nil {
+			return f.refetchErr
+		}
 		output.(*tg.MessagesMessagesBox).Messages = &tg.MessagesMessages{Messages: f.messages}
 		return nil
 	case *tg.UploadGetFileRequest:
 		f.mu.Lock()
 		f.transfers++
 		f.mu.Unlock()
-		if f.gate != nil {
-			f.started <- struct{}{}
-			select {
-			case <-f.gate:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		if err := holdAt(ctx, f.started, f.gate); err != nil {
+			return err
 		}
 		output.(*tg.UploadFileBox).File = &tg.UploadFile{Type: &tg.StorageFileJpeg{}, Bytes: f.payload}
 		return nil
 	default:
 		return fmt.Errorf("unexpected request %T", input)
+	}
+}
+
+// holdAt announces a request on started and waits for gate to close, when
+// there is a gate. The announcement never blocks: a second request arriving
+// is what a broken test has to be able to see, not a deadlock.
+func holdAt(ctx context.Context, started, gate chan struct{}) error {
+	if gate == nil {
+		return nil
+	}
+	select {
+	case started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-gate:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -175,6 +198,73 @@ func TestADownloadTheRefetchCannotRecoverSaysWhy(t *testing.T) {
 				t.Errorf("%d transfers started, want none", n)
 			}
 		})
+	}
+}
+
+// Readers that miss together share one refetch and one transfer. A page of
+// thumbnails whose entries were pushed out asks the server once per file,
+// not once per reader of it.
+func TestConcurrentMissesShareOneRefetch(t *testing.T) {
+	payload := []byte("%PDF")
+	srv := &fileServer{
+		messages:       []tg.MessageClass{documentMessage(42, 7, int64(len(payload)))},
+		payload:        payload,
+		refetchStarted: make(chan struct{}, 1),
+		refetchGate:    make(chan struct{}),
+	}
+	c := serverClient(t, srv, newFileRegistry())
+
+	const readers = 20
+	errs := make(chan error, readers)
+	for i := 0; i < readers; i++ {
+		go func() {
+			_, err := c.DownloadMessageFile(5, 42, "doc:7")
+			errs <- err
+		}()
+	}
+	select {
+	case <-srv.refetchStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refetch reached the server")
+	}
+	// The first refetch is held; the other readers arrive meanwhile. A
+	// lookup outside the flight would miss and reach the server now.
+	time.Sleep(50 * time.Millisecond)
+	close(srv.refetchGate)
+
+	for i := 0; i < readers; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("DownloadMessageFile: %v", err)
+		}
+	}
+	if n := len(srv.refetches()); n != 1 {
+		t.Errorf("%d readers missing together made %d refetches, want 1", readers, n)
+	}
+	if n := srv.transferCount(); n != 1 {
+		t.Errorf("%d readers missing together made %d transfers, want 1", readers, n)
+	}
+}
+
+// A refetch the server refuses is the answer the reader gets, and it lets
+// the key go: a hold left behind would keep the entry from ever being
+// evicted.
+func TestAFailedRefetchReportsItsErrorAndLetsTheKeyGo(t *testing.T) {
+	refused := errors.New("FLOOD_WAIT (30)")
+	srv := &fileServer{refetchErr: refused}
+	c := serverClient(t, srv, newFileRegistry())
+
+	_, err := c.DownloadMessageFile(5, 42, "doc:7")
+	if !errors.Is(err, refused) {
+		t.Fatalf("error = %v, want the server's %q", err, refused)
+	}
+	if n := srv.transferCount(); n != 0 {
+		t.Errorf("%d transfers started, want none", n)
+	}
+	c.files.mu.Lock()
+	held := len(c.files.inflight)
+	c.files.mu.Unlock()
+	if held != 0 {
+		t.Errorf("%d keys still held after the download returned", held)
 	}
 }
 
