@@ -100,8 +100,12 @@ func mentionColumns(users []*telegram.User, width int) (nameW, tagW int) {
 		names = max(names, cell.Width(displayName(u)))
 		tags = max(tags, cell.Width(mentionTag(u)))
 	}
-	if tags == 0 {
+	switch {
+	case tags == 0:
 		return avail, 0
+	case names == 0:
+		// Known only by their usernames: those go where the names would.
+		return 0, avail
 	}
 	tagW = min(tags, max(avail-names-mentionRowGap, avail*2/5))
 	nameW = min(names, avail-mentionRowGap-tagW)
@@ -166,10 +170,15 @@ func (m Model) mentionRow(u *telegram.User, selected bool, width, nameW, tagW in
 		mark, markColour = "●", r.Green
 	}
 
-	line := fg(barColour).Render(bar) + fg(markColour).Render(mark) + " " +
-		fg(nameColour).Render(cell.Fit(cell.Truncate(displayName(u), nameW), nameW))
+	line := fg(barColour).Render(bar) + fg(markColour).Render(mark) + " "
+	if nameW > 0 {
+		line += fg(nameColour).Render(cell.Fit(cell.Truncate(displayName(u), nameW), nameW))
+		if tagW > 0 {
+			line += strings.Repeat(" ", mentionRowGap)
+		}
+	}
 	if tagW > 0 {
-		line += strings.Repeat(" ", mentionRowGap) + m.mentionTagCell(u, tagW)
+		line += m.mentionTagCell(u, tagW)
 	}
 	return cell.Fill(surface, line, width)
 }

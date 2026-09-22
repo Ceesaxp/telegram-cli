@@ -272,3 +272,12 @@ func TestThePickerLeavesTheComposerAlone(t *testing.T) {
 		}
 	}
 }
+
+// A member known only by a username — a user built from what a message
+// carried — is shown by it, at the name's place.
+func TestAMemberWithOnlyAUsernameShowsIt(t *testing.T) {
+	rows := plain(picker(t, openWith(t, user(1, "nadia", "", "")), 30, 5))
+	if !strings.HasPrefix(rows[0], "▌◦ @nadia") {
+		t.Errorf("row 0 = %q, want the username where the name would be", rows[0])
+	}
+}
