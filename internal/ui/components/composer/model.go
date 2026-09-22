@@ -26,6 +26,11 @@ const (
 	noticeEditDiscard = "⚠ attachment discarded — editing"
 	// noticeNoEditor is shown when ctrl+o has no editor to launch.
 	noticeNoEditor = "⚠ no $EDITOR set"
+	// noticeMentionsDropped is shown when the external editor changed a
+	// draft that held mentions, which cannot be followed through it. Short
+	// because it shares the one inline row with the badge and the count;
+	// "$EDITOR" is what the ctrl+o hint calls it.
+	noticeMentionsDropped = "⚠ mentions dropped: draft changed in $EDITOR"
 )
 
 // Model is the message composer component.

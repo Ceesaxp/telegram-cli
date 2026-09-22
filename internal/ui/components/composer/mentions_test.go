@@ -1,7 +1,9 @@
 package composer
 
 import (
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -514,4 +516,71 @@ func TestSubmitNeverSendsASpanOverTheWrongText(t *testing.T) {
 	if len(sub.Mentions) != 0 {
 		t.Errorf("Mentions = %+v, want none: the text no longer says Nadia", sub.Mentions)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// External editor
+// ---------------------------------------------------------------------------
+
+// Opening the editor and closing it without a change costs nothing — the
+// real round trip, through a stub that touches nothing.
+func TestAnUnchangedEditorRoundTripKeepsMentions(t *testing.T) {
+	t.Setenv("VISUAL", stubEditor(t, `:`))
+	t.Setenv("EDITOR", "")
+	m := withNadia(t, newFocused())
+
+	var runErr error
+	m, _ = runEditor(t, m, &runErr)
+	if runErr != nil {
+		t.Fatalf("stub editor failed: %v", runErr)
+	}
+
+	wantMentions(t, m, nadia)
+	if strings.Contains(m.View(), noticeMentionsDropped) {
+		t.Errorf("a notice about dropping mentions nothing dropped:\n%s", m.View())
+	}
+}
+
+// The trailing newline an editor adds is trimmed on the way back in, so a
+// file saved as-is still comes back as the same text.
+func TestAnEditorsTrailingNewlineIsNotAChange(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m, _ = m.Update(editorFinishedMsg{text: "hi Nadia \n", ok: true})
+
+	wantMentions(t, m, nadia)
+}
+
+// Text changed outside the composer cannot be followed: no edit came through
+// editDraft, only a new text. Guessing where the mention went could put a
+// user ID on words that do not name them, so the mentions go — and the user
+// is told, because the words still look the same.
+func TestAChangedEditorResultDropsMentionsAndSaysSo(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m, _ = m.Update(editorFinishedMsg{text: "hi Nadia, how are you?\n", ok: true})
+
+	if got := m.Draft(); got != "hi Nadia, how are you?" {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m)
+	if !strings.Contains(m.View(), noticeMentionsDropped) {
+		t.Errorf("no notice that the mentions were dropped:\n%s", m.View())
+	}
+}
+
+// With no mentions to lose there is nothing to say.
+func TestAChangedEditorResultWithoutMentionsSaysNothing(t *testing.T) {
+	m := typeInto(t, newFocused(), "hi")
+	m, _ = m.Update(editorFinishedMsg{text: "hi there\n", ok: true})
+
+	if strings.Contains(m.View(), noticeMentionsDropped) {
+		t.Errorf("a notice about mentions the draft never had:\n%s", m.View())
+	}
+}
+
+// A failed editor keeps the draft, so it keeps the mentions in it.
+func TestAFailedEditorKeepsMentions(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m, _ = m.Update(editorFinishedMsg{err: os.ErrPermission})
+
+	wantMentions(t, m, nadia)
 }
