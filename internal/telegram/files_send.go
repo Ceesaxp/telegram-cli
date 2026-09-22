@@ -75,12 +75,20 @@ func nonEmpty(roots []string) []string {
 // placeholderID is the local echo the caller already drew for this send, so
 // the success message can name the row to swap; 0 when there is none.
 func (c *Client) SendFileMessage(chatID int64, path, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
+	msg, _, err := c.SendFileMessageWithMentions(chatID, path, caption, nil, replyToMessageID, placeholderID)
+	return msg, err
+}
+
+// SendFileMessageWithMentions is SendFileMessage for a caption that
+// mentions users without a username (see MentionSpan). Dropped mentions
+// are counted as in SendTextMessageWithMentions.
+func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	ctx, cancel := transferCtx()
 	defer cancel()
 
 	peer, inputFile, err := c.uploadForSend(ctx, chatID, path)
 	if err != nil {
-		return nil, fmt.Errorf("send file: %w", err)
+		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
 
 	mimeType := mime.TypeByExtension(filepath.Ext(path))
@@ -96,11 +104,11 @@ func (c *Client) SendFileMessage(chatID int64, path, caption string, replyToMess
 		},
 	}
 
-	msg, err := c.sendUploadedMedia(ctx, peer, media, caption, replyToMessageID, placeholderID)
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, media, caption, mentions, replyToMessageID, placeholderID)
 	if err != nil {
-		return nil, fmt.Errorf("send file: %w", err)
+		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
-	return msg, nil
+	return msg, dropped, nil
 }
 
 // photoSizeLimit is the largest file Telegram accepts as an uploaded
@@ -115,12 +123,20 @@ const photoSizeLimit = 10 << 20 // 10 MiB
 //
 // placeholderID names the local echo to swap, as in SendFileMessage.
 func (c *Client) SendPhotoMessage(chatID int64, path, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
+	msg, _, err := c.SendPhotoMessageWithMentions(chatID, path, caption, nil, replyToMessageID, placeholderID)
+	return msg, err
+}
+
+// SendPhotoMessageWithMentions is SendPhotoMessage for a caption that
+// mentions users without a username (see MentionSpan). Dropped mentions
+// are counted as in SendTextMessageWithMentions.
+func (c *Client) SendPhotoMessageWithMentions(chatID int64, path, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	ctx, cancel := transferCtx()
 	defer cancel()
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("send photo: %w", err)
+		return nil, 0, fmt.Errorf("send photo: %w", err)
 	}
 	// Checked against the file on disk, and before the cached upload is
 	// consumed: the limit is inputMediaUploadedPhoto's, not the upload's,
@@ -128,23 +144,23 @@ func (c *Client) SendPhotoMessage(chatID int64, path, caption string, replyToMes
 	// has to survive, because the way out of this error is to send the
 	// same already-uploaded file as a document instead.
 	if info.Size() > photoSizeLimit {
-		return nil, fmt.Errorf(
+		return nil, 0, fmt.Errorf(
 			"send photo: image too large to send as photo (%.1f MB, limit 10 MB) — send it as a file instead",
 			float64(info.Size())/(1<<20))
 	}
 
 	peer, inputFile, err := c.uploadForSend(ctx, chatID, path)
 	if err != nil {
-		return nil, fmt.Errorf("send photo: %w", err)
+		return nil, 0, fmt.Errorf("send photo: %w", err)
 	}
 
 	media := &tg.InputMediaUploadedPhoto{File: inputFile}
 
-	msg, err := c.sendUploadedMedia(ctx, peer, media, caption, replyToMessageID, placeholderID)
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, media, caption, mentions, replyToMessageID, placeholderID)
 	if err != nil {
-		return nil, fmt.Errorf("send photo: %w", err)
+		return nil, 0, fmt.Errorf("send photo: %w", err)
 	}
-	return msg, nil
+	return msg, dropped, nil
 }
 
 // uploadForSend resolves the target peer and uploads path to Telegram.
@@ -179,9 +195,10 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 }
 
 // sendUploadedMedia sends already-uploaded media to peer and publishes the
-// resulting message to the update stream.
-func (c *Client) sendUploadedMedia(ctx context.Context, peer tg.InputPeerClass, media tg.InputMediaClass, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
-	body, entities := c.formatOutgoing(caption)
+// resulting message to the update stream. It also returns how many of the
+// caption's mentions were dropped.
+func (c *Client) sendUploadedMedia(ctx context.Context, peer tg.InputPeerClass, media tg.InputMediaClass, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
+	body, entities, dropped := c.formatOutgoingWithMentions(ctx, caption, mentions)
 	req := &tg.MessagesSendMediaRequest{
 		Peer:     peer,
 		Media:    media,
@@ -195,13 +212,13 @@ func (c *Client) sendUploadedMedia(ctx context.Context, peer tg.InputPeerClass, 
 
 	updates, err := c.api.MessagesSendMedia(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	msg := messageFromUpdates(c, updates)
 	if msg == nil {
-		return nil, fmt.Errorf("no message in response")
+		return nil, 0, fmt.Errorf("no message in response")
 	}
 	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
-	return msg, nil
+	return msg, dropped, nil
 }
