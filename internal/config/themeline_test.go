@@ -110,6 +110,16 @@ func TestSetThemeLineEditsOnlyTheThemeLine(t *testing.T) {
 			value:  "gruvbox",
 			before: "[UI]\nrail = true\n",
 			after:  "[UI]\ntheme = 'gruvbox'\nrail = true\n"},
+		// An array of tables under ui is not ui itself, and the loader
+		// takes it: only an array of [[ui]] makes ui something else.
+		{name: "an array of tables under ui",
+			value:  "gruvbox",
+			before: "[ui]\ntheme = \"dark\"\n\n[[ui.plugins]]\nname = \"x\"\n",
+			after:  "[ui]\ntheme = 'gruvbox'\n\n[[ui.plugins]]\nname = \"x\"\n"},
+		{name: "an array of tables under ui, and no [ui]",
+			value:  "gruvbox",
+			before: "[[ui.plugins]]\nname = \"x\"\n",
+			after:  "[[ui.plugins]]\nname = \"x\"\n\n[ui]\ntheme = 'gruvbox'\n"},
 		{name: "[ui] without a theme key gets one under the header",
 			value:  "gruvbox",
 			before: "[ui]  # interface\nrail = true\n",

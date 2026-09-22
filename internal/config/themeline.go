@@ -250,7 +250,9 @@ func findThemeSite(data []byte) (themeSite, error) {
 				continue
 			}
 			switch {
-			case expr.Kind == unstable.ArrayTable:
+			// [[ui]] makes ui a list, which the loader cannot read into
+			// its table; [[ui.plugins]] is a list inside ui, and it can.
+			case expr.Kind == unstable.ArrayTable && len(table) == 1:
 				return themeSite{}, errors.New("has an array of [[ui]] tables")
 			case len(table) == 1 && site.hasHeader:
 				return themeSite{}, errors.New("has more than one [ui] table, told apart only by case")
