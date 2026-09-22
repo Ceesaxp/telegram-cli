@@ -115,6 +115,13 @@ type Model struct {
 	// Nil when there is no client.
 	uploads uploadController
 
+	// sends is the slice of the Telegram client that delivers what the
+	// composer submits: a text, an edit, a file or a photo. An interface
+	// for the reason uploads is one — the tests have to see which call a
+	// submit made, and with what, and a live client cannot show them.
+	// Nil when there is no client.
+	sends messageSender
+
 	// pasteInFlight is set while a clipboard paste command is running, so a
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
@@ -356,6 +363,7 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// Model without.
 	if tg != nil {
 		m.uploads = tg
+		m.sends = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -1758,6 +1766,16 @@ type uploadController interface {
 	CancelUpload(path string)
 }
 
+// messageSender is what the app needs of the Telegram client to deliver a
+// submitted draft. Each call also says how many of the draft's mentions went
+// out as plain text; see [telegram.Client.SendTextMessageWithMentions].
+type messageSender interface {
+	SendTextMessageWithMentions(chatID int64, text string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+	EditTextMessageWithMentions(chatID, messageID int64, text string, mentions []telegram.MentionSpan) (*telegram.Message, int, error)
+	SendFileMessageWithMentions(chatID int64, path, caption string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+	SendPhotoMessageWithMentions(chatID int64, path, caption string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+}
+
 // startUpload puts an attachment on its way to Telegram as soon as it is
 // staged, rather than at Enter. The user has already chosen the file and is
 // about to spend seconds typing a caption; spending them on the upload
@@ -1864,9 +1882,9 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	if msg.ChatId == 0 {
 		return func() tea.Msg { return ErrorMsg{Err: errNoChatOpen} }
 	}
-	// Bound to a local so the commands below close over the client rather
+	// Bound to locals so the commands below close over the client rather
 	// than over the model, which they now only borrow.
-	tg := m.tg
+	tg, sends := m.tg, m.sends
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
 			// Edits carry text only. Nothing upstream should let an
@@ -1879,7 +1897,7 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 				}
 				clipboard.Remove(msg.Attachment)
 			}
-			if _, err := tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text); err != nil {
+			if _, _, err := sends.EditTextMessageWithMentions(msg.ChatId, msg.EditMessageId, msg.Text, nil); err != nil {
 				return ErrorMsg{Err: err}
 			}
 			if dropped {
@@ -1897,9 +1915,9 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 		return func() tea.Msg {
 			var err error
 			if msg.AsPhoto {
-				_, err = tg.SendPhotoMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
+				_, _, err = sends.SendPhotoMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, nil, msg.ReplyToId, echoID)
 			} else {
-				_, err = tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
+				_, _, err = sends.SendFileMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, nil, msg.ReplyToId, echoID)
 			}
 			if err != nil {
 				// Keep the file: the composer is already reset, so the app
@@ -1947,7 +1965,7 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	})
 
 	return func() tea.Msg {
-		if _, err := tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId, echoID); err != nil {
+		if _, _, err := sends.SendTextMessageWithMentions(msg.ChatId, msg.Text, nil, msg.ReplyToId, echoID); err != nil {
 			// Not a bare ErrorMsg any more: the thread needs to know WHICH
 			// row never went out, and the notice row still gets the text
 			// via the handler for this message.
