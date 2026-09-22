@@ -109,6 +109,22 @@ func TestSupergroupMembersAreKnownAfterwards(t *testing.T) {
 	assertKnown(t, hashes, nadia)
 }
 
+// The context rail's member list asks for a page the server will serve: no
+// limit, or one past the server's cap, is asked as the cap.
+func TestSupergroupMembersAsksForAPageTheServerServes(t *testing.T) {
+	for limit, want := range map[int32]int{0: 200, -1: 200, 500: 200, 50: 50} {
+		inv := &memberInvoker{participants: &tg.ChannelsChannelParticipants{}}
+		c, _ := memberClient(inv)
+
+		if _, err := c.GetSupergroupMembers(channelChatID(9), 0, limit); err != nil {
+			t.Fatalf("GetSupergroupMembers(limit %d): %v", limit, err)
+		}
+		if asked := inv.participantsRequests(); len(asked) != 1 || asked[0].Limit != want {
+			t.Errorf("limit %d was asked as %v, want %d", limit, asked, want)
+		}
+	}
+}
+
 // A basic group's full info does the same for its members.
 func TestBasicGroupMembersAreKnownAfterwards(t *testing.T) {
 	nadia := member(4, "Nadia", "nadia")

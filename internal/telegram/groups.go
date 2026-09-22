@@ -64,15 +64,12 @@ func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*Cha
 	if !ok {
 		return nil, fmt.Errorf("chat %d is not a channel", chatID)
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 200
-	}
 
 	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
 		Channel: inputChannel,
 		Filter:  &tg.ChannelParticipantsRecent{},
 		Offset:  int(offset),
-		Limit:   int(limit),
+		Limit:   participantsLimit(int(limit)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup members: %w", err)
@@ -283,6 +280,19 @@ func mentionable(memberIDs []int64, users []tg.UserClass) []*User {
 		out = append(out, userFromTG(u))
 	}
 	return out
+}
+
+// maxParticipantsPage is the most members channels.getParticipants answers
+// with in one call.
+const maxParticipantsPage = 200
+
+// participantsLimit is the page size to ask channels.getParticipants for:
+// limit, or the server's cap when there is no limit or it is past the cap.
+func participantsLimit(limit int) int {
+	if limit <= 0 || limit > maxParticipantsPage {
+		return maxParticipantsPage
+	}
+	return limit
 }
 
 // seededParticipants reads a channels.getParticipants answer and seeds the
