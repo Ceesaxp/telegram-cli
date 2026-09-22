@@ -281,9 +281,9 @@ func answerMention(q composer.MentionQueryMsg, users []*telegram.User, err error
 	}
 }
 
-// mentionPickerRows is the most rows the picker is given: five members and
+// mentionOverlayRows is the most rows the picker is given: five members and
 // a line about the search, which is all MentionPicker ever draws.
-const mentionPickerRows = 6
+const mentionOverlayRows = 6
 
 // threadHeaderRows is the chat view's header, which the picker never
 // covers: it names the chat the mention is going to.
@@ -299,12 +299,12 @@ const threadHeaderRows = 1
 // and moves nothing. Which is also why a closed picker changes nothing at
 // all — thread comes back as it went in.
 //
-// It is the thread column's width, and never more than mentionPickerRows
+// It is the thread column's width, and never more than mentionOverlayRows
 // tall. On a short terminal it gets what is left under the header, and the
 // composer draws fewer members rather than spill over it; with no row to
 // spare there is no picker.
 func (m Model) paintMentionPicker(thread []string) []string {
-	rows := min(mentionPickerRows, len(thread)-threadHeaderRows)
+	rows := min(mentionOverlayRows, len(thread)-threadHeaderRows)
 	picker, ok := m.composer.MentionPicker(m.layout.ThreadWidth, rows)
 	if !ok {
 		return thread

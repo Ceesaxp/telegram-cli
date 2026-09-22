@@ -640,7 +640,7 @@ func TestTheMentionPickerIsPaintedOverTheThreadsFoot(t *testing.T) {
 			if closed.layout != l {
 				t.Fatalf("the layout moved when the picker closed:\n%+v\n%+v", l, closed.layout)
 			}
-			want, ok := open.composer.MentionPicker(l.ThreadWidth, mentionPickerRows)
+			want, ok := open.composer.MentionPicker(l.ThreadWidth, mentionOverlayRows)
 			if !ok {
 				t.Fatal("setup: the picker has no rows")
 			}
