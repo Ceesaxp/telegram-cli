@@ -47,11 +47,6 @@ type Model struct {
 // New creates a new contacts model.
 func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	l := widgets.NewList()
-	// Only StyleEmpty. Every other List style feeds the widget's own row
-	// drawing, and this component supplies RenderRow — the six that used to
-	// be set here were read by nothing once it did, and three of them
-	// painted a panel background the frame already fills.
-	l.StyleEmpty = theme.OverlayMuted(r)
 
 	// The filter input reuses the shared single-line TextArea, so the query
 	// gets the same rune-safe editing as every other text surface.
@@ -65,11 +60,34 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		roles:       r,
 		filterInput: fi,
 	}
-	// Installed here rather than in a setter: a component that renders two
+	m.restyle()
+	return m
+}
+
+// restyle derives from the palette everything that is styled ahead of
+// drawing rather than while drawing. Whatever replaces the palette has to
+// call it too, or these keep the colours they were built with.
+func (m *Model) restyle() {
+	// Only StyleEmpty. Every other List style feeds the widget's own row
+	// drawing, and this component supplies RenderRow — the six that used to
+	// be set here were read by nothing once it did, and three of them
+	// painted a panel background the frame already fills.
+	m.list.StyleEmpty = theme.OverlayMuted(m.roles)
+
+	// Installed here rather than by the host: a component that renders two
 	// different ways depending on whether the caller remembered a call is a
 	// component with two behaviours.
+	//
+	// And here rather than beside the constructor's other wiring because
+	// m.renderRow is a method VALUE: it binds a copy of the model, palette
+	// included, as the model stands at this line. Rows drawn later are
+	// drawn with that copy's roles, so a new palette means binding again.
+	//
+	// Cleared first because the list is held by value: the copy being bound
+	// would otherwise carry the previous binding, and that one the binding
+	// before it, a chain one model longer on every new palette.
+	m.list.RenderRow = nil
 	m.list.RenderRow = m.renderRow
-	return m
 }
 
 // SetSize sets the component dimensions.
