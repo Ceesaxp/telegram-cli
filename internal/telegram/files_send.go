@@ -2,7 +2,9 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
 	"mime"
 	"os"
@@ -53,6 +55,146 @@ func ResolveAllowedSendPath(path string, roots ...string) (string, error) {
 	// dead end — the reader cannot tell a typo from a policy.
 	return "", fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
 		path, strings.Join(nonEmpty(roots), ", "))
+}
+
+// OpenAllowedSendFile opens path for a remote caller's send if it names a
+// regular file inside one of roots. The send then reads that descriptor
+// (see [Client.SendOpenedFileMessage]) and never goes back to the path.
+//
+// That is the point of it. Checking a path and then opening it by name
+// leaves a gap in which anyone who can write to a root swaps the checked
+// file for a symlink to one outside, and the upload reads that instead.
+// Here the check is the open: path is made absolute and clean but not
+// resolved, taken relative to each root in turn, and opened through an
+// [os.Root], which follows a link only while it stays inside. Whatever the
+// name points at afterwards, what is sent is what was opened.
+//
+// Blank roots are skipped, and with no usable root everything is refused.
+// A root is matched as written and where it really is (see rootDirs), so
+// a root under /tmp on macOS also matches the same path under
+// /private/tmp. A link inside a root must be relative and stay inside:
+// os.Root refuses an absolute link even when it names a file in the root.
+func OpenAllowedSendFile(path string, roots ...string) (*os.File, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("send file: %w", err)
+	}
+	// found is why a root that holds the path could not send it. It
+	// outranks "outside": the path was inside, and saying otherwise would
+	// send the caller looking for a typo that is not there.
+	var found error
+	for _, dir := range rootDirs(roots) {
+		rel, ok := within(dir, abs)
+		if !ok {
+			continue
+		}
+		f, err := openInRoot(dir, rel)
+		if err == nil {
+			return f, nil
+		}
+		if found == nil && foundButUnsendable(err) {
+			found = fmt.Errorf("send file: %q: %w", path, cause(err))
+		}
+	}
+	if found != nil {
+		return nil, found
+	}
+	// Name the roots, as ResolveAllowedSendPath does and for its reasons.
+	return nil, fmt.Errorf("send file: path %q is outside the allowed directories (%s)",
+		path, strings.Join(nonEmpty(roots), ", "))
+}
+
+// errNotRegular refuses what is not a plain file: a directory, a fifo, a
+// device. There is nothing in one to send, and reading some of them has
+// side effects or never ends.
+var errNotRegular = errors.New("not a regular file")
+
+// openInRoot opens name, relative to dir, without leaving dir, and only if
+// it is a regular file. An [os.Root] refuses a ".." or a symlink that
+// points outside it, checking each link as it follows it on the
+// descriptors it opens; the type is then asked of the descriptor, not of
+// the path, which may name something else by now.
+//
+// The root is closed on the way out. The file is not tied to it and stays
+// open, which is what [os.OpenInRoot] relies on too.
+func openInRoot(dir, name string) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	f, err := root.OpenFile(name, sendOpenFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errNotRegular
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// foundButUnsendable reports whether err, from opening a path inside a
+// root, says the file is there (or ought to be) and cannot be sent, as
+// opposed to lying outside. Anything else — above all os.Root's refusal
+// of a path that leaves it, which has no exported error of its own — reads
+// as outside.
+func foundButUnsendable(err error) bool {
+	return errors.Is(err, errNotRegular) ||
+		errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, fs.ErrPermission)
+}
+
+// cause is err without the path os.Root put on it, which is relative to
+// the root; the caller's error names the path as they gave it instead.
+func cause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
+}
+
+// rootDirs is every directory a path may be named under: each root as
+// written, made absolute, and also where it really is when that differs.
+// A root is configuration, not something a caller can swap, so resolving
+// its links here is safe in a way that resolving the file's would not be.
+// Blank roots are skipped, as is one that cannot be made absolute.
+func rootDirs(roots []string) []string {
+	dirs := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		dirs = append(dirs, abs)
+		if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
+			dirs = append(dirs, real)
+		}
+	}
+	return dirs
+}
+
+// within returns path relative to dir, if path is dir or lies beneath it.
+// Both must be absolute and clean. It reads nothing from disk: a symlink
+// on the way is the open's business, not this.
+func within(dir, path string) (string, bool) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
 }
 
 // nonEmpty drops the blank roots ResolveAllowedSendPath skips, so the
