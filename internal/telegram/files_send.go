@@ -91,24 +91,28 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
 
+	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, path), caption, mentions, replyToMessageID, placeholderID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send file: %w", err)
+	}
+	return msg, dropped, nil
+}
+
+// documentMedia is an uploaded file as a document named for path: its base
+// name is the file name the chat shows, and its extension picks the MIME
+// type.
+func documentMedia(file tg.InputFileClass, path string) *tg.InputMediaUploadedDocument {
 	mimeType := mime.TypeByExtension(filepath.Ext(path))
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-
-	media := &tg.InputMediaUploadedDocument{
-		File:     inputFile,
+	return &tg.InputMediaUploadedDocument{
+		File:     file,
 		MimeType: mimeType,
 		Attributes: []tg.DocumentAttributeClass{
 			&tg.DocumentAttributeFilename{FileName: filepath.Base(path)},
 		},
 	}
-
-	msg, dropped, err := c.sendUploadedMedia(ctx, peer, media, caption, mentions, replyToMessageID, placeholderID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("send file: %w", err)
-	}
-	return msg, dropped, nil
 }
 
 // photoSizeLimit is the largest file Telegram accepts as an uploaded
