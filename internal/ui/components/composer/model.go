@@ -381,6 +381,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	before, cursor := m.textarea.Value, m.textarea.Cursor
 	normal := m.IsViNormalMode()
+	// Where a vi command edits is read before it runs; see below.
+	at := cursor
+	if key, ok := msg.(tea.KeyPressMsg); ok && normal {
+		at = m.viEditStart(key)
+	}
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
@@ -394,13 +399,14 @@ func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	// the new text, so the lower of the two is where the edit was. vi's
 	// normal mode moves it on afterwards — x and D clamp it back onto a
 	// character, dd takes it to the start of a line, the line ABOVE when it
-	// deleted the last one — so there only the cursor the command started
-	// from says anything.
-	after := m.textarea.Cursor
+	// deleted the last one — and not every command edits at the cursor it
+	// started from either: dd deletes from the line's start. There the
+	// command itself says where it edited.
+	from, to := cursor, m.textarea.Cursor
 	if normal {
-		after = cursor
+		from, to = at, at
 	}
-	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, cursor, after)
+	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, from, to)
 	// The @-completion follows the same edits from the same door, for the
 	// same reason. See mentionpicker.go.
 	return m, tea.Batch(cmd, m.trackMention(msg, before, cursor))

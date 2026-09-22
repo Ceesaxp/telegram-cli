@@ -507,17 +507,68 @@ func TestViDdBetweenTwoSameNamedLinesKeepsTheRightUser(t *testing.T) {
 		m := chars(t, build(t), "dd")
 		wantMentions(t, m, alex1)
 	})
-	// From the middle of the line the texts and the cursor together cannot
-	// say which Alex went. Losing both mentions is allowed; the wrong one
-	// surviving is not.
+	// From the middle of the line the cursor says nothing about which Alex
+	// went; dd deletes from the line's start, and that is what places it.
 	t.Run("dd on the first line from its middle", func(t *testing.T) {
 		m := chars(t, build(t), "k0lldd")
-		for _, span := range m.mentions {
-			if span.UserID == 1 {
-				t.Errorf("mentions = %+v: user 1's line was deleted", m.mentions)
-			}
-		}
+		wantMentions(t, m, MentionSpan{Start: 0, End: 4, UserID: 2, Label: "Alex"})
 	})
+}
+
+// dd deletes a line from its start — from the break before it, on the last
+// line — wherever the cursor sits on it. When the line after it starts with
+// the same words the two texts read the same whichever line went, and an
+// edit placed at the cursor handed the deleted line's mention to the line
+// that took its place.
+func TestViDdPlacesTheEditWhereTheLineStarts(t *testing.T) {
+	// lines builds one line per user, each "<before>Alex<after>" with Alex
+	// mentioning that user, and leaves vi in normal mode on the last line.
+	lines := func(t *testing.T, before, after string, users ...int64) Model {
+		t.Helper()
+		m := viComposer(t)
+		for i, user := range users {
+			if i > 0 {
+				m = typeSeq(t, m, "\n") // ctrl+j
+			}
+			m = typeInto(t, m, before)
+			m = mentionAlex(t, m, user)
+			m = typeInto(t, m, after)
+		}
+		return typeSeq(t, m, "\x1b") // Esc: normal mode
+	}
+	alex := func(start int, user int64) MentionSpan {
+		return MentionSpan{Start: start, End: start + 4, UserID: user, Label: "Alex"}
+	}
+
+	for _, tc := range []struct {
+		name          string
+		before, after string
+		users         []int64
+		keys          string
+		draft         string
+		want          []MentionSpan
+	}{
+		{"the cursor past the mention", "", " x", []int64{1, 2}, "kdd",
+			"Alex x", []MentionSpan{alex(0, 2)}},
+		{"the cursor inside the mention", "", " x", []int64{1, 2}, "k0ldd",
+			"Alex x", []MentionSpan{alex(0, 2)}},
+		{"a mention mid-line, the cursor at the end", "hi ", "!", []int64{1, 2}, "k$dd",
+			"hi Alex!", []MentionSpan{alex(3, 2)}},
+		{"the middle of three lines", "", " x", []int64{1, 2, 3}, "kdd",
+			"Alex x\nAlex x", []MentionSpan{alex(0, 1), alex(7, 3)}},
+		{"the last line", "", " x", []int64{1, 2}, "dd",
+			"Alex x", []MentionSpan{alex(0, 1)}},
+		{"the last line from its start", "", " x", []int64{1, 2}, "0dd",
+			"Alex x", []MentionSpan{alex(0, 1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := chars(t, lines(t, tc.before, tc.after, tc.users...), tc.keys)
+			if got := m.Draft(); got != tc.draft {
+				t.Fatalf("precondition: Draft = %q, want %q", got, tc.draft)
+			}
+			wantMentions(t, m, tc.want...)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
