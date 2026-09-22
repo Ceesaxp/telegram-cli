@@ -141,9 +141,13 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 		return nil, fmt.Errorf("search chat members: %w", err)
 	}
 
+	var filter tg.ChannelParticipantsFilterClass = &tg.ChannelParticipantsSearch{Q: query}
+	if query == "" {
+		filter = &tg.ChannelParticipantsRecent{}
+	}
 	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
 		Channel: channel.InputChannel(),
-		Filter:  &tg.ChannelParticipantsSearch{Q: query},
+		Filter:  filter,
 		Limit:   limit,
 	})
 	if err != nil {

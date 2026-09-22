@@ -189,6 +189,28 @@ func TestSearchChatMembersSearchesASupergroup(t *testing.T) {
 	}
 }
 
+// A bare @ has nothing to search for yet, so it asks for the members who
+// were active lately, which is who the reader most likely means.
+func TestSearchChatMembersWithoutAQueryAsksForRecentMembers(t *testing.T) {
+	inv := &memberInvoker{participants: &tg.ChannelsChannelParticipants{}}
+	c, _ := memberClient(inv)
+
+	if _, err := c.SearchChatMembers(channelChatID(9), "", 20); err != nil {
+		t.Fatalf("SearchChatMembers: %v", err)
+	}
+
+	asked := inv.participantsRequests()
+	if len(asked) != 1 {
+		t.Fatalf("asked for participants %d times, want once", len(asked))
+	}
+	if _, ok := asked[0].Filter.(*tg.ChannelParticipantsRecent); !ok {
+		t.Errorf("asked with filter %#v, want the recent members", asked[0].Filter)
+	}
+	if asked[0].Limit != 20 {
+		t.Errorf("asked with limit %d, want 20", asked[0].Limit)
+	}
+}
+
 // The members a search finds are handed to the peers manager on the way
 // through, so the one picked can be sent a mention by ID.
 func TestSearchedMembersAreKnownAfterwards(t *testing.T) {
