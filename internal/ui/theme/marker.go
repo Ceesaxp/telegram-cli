@@ -25,6 +25,15 @@ import (
 // one nobody was checking.
 func MarkerRoles() (Roles, map[string]string) { return markerRoles(1) }
 
+// SecondMarkerRoles is another marker palette — #0200xx — sharing no colour
+// with [MarkerRoles].
+//
+// It answers the question a live theme switch raises: after a component is
+// handed a new palette, is ANY of the old one still on screen? Draw in the
+// first, switch to this, and every colour left over from before is one the
+// map returned here does not know.
+func SecondMarkerRoles() (Roles, map[string]string) { return markerRoles(2) }
+
 // markerRoles builds one marker palette: every role #SS00xx, where SS is set
 // and xx counts the fields in declaration order.
 func markerRoles(set int) (Roles, map[string]string) {
