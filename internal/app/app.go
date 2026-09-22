@@ -2212,6 +2212,9 @@ func (m *Model) setFocus(panel FocusPanel) {
 // that grew a row.
 func (m *Model) switchComposerTo(chatID int64) {
 	clipboard.Remove(m.composer.SetChatId(chatID))
+	// SetChatId switches @-completion off: whether an @ offers members is
+	// the new chat's to say, and only the store knows what kind it is.
+	m.composer.SetMentionsEnabled(m.mentionsAllowed(chatID))
 	m.chatList.SetDraftChats(m.composer.DraftChats())
 	m.updateLayout()
 	// Warm the peer cache now, in the background, so a cache miss costs
