@@ -1323,6 +1323,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrorMsg:
 		m.notify(fmt.Sprintf("⚠ %v", msg.Err))
 
+	case mentionsSentPlainMsg:
+		m.notify(mentionsSentPlainNotice(msg))
+
 	// A file dropped on the terminal arrives as a PASTE of its path, not as
 	// keystrokes — the terminal is typing a command line for you, escaped
 	// the way a shell would need it. Dragging a file is how people already
@@ -1912,6 +1915,9 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	// Bound to locals so the commands below close over the client rather
 	// than over the model, which they now only borrow.
 	tg, sends := m.tg, m.sends
+	// The members the @ picker inserted by name, which every kind of send
+	// carries — a caption as much as a message. See mentionsend.go.
+	mentions := mentionSpans(msg.Mentions)
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
 			// Edits carry text only. Nothing upstream should let an
@@ -1924,13 +1930,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 				}
 				clipboard.Remove(msg.Attachment)
 			}
-			if _, _, err := sends.EditTextMessageWithMentions(msg.ChatId, msg.EditMessageId, msg.Text, nil); err != nil {
+			_, plain, err := sends.EditTextMessageWithMentions(msg.ChatId, msg.EditMessageId, msg.Text, mentions)
+			if err != nil {
 				return ErrorMsg{Err: err}
 			}
 			if dropped {
 				return ErrorMsg{Err: errEditDroppedAttachment}
 			}
-			return nil
+			return sentPlain(plain)
 		}
 	}
 	if msg.Attachment != "" {
@@ -1940,11 +1947,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 		// thread showed nothing at all for the length of it.
 		echoID := m.echoAttachment(msg)
 		return func() tea.Msg {
-			var err error
+			var (
+				plain int
+				err   error
+			)
 			if msg.AsPhoto {
-				_, _, err = sends.SendPhotoMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, nil, msg.ReplyToId, echoID)
+				_, plain, err = sends.SendPhotoMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, mentions, msg.ReplyToId, echoID)
 			} else {
-				_, _, err = sends.SendFileMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, nil, msg.ReplyToId, echoID)
+				_, plain, err = sends.SendFileMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, mentions, msg.ReplyToId, echoID)
 			}
 			if err != nil {
 				// Keep the file: the composer is already reset, so the app
@@ -1961,7 +1971,7 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 			}
 			// Drop the spool file once it is on its way to Telegram.
 			clipboard.Remove(msg.Attachment)
-			return nil
+			return sentPlain(plain)
 		}
 	}
 
@@ -1992,13 +2002,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	})
 
 	return func() tea.Msg {
-		if _, _, err := sends.SendTextMessageWithMentions(msg.ChatId, msg.Text, nil, msg.ReplyToId, echoID); err != nil {
+		_, plain, err := sends.SendTextMessageWithMentions(msg.ChatId, msg.Text, mentions, msg.ReplyToId, echoID)
+		if err != nil {
 			// Not a bare ErrorMsg any more: the thread needs to know WHICH
 			// row never went out, and the notice row still gets the text
 			// via the handler for this message.
 			return telegram.MessageSendFailedMsg{ChatId: msg.ChatId, OldMessageId: echoID, Err: err}
 		}
-		return nil
+		return sentPlain(plain)
 	}
 }
 
