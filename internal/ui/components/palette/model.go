@@ -218,21 +218,27 @@ func (m *Model) complete() {
 // run a command the user is no longer looking at.
 func (m *Model) refilter() {
 	name, _ := SplitQuery(m.query)
-	m.filtered = m.filtered[:0]
-
-	// Two passes so prefix matches sort above looser subsequence matches,
-	// which keeps an exactly-typed command at the top where Enter expects it.
-	for i, it := range m.items {
-		if strings.HasPrefix(it.Name, name) {
-			m.filtered = append(m.filtered, i)
-		}
-	}
-	for i, it := range m.items {
-		if !strings.HasPrefix(it.Name, name) && subsequence(it.Name, name) {
-			m.filtered = append(m.filtered, i)
-		}
-	}
+	m.filtered = rank(len(m.items), func(i int) string { return m.items[i].Name }, name)
 	m.cursor = 0
+}
+
+// rank is the indices 0..n-1 whose text matches pattern, best first. Two
+// passes so prefix matches sort above looser subsequence matches, which keeps
+// an exactly-typed command at the top where Enter expects it; within a pass
+// the list keeps its own order.
+func rank(n int, text func(i int) string, pattern string) []int {
+	var out []int
+	for i := range n {
+		if strings.HasPrefix(text(i), pattern) {
+			out = append(out, i)
+		}
+	}
+	for i := range n {
+		if s := text(i); !strings.HasPrefix(s, pattern) && subsequence(s, pattern) {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // SplitQuery separates the command word from its arguments.
