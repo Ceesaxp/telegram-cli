@@ -405,6 +405,17 @@ func hyperlinksEnabled(policy string) bool {
 	}
 }
 
+// SetRoles replaces the palette the thread is drawn in: the grid's copy,
+// the renderer's copy — the body and the gutter have to agree about what
+// amber is — and every line already drawn in the old one. Those are cached,
+// and a cache hit would serve the old colours back until each message
+// happened to change.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.renderer.SetRoles(r)
+	m.cache.clear()
+}
+
 // SetSenderRamp sets the colours other people's names are drawn from: the
 // ramp the theme resolved alongside the palette. Nil or empty is the
 // palette's default ramp. Lines already rendered carry the old colours, so
