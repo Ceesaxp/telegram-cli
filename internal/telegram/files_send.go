@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -30,9 +31,10 @@ import (
 //
 // A nil SendRoots has no roots and refuses every path.
 type SendRoots struct {
-	roots []*os.Root // held open, one per usable root
-	dirs  []string   // those roots as configured, for the refusal
-	names []rootName // every name a path may be matched under, in order
+	roots  []*os.Root  // held open, one per usable root
+	dirs   []string    // those roots as configured, for the refusal
+	names  []rootName  // every name a path may be matched under, in order
+	closed atomic.Bool // set by Close, which a send may race at shutdown
 }
 
 // rootName is one absolute name a held root answers to.
@@ -78,9 +80,10 @@ func OpenSendRoots(dirs ...string) (roots *SendRoots, errs []error) {
 }
 
 // Close releases the roots. Files already opened through them stay open;
-// Open refuses every path from now on.
+// Open refuses every path from now on, saying the roots are closed.
+// Closing twice does nothing.
 func (r *SendRoots) Close() error {
-	if r == nil {
+	if r == nil || r.closed.Swap(true) {
 		return nil
 	}
 	var errs []error
@@ -109,6 +112,9 @@ func (r *SendRoots) Close() error {
 func (r *SendRoots) Open(path string) (*os.File, error) {
 	if r == nil {
 		r = &SendRoots{}
+	}
+	if r.closed.Load() {
+		return nil, fmt.Errorf("send file: %w", errRootsClosed)
 	}
 	if strings.ContainsRune(path, 0) {
 		return nil, fmt.Errorf("send file: %q: %w", path, errInvalidPath)
@@ -157,6 +163,10 @@ var errNotRegular = errors.New("not a regular file")
 // errInvalidPath refuses a path no file can have: one with a NUL in it.
 var errInvalidPath = errors.New("invalid path")
 
+// errRootsClosed refuses a send that arrives once the roots are closed,
+// at shutdown, whatever its path: none of them is searched any more.
+var errRootsClosed = errors.New("send roots closed")
+
 // openRegular opens name inside root, and only if it is a regular file.
 // An [os.Root] refuses a ".." or a symlink that points outside it,
 // checking each link as it follows it on the descriptors it opens; the
@@ -189,6 +199,10 @@ func openRegular(root *os.Root, name string) (*os.File, error) {
 // outside.
 func whyInside(err error) error {
 	err = cause(err)
+	if errors.Is(err, fs.ErrClosed) {
+		// A send that was already searching when Close ran at shutdown.
+		return errRootsClosed
+	}
 	if errors.Is(err, errNotRegular) ||
 		errors.Is(err, fs.ErrNotExist) ||
 		errors.Is(err, fs.ErrPermission) {

@@ -243,18 +243,37 @@ func TestOpenSendRootsReportsTheRootsItCannotOpen(t *testing.T) {
 	f.Close()
 }
 
-// Closing the roots, at shutdown, leaves nothing to send from.
+// Closing the roots, at shutdown, leaves nothing to send from, and a send
+// that arrives then is told so rather than that its path is outside.
 func TestSendRootsRefuseEverythingOnceClosed(t *testing.T) {
-	root, file, _ := sendRoot(t)
+	root, file, secret := sendRoot(t)
 	roots, _ := OpenSendRoots(root)
 
 	if err := roots.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	f, err := roots.Open(file)
+	for _, path := range []string{file, secret} {
+		f, err := roots.Open(path)
+		if err == nil {
+			f.Close()
+			t.Fatalf("opened %s through closed roots", path)
+		}
+		if !strings.Contains(err.Error(), "send roots closed") {
+			t.Errorf("Open(%s) = %v, want it to say the send roots are closed", path, err)
+		}
+	}
+
+	// A send already past that check when Close runs meets the closed
+	// os.Root itself, and is told the same.
+	racing, _ := OpenSendRoots(root)
+	racing.roots[0].Close()
+	f, err := racing.Open(file)
 	if err == nil {
 		f.Close()
-		t.Fatalf("opened %s through closed roots", file)
+		t.Fatalf("opened %s through a closed root", file)
+	}
+	if !strings.Contains(err.Error(), "send roots closed") {
+		t.Errorf("Open(%s) racing Close = %v, want it to say the send roots are closed", file, err)
 	}
 }
 
