@@ -66,7 +66,10 @@ sequences to your terminal.
 `themes/*.toml` in the two directories above — and saves the choice as
 `ui.theme`. Saving edits `config.toml` as text rather than rewriting it:
 only the value on the `theme` line under `[ui]` changes, and your comments,
-order, spacing, quoting and line endings stay as they were. A `[ui]` table
+order, spacing, the key as you spelled it and line endings stay as they
+were. The value itself is written anew, as a literal string —
+`theme = 'gruvbox'` — whatever quotes it had before; a value containing a
+`'` is written as a basic string, `"…"`, with its escapes. A `[ui]` table
 without a `theme` line gets one under its header; a file without `[ui]` gets
 one at the end. Before the first edit the file is copied to
 `config.toml.bak` (beside the real file, if `config.toml` is a symlink), and
@@ -81,9 +84,9 @@ back the way it was before that save, backup or not.
 
 `:theme` will not edit a `config.toml` that sets `ui` with dotted keys
 (`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
-or one that is not valid TOML, or one you have made read-only: the theme
-still switches, the notice says
-"not saved" and why, and the file is left for you to edit by hand.
+one that is not valid TOML, one you have made read-only, or a symlink whose
+target is missing: the theme still switches, the notice says "not saved" and
+why, and the file is left for you to edit by hand.
 
 A name that is not a usable theme — no such file, a file that does not
 parse — changes nothing: the theme on screen stays, rather than falling back
