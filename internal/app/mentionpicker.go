@@ -65,11 +65,14 @@ type mentionSearchMsg struct {
 	query composer.MentionQueryMsg
 }
 
-// mentionMembersMsg is what the member search said about query.
+// mentionMembersMsg is what the member search said about query. whole is
+// whether it was asked for a basic group, which answers with every member it
+// has whatever the query.
 type mentionMembersMsg struct {
 	query composer.MentionQueryMsg
 	users []*telegram.User
 	err   error
+	whole bool
 }
 
 // chatMembers is what the member search has said about one chat.
@@ -77,10 +80,19 @@ type chatMembers struct {
 	// users are the members it turned up, newest answer first, each once,
 	// no more than mentionMembersKept of them.
 	users []*telegram.User
+	// whole is whether users is a basic group's entire member list, which
+	// answers every query in the chat from here on.
+	whole bool
+	// fetching is whether that list has been asked for and not come back.
+	fetching bool
 }
 
-// learn adds an answer's users to what is known, ahead of the rest.
-func (c chatMembers) learn(users []*telegram.User) chatMembers {
+// learn adds an answer's users to what is known, ahead of the rest. A whole
+// member list replaces what was known instead: it is all of it.
+func (c chatMembers) learn(users []*telegram.User, whole bool) chatMembers {
+	if whole {
+		c = chatMembers{whole: true}
+	}
 	seen := map[int64]bool{}
 	var out []*telegram.User
 	for _, group := range [][]*telegram.User{users, c.users} {
@@ -98,7 +110,7 @@ func (c chatMembers) learn(users []*telegram.User) chatMembers {
 
 // handleMentionQuery answers the composer's question about who an @ could
 // mean: now with the members already known here, and after the debounce with
-// the server's.
+// the server's — or at once, in a basic group whose whole list is here.
 //
 // The candidates are handed over again first. They were handed over when
 // the chat opened, but the page of history that was loading then has
@@ -107,6 +119,9 @@ func (c chatMembers) learn(users []*telegram.User) chatMembers {
 func (m *Model) handleMentionQuery(q composer.MentionQueryMsg) tea.Cmd {
 	m.mentionQuery = q
 	m.offerMentionCandidates(q.ChatID)
+	if known := m.mentionMembers[q.ChatID]; known.whole {
+		return answerMention(q, known.users, nil)
+	}
 	return tea.Tick(mentionSearchDebounce, func(time.Time) tea.Msg {
 		return mentionSearchMsg{query: q}
 	})
@@ -120,6 +135,11 @@ func (m *Model) handleMentionQuery(q composer.MentionQueryMsg) tea.Cmd {
 // Every query that is not typed past gets an answer, even one with nobody
 // in it, and even with no client to ask: the picker says "searching…" until
 // it hears back, and would go on saying it.
+//
+// A basic group is asked once for all its members, whatever the query —
+// that is what the search gives back for one — and the list answers every
+// query after it. A query arriving while the list is on its way asks
+// nothing: the list answers it when it lands.
 func (m *Model) handleMentionSearch(msg mentionSearchMsg) tea.Cmd {
 	q := msg.query
 	if q != m.mentionQuery {
@@ -128,10 +148,23 @@ func (m *Model) handleMentionSearch(msg mentionSearchMsg) tea.Cmd {
 	if m.members == nil {
 		return answerMention(q, nil, nil)
 	}
+	kind, _ := m.chatType(q.ChatID)
+	whole := kind == telegram.ChatTypeBasicGroup
+	if whole {
+		known := m.mentionMembers[q.ChatID]
+		switch {
+		case known.whole:
+			return answerMention(q, known.users, nil)
+		case known.fetching:
+			return nil
+		}
+		known.fetching = true
+		m.keepMembers(q.ChatID, known)
+	}
 	members := m.members
 	return func() tea.Msg {
 		users, err := members.SearchChatMembers(q.ChatID, q.Query, mentionSearchLimit)
-		return mentionMembersMsg{query: q, users: users, err: err}
+		return mentionMembersMsg{query: q, users: users, err: err, whole: whole}
 	}
 }
 
@@ -140,20 +173,38 @@ func (m *Model) handleMentionSearch(msg mentionSearchMsg) tea.Cmd {
 // them as much as the picker — and members of the chat the next completion
 // can offer at once. Then the composer is told, whether or not it is still
 // asking; it discards an answer to a question it has moved past.
+//
+// A basic group's list answers the newest query in the chat rather than the
+// one that sent for it: every query typed while it was on its way was left
+// for it to answer. A failed fetch leaves nothing on its way, so the next
+// query asks again.
 func (m *Model) handleMentionMembers(msg mentionMembersMsg) tea.Cmd {
-	q := msg.query
+	q, chatID := msg.query, msg.query.ChatID
+	known := m.mentionMembers[chatID]
+	if msg.whole {
+		known.fetching = false
+		if m.mentionQuery.ChatID == chatID {
+			q = m.mentionQuery
+		}
+	}
 	if msg.err == nil {
 		for _, u := range msg.users {
 			if u != nil {
 				m.store.Users.Set(u)
 			}
 		}
-		if m.mentionMembers == nil {
-			m.mentionMembers = map[int64]chatMembers{}
-		}
-		m.mentionMembers[q.ChatID] = m.mentionMembers[q.ChatID].learn(msg.users)
+		known = known.learn(msg.users, msg.whole)
 	}
+	m.keepMembers(chatID, known)
 	return answerMention(q, msg.users, msg.err)
+}
+
+// keepMembers records what is known of chatID's members.
+func (m *Model) keepMembers(chatID int64, known chatMembers) {
+	if m.mentionMembers == nil {
+		m.mentionMembers = map[int64]chatMembers{}
+	}
+	m.mentionMembers[chatID] = known
 }
 
 // answerMention is the composer's answer to q.

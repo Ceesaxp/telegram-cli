@@ -470,3 +470,84 @@ func TestTheSearchedMemberReachesThePicker(t *testing.T) {
 		t.Fatalf("picker =\n%s\nwant the member the search found", names)
 	}
 }
+
+// ivo is a member without a username, mentioned by name.
+func ivo() *telegram.User { return &telegram.User{ID: 8, FirstName: "Ivo"} }
+
+// basicGroup is the open ops group, its member list behind members.
+func basicGroup(t *testing.T, members *fakeMembers) Model {
+	t.Helper()
+	m := openedChat(t, opsGroup())
+	m.members = members
+	return m
+}
+
+// A basic group hands over its whole member list, so it is fetched once, on
+// the first query, and every query after it is answered from it at once —
+// no debounce, no second request. The composer filters it.
+func TestABasicGroupFetchesItsMembersOnce(t *testing.T) {
+	members := &fakeMembers{users: []*telegram.User{nadia(), ivo()}}
+	m := basicGroup(t, members)
+	first := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "", Gen: 1}
+	m = send(t, m, first)
+	m, answers := fire(t, m, first)
+	if len(members.asked) != 1 || len(answers) != 1 || len(answers[0].Users) != 2 {
+		t.Fatalf("first query: searched %+v, answered %+v; want one fetch answering with both", members.asked, answers)
+	}
+
+	next := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "iv", Gen: 2}
+	updated, cmd := m.Update(next)
+	_, answers = answersIn(t, updated.(Model), cmd)
+	if len(members.asked) != 1 {
+		t.Fatalf("the list was fetched again: %+v", members.asked)
+	}
+	if len(answers) != 1 || answers[0].Gen != next.Gen || len(answers[0].Users) != 2 {
+		t.Fatalf("answers = %+v, want the known list, at once, for the new query", answers)
+	}
+}
+
+// Typing on while the list is on its way asks for it once, not once per
+// letter — and the list, when it lands, answers what is being typed now
+// rather than the question that sent for it.
+func TestABasicGroupListOnItsWayAnswersTheNewestQuery(t *testing.T) {
+	members := &fakeMembers{users: []*telegram.User{nadia(), ivo()}}
+	m := basicGroup(t, members)
+	first := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "", Gen: 1}
+	newer := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "i", Gen: 2}
+
+	m = send(t, m, first)
+	updated, fetch := m.Update(mentionSearchMsg{query: first})
+	m = send(t, updated.(Model), newer)
+	m, early := fire(t, m, newer)
+	if len(early) != 0 {
+		t.Fatalf("answered %+v before the list landed", early)
+	}
+
+	_, answers := answersIn(t, m, fetch)
+	if len(members.asked) != 1 {
+		t.Fatalf("searched %+v, want the one fetch", members.asked)
+	}
+	if len(answers) != 1 || answers[0].Gen != newer.Gen || answers[0].Query != "i" {
+		t.Fatalf("answers = %+v, want the list answering the newest query", answers)
+	}
+}
+
+// A fetch that failed has fetched nothing: the next query asks again rather
+// than waiting on a list that is not coming.
+func TestAFailedBasicGroupFetchIsAskedAgain(t *testing.T) {
+	members := &fakeMembers{err: errors.New("CHAT_ADMIN_REQUIRED")}
+	m := basicGroup(t, members)
+	first := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "", Gen: 1}
+	m = send(t, m, first)
+	m, answers := fire(t, m, first)
+	if len(answers) != 1 || answers[0].Err == nil {
+		t.Fatalf("answers = %+v, want the failure carried", answers)
+	}
+
+	members.err, members.users = nil, []*telegram.User{nadia()}
+	again := composer.MentionQueryMsg{ChatID: basicGroupID, Query: "n", Gen: 2}
+	m = send(t, m, again)
+	if _, answers = fire(t, m, again); len(members.asked) != 2 || len(answers) != 1 || len(answers[0].Users) != 1 {
+		t.Fatalf("searched %+v, answered %+v; want a second fetch answering", members.asked, answers)
+	}
+}
