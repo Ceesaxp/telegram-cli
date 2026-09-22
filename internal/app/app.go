@@ -1220,8 +1220,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case composer.MentionQueryMsg:
 		// The @ picker asking who the query could mean. See
-		// mentionpicker.go.
-		cmds = append(cmds, m.handleMentionQuery(msg))
+		// mentionpicker.go. Nothing below has a use for the question.
+		return m, m.handleMentionQuery(msg)
 
 	case composer.PasteRequestedMsg:
 		if !m.pasteInFlight {

@@ -57,15 +57,18 @@ func (m *Model) offerMentionCandidates(chatID int64) {
 // who is already reading; a broadcast channel's members cannot be named at
 // all. A chat the store has not described yet is neither, until it is.
 func (m Model) mentionsAllowed(chatID int64) bool {
+	kind, ok := m.chatType(chatID)
+	return ok && (kind == telegram.ChatTypeBasicGroup || kind == telegram.ChatTypeSupergroup)
+}
+
+// chatType is what kind of chat the store says chatID is, and false when it
+// has not said.
+func (m Model) chatType(chatID int64) (telegram.ChatType, bool) {
 	entry, ok := m.store.Chats.Get(chatID)
 	if !ok || entry.Chat == nil {
-		return false
+		return 0, false
 	}
-	switch entry.Chat.Type {
-	case telegram.ChatTypeBasicGroup, telegram.ChatTypeSupergroup:
-		return true
-	}
-	return false
+	return entry.Chat.Type, true
 }
 
 // mentionCandidates are the members of chatID an @ can offer before any
