@@ -3,6 +3,8 @@ package composer
 import (
 	"slices"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // nadia is the span the table below starts from: "Nadia" in "hi Nadia ok",
@@ -207,4 +209,121 @@ func TestInsertMentionKeepsTheOtherSpansInStep(t *testing.T) {
 	if !slices.Equal(m.mentions, want) {
 		t.Errorf("mentions = %+v, want %+v, in order", m.mentions, want)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Spans follow the edits, whatever makes them
+// ---------------------------------------------------------------------------
+
+// withNadia is a composer holding "hi Nadia " with Nadia mentioned by ID,
+// runes [3, 8), and the cursor after the trailing space — the state a
+// completed mention leaves behind.
+func withNadia(t *testing.T, m Model) Model {
+	t.Helper()
+	m = typeInto(t, m, "hi @na")
+	m.InsertMention(3, 6, "Nadia", 7)
+	if want := []MentionSpan{nadia}; !slices.Equal(m.mentions, want) {
+		t.Fatalf("precondition: mentions = %+v, want %+v", m.mentions, want)
+	}
+	return m
+}
+
+func wantMentions(t *testing.T, m Model, want ...MentionSpan) {
+	t.Helper()
+	if !slices.Equal(m.mentions, want) {
+		t.Errorf("draft %q: mentions = %+v, want %+v", m.Draft(), m.mentions, want)
+	}
+}
+
+func TestTypingBeforeAMentionShiftsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = typeSeq(t, m, "\x01") // ctrl+a
+	m = chars(t, m, "oh ")
+
+	wantMentions(t, m, shifted(nadia, 3))
+}
+
+func TestTypingAfterAMentionLeavesIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = chars(t, m, "how are you")
+
+	wantMentions(t, m, nadia)
+}
+
+// The space after a mention is the composer's, so backspacing over it costs
+// nothing. The next backspace eats into the name, and the name no longer
+// says who it means.
+func TestBackspacingIntoAMentionDropsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+
+	m = typeSeq(t, m, "\x7f")
+	wantMentions(t, m, nadia)
+
+	m = typeSeq(t, m, "\x7f")
+	wantMentions(t, m)
+}
+
+// ctrl+w kills the word before the cursor — the whole mention.
+func TestKillingAMentionDropsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = typeSeq(t, m, "\x17") // ctrl+w
+
+	if got := m.Draft(); got != "hi " {
+		t.Fatalf("precondition: Draft = %q, want %q", got, "hi ")
+	}
+	wantMentions(t, m)
+}
+
+func TestANewlineBeforeAMentionShiftsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = typeSeq(t, m, "\x01", "\n") // ctrl+a, ctrl+j
+
+	wantMentions(t, m, shifted(nadia, 1))
+}
+
+func TestPastingBeforeAMentionShiftsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m = typeSeq(t, m, "\x01") // ctrl+a
+	m, _ = m.Update(tea.PasteMsg{Content: "well,\n"})
+
+	wantMentions(t, m, shifted(nadia, 6))
+}
+
+func TestPastingIntoAMentionDropsIt(t *testing.T) {
+	m := withNadia(t, newFocused())
+	m.textarea.Cursor = 5
+	m, _ = m.Update(tea.PasteMsg{Content: "xx"})
+
+	wantMentions(t, m)
+}
+
+// vi's operators go through the same door as typing. D from the start of the
+// line takes the mention with it; x on its first letter breaks it.
+func TestViOperatorsOverAMentionDropIt(t *testing.T) {
+	for _, keys := range []string{"0D", "dd", "0lllx"} {
+		t.Run(keys, func(t *testing.T) {
+			m := withNadia(t, viComposer(t))
+			m = typeSeq(t, m, "\x1b") // Esc: normal mode
+			m = chars(t, m, keys)
+
+			wantMentions(t, m)
+		})
+	}
+}
+
+// ... and dd on another line only moves it.
+func TestViDeletingAnotherLineShiftsAMention(t *testing.T) {
+	m := chars(t, viComposer(t), "first")
+	m = typeSeq(t, m, "\n") // ctrl+j
+	m = chars(t, m, "hi @na")
+	m.InsertMention(9, 12, "Nadia", 7)
+	wantMentions(t, m, shifted(nadia, 6))
+
+	m = typeSeq(t, m, "\x1b") // Esc: normal mode
+	m = chars(t, m, "kdd")
+
+	if got := m.Draft(); got != "hi Nadia " {
+		t.Fatalf("precondition: Draft = %q, want the first line gone", got)
+	}
+	wantMentions(t, m, nadia)
 }

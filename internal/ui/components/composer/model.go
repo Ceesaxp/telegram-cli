@@ -329,7 +329,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // editDraft applies input that edits the text: a paste, or a key none of the
 // composer's own chords claimed. It is the one door typed and pasted text
 // comes through, whichever keymap is speaking.
+//
+// Which is why the mention spans are kept in step here and nowhere else in
+// the key path. There are too many editing primitives — emacs chords, vi
+// operators, paste — to teach each one about spans, and the next one added
+// would be the one that forgot. Comparing the text before and after catches
+// all of them. See adjustMentions.
 func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
+	before := m.textarea.Value
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
@@ -337,6 +344,7 @@ func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m, cmd = m.editKey(msg)
 	}
+	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value)
 	return m, cmd
 }
 
