@@ -60,14 +60,15 @@ func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
 	m.mentions = spans
 }
 
-// mentionsToSend is what a submit hands over: the spans that still cover
-// their labels in text, sorted by Start.
+// validMentions returns the spans that cover their labels in text, sorted by
+// Start, as a new slice.
 //
-// Every path that changes the text already keeps the spans in step, so the
-// check should find nothing to drop. It runs anyway because this is the last
-// point before a user ID goes on the wire, and a mention over words that do
-// not name its user is worse than no mention at all.
-func mentionsToSend(spans []MentionSpan, text string) []MentionSpan {
+// Submit runs it on the way out. Every path that changes the text already
+// keeps the spans in step, so it should find nothing to drop there; it runs
+// anyway because that is the last point before a user ID goes on the wire,
+// and a mention over words that do not name its user is worse than no
+// mention at all.
+func validMentions(spans []MentionSpan, text string) []MentionSpan {
 	out := adjustMentions(spans, text, text)
 	slices.SortFunc(out, byStart)
 	return out

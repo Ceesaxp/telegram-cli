@@ -483,7 +483,7 @@ func (m Model) submit() (Model, tea.Cmd) {
 		Text:       m.textarea.Value,
 		Attachment: m.attachment,
 		AsPhoto:    m.asPhoto,
-		Mentions:   mentionsToSend(m.mentions, m.textarea.Value),
+		Mentions:   validMentions(m.mentions, m.textarea.Value),
 	}
 	wasEdit := m.mode == ModeEdit
 	switch m.mode {
