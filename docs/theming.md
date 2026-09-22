@@ -332,7 +332,11 @@ Decisions made in Phase 2:
   never backs up twice. Every save is written atomically through a
   symlink with its own mode, and read back with the real loader; if it does
   not load, or does not say the new value, the bytes read before the edit
-  are restored, so the safety does not depend on a backup. It refuses,
+  are restored, so the safety does not depend on a backup. Just before the
+  rename the file is read again, and a save that finds it changed since it
+  was read stops without writing; a restore likewise happens only over the
+  file that was written. That narrows the window an outside edit can be lost
+  in to the rename itself. It refuses,
   and says to edit by hand, when `ui` is dotted keys or an inline table or
   the file is not TOML: the theme still switches, and the notice says "not
   saved" and why.

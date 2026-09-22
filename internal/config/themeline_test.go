@@ -551,3 +551,86 @@ func TestSetThemeLineRestoresWhatDoesNotReadBack(t *testing.T) {
 		}
 	})
 }
+
+// whileSaving makes change run at SetThemeLine's last moment before the
+// rename, for the rest of the test.
+func whileSaving(t *testing.T, change func(path string)) {
+	t.Helper()
+	whileSavingThemeLine = change
+	t.Cleanup(func() { whileSavingThemeLine = func(string) {} })
+}
+
+// leftovers are the temp files a write left in dir.
+func leftovers(t *testing.T, dir string) []string {
+	t.Helper()
+	found, err := filepath.Glob(filepath.Join(dir, "*.tmp*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
+// TestSetThemeLineDoesNotSaveOverAnEditMadeWhileSaving: the file is read,
+// edited and written to a temp file before it is renamed into place, and
+// somebody — an editor, a dotfiles sync — can write it in between. Their
+// write is newer than the edit, so the save stops rather than replacing it.
+func TestSetThemeLineDoesNotSaveOverAnEditMadeWhileSaving(t *testing.T) {
+	const theirs = "[ui]\ntheme = \"light\"  # written meanwhile\n"
+	for name, before := range map[string]string{
+		"an existing file":          "[ui]\ntheme = \"dark\"\n",
+		"a file that was not there": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			if before != "" {
+				if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			whileSaving(t, func(path string) {
+				if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			})
+
+			_, err := SetThemeLine(path, "gruvbox", true)
+
+			if err == nil || !strings.Contains(err.Error(), "config.toml changed while saving; not saved") {
+				t.Fatalf("err = %v, want the save stopped", err)
+			}
+			if got := readFile(t, path); got != theirs {
+				t.Errorf("the file is %q, want the edit made while saving, %q", got, theirs)
+			}
+			if tmp := leftovers(t, dir); len(tmp) != 0 {
+				t.Errorf("the stopped save left %v", tmp)
+			}
+		})
+	}
+}
+
+// TestSetThemeLineDoesNotRestoreOverAnEditMadeSince: a write that does not
+// read back is put back — unless the file is no longer the one written,
+// when somebody else's newer edit is what is there, and restoring would
+// throw it away.
+func TestSetThemeLineDoesNotRestoreOverAnEditMadeSince(t *testing.T) {
+	const theirs = "[ui]\ntheme = \"light\"  # written meanwhile\n"
+	path := configFile(t, "[ui]\ntheme = \"dark\"\n")
+	loadWritten = func(path string) (*Config, error) {
+		if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return nil, errors.New("simulated")
+	}
+	t.Cleanup(func() { loadWritten = loadFrom })
+
+	_, err := SetThemeLine(path, "gruvbox", true)
+
+	if err == nil || !strings.Contains(err.Error(), "not restored") {
+		t.Fatalf("err = %v, want it to say the file was not restored", err)
+	}
+	if got := readFile(t, path); got != theirs {
+		t.Errorf("the file is %q, want the newer edit, %q", got, theirs)
+	}
+}

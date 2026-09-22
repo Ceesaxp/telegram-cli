@@ -92,11 +92,23 @@ func SetThemeLine(path, value string, backup bool) (kept bool, err error) {
 		kept = true
 	}
 	mode := info.Mode().Perm()
-	if err := writeFileAtomic(path, edited, mode); err != nil {
+	if err := writeFileGuarded(path, edited, mode, savedOver(path, original)); err != nil {
 		return kept, err
 	}
 	if err := checkThemeLine(path, value); err != nil {
-		if restoreErr := writeFileAtomic(path, original, mode); restoreErr != nil {
+		// Put back only over what this wrote: a file somebody has written
+		// since is newer than both, and restoring would throw it away.
+		stillOurs := func() error {
+			if !fileHolds(path, edited) {
+				return fmt.Errorf("%w; %s changed after it was written, so it was not restored",
+					err, filepath.Base(path))
+			}
+			return nil
+		}
+		if err := stillOurs(); err != nil {
+			return kept, err
+		}
+		if restoreErr := writeFileGuarded(path, original, mode, stillOurs); restoreErr != nil {
 			if backupPath == "" {
 				return kept, fmt.Errorf("%w, and restoring it failed too (%v)", err, restoreErr)
 			}
@@ -126,6 +138,11 @@ func backupOnce(path string, original []byte) (string, error) {
 	}
 	return backup, writeFilePrivate(backup, original)
 }
+
+// whileSavingThemeLine is called at SetThemeLine's last check before the
+// rename. It does nothing; a test replaces it to change the file there, in a
+// window too narrow to hit from outside.
+var whileSavingThemeLine = func(path string) {}
 
 // loadWritten is the loader SetThemeLine reads its own write back with. A
 // variable so a test can make the check fail: a real edit that reads back
@@ -167,14 +184,42 @@ func createThemeFile(path, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := writeFilePrivate(path, []byte("[ui]\ntheme = "+tomlString(value)+"\n")); err != nil {
+	created := []byte("[ui]\ntheme = " + tomlString(value) + "\n")
+	if err := writeFileGuarded(path, created, 0o600, savedOver(path, nil)); err != nil {
 		return err
 	}
 	if err := checkThemeLine(path, value); err != nil {
-		os.Remove(resolveTarget(path))
+		// Removed only while it is still what this created.
+		if fileHolds(path, created) {
+			os.Remove(resolveTarget(path))
+		}
 		return err
 	}
 	return nil
+}
+
+// savedOver is the last check before a save's rename: the file at path is
+// still what the save started from — before, or not there at all for a nil
+// before. Somebody who wrote it in between, an editor or a dotfiles sync,
+// wrote something newer than the edit, and the save stops rather than
+// replacing it. It narrows the window to the rename; it cannot close it.
+func savedOver(path string, before []byte) func() error {
+	return func() error {
+		whileSavingThemeLine(path)
+		now, err := os.ReadFile(path)
+		unchanged := before == nil && errors.Is(err, fs.ErrNotExist) ||
+			before != nil && err == nil && bytes.Equal(now, before)
+		if !unchanged {
+			return fmt.Errorf("%s changed while saving; not saved", filepath.Base(path))
+		}
+		return nil
+	}
+}
+
+// fileHolds reports whether the file at path holds exactly want.
+func fileHolds(path string, want []byte) bool {
+	now, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(now, want)
 }
 
 // editThemeLine is data with ui.theme set to value: see [SetThemeLine]. The

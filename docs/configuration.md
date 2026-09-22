@@ -80,7 +80,11 @@ that one is left alone, so trying theme after theme, today or next week,
 leaves one copy of your config, not one a switch. Delete it to have the next
 save take a fresh one. Every save is read back before `:theme` reports
 success; if the file does not load, or does not say the new theme, it is put
-back the way it was before that save, backup or not.
+back the way it was before that save, backup or not. If something else —
+your editor, a dotfiles sync — writes `config.toml` while a save is in
+progress, the save stops ("changed while saving; not saved") rather than
+replace the newer file, and a failed read-back does not restore over it
+either.
 
 `:theme` will not edit a `config.toml` that sets `ui` with dotted keys
 (`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
