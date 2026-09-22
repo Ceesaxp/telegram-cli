@@ -40,6 +40,19 @@ type Item struct {
 	// Key is the equivalent key binding, right-aligned so the palette
 	// teaches the keymap. Empty when the command has no key of its own.
 	Key string
+	// Candidates are the values the argument can take. Once the query is
+	// this command's exact name and a space, the palette lists these instead
+	// of commands. Nil for a command whose argument is free text or absent,
+	// which the palette treats exactly as it always has.
+	Candidates []Arg
+}
+
+// Arg is one value a command's argument can take, as the palette offers it.
+type Arg struct {
+	// Value is what the argument becomes when this row is chosen.
+	Value string
+	// Description is the dim note beside it — where a theme lives, say.
+	Description string
 }
 
 // Action is what a keypress asked the app to do.
@@ -65,7 +78,13 @@ type Model struct {
 
 	items    []Item
 	filtered []int // indices into items, in display order
-	cursor   int   // index into filtered
+	cursor   int   // index into filtered, or into argHits while choosing an argument
+
+	// arg is the command whose argument is being chosen, and argHits the
+	// indices into its Candidates that match, in display order. The zero
+	// Item has no candidates, and is the palette listing commands.
+	arg     Item
+	argHits []int
 }
 
 func New(r theme.Roles) Model {
@@ -98,8 +117,25 @@ func (m Model) IsVisible() bool { return m.visible }
 // Query returns the raw typed text, command word and arguments together.
 func (m Model) Query() string { return m.query }
 
+// Line is the command line Enter asks the app to run. It is the query as
+// typed, except while an argument's values are listed: then it is the
+// command with the highlighted value, so what runs is what the user sees
+// selected, typed out in full or not. With no value matching it is the
+// query again, and the command gets to say what it was given.
+func (m Model) Line() string {
+	if a, ok := m.SelectedArg(); ok {
+		return m.arg.Name + " " + a.Value
+	}
+	return m.query
+}
+
 // Selected returns the highlighted item, if the filter matched anything.
+// While an argument's values are listed that is the command they belong to:
+// the highlight is on one of its values, not on another command.
 func (m Model) Selected() (Item, bool) {
+	if m.choosingArg() {
+		return m.arg, true
+	}
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
 		return Item{}, false
 	}
@@ -115,6 +151,32 @@ func (m Model) Matches() []Item {
 	}
 	return out
 }
+
+// ArgMatches returns the argument values currently listed, nil while the
+// palette is listing commands.
+func (m Model) ArgMatches() []Arg {
+	if !m.choosingArg() {
+		return nil
+	}
+	out := make([]Arg, 0, len(m.argHits))
+	for _, i := range m.argHits {
+		out = append(out, m.arg.Candidates[i])
+	}
+	return out
+}
+
+// SelectedArg returns the highlighted argument value, if the palette is
+// listing values and the partial argument matched any.
+func (m Model) SelectedArg() (Arg, bool) {
+	if !m.choosingArg() || m.cursor < 0 || m.cursor >= len(m.argHits) {
+		return Arg{}, false
+	}
+	return m.arg.Candidates[m.argHits[m.cursor]], true
+}
+
+// choosingArg reports whether the palette is listing an argument's values
+// rather than commands.
+func (m Model) choosingArg() bool { return len(m.arg.Candidates) > 0 }
 
 // Update handles a keypress while the palette owns input.
 //
@@ -178,7 +240,8 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, Action) {
 }
 
 func (m *Model) move(delta int) {
-	if len(m.filtered) == 0 {
+	rows := m.rows()
+	if rows == 0 {
 		m.cursor = 0
 		return
 	}
@@ -186,16 +249,33 @@ func (m *Model) move(delta int) {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	if m.cursor >= len(m.filtered) {
-		m.cursor = len(m.filtered) - 1
+	if m.cursor >= rows {
+		m.cursor = rows - 1
 	}
+}
+
+// rows is how many entries the palette is listing: values while choosing an
+// argument, commands otherwise.
+func (m Model) rows() int {
+	if m.choosingArg() {
+		return len(m.argHits)
+	}
+	return len(m.filtered)
 }
 
 // complete replaces the typed command word with the selected item's name,
 // leaving any arguments already typed alone and adding a trailing space when
 // the command takes arguments — so Tab lands the cursor where the argument
-// goes.
+// goes. While an argument's values are listed it writes out the highlighted
+// value instead, and does nothing when none matched.
 func (m *Model) complete() {
+	if m.choosingArg() {
+		if a, ok := m.SelectedArg(); ok {
+			m.query = m.arg.Name + " " + a.Value
+			m.refilter()
+		}
+		return
+	}
 	item, ok := m.Selected()
 	if !ok {
 		return
@@ -217,9 +297,52 @@ func (m *Model) complete() {
 // the old highlighted row is usually gone, and holding a stale index would
 // run a command the user is no longer looking at.
 func (m *Model) refilter() {
-	name, _ := SplitQuery(m.query)
+	name, partial := SplitQuery(m.query)
 	m.filtered = rank(len(m.items), func(i int) string { return m.items[i].Name }, name)
+	m.arg, m.argHits = m.argTarget(name), nil
+	if m.choosingArg() {
+		m.argHits = rankArgs(m.arg.Candidates, partial)
+	}
 	m.cursor = 0
+}
+
+// argTarget is the command whose argument the query has moved on to: the
+// command word typed out in full, a space after it, and candidates to offer.
+// Anything short of that — "theme" with no space yet, "them ", a command
+// whose argument is free text — is the zero Item, and the palette goes on
+// listing commands.
+func (m Model) argTarget(name string) Item {
+	if !strings.Contains(strings.TrimLeft(m.query, " "), " ") {
+		return Item{}
+	}
+	for _, it := range m.items {
+		if it.Name == name && len(it.Candidates) > 0 {
+			return it
+		}
+	}
+	return Item{}
+}
+
+// rankArgs is [rank] for argument values: case-folded, since a value is
+// usually somebody's file name and nobody remembers how they capitalised it.
+//
+// An exactly-typed value is moved to the top. Enter runs the highlighted
+// value, not the typed text, and the order is the caller's: listed after
+// "nord-light", a "nord" typed out in full would otherwise run the other one.
+// The command names need no such pass, because the registry is sorted and a
+// name sorts before every longer name it is a prefix of.
+func rankArgs(args []Arg, partial string) []int {
+	pattern := strings.ToLower(partial)
+	value := func(i int) string { return strings.ToLower(args[i].Value) }
+	hits := rank(len(args), value, pattern)
+	for j, i := range hits {
+		if value(i) == pattern {
+			copy(hits[1:j+1], hits[:j])
+			hits[0] = i
+			break
+		}
+	}
+	return hits
 }
 
 // rank is the indices 0..n-1 whose text matches pattern, best first. Two
@@ -288,19 +411,30 @@ func (m Model) View() string {
 	// Prompt row: ": <query>" with a block cursor.
 	lines = append(lines, cell.Fit(promptStyle.Render(":")+" "+m.query+"█", Width))
 
-	if len(m.filtered) == 0 {
-		lines = append(lines, cell.Fit(descStyle.Render("  no matching command"), Width))
+	rows := m.rows()
+	if rows == 0 {
+		empty := "  no matching command"
+		if m.choosingArg() {
+			empty = "  no matching value"
+		}
+		lines = append(lines, cell.Fit(descStyle.Render(empty), Width))
 	}
 
-	for row, idx := range m.filtered {
-		if row >= maxRows {
-			break
+	// The window scrolls just far enough to keep the highlight on screen:
+	// there can be more values than rows, and a highlight walked off the
+	// bottom would have Enter run something the user cannot see.
+	start := max(0, m.cursor-maxRows+1)
+	for row := start; row < rows && row < start+maxRows; row++ {
+		if m.choosingArg() {
+			a := m.arg.Candidates[m.argHits[row]]
+			lines = append(lines, m.argLine(a, row == m.cursor, theme.OverlayBody(m.roles), descStyle))
+			continue
 		}
-		it := m.items[idx]
+		it := m.items[m.filtered[row]]
 		lines = append(lines, m.itemLine(it, row == m.cursor, nameStyle, descStyle, keyStyle))
 	}
 
-	if n := len(m.filtered) - maxRows; n > 0 {
+	if n := rows - maxRows; n > 0 {
 		lines = append(lines, cell.Fit(descStyle.Render("  +"+itoa(n)+" more"), Width))
 	}
 
@@ -349,6 +483,30 @@ func (m Model) itemLine(it Item, selected bool, nameStyle, descStyle, keyStyle l
 	// style instead would spend part of the budget on the style's own frame
 	// and truncate the tail — which is precisely the right-aligned key
 	// equivalent, the one thing on the row that must not be cut.
+	line = cell.Fit(line, Width)
+	if selected {
+		return theme.OverlaySelected(m.roles).Render(line)
+	}
+	return line
+}
+
+// argLine renders one value row: marker, value, and its description dim
+// beside it. The value is cut only when it cannot fit on its own; the
+// description takes what is left, or is left off.
+func (m Model) argLine(a Arg, selected bool, valueStyle, descStyle lipgloss.Style) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+
+	value := cell.Truncate(a.Value, Width-cell.Width(marker))
+	line := marker + valueStyle.Render(value)
+
+	// Budget: marker + value + gap + description.
+	if descBudget := Width - cell.Width(marker) - cell.Width(value) - 2; descBudget > 0 && a.Description != "" {
+		line += "  " + descStyle.Render(cell.Truncate(a.Description, descBudget))
+	}
+
 	line = cell.Fit(line, Width)
 	if selected {
 		return theme.OverlaySelected(m.roles).Render(line)
