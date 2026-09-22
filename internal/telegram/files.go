@@ -1,10 +1,12 @@
 package telegram
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -30,20 +32,111 @@ type avatarRef struct {
 	photoID int64
 }
 
-// fileRegistry maps string keys to downloadable tg file locations.
+// fileRegistryCapacity is how many files the registry remembers (#33).
+//
+// Conversion registers every downloadable size of every photo — three to
+// five of them — a document and its thumbnail, and the avatar of every chat
+// and user seen, so a few thousand entries are the files of several hundred
+// media messages: every chat a session keeps warm, with room to spare. An
+// entry is a location, a name and a key, a few hundred bytes, so the whole
+// of it is a megabyte or two.
+//
+// Falling out of it costs a refetch, not a failure: a file whose entry is
+// gone is registered again from its message (see [Client.DownloadMessageFile])
+// or, for an avatar, from its chat. So the number is a trade between memory
+// and round trips, and both ends of it are cheap.
+const fileRegistryCapacity = 4096
+
+// fileRegistry maps string keys to downloadable tg file locations, keeping
+// the fileRegistryCapacity most recently used.
+//
+// A key with a download running is never evicted, whatever its age: the
+// transfer ends by marking the entry done, and a mark on an entry that is
+// no longer there is a file on disk the next open does not know about. So
+// the registry can stand above its capacity, by the keys in flight and only
+// while they are.
 type fileRegistry struct {
-	mu      sync.RWMutex
-	entries map[string]*fileEntry
-	sf      singleflight.Group
+	mu       sync.Mutex
+	capacity int
+	entries  map[string]*list.Element // of *registered
+	recency  *list.List               // front is the most recently used
+	inflight map[string]int           // keys a download is running for
+	sf       singleflight.Group
+}
+
+// registered is one entry in the recency list, which has to know its key to
+// take it out of the map when it falls off the end.
+type registered struct {
+	key   string
+	entry *fileEntry
 }
 
 func newFileRegistry() *fileRegistry {
-	return &fileRegistry{entries: make(map[string]*fileEntry)}
+	return newFileRegistryOf(fileRegistryCapacity)
 }
 
+// newFileRegistryOf is a registry of another capacity, which is how a test
+// gets one small enough to fill.
+func newFileRegistryOf(capacity int) *fileRegistry {
+	return &fileRegistry{
+		capacity: capacity,
+		entries:  make(map[string]*list.Element),
+		recency:  list.New(),
+		inflight: make(map[string]int),
+	}
+}
+
+// lookup finds a key's entry and counts it as used. The caller holds mu.
+func (r *fileRegistry) lookup(key string) (*fileEntry, bool) {
+	el, ok := r.entries[key]
+	if !ok {
+		return nil, false
+	}
+	r.recency.MoveToFront(el)
+	return el.Value.(*registered).entry, true
+}
+
+// evict drops the least recently used entries until the registry fits its
+// capacity, passing over the keys in flight. The caller holds mu.
+func (r *fileRegistry) evict() {
+	for el := r.recency.Back(); el != nil && len(r.entries) > r.capacity; {
+		older := el
+		el = el.Prev()
+		key := older.Value.(*registered).key
+		if r.inflight[key] > 0 {
+			continue
+		}
+		r.recency.Remove(older)
+		delete(r.entries, key)
+	}
+}
+
+// do runs fn once for concurrent callers of one key, and holds the key
+// against eviction for as long as it runs — from the lookup, through any
+// refetch that registers it again, to the mark that the transfer is done.
 func (r *fileRegistry) do(key string, fn func() (any, error)) (any, error) {
-	v, err, _ := r.sf.Do(key, fn)
+	v, err, _ := r.sf.Do(key, func() (any, error) {
+		r.hold(key)
+		defer r.release(key)
+		return fn()
+	})
 	return v, err
+}
+
+func (r *fileRegistry) hold(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inflight[key]++
+}
+
+// release lets a key go, and evicts whatever it was holding above capacity.
+func (r *fileRegistry) release(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inflight[key]--; r.inflight[key] <= 0 {
+		delete(r.inflight, key)
+	}
+	r.evict()
 }
 
 // fileSnap is a copy of the fields DownloadFileSync needs so the registry
@@ -58,9 +151,9 @@ type fileSnap struct {
 }
 
 func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	e, ok := r.entries[key]
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.lookup(key)
 	if !ok {
 		return fileSnap{}, false
 	}
@@ -77,11 +170,18 @@ func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
 func (r *fileRegistry) put(key string, e *fileEntry) *File {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if previous, ok := r.entries[key]; ok && reusableLocalFile(previous, e) {
-		e.path = previous.path
-		e.done = true
+	if el, ok := r.entries[key]; ok {
+		item := el.Value.(*registered)
+		if reusableLocalFile(item.entry, e) {
+			e.path = item.entry.path
+			e.done = true
+		}
+		item.entry = e
+		r.recency.MoveToFront(el)
+	} else {
+		r.entries[key] = r.recency.PushFront(&registered{key: key, entry: e})
+		r.evict()
 	}
-	r.entries[key] = e
 	return fileFromEntry(key, e)
 }
 
@@ -138,7 +238,7 @@ func fileFromEntry(key string, e *fileEntry) *File {
 func (r *fileRegistry) markDone(key, path string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e, ok := r.entries[key]; ok {
+	if e, ok := r.lookup(key); ok {
 		e.path = path
 		e.done = true
 	}
@@ -205,75 +305,167 @@ func (c *Client) registerPhotoSize(p *tg.Photo, thumbType string, size int64) *F
 
 // registerAvatar registers a peer avatar; key "avatar:<chatID>".
 func (c *Client) registerAvatar(chatID, photoID int64) *File {
-	key := fmt.Sprintf("avatar:%d", chatID)
+	key := avatarKey(chatID)
 	return c.files.put(key, &fileEntry{
 		avatar: &avatarRef{chatID: chatID, photoID: photoID},
 		name:   strings.ReplaceAll(key, ":", "_") + ".jpg",
 	})
 }
 
+// avatarPrefix begins every avatar key; the chat ID follows it.
+const avatarPrefix = "avatar:"
+
+// avatarKey is the registry key of a chat's avatar.
+func avatarKey(chatID int64) string {
+	return fmt.Sprintf("%s%d", avatarPrefix, chatID)
+}
+
 // DownloadFileSync downloads a registered file to the files dir
 // and returns its local state. Concurrent calls for the same key share
 // one in-flight download via the registry's singleflight group.
+//
+// An avatar whose entry is gone is registered again from its chat, which
+// its key names. Any other key needs the message it came from to come back:
+// see [Client.DownloadMessageFile].
 func (c *Client) DownloadFileSync(key string) (*File, error) {
+	var reregister func() error
+	if chatID, ok := avatarChatID(key); ok {
+		reregister = func() error { return c.reregisterAvatar(chatID) }
+	}
+	return c.download(key, reregister)
+}
+
+// DownloadMessageFile is [Client.DownloadFileSync] for a file a message
+// shows, and the form to use whenever the message is at hand.
+//
+// The registry is bounded (#33), so the entry behind a key can be gone by
+// the time a reader asks for it: a photo still on screen, scrolled past
+// thousands of files ago. The message is what registered it, so fetching
+// the message again — the same fetch an edit takes — registers it again,
+// and the download goes ahead instead of reporting an unknown file.
+func (c *Client) DownloadMessageFile(chatID, messageID int64, key string) (*File, error) {
+	return c.download(key, func() error { return c.reregisterMessage(chatID, messageID) })
+}
+
+// download is the shared body of the two: look the key up, register it
+// again if it is gone and reregister knows how, then fetch. The whole of
+// it runs inside the key's singleflight, so callers that miss together
+// share one refetch as well as one transfer.
+func (c *Client) download(key string, reregister func() error) (*File, error) {
 	v, err := c.files.do(key, func() (any, error) {
 		snap, ok := c.files.snapshot(key)
+		if !ok && reregister != nil {
+			if err := reregister(); err != nil {
+				return nil, fmt.Errorf("download %s: %w", key, err)
+			}
+			snap, ok = c.files.snapshot(key)
+		}
 		if !ok {
 			return nil, fmt.Errorf("unknown file %q", key)
 		}
-
-		if snap.done && snap.path != "" {
-			if _, err := os.Stat(snap.path); err == nil {
-				return &File{ID: key, Path: snap.path, Size: snap.size, Downloaded: true}, nil
-			}
-		}
-
-		// The cache outlives the process. done is in-memory and starts
-		// false in every one, so without this a restart re-downloads every
-		// thumbnail, avatar and document already sitting in files_dir —
-		// which the config calls "the media CACHE" and which held only
-		// within one process lifetime.
-		//
-		// The path is deterministic and the content behind a key never
-		// changes: a document ID, a photo ID and a size identify bytes, not
-		// a version of them.
-		path := c.cachePath(key, snap)
-		if cached, ok := usableCache(path, snap.size); ok {
-			c.files.markDone(key, path)
-			return &File{ID: key, Path: cached, Size: snap.size, Downloaded: true}, nil
-		}
-
-		ctx, cancel := transferCtx()
-		defer cancel()
-
-		location := snap.location
-		if location == nil && snap.avatar != nil {
-			peer, err := c.inputPeer(ctx, snap.avatar.chatID)
-			if err != nil {
-				return nil, fmt.Errorf("download %s: %w", key, err)
-			}
-			location = &tg.InputPeerPhotoFileLocation{
-				Peer:    peer,
-				PhotoID: snap.avatar.photoID,
-			}
-		}
-		if location == nil {
-			return nil, fmt.Errorf("file %q has no location", key)
-		}
-
-		if err := downloadToPath(ctx, c.api, location, path); err != nil {
-			return nil, fmt.Errorf("download %s: %w", key, err)
-		}
-
-		c.files.markDone(key, path)
-		file := &File{ID: key, Path: path, Size: snap.size, Downloaded: true}
-		c.send(FileUpdateMsg{File: file})
-		return file, nil
+		return c.fetch(key, snap)
 	})
 	if err != nil {
 		return nil, err
 	}
 	file, _ := v.(*File)
+	return file, nil
+}
+
+// reregisterMessage fetches a message for the side effect of converting
+// it, which registers every file it carries.
+//
+// A pending send has a negative ID and no server copy, so there is nothing
+// to ask for.
+func (c *Client) reregisterMessage(chatID, messageID int64) error {
+	if messageID <= 0 {
+		return fmt.Errorf("message %d is not on the server yet", messageID)
+	}
+	_, err := c.GetMessages(chatID, []int64{messageID})
+	return err
+}
+
+// reregisterAvatar resolves a chat again for the side effect of converting
+// it, which registers its current photo under the chat's avatar key. A chat
+// with no photo any more registers nothing, and the lookup after this one
+// misses as it should.
+//
+// The chat itself is thrown away. It is built by resolvedChat all the same,
+// which costs a notify-settings call a photo does not need, because every
+// peer-derived chat is built there (see TestPeerChatsAreBuiltInOnePlace) —
+// and a miss on an avatar is rare enough that one round trip is not worth
+// a second place to build chats in.
+func (c *Client) reregisterAvatar(chatID int64) error {
+	ctx, cancel := opCtx()
+	defer cancel()
+	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
+	if err != nil {
+		return fmt.Errorf("resolve peer %d: %w", chatID, err)
+	}
+	_, err = c.resolvedChat(ctx, peer)
+	return err
+}
+
+// avatarChatID is the chat an avatar key names, or false for any other key.
+func avatarChatID(key string) (int64, bool) {
+	rest, ok := strings.CutPrefix(key, avatarPrefix)
+	if !ok {
+		return 0, false
+	}
+	chatID, err := strconv.ParseInt(rest, 10, 64)
+	return chatID, err == nil
+}
+
+// fetch brings the bytes behind a registered key onto disk: from memory if
+// this process already has them, from the cache if an earlier one did, and
+// from the server otherwise.
+func (c *Client) fetch(key string, snap fileSnap) (*File, error) {
+	if snap.done && snap.path != "" {
+		if _, err := os.Stat(snap.path); err == nil {
+			return &File{ID: key, Path: snap.path, Size: snap.size, Downloaded: true}, nil
+		}
+	}
+
+	// The cache outlives the process. done is in-memory and starts
+	// false in every one, so without this a restart re-downloads every
+	// thumbnail, avatar and document already sitting in files_dir —
+	// which the config calls "the media CACHE" and which held only
+	// within one process lifetime.
+	//
+	// The path is deterministic and the content behind a key never
+	// changes: a document ID, a photo ID and a size identify bytes, not
+	// a version of them.
+	path := c.cachePath(key, snap)
+	if cached, ok := usableCache(path, snap.size); ok {
+		c.files.markDone(key, path)
+		return &File{ID: key, Path: cached, Size: snap.size, Downloaded: true}, nil
+	}
+
+	ctx, cancel := transferCtx()
+	defer cancel()
+
+	location := snap.location
+	if location == nil && snap.avatar != nil {
+		peer, err := c.inputPeer(ctx, snap.avatar.chatID)
+		if err != nil {
+			return nil, fmt.Errorf("download %s: %w", key, err)
+		}
+		location = &tg.InputPeerPhotoFileLocation{
+			Peer:    peer,
+			PhotoID: snap.avatar.photoID,
+		}
+	}
+	if location == nil {
+		return nil, fmt.Errorf("file %q has no location", key)
+	}
+
+	if err := downloadToPath(ctx, c.api, location, path); err != nil {
+		return nil, fmt.Errorf("download %s: %w", key, err)
+	}
+
+	c.files.markDone(key, path)
+	file := &File{ID: key, Path: path, Size: snap.size, Downloaded: true}
+	c.send(FileUpdateMsg{File: file})
 	return file, nil
 }
 

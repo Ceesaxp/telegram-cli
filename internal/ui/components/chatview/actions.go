@@ -109,11 +109,11 @@ func (m Model) PlayVoiceCmd() tea.Cmd {
 	switch c := msg.Content.(type) {
 	case *telegram.MessageVoiceNote:
 		if c.VoiceNote != nil {
-			return m.downloadAndPlay(fileKey(c.VoiceNote.File), "voice", "▶ playing voice note")
+			return m.downloadAndPlay(msg, fileKey(c.VoiceNote.File), "voice", "▶ playing voice note")
 		}
 	case *telegram.MessageAudio:
 		if c.Audio != nil {
-			return m.downloadAndPlay(fileKey(c.Audio.File), "audio", "▶ playing audio")
+			return m.downloadAndPlay(msg, fileKey(c.Audio.File), "audio", "▶ playing audio")
 		}
 	}
 	return nil
@@ -139,6 +139,7 @@ func (m Model) OverlayPhotoCmd() tea.Cmd {
 		return nil
 	}
 	tg := m.tg
+	chatID, msgID := msg.ChatID, msg.ID
 
 	return tea.Batch(
 		func() tea.Msg { return OpenPhotoMsg{Caption: caption} },
@@ -146,7 +147,7 @@ func (m Model) OverlayPhotoCmd() tea.Cmd {
 			if tg == nil {
 				return OpenedPhotoMsg{Err: errNoClient}
 			}
-			file, err := tg.DownloadFileSync(key)
+			file, err := tg.DownloadMessageFile(chatID, msgID, key)
 			if err != nil {
 				return OpenedPhotoMsg{Err: err}
 			}
