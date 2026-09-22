@@ -137,16 +137,29 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
+
+	var (
+		users []*User
+		err   error
+	)
 	if constant.TDLibPeerID(chatID).IsChat() {
-		users, err := c.basicGroupMembers(ctx, chatID)
-		if err != nil {
-			return nil, fmt.Errorf("search chat members: %w", err)
-		}
-		return users, nil
+		users, err = c.basicGroupMembers(ctx, chatID)
+	} else {
+		users, err = c.supergroupMembers(ctx, chatID, query, limit)
 	}
-	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
 	if err != nil {
 		return nil, fmt.Errorf("search chat members: %w", err)
+	}
+	return users, nil
+}
+
+// supergroupMembers is the members of a supergroup who match query and can
+// be mentioned, at most limit of them, in the server's order. An empty
+// query lists the recent members.
+func (c *Client) supergroupMembers(ctx context.Context, chatID int64, query string, limit int) ([]*User, error) {
+	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
+	if err != nil {
+		return nil, err
 	}
 
 	var filter tg.ChannelParticipantsFilterClass = &tg.ChannelParticipantsSearch{Q: query}
@@ -159,11 +172,11 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 		Limit:   limit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("search chat members: %w", err)
+		return nil, err
 	}
 	participants, err := c.seededParticipants(ctx, res)
 	if err != nil {
-		return nil, fmt.Errorf("search chat members: %w", err)
+		return nil, err
 	}
 
 	ids := make([]int64, 0, len(participants.Participants))
