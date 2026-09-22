@@ -686,8 +686,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// and a literal tab in a chat message is rare enough that
 			// cycling is the more useful meaning. (Shift+Tab already
 			// worked from the composer.) The search overlay keeps tab for
-			// its own use.
-			if key.Matches("tab") && m.focus != PanelSearch {
+			// its own use, and so does an open @ picker, where it is one
+			// of the two keys that insert the chosen member (issue #41).
+			if key.Matches("tab") && m.focus != PanelSearch && !m.mentionPickerOpen() {
 				switch m.focus {
 				case PanelChatList:
 					m.setFocus(PanelChatView)

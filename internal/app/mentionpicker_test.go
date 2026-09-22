@@ -5,6 +5,7 @@ import (
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 )
 
 // The @ picker's app half (issue #41): which chats offer it, who it offers,
@@ -83,5 +84,73 @@ func TestMentionCompletionFollowsTheOpenChat(t *testing.T) {
 	m.setFocus(PanelComposer)
 	if m = typeText(t, m, "@"); !m.composer.MentionActive() {
 		t.Fatal("back in the group, @ did not open the picker")
+	}
+}
+
+// opsGroup is a basic group, the plainest chat completion works in.
+func opsGroup() *telegram.Chat {
+	return &telegram.Chat{ID: basicGroupID, Type: telegram.ChatTypeBasicGroup, Title: "ops"}
+}
+
+// nadia is a member with a username, so choosing her types it.
+func nadia() *telegram.User {
+	return &telegram.User{ID: 7, FirstName: "Nadia", LastName: "Feld", Username: "nadia"}
+}
+
+// Tab cycles panels from the composer, but while the picker is open it is
+// one of the two keys that insert — the picker's hint says so, and the
+// composer has to be the one to hear it.
+func TestTabInsertsFromAnOpenPicker(t *testing.T) {
+	m := openedChat(t, opsGroup())
+	m.composer.SetMentionCandidates(basicGroupID, []*telegram.User{nadia()})
+	m = typeText(t, m, "@na")
+	if !m.composer.MentionActive() {
+		t.Fatal("setup: the picker did not open")
+	}
+
+	m = update(t, m, "\t")
+	if m.focus != PanelComposer {
+		t.Fatalf("tab moved focus to %v; it belongs to the picker while it is open", m.focus)
+	}
+	if got := m.composer.Draft(); got != "@nadia " {
+		t.Fatalf("draft = %q, want the chosen member inserted", got)
+	}
+}
+
+// And with the picker closed Tab is panel cycling again — even with the
+// half-typed @ still in the draft.
+func TestTabCyclesPanelsOnceThePickerCloses(t *testing.T) {
+	m := openedChat(t, opsGroup())
+	m.composer.SetMentionCandidates(basicGroupID, []*telegram.User{nadia()})
+	m = typeText(t, m, "@na")
+	m = update(t, m, "\x1b") // esc closes the picker, and only that
+	if m.composer.MentionActive() || m.focus != PanelComposer {
+		t.Fatalf("setup: esc left picker open = %v, focus %v", m.composer.MentionActive(), m.focus)
+	}
+
+	m = update(t, m, "\t")
+	if m.focus == PanelComposer {
+		t.Fatal("tab with the picker closed did not cycle panels")
+	}
+	if got := m.composer.Draft(); got != "@na" {
+		t.Fatalf("draft = %q, want it untouched", got)
+	}
+}
+
+// Enter is the picker's too: it inserts, and nothing is sent. A half-typed
+// "@na" going to a group is not something to do on the reader's behalf.
+func TestEnterInsertsFromAnOpenPickerRatherThanSending(t *testing.T) {
+	m := openedChat(t, opsGroup())
+	m.composer.SetMentionCandidates(basicGroupID, []*telegram.User{nadia()})
+	m = typeText(t, m, "@na")
+
+	m, cmd := updateCmd(t, m, "\r")
+	for _, msg := range flattenCmd(cmd) {
+		if sent, ok := msg.(composer.MessageSubmittedMsg); ok {
+			t.Fatalf("enter sent %q with the picker open", sent.Text)
+		}
+	}
+	if got := m.composer.Draft(); got != "@nadia " {
+		t.Fatalf("draft = %q, want the chosen member inserted", got)
 	}
 }

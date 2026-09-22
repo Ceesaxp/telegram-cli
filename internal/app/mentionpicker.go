@@ -13,6 +13,14 @@ import (
 // along with painting the picker over the thread, which only the frame can
 // do without moving anything.
 
+// mentionPickerOpen reports whether the composer is showing the @ picker,
+// which owns Up, Down, Enter, Tab and Esc while it is up. The app matches
+// Tab before the focused panel sees it, so it is the one key that has to be
+// let through here; the rest reach the composer anyway.
+func (m Model) mentionPickerOpen() bool {
+	return m.focus == PanelComposer && m.composer.MentionActive()
+}
+
 // mentionsAllowed reports whether an @ in chatID can name its members: a
 // basic group or a supergroup. A private chat has one person to mention,
 // who is already reading; a broadcast channel's members cannot be named at
