@@ -355,10 +355,53 @@ func TestTheHighlightedValueStaysOnScreen(t *testing.T) {
 	if !strings.Contains(view, selected.Value) {
 		t.Errorf("the highlighted %q is not on screen:\n%s", selected.Value, view)
 	}
-	if !strings.Contains(view, "+4 more") {
-		t.Errorf("View() does not count the %d rows it cannot show:\n%s", 4, view)
+	// Ten rows down a list of twelve: three scrolled off the top, one
+	// still below.
+	if !strings.Contains(view, "↑3 ↓1") {
+		t.Errorf("View() does not count the rows it cannot show, three above and one below:\n%s", view)
 	}
 	assertUniformWidth(t, view)
+}
+
+// TestTheHiddenRowsAreCountedWhereTheyAre: once the list scrolls, rows are
+// hidden above as well as below, and a single total says neither — twenty
+// values opened on the sixteenth hide eight above and four below, not
+// "twelve more". The wording is the help card's.
+func TestTheHiddenRowsAreCountedWhereTheyAre(t *testing.T) {
+	var twenty []Arg
+	for i := range 20 {
+		twenty = append(twenty, Arg{Value: "theme-" + itoa(i+10)})
+	}
+	withCurrent := func(i int) []Arg {
+		args := append([]Arg(nil), twenty...)
+		args[i].Current = true
+		return args
+	}
+	tests := []struct {
+		name    string
+		current int
+		want    string
+	}{
+		{"at the top", 0, "↓12 more"},
+		{"scrolled into the middle", 15, "↑8 ↓4"},
+		{"at the bottom", 19, "↑12 above"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(theme.DarkRoles(false))
+			m.SetItems([]Item{{Name: "theme", Args: "<name>", Candidates: withCurrent(tt.current)}})
+			m.Open()
+			view := typeString(t, m, "theme ").View()
+
+			if !strings.Contains(view, tt.want) {
+				t.Errorf("View() does not say %q:\n%s", tt.want, view)
+			}
+			if strings.Contains(view, "+") {
+				t.Errorf("View() still gives a single total:\n%s", view)
+			}
+			assertUniformWidth(t, view)
+		})
+	}
 }
 
 // TestDeletingIntoTheCommandWordListsCommandsAgain: the argument listing

@@ -454,7 +454,8 @@ func (m Model) View() string {
 	// there can be more values than rows, and a highlight walked off the
 	// bottom would have Enter run something the user cannot see.
 	start := max(0, m.cursor-maxRows+1)
-	for row := start; row < rows && row < start+maxRows; row++ {
+	end := min(rows, start+maxRows)
+	for row := start; row < end; row++ {
 		if m.choosingArg() {
 			a := m.arg.Candidates[m.argHits[row]]
 			lines = append(lines, m.argLine(a, row == m.cursor, theme.OverlayBody(m.roles), descStyle))
@@ -464,13 +465,29 @@ func (m Model) View() string {
 		lines = append(lines, m.itemLine(it, row == m.cursor, nameStyle, descStyle, keyStyle))
 	}
 
-	if n := rows - maxRows; n > 0 {
-		lines = append(lines, cell.Fit(descStyle.Render("  +"+itoa(n)+" more"), Width))
+	if hidden := hiddenRows(start, rows-end); hidden != "" {
+		lines = append(lines, cell.Fit(descStyle.Render("  "+hidden), Width))
 	}
 
 	lines = append(lines, cell.Fit(descStyle.Render("  enter run · tab complete · esc cancel"), Width))
 
 	return theme.OverlayFrame(m.roles).Padding(0, 1).Render(strings.Join(lines, "\n"))
+}
+
+// hiddenRows says how many rows the window leaves off, above and below it,
+// in the help card's words — or "" when it shows them all. Once the list
+// scrolls there are rows hidden on both sides, and one total would say
+// where neither of them is.
+func hiddenRows(above, below int) string {
+	switch {
+	case above > 0 && below > 0:
+		return "↑" + itoa(above) + " ↓" + itoa(below)
+	case below > 0:
+		return "↓" + itoa(below) + " more"
+	case above > 0:
+		return "↑" + itoa(above) + " above"
+	}
+	return ""
 }
 
 // itemLine renders one command row: marker, name, arguments, description,
