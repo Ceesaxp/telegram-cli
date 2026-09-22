@@ -19,9 +19,9 @@ type draft struct {
 	attachment string
 	asPhoto    bool
 
-	// mentions are the spans of text, which they describe. They are never
-	// modified in place (see adjustMentions), so the parked draft and the
-	// model can share one slice.
+	// mentions are the mention spans over text. Nothing modifies a span
+	// slice in place (see adjustMentions), so the parked draft and the
+	// model can share one.
 	mentions []MentionSpan
 }
 
