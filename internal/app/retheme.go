@@ -1,9 +1,23 @@
 package app
 
 import (
+	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// applyThemeSpec resolves a theme and applies it: spec drawn over the
+// builtin it names, or the builtin alone for a nil spec — what
+// config.LoadTheme returns — at the colour depth New decided.
+//
+// The warnings are the theme's, for the caller to show. At startup main
+// prints them before the app exists; a theme applied to a running app has
+// nowhere else to report a colour it could not use.
+func (m *Model) applyThemeSpec(spec *config.ThemeSpec, builtin string) []string {
+	roles, senderRamp, warnings := theme.RolesForSpec(spec, builtin, m.trueColor)
+	m.applyRoles(roles, senderRamp)
+	return warnings
+}
 
 // applyRoles makes roles the palette everything is drawn in, and senderRamp
 // the colours people's names are hashed into.

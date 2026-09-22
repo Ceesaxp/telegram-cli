@@ -107,6 +107,13 @@ type Model struct {
 	height     int
 	myUserId   int64
 
+	// trueColor is the colour depth New resolved the palette at, from the
+	// environment. A theme applied later is resolved at the same depth
+	// rather than by asking again: the environment can have changed since,
+	// and the terminal is never asked — its reply would arrive as
+	// keystrokes (see theme.SupportsTrueColor).
+	trueColor bool
+
 	// uploads is the slice of the Telegram client the attachment path uses:
 	// files start uploading when they are attached, not when Enter is
 	// pressed. An interface rather than a use of m.tg directly so the tests
@@ -344,16 +351,19 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// The one place the palette is chosen, theme file or builtin. Its
 	// warnings are dropped: config.Load read the file, and main has already
 	// printed what theme.CheckSpec says about it.
-	roles, senderRamp, _ := theme.RolesForSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin(), theme.SupportsTrueColor())
-	return newModel(cfg, tg, s, authorizer, roles, senderRamp)
+	trueColor := theme.SupportsTrueColor()
+	roles, senderRamp, _ := theme.RolesForSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin(), trueColor)
+	return newModel(cfg, tg, s, authorizer, trueColor, roles, senderRamp)
 }
 
 // newModel is New with the palette already chosen: everything New does
 // after resolving the theme. The tests build the app in a marker palette
-// through it, which no config can express.
+// through it, which no config can express. trueColor is the depth the
+// palette was resolved at, kept for any theme applied later.
 func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *telegram.TUIAuthorizer,
-	roles theme.Roles, senderRamp []lipgloss.Color) Model {
+	trueColor bool, roles theme.Roles, senderRamp []lipgloss.Color) Model {
 	m := Model{
+		trueColor:  trueColor,
 		auth:       auth.New(roles, authorizer),
 		chatList:   chatlist.New(s, tg, roles),
 		chatView:   chatview.New(s, tg, roles),

@@ -11,6 +11,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/forward"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/hintbar"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -199,11 +200,60 @@ func TestEveryComponentFollowsARetheme(t *testing.T) {
 	}
 }
 
+// A theme applied to a running app is resolved at the colour depth decided
+// at startup. The environment is not consulted again — it may say something
+// else by now, and a 256-colour palette on a truecolour terminal or the
+// reverse is a different app from the one that started — and the terminal
+// is never asked at all. What the theme warns about comes back to the
+// caller, which is the one that can show it.
+func TestAThemeIsAppliedAtTheStartupColourDepth(t *testing.T) {
+	spec := &config.ThemeSpec{
+		Name: "test", Source: "test.toml", Inherit: config.ThemeDark,
+		Colors: map[string]string{"cyan": "#123456", "red": "not a colour"},
+	}
+
+	for _, trueColor := range []bool{true, false} {
+		t.Run(map[bool]string{true: "truecolour", false: "256"}[trueColor], func(t *testing.T) {
+			// The environment now says the opposite of what startup decided.
+			t.Setenv("TERM", "xterm-256color")
+			t.Setenv("COLORTERM", map[bool]string{true: "", false: "truecolor"}[trueColor])
+			if theme.SupportsTrueColor() == trueColor {
+				t.Fatal("precondition: the environment agrees with startup")
+			}
+
+			marker, _ := theme.MarkerRoles()
+			cfg := &config.Config{}
+			m := newModel(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg), trueColor, marker, nil)
+			warnings := m.applyThemeSpec(spec, config.ThemeDark)
+
+			want, _, wantWarnings := theme.RolesForSpec(spec, config.ThemeDark, trueColor)
+			if m.roles != want {
+				t.Errorf("the app's palette is not the theme at the startup depth:\n got %+v\nwant %+v",
+					m.roles, want)
+			}
+			if len(wantWarnings) == 0 {
+				t.Fatal("precondition: the spec draws no warning")
+			}
+			if strings.Join(warnings, "\n") != strings.Join(wantWarnings, "\n") {
+				t.Errorf("warnings = %q, want the theme's own %q", warnings, wantWarnings)
+			}
+
+			// And it went where a palette goes: the hint bar's keys are cyan.
+			m.hintBar.SetWidth(80)
+			m.hintBar.SetHints([]hintbar.Hint{{Key: "q", Label: "quit"}})
+			if bar := m.hintBar.View(); !strings.Contains(bar, foregroundSeq(want.Cyan)) {
+				t.Errorf("the hint bar does not draw the theme's cyan:\n%s",
+					strings.ReplaceAll(bar, "\x1b", "ESC"))
+			}
+		})
+	}
+}
+
 // markedModel is the app built in a marker palette, through the one
 // constructor the real app uses, with nothing in it.
 func markedModel(roles theme.Roles, ramp []lipgloss.Color) Model {
 	cfg := &config.Config{}
-	return newModel(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg), roles, ramp)
+	return newModel(cfg, nil, store.NewStore(), telegram.NewTUIAuthorizer(cfg), true, roles, ramp)
 }
 
 // assertDrawnIn fails for every colour in view that is not in want, naming
