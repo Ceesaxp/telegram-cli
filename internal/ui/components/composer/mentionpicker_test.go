@@ -155,6 +155,27 @@ func TestAPastedAtDoesNotOpen(t *testing.T) {
 	}
 }
 
+// A paste into an open picker is an edit like any other: the query follows
+// it, and a paste that ends the token closes the picker.
+func TestAPasteIntoAnOpenPickerFollowsTheQuery(t *testing.T) {
+	m := chars(t, mentionComposer(t), "@na")
+	m, cmd := m.Update(tea.PasteMsg{Content: "dia"})
+	if !m.MentionActive() || m.mention.query != "nadia" {
+		t.Errorf("open = %v, query = %q; want still open on %q", m.MentionActive(), m.mention.query, "nadia")
+	}
+	if cmd == nil {
+		t.Fatal("the paste changed the query and asked nothing")
+	}
+	if q, ok := queryIn(cmd()); !ok || q.Query != "nadia" {
+		t.Errorf("asked %+v, want the query %q", q, "nadia")
+	}
+
+	m, _ = m.Update(tea.PasteMsg{Content: " and more"})
+	if m.MentionActive() {
+		t.Error("a paste with a space in it left the picker open")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The query
 // ---------------------------------------------------------------------------
