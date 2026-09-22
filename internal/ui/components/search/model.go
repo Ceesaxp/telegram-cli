@@ -206,6 +206,14 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	return m
 }
 
+// SetRoles replaces the palette, and every widget style New derived from
+// it: without restyle a new palette would recolour the box and leave the
+// input, the tabs and the results inside it as they were.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.restyle()
+}
+
 // restyle derives from the palette what is styled ahead of drawing rather
 // than while drawing: the styles the input, the tabs and the result list
 // hold. Whatever replaces the palette has to call it too, or they keep the
