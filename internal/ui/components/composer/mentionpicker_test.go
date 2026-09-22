@@ -596,3 +596,169 @@ func TestAFailedSearchKeepsTheLocalCandidates(t *testing.T) {
 		t.Error("the failure outlived the query it was about")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Choosing and inserting
+// ---------------------------------------------------------------------------
+
+// selectedID is the member Enter would insert, 0 when there is none.
+func selectedID(m Model) int64 {
+	if s := m.mention; s.selected < len(s.results) {
+		return s.results[s.selected].ID
+	}
+	return 0
+}
+
+// threeNadias is a composer on a second line, completing "@nad" with three
+// members to choose between: @nadia, then Nadia S., then @nadz.
+func threeNadias(t *testing.T) Model {
+	t.Helper()
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaUser, nadiaS, user(4, "nadz", "Zed", "")})
+	m = chars(t, m, "first")
+	m = typeSeq(t, m, keyCtrlJ)
+	m = chars(t, m, "@nad")
+	if got := shown(m); !slices.Equal(got, []int64{1, 4, 2}) {
+		t.Fatalf("precondition: showing %v", got)
+	}
+	return m
+}
+
+// Up and Down move the selection and stop at either end rather than
+// wrapping: on a list of five, one press too many landing on the worst match
+// is a worse surprise than a press that does nothing. The text and the
+// cursor stay where they are, though Up would otherwise go to the line above.
+func TestUpAndDownMoveTheSelection(t *testing.T) {
+	m := threeNadias(t)
+	draft, cursor := m.Draft(), m.textarea.Cursor
+
+	steps := []struct {
+		key  string
+		want int64
+	}{
+		{keyUp, 1}, // already at the top: stays
+		{keyDown, 4},
+		{keyDown, 2},
+		{keyDown, 2}, // at the bottom: stays
+		{keyUp, 4},
+	}
+	for i, st := range steps {
+		m, _ = send(t, m, st.key)
+		if got := selectedID(m); got != st.want {
+			t.Errorf("step %d: selected %d, want %d", i, got, st.want)
+		}
+	}
+	if m.Draft() != draft || m.textarea.Cursor != cursor {
+		t.Errorf("the arrows moved the text: %q at %d, want %q at %d",
+			m.Draft(), m.textarea.Cursor, draft, cursor)
+	}
+}
+
+// A new query is a new list, so the selection goes back to its top — the
+// row that was selected is usually not on it any more.
+func TestANewQueryResetsTheSelection(t *testing.T) {
+	m := threeNadias(t)
+	m = typeSeq(t, m, keyDown)
+	if m = chars(t, m, "i"); selectedID(m) != 1 {
+		t.Errorf("selected %d after typing on, want the top row", selectedID(m))
+	}
+}
+
+// An answer arriving under the reader's selection does not move it to
+// somebody else: the member selected stays selected wherever they now sit.
+func TestAnAnswerKeepsTheSelectedMember(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaS, olegUser})
+	m, q := openAt(t, m, "@")
+	m = typeSeq(t, m, keyDown)
+	if selectedID(m) != 3 {
+		t.Fatalf("precondition: selected %d", selectedID(m))
+	}
+
+	m, _ = m.Update(answer(q, user(9, "", "Anna", "")))
+	if selectedID(m) != 3 {
+		t.Errorf("selected %d after the answer, want Oleg still", selectedID(m))
+	}
+}
+
+// Enter and Tab insert the selected member. One with a username is
+// mentioned by it: "@nadia " goes in, and nothing needs remembering.
+func TestEnterAndTabInsertAUsername(t *testing.T) {
+	for _, key := range []string{keyEnter, keyTab} {
+		m := mentionComposer(t)
+		m.SetMentionCandidates(42, []*telegram.User{nadiaUser})
+		m = chars(t, m, "hi @na")
+
+		m, msg := send(t, m, key)
+		if _, sent := msg.(MessageSubmittedMsg); sent {
+			t.Fatalf("%q sent the draft instead of completing", key)
+		}
+		if m.Draft() != "hi @nadia " {
+			t.Errorf("%q: Draft = %q, want %q", key, m.Draft(), "hi @nadia ")
+		}
+		if len(m.mentions) != 0 {
+			t.Errorf("%q: mentions = %+v, want none for a username", key, m.mentions)
+		}
+		if m.MentionActive() {
+			t.Errorf("%q: completion still open after inserting", key)
+		}
+	}
+}
+
+// One without a username can only be mentioned by an entity carrying their
+// ID: their name goes in, with a span saying who it means — and the span
+// goes out with the message.
+func TestEnterInsertsANameWithItsMention(t *testing.T) {
+	m := mentionComposer(t)
+	m.SetMentionCandidates(42, []*telegram.User{nadiaS})
+	m = chars(t, m, "hi @na")
+
+	m, _ = send(t, m, keyEnter)
+	if m.Draft() != "hi Nadia S. " {
+		t.Fatalf("Draft = %q, want %q", m.Draft(), "hi Nadia S. ")
+	}
+	span := MentionSpan{Start: 3, End: 11, UserID: 2, Label: "Nadia S."}
+	wantMentions(t, m, span)
+
+	m = chars(t, m, "ok")
+	if _, sub := submitted(t, m); !slices.Equal(sub.Mentions, []MentionSpan{span}) {
+		t.Errorf("sent Mentions = %+v, want %+v", sub.Mentions, []MentionSpan{span})
+	}
+}
+
+// Enter with nothing to insert does not send either. It closes the picker
+// and leaves the draft be: sending a half-typed "@nad" to a group is the
+// kind of thing nobody wants done for them, and one more Enter sends it.
+func TestEnterWithNothingToInsertDoesNotSend(t *testing.T) {
+	for _, key := range []string{keyEnter, keyTab} {
+		m := chars(t, mentionComposer(t), "hi @zz")
+
+		m, msg := send(t, m, key)
+		if msg != nil {
+			t.Errorf("%q with no match produced %#v, want nothing", key, msg)
+		}
+		if m.MentionActive() || m.Draft() != "hi @zz" {
+			t.Errorf("%q: open = %v, Draft = %q; want closed and the draft as typed",
+				key, m.MentionActive(), m.Draft())
+		}
+	}
+
+	m := chars(t, mentionComposer(t), "hi @zz")
+	m, _ = send(t, m, keyEnter)
+	if _, msg := send(t, m, keyEnter); msg == nil {
+		t.Error("the Enter after that did not send")
+	}
+}
+
+// Every other key still reaches the text while the picker is open —
+// letters that are bindings elsewhere included.
+func TestPrintableKeysReachTheTextWhileOpen(t *testing.T) {
+	m := chars(t, mentionComposer(t), "@jkq/`")
+	if m.Draft() != "@jkq/`" || !m.MentionActive() {
+		t.Errorf("Draft = %q, open = %v; want every key typed, the picker open",
+			m.Draft(), m.MentionActive())
+	}
+	if m.mention.query != "jkq/`" {
+		t.Errorf("query = %q, want what was typed after the @", m.mention.query)
+	}
+}

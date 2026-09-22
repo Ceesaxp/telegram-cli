@@ -34,6 +34,8 @@ type mentionState struct {
 	// results are what the picker offers, best first: the local candidates
 	// and server merged and ranked against query. See rankMentions.
 	results []*telegram.User
+	// selected is the index in results of the member Enter inserts.
+	selected int
 	// server is the member search's latest answer. It is kept when the
 	// query changes: its members are still this chat's, and ranking
 	// against the new query sorts out which of them still match.
@@ -139,7 +141,19 @@ func (m Model) mentionQuery() (string, bool) {
 }
 
 // mentionKey runs a key the open picker owns, and reports whether stroke was
-// one. Matched on Keystroke(), like every chord in handleKey.
+// one. Matched on Keystroke(), like every chord in handleKey. Anything else
+// goes on to the composer, which is how every printable key still reaches
+// the text.
+//
+// Up and Down move the selection, and stop at either end rather than wrap:
+// on a list of five, a press too many landing on the worst match is a worse
+// surprise than a press that does nothing. While the picker is open they are
+// its, not the multi-line cursor's.
+//
+// Enter and Tab insert the selected member. With nobody to insert they close
+// the picker and do nothing else — Enter does NOT send. A half-typed "@nad"
+// going to a group is not something to do on somebody's behalf, and the next
+// Enter sends it.
 //
 // Esc closes the picker and does nothing else: the text stays as typed, a
 // reply stays a reply, and vi stays in insert mode. The composer's own
@@ -147,11 +161,38 @@ func (m Model) mentionQuery() (string, bool) {
 // typed @ opens completion, so nothing can bring this one back.
 func (m Model) mentionKey(stroke string) (Model, bool) {
 	switch stroke {
+	case "up":
+		m.mention.selected = max(m.mention.selected-1, 0)
+	case "down":
+		m.mention.selected = max(min(m.mention.selected+1, len(m.mention.results)-1), 0)
+	case "enter", "tab":
+		m.acceptMention()
 	case "esc":
 		m.closeMention()
-		return m, true
+	default:
+		return m, false
 	}
-	return m, false
+	return m, true
+}
+
+// acceptMention puts the selected member in place of the token and closes
+// the completion.
+//
+// A member with a username is mentioned by it, and "@username" is a mention
+// all by itself. One without is mentioned by name, which only means them
+// because of the span InsertMention records with it.
+func (m *Model) acceptMention() {
+	s := m.mention
+	m.closeMention()
+	if s.selected >= len(s.results) {
+		return
+	}
+	u := s.results[s.selected]
+	if u.Username != "" {
+		m.InsertMention(s.anchor, m.textarea.Cursor, "@"+u.Username, 0)
+		return
+	}
+	m.InsertMention(s.anchor, m.textarea.Cursor, displayName(u), u.ID)
 }
 
 // applyMentionResults takes the member search's answer, if it is the answer
@@ -171,9 +212,17 @@ func (m *Model) applyMentionResults(res MentionResultsMsg) {
 	m.rankMention()
 }
 
-// rankMention recomputes what the picker offers.
+// rankMention recomputes what the picker offers. The member selected stays
+// selected if they are still on offer, wherever they now sit: an answer
+// arriving under the reader's cursor must not move it onto somebody else.
 func (m *Model) rankMention() {
+	var keep int64
+	if s := m.mention; s.selected < len(s.results) {
+		keep = s.results[s.selected].ID
+	}
 	m.mention.results = rankMentions(m.mention.query, m.mentionCandidates, m.mention.server)
+	m.mention.selected = max(slices.IndexFunc(m.mention.results,
+		func(u *telegram.User) bool { return u.ID == keep }), 0)
 }
 
 // closeMention ends the completion, keeping only the generation: an answer
@@ -234,6 +283,8 @@ func (m *Model) queryMention(q string) tea.Cmd {
 	m.mention.loading = true
 	m.mention.failed = false
 	m.rankMention()
+	// A new list: whoever was selected is usually not on it any more.
+	m.mention.selected = 0
 	ask := MentionQueryMsg{
 		ChatID: m.mention.chatID,
 		Anchor: m.mention.anchor,
