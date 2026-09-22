@@ -37,10 +37,10 @@ type MentionSpan struct {
 // the label and not the space: the space is the composer's, not theirs, and
 // deleting it must not cost the mention.
 //
-// Mentions already in the draft stay in step with the replacement, the same
-// as after any other edit.
+// Mentions already in the draft stay in step with the replacement: those
+// before the token stay, those after it move along, and one inside it is
+// replaced with it.
 func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
-	before := m.textarea.Value
 	n := m.textarea.Len()
 	anchor = min(max(anchor, 0), n)
 	end = min(max(end, anchor), n)
@@ -49,9 +49,25 @@ func (m *Model) InsertMention(anchor, end int, label string, userID int64) {
 	m.textarea.Cursor = anchor
 	m.textarea.InsertString(label + " ")
 
-	// The replacement starts at anchor, wherever the cursor was, so anchor
-	// is where the edit happened.
-	spans := adjustMentions(m.mentions, before, m.textarea.Value, anchor, m.textarea.Cursor)
+	// Unlike an edit coming through editDraft, this one is known exactly —
+	// [anchor, end) became the label and a space — so the spans follow it
+	// by position rather than by a diff of the two texts. A diff reads a
+	// label that begins with what it replaced as untouched: "@alex" picked
+	// over "@" and a mention of somebody named "alex" would keep that
+	// mention inside the username, and send it.
+	delta := m.textarea.Len() - n
+	var spans []MentionSpan
+	for _, span := range m.mentions {
+		switch {
+		case span.End <= anchor:
+		case span.Start >= end:
+			span.Start += delta
+			span.End += delta
+		default:
+			continue
+		}
+		spans = append(spans, span)
+	}
 	if userID != 0 && label != "" {
 		spans = append(spans, MentionSpan{
 			Start:  anchor,

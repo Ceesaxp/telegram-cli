@@ -259,6 +259,72 @@ func TestInsertMentionKeepsTheOtherSpansInStep(t *testing.T) {
 	}
 }
 
+// atOverAlex is "alex hi" — or "Alex hi" — with the name mentioning user 1,
+// then an @ typed in front of it and the cursor walked to the name's end:
+// the picker open on the token "@alex", which has user 1's mention inside
+// it.
+func atOverAlex(t *testing.T, name string) Model {
+	t.Helper()
+	m := typeInto(t, mentionComposer(t), "@a")
+	m.InsertMention(0, 2, name, 1)
+	m = typeSeq(t, m, "\x7f") // take back the space
+	m = typeInto(t, m, " hi")
+	m = typeSeq(t, m, "\x01", "@") // ctrl+a, then @ in front of the name
+	for range len(name) {
+		m = typeSeq(t, m, "\x1b[C") // right
+	}
+	if !m.MentionActive() || m.Draft() != "@"+name+" hi" {
+		t.Fatalf("precondition: picker open = %v, Draft = %q", m.MentionActive(), m.Draft())
+	}
+	wantMentions(t, m, MentionSpan{Start: 1, End: 5, UserID: 1, Label: name})
+	return m
+}
+
+// A picked member replaces the whole token being completed, and a mention
+// inside that token goes with it — even when the new label begins with the
+// very text the old mention covered, which a diff of the two drafts reads as
+// untouched.
+func TestAPickedMentionReplacesTheMentionsInItsToken(t *testing.T) {
+	t.Run("a username over a mention by name", func(t *testing.T) {
+		m := atOverAlex(t, "alex")
+		m.SetMentionCandidates(42, []*telegram.User{{ID: 2, FirstName: "Alexandra", Username: "alex"}})
+		_, sub := submitted(t, typeSeq(t, m, "\r"))
+		if sub.Text != "@alex  hi" || len(sub.Mentions) != 0 {
+			t.Fatalf("sent %q with %+v, want the username alone — user 1's name was replaced", sub.Text, sub.Mentions)
+		}
+	})
+
+	t.Run("a name starting with @ over the same name", func(t *testing.T) {
+		m := atOverAlex(t, "Alex")
+		m.SetMentionCandidates(42, []*telegram.User{{ID: 2, FirstName: "@Alex"}})
+		m = typeSeq(t, m, "\r")
+		wantMentions(t, m, MentionSpan{Start: 0, End: 5, UserID: 2, Label: "@Alex"})
+
+		// Deleting the @ breaks user 2's label; it must not uncover a
+		// mention of user 1 underneath.
+		m = typeSeq(t, m, "\x01", "\x04") // ctrl+a, ctrl+d
+		wantMentions(t, m)
+	})
+
+	t.Run("a name starting with @ between two mentions of the same name", func(t *testing.T) {
+		m := mentionAlex(t, mentionComposer(t), 1)
+		m = typeInto(t, m, " @Al ")
+		m = mentionAlex(t, m, 3)
+		m = typeSeq(t, m, "\x01") // ctrl+a
+		for range len("Alex @Al") {
+			m = typeSeq(t, m, "\x1b[C") // right, to the end of the token
+		}
+		m.InsertMention(5, 8, "@Alex", 2)
+		if got := m.Draft(); got != "Alex @Alex  Alex" {
+			t.Fatalf("precondition: Draft = %q", got)
+		}
+		wantMentions(t, m,
+			MentionSpan{Start: 0, End: 4, UserID: 1, Label: "Alex"},
+			MentionSpan{Start: 5, End: 10, UserID: 2, Label: "@Alex"},
+			MentionSpan{Start: 12, End: 16, UserID: 3, Label: "Alex"})
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Spans follow the edits, whatever makes them
 // ---------------------------------------------------------------------------
