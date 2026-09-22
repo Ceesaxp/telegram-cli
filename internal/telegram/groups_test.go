@@ -240,6 +240,23 @@ func TestSearchChatMembersWithoutAQueryAsksForRecentMembers(t *testing.T) {
 	}
 }
 
+// A search asks for a page the server will serve, as the context rail's
+// member list does: no limit, or one past the server's cap, is asked as the
+// cap.
+func TestSearchChatMembersAsksForAPageTheServerServes(t *testing.T) {
+	for limit, want := range map[int]int{0: 200, 500: 200, 20: 20} {
+		inv := &memberInvoker{participants: &tg.ChannelsChannelParticipants{}}
+		c, _ := memberClient(inv)
+
+		if _, err := c.SearchChatMembers(channelChatID(9), "na", limit); err != nil {
+			t.Fatalf("SearchChatMembers(limit %d): %v", limit, err)
+		}
+		if asked := inv.participantsRequests(); len(asked) != 1 || asked[0].Limit != want {
+			t.Errorf("limit %d was asked as %v, want %d", limit, asked, want)
+		}
+	}
+}
+
 // The members a search finds are handed to the peers manager on the way
 // through, so the one picked can be sent a mention by ID.
 func TestSearchedMembersAreKnownAfterwards(t *testing.T) {

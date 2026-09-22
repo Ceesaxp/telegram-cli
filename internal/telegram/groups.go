@@ -135,8 +135,9 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 // What it asks depends on the kind of chat:
 //
 //   - A supergroup is searched on the server for query, or asked for its
-//     recent members when query is empty. At most limit members come back
-//     (the server allows no more than 200), in the server's order.
+//     recent members when query is empty. At most limit members come back,
+//     in the server's order. As for [Client.GetSupergroupMembers], no limit
+//     or one past the server's cap of 200 asks for the cap.
 //   - A basic group returns ALL its members, and query and limit are
 //     ignored. A basic group is small, so the composer filters the list
 //     locally as the query grows and does not ask again.
@@ -177,8 +178,8 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 }
 
 // supergroupMembers is the members of a supergroup who match query and can
-// be mentioned, at most limit of them, in the server's order. An empty
-// query lists the recent members.
+// be mentioned, at most limit of them (clamped by [participantsLimit]), in
+// the server's order. An empty query lists the recent members.
 func (c *Client) supergroupMembers(ctx context.Context, chatID int64, query string, limit int) ([]*User, error) {
 	channel, err := c.peers.ResolveChannelID(ctx, plainChatID(chatID))
 	if err != nil {
@@ -195,7 +196,7 @@ func (c *Client) supergroupMembers(ctx context.Context, chatID int64, query stri
 	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
 		Channel: channel.InputChannel(),
 		Filter:  filter,
-		Limit:   limit,
+		Limit:   participantsLimit(limit),
 	})
 	if err != nil {
 		return nil, err
