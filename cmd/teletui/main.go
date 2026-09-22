@@ -16,6 +16,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/config"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/version"
 )
@@ -245,7 +246,8 @@ func runMigrateConfig(cfg *config.Config) {
 // stderr directly because the log package's output is discarded (see main),
 // which would otherwise turn every failure into a silent exit(1).
 // startupWarnings is everything printed before the TUI takes the screen,
-// each line made [printable].
+// each line made [cell.Printable]: a warning quotes what it is about, and a
+// theme file is somebody else's text.
 //
 // The theme's role and value warnings join the config's from
 // theme.CheckSpec: config read the file but cannot judge colours, and
@@ -253,30 +255,9 @@ func runMigrateConfig(cfg *config.Config) {
 func startupWarnings(cfg *config.Config) []string {
 	warnings := append(config.StartupWarnings(cfg), theme.CheckSpec(cfg.ThemeSpec(), cfg.ThemeBuiltin())...)
 	for i, w := range warnings {
-		warnings[i] = printable(w)
+		warnings[i] = cell.Printable(w)
 	}
 	return warnings
-}
-
-// printable makes a warning safe to write to a terminal: every C0 and C1
-// control, DEL, and any byte that is not UTF-8 becomes U+FFFD.
-//
-// A warning quotes what it is about, and a theme file is made to be passed
-// around, so what it quotes can be anybody's: a key spelled "\x1b]0;…"
-// would retitle the window, and worse sequences exist. Done here, where
-// every warning is printed, because a guard at each place a warning is
-// built is a guard that the next one forgets. Replaced rather than dropped,
-// so the reader can see something was there; newlines and tabs go too, as
-// no warning has one of its own.
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-			return '�'
-		}
-		// strings.Map hands a byte that is not UTF-8 over as U+FFFD and,
-		// given it back, writes U+FFFD in its place.
-		return r
-	}, s)
 }
 
 func fatalf(format string, args ...any) {
