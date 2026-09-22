@@ -354,6 +354,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // all of them. See adjustMentions.
 func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	before, cursor := m.textarea.Value, m.textarea.Cursor
+	normal := m.IsViNormalMode()
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
@@ -361,7 +362,19 @@ func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m, cmd = m.editKey(msg)
 	}
-	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, cursor, m.textarea.Cursor)
+
+	// The cursor either side is how an edit of repeated text is placed.
+	// Typing and the emacs chords leave it at the edit's start or just past
+	// the new text, so the lower of the two is where the edit was. vi's
+	// normal mode moves it on afterwards — x and D clamp it back onto a
+	// character, dd takes it to the start of a line, the line ABOVE when it
+	// deleted the last one — so there only the cursor the command started
+	// from says anything.
+	after := m.textarea.Cursor
+	if normal {
+		after = cursor
+	}
+	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, cursor, after)
 	return m, cmd
 }
 

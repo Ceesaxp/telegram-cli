@@ -135,10 +135,8 @@ func MentionsIn(ft *telegram.FormattedText) []MentionSpan {
 // It does not need to know what the change was. Every editing primitive —
 // typing, the emacs chords, vi's operators, a paste, the whole draft swapped
 // at once — comes down to "these runes were replaced by those", and the two
-// texts say which: whatever they share at the start and at the end was not
-// touched, and what lies between was. The shared prefix is measured first,
-// and the shared suffix is not allowed to reach back into it, so the region
-// never ends before it starts.
+// texts say which, with the cursor settling what they leave open. See
+// changedRegion.
 //
 // Each span is then judged against that region alone:
 //
@@ -164,14 +162,19 @@ func adjustMentions(spans []MentionSpan, oldText, newText string, cursorBefore, 
 		return nil
 	}
 	oldRunes, newRunes := []rune(oldText), []rune(newText)
-	prefix, suffix := commonAffixes(oldRunes, newRunes)
-	oldEnd := len(oldRunes) - suffix
+	if oldText == newText {
+		// Nothing was edited — the key only moved the cursor — so there
+		// is no region to judge by, and an empty one placed at the cursor
+		// would cut every span the cursor sits inside.
+		return coveringLabels(spans, newRunes)
+	}
+	start, oldEnd := changedRegion(oldRunes, newRunes, min(cursorBefore, cursorAfter))
 	delta := len(newRunes) - len(oldRunes)
 
 	var out []MentionSpan
 	for _, span := range spans {
 		switch {
-		case span.End <= prefix:
+		case span.End <= start:
 		case span.Start >= oldEnd:
 			span.Start += delta
 			span.End += delta
@@ -185,17 +188,38 @@ func adjustMentions(spans []MentionSpan, oldText, newText string, cursorBefore, 
 	return out
 }
 
-// commonAffixes returns how many runes a and b share at the start and, of what
-// is left after that, at the end.
-func commonAffixes(a, b []rune) (prefix, suffix int) {
-	for prefix < len(a) && prefix < len(b) && a[prefix] == b[prefix] {
+// changedRegion returns the runes of a, [start, oldEnd), that were replaced to
+// make b, which must differ from it. at is where the cursor says the edit
+// was.
+//
+// Whatever a and b share at the start and at the end was not touched. When
+// those two leave a gap between them, the gap is the edit and the cursor is
+// not consulted: vi's o opens a line past the end of this one wherever the
+// cursor sits on it.
+//
+// When they meet or overlap, the texts cannot say where the edit was. It was
+// an insertion or deletion of text that repeats what is next to it, and it
+// could have been made anywhere from where the shared suffix begins to where
+// the shared prefix ends: "Alex, Alex" -> "Alex" reads the same whichever
+// name went. Only the cursor knows, so the edit goes where it says, held
+// inside that range — and when two members share a name, that is the
+// difference between keeping the mention the user kept and handing it to
+// the other one.
+func changedRegion(a, b []rune, at int) (start, oldEnd int) {
+	short := min(len(a), len(b))
+	prefix := 0
+	for prefix < short && a[prefix] == b[prefix] {
 		prefix++
 	}
-	for suffix < len(a)-prefix && suffix < len(b)-prefix &&
-		a[len(a)-1-suffix] == b[len(b)-1-suffix] {
+	suffix := 0
+	for suffix < short && a[len(a)-1-suffix] == b[len(b)-1-suffix] {
 		suffix++
 	}
-	return prefix, suffix
+	if prefix+suffix < short {
+		return prefix, len(a) - suffix
+	}
+	start = min(max(at, short-suffix), prefix)
+	return start, start + len(a) - short
 }
 
 // coversLabel reports whether span lies inside text and covers exactly its

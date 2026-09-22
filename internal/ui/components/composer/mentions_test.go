@@ -22,8 +22,8 @@ func shifted(s MentionSpan, by int) MentionSpan {
 
 // TestAdjustMentions is the whole rule in one table. The draft is diffed
 // before and after an edit; what the edit touched is the region between the
-// common prefix and the common suffix, and every span is judged against that
-// region alone.
+// common prefix and the common suffix — placed by the cursor where the two
+// overlap — and every span is judged against that region alone.
 func TestAdjustMentions(t *testing.T) {
 	oleg := MentionSpan{Start: 10, End: 14, UserID: 8, Label: "Oleg"}
 
@@ -127,6 +127,44 @@ func TestAdjustMentions(t *testing.T) {
 		{"an empty span drops", []MentionSpan{
 			{Start: 3, End: 3, UserID: 7, Label: ""}},
 			"hi Nadia", "hi Nadia", 8, 8, nil},
+
+		// Repeated text. "Alex, Alex" -> "Alex" could be either name going,
+		// and the texts alone cannot say which — but the cursor can. Two
+		// members called Alex are two different people, and the one left
+		// must be the one the user kept.
+		{"deleting the first of two same names backwards keeps the second user", []MentionSpan{
+			{Start: 0, End: 4, UserID: 1, Label: "Alex"},
+			{Start: 6, End: 10, UserID: 2, Label: "Alex"}},
+			"Alex, Alex", "Alex", 6, 0, []MentionSpan{
+				{Start: 0, End: 4, UserID: 2, Label: "Alex"}}},
+		{"deleting the first of two same names forwards keeps the second user", []MentionSpan{
+			{Start: 0, End: 4, UserID: 1, Label: "Alex"},
+			{Start: 6, End: 10, UserID: 2, Label: "Alex"}},
+			"Alex, Alex", "Alex", 0, 0, []MentionSpan{
+				{Start: 0, End: 4, UserID: 2, Label: "Alex"}}},
+		{"deleting the second of two same names backwards keeps the first user", []MentionSpan{
+			{Start: 0, End: 4, UserID: 1, Label: "Alex"},
+			{Start: 6, End: 10, UserID: 2, Label: "Alex"}},
+			"Alex, Alex", "Alex", 10, 4, []MentionSpan{
+				{Start: 0, End: 4, UserID: 1, Label: "Alex"}}},
+		{"deleting the second of two same names forwards keeps the first user", []MentionSpan{
+			{Start: 0, End: 4, UserID: 1, Label: "Alex"},
+			{Start: 6, End: 10, UserID: 2, Label: "Alex"}},
+			"Alex, Alex", "Alex", 4, 4, []MentionSpan{
+				{Start: 0, End: 4, UserID: 1, Label: "Alex"}}},
+		{"typing the same name in front of a mention shifts it", []MentionSpan{
+			{Start: 0, End: 4, UserID: 1, Label: "Alex"}},
+			"Alex", "Alex, Alex", 0, 6, []MentionSpan{
+				{Start: 6, End: 10, UserID: 1, Label: "Alex"}}},
+
+		// The cursor only settles what the texts leave open. Where they
+		// pin the edit down, it is not consulted: vi's o opens a line past
+		// the end of this one wherever the cursor sits on it, and a cursor
+		// that merely moved changed nothing at all.
+		{"a line opened past the cursor leaves the mention between", []MentionSpan{nadia},
+			"hi Nadia ok", "hi Nadia ok\n", 0, 0, []MentionSpan{nadia}},
+		{"a cursor moving into a mention leaves it", []MentionSpan{nadia},
+			"hi Nadia ok", "hi Nadia ok", 11, 5, []MentionSpan{nadia}},
 	}
 
 	for _, tc := range cases {
@@ -144,15 +182,17 @@ func TestAdjustMentions(t *testing.T) {
 	}
 }
 
-// The common prefix and suffix may not overlap. "aaa" -> "aa" has two runes
-// in common at each end, and counting both would describe an edit region that
-// ends before it starts. The prefix is measured first and the suffix gives
-// way, so the deleted rune is the LAST one — the one the span covers — and the
-// span goes, rather than sliding onto a rune it never marked.
-func TestAdjustMentionsPrefixAndSuffixDoNotOverlap(t *testing.T) {
+// "aaa" -> "aa" has two runes in common at each end: any of the three could
+// be the one that went. The cursor says which. Backspace at the end deleted
+// the last — the one the span covers — so the span goes; a forward delete at
+// the start deleted the first, so the span moves back onto its own rune.
+func TestAdjustMentionsPlacesAnAmbiguousEditAtTheCursor(t *testing.T) {
 	span := MentionSpan{Start: 2, End: 3, UserID: 7, Label: "a"}
 	if got := adjustMentions([]MentionSpan{span}, "aaa", "aa", 3, 2); len(got) != 0 {
-		t.Errorf("got %+v, want the span over the deleted rune dropped", got)
+		t.Errorf("backspace at the end: got %+v, want the span over the deleted rune dropped", got)
+	}
+	if got, want := adjustMentions([]MentionSpan{span}, "aaa", "aa", 0, 0), []MentionSpan{shifted(span, -1)}; !slices.Equal(got, want) {
+		t.Errorf("delete at the start: got %+v, want %+v", got, want)
 	}
 }
 
@@ -334,6 +374,150 @@ func TestViDeletingAnotherLineShiftsAMention(t *testing.T) {
 		t.Fatalf("precondition: Draft = %q, want the first line gone", got)
 	}
 	wantMentions(t, m, nadia)
+}
+
+// vi's o opens the new line past the end of this one, wherever the cursor is
+// on it. A mention between the two is not in the way.
+func TestViOpeningALineKeepsAMentionBeforeIt(t *testing.T) {
+	m := withNadia(t, viComposer(t))
+	m = typeSeq(t, m, "\x1b") // Esc: normal mode
+	m = chars(t, m, "0o")
+
+	if got := m.Draft(); got != "hi Nadia \n" {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m, nadia)
+}
+
+// ---------------------------------------------------------------------------
+// Two members with the same name
+// ---------------------------------------------------------------------------
+
+var (
+	alex1 = MentionSpan{Start: 0, End: 4, UserID: 1, Label: "Alex"}
+	alex2 = MentionSpan{Start: 6, End: 10, UserID: 2, Label: "Alex"}
+)
+
+// mentionAlex completes "@a" at the cursor as a mention of Alex, the member
+// with ID user, and takes back the space the completion adds.
+func mentionAlex(t *testing.T, m Model, user int64) Model {
+	t.Helper()
+	m = typeInto(t, m, "@a")
+	at := m.textarea.Cursor - 2
+	m.InsertMention(at, at+2, "Alex", user)
+	return typeSeq(t, m, "\x7f") // backspace
+}
+
+// alexAndAlex is "Alex, Alex": two different members called Alex, user 1
+// mentioned first and user 2 second, with the cursor at the end.
+func alexAndAlex(t *testing.T, m Model) Model {
+	t.Helper()
+	m = mentionAlex(t, m, 1)
+	m = typeInto(t, m, ", ")
+	m = mentionAlex(t, m, 2)
+	if got := m.Draft(); got != "Alex, Alex" {
+		t.Fatalf("precondition: Draft = %q", got)
+	}
+	wantMentions(t, m, alex1, alex2)
+	return m
+}
+
+// Deleting the first Alex leaves text that reads exactly as if the second
+// had been deleted. The mention left must be the one the user kept.
+func TestDeletingTheFirstOfTwoSameNamesKeepsTheSecondUser(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys []string
+	}{
+		{"ctrl+u from the second", append(slices.Repeat([]string{"\x02"}, 4), "\x15")},
+		{"backspace from the second", append(slices.Repeat([]string{"\x02"}, 4), slices.Repeat([]string{"\x7f"}, 6)...)},
+		{"ctrl+d from the start", append([]string{"\x01"}, slices.Repeat([]string{"\x04"}, 6)...)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := alexAndAlex(t, newFocused())
+			m = typeSeq(t, m, tc.keys...)
+
+			if got := m.Draft(); got != "Alex" {
+				t.Fatalf("precondition: Draft = %q", got)
+			}
+			wantMentions(t, m, MentionSpan{Start: 0, End: 4, UserID: 2, Label: "Alex"})
+		})
+	}
+}
+
+func TestDeletingTheSecondOfTwoSameNamesKeepsTheFirstUser(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys []string
+	}{
+		{"backspace from the end", slices.Repeat([]string{"\x7f"}, 6)},
+		{"ctrl+k from after the first", append(slices.Repeat([]string{"\x02"}, 6), "\x0b")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := alexAndAlex(t, newFocused())
+			m = typeSeq(t, m, tc.keys...)
+
+			if got := m.Draft(); got != "Alex" {
+				t.Fatalf("precondition: Draft = %q", got)
+			}
+			wantMentions(t, m, alex1)
+		})
+	}
+}
+
+// Typing or pasting the same name in front of a mention moves the mention;
+// it does not hand it to the words that were just typed.
+func TestTheSameNameTypedInFrontOfAMentionShiftsIt(t *testing.T) {
+	moved := MentionSpan{Start: 6, End: 10, UserID: 1, Label: "Alex"}
+
+	t.Run("typed", func(t *testing.T) {
+		m := mentionAlex(t, newFocused(), 1)
+		m = typeSeq(t, m, "\x01") // ctrl+a
+		m = typeInto(t, m, "Alex, ")
+		wantMentions(t, m, moved)
+	})
+	t.Run("pasted", func(t *testing.T) {
+		m := mentionAlex(t, newFocused(), 1)
+		m = typeSeq(t, m, "\x01") // ctrl+a
+		m, _ = m.Update(tea.PasteMsg{Content: "Alex, "})
+		wantMentions(t, m, moved)
+	})
+}
+
+// vi's normal mode moves the cursor after an edit — dd lands it at the start
+// of a line, which for the last line is the line above — so the cursor it
+// ends on is no evidence of where the edit was.
+func TestViDdBetweenTwoSameNamedLinesKeepsTheRightUser(t *testing.T) {
+	build := func(t *testing.T) Model {
+		t.Helper()
+		m := mentionAlex(t, viComposer(t), 1)
+		m = typeSeq(t, m, "\n") // ctrl+j
+		m = mentionAlex(t, m, 2)
+		if got := m.Draft(); got != "Alex\nAlex" {
+			t.Fatalf("precondition: Draft = %q", got)
+		}
+		return typeSeq(t, m, "\x1b") // Esc: normal mode
+	}
+
+	t.Run("dd on the first line", func(t *testing.T) {
+		m := chars(t, build(t), "k0dd")
+		wantMentions(t, m, MentionSpan{Start: 0, End: 4, UserID: 2, Label: "Alex"})
+	})
+	t.Run("dd on the last line", func(t *testing.T) {
+		m := chars(t, build(t), "dd")
+		wantMentions(t, m, alex1)
+	})
+	// From the middle of the line the texts and the cursor together cannot
+	// say which Alex went. Losing both mentions is allowed; the wrong one
+	// surviving is not.
+	t.Run("dd on the first line from its middle", func(t *testing.T) {
+		m := chars(t, build(t), "k0lldd")
+		for _, span := range m.mentions {
+			if span.UserID == 1 {
+				t.Errorf("mentions = %+v: user 1's line was deleted", m.mentions)
+			}
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
