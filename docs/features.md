@@ -213,7 +213,7 @@ Set with `notifications.method` in `config.toml`:
 |---|---|
 | `"auto"` (default) | The terminal, where it is known to understand the sequence; the system otherwise. |
 | `"terminal"` | Always the terminal — for one the allowlist doesn't know. A terminal that doesn't understand the sequence **prints** it, into whatever is on screen. |
-| `"system"` | Always the platform notifier: `notify-send` on Linux, `osascript` on macOS. |
+| `"system"` | Always the platform notifier: `notify-send` on Linux and the BSDs, `osascript` on macOS. |
 
 **Why the terminal, and why macOS says "Script Editor".** `osascript` posts
 notifications as Script Editor, because the process *is* Script Editor — so
@@ -232,6 +232,38 @@ system notification fires on the wrong machine.
 | iTerm2, Windows Terminal | Body only (OSC 9) — the sender is folded into the message |
 | Terminal.app | None; falls back to the system |
 | Under tmux or screen | Nothing is sent — whether the sequence gets through depends on configuration that can't be read from inside |
+
+**Bursts.** On the system path a burst of messages — a busy group, or the
+backlog that arrives after a reconnect — doesn't become a burst of alerts.
+One notification is posted at a time, and a lone message goes out at once.
+Whatever arrives while one is on its way waits behind it as a single
+notification: a single message that waited still goes out as itself, and
+two or more go out together as "12 new messages".
+
+**Sound.** The notification sound (`notifications.sound`, off by default)
+never plays over itself, and never starts within a second of the last one.
+A burst that arrives inside a second, or while the sound is still playing,
+sounds once; one spread over longer sounds about once a second, or once per
+sound where the sound is longer than that.
+
+**The bell.** The terminal bell stands in when something that should alert
+you can't:
+
+- nothing is installed to run — no `notify-send` for the system path, no
+  player for the sound;
+- the notifier or player is installed but its last run failed — over ssh
+  to a machine with no notification daemon or session bus, say, or with no
+  sound server — or hung and was killed after ten seconds. It is still
+  tried, and once it works again the bell stops. The bell only starts once
+  the failure is known: a helper that fails at once costs the one message
+  that found out, but one that hangs keeps every message silent until the
+  timeout names it a failure, up to ten seconds. The bell starts with the
+  next message after that.
+
+The bell rings at most once a second, however many of these apply at once.
+`sound = false` turns off the sound and its bell, not the notification's:
+where there is no working notifier, the notification itself falls back to
+the bell.
 
 Muted chats never notify. The mute flag is read from your account's notify
 settings, including for chats below the first page of the dialog list — a

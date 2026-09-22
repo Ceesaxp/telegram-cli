@@ -1,5 +1,14 @@
 # TODO
 
+## Notification fan-out wave (2026-09-21) — branch fix/notify-fanout, issue #36
+
+- [x] One system notifier at a time; a burst coalesces into one waiting notification ("N new messages"); posting never blocks the update loop
+- [x] Sound: one player at a time, and none within 1 s of the last
+- [x] No bell written from a background goroutine: with no helper, or a helper whose last run failed, the bell goes back to the caller through `tea.Raw`, one shared limit for notifier and sound
+- [x] Helpers run under a 10 s timeout and are killed with their whole process group; message text reaches osascript and notify-send as arguments (`--`), never spliced into a script
+- [x] The BSDs use notify-send and canberra-gtk-play (checked by cross-build and tables only, not on a real BSD)
+- [ ] Not wired: `Notifier.Close` / `SoundPlayer.Close` are not called at app shutdown — no process-lifetime goroutine exists, workers live only while a helper runs
+
 ## Read-on-open wave (2026-09-21) — branch fix/read-on-open
 
 Reported: a chat read in tele-tui stayed unread on the phone. Diagnosis: the first page of a chat never sent a read receipt — only arrivals in the open chat and `m` did, since the first scaffold. Unread reactions (the phone's heart) were never read or cleared at all.

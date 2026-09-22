@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/config"
+	"github.com/Ceesaxp/telegram-cli/internal/notification"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 )
 
@@ -197,6 +199,50 @@ func TestHoldingIsBounded(t *testing.T) {
 	}
 	if released != 5 {
 		t.Errorf("%d notifications released by overflow, want 5", released)
+	}
+}
+
+// bellModel is notifyModel on a machine with nothing to run — no notifier,
+// no sound player — and the sound switched on, so every fallback is the
+// terminal bell.
+func bellModel(t *testing.T) Model {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+
+	m := notifyModel(t)
+	m.sound = notification.NewSoundPlayer(true)
+	m.store.Chats.Set(&telegram.Chat{ID: 7, Type: telegram.ChatTypePrivate, Title: "Ana"})
+	return m
+}
+
+// With no player to run, the bell stands in for the sound, and reaches the
+// terminal the way the notification does: through the renderer. Printed
+// from a background goroutine, it landed wherever the frame being drawn
+// happened to be.
+func TestWithoutAPlayerTheBellGoesThroughTheRenderer(t *testing.T) {
+	m := bellModel(t)
+
+	_, cmd := deliver(t, m, incoming(7))
+
+	written := strings.Join(rawSequences(t, cmd), "")
+	if n := strings.Count(written, "\a"); n != 1 {
+		t.Errorf("the renderer was handed %d bells, want 1: %q", n, written)
+	}
+	if !strings.Contains(written, "hello") {
+		t.Errorf("the notification itself was lost: %q", written)
+	}
+}
+
+// Where the notifier cannot run either, its fallback is the same bell. Two
+// of them for one message is one alert said twice.
+func TestWithNeitherNotifierNorPlayerTheBellRingsOnce(t *testing.T) {
+	m := bellModel(t)
+	m.notifier = notification.NewNotifier(true, true, config.NotifyMethodSystem)
+
+	_, cmd := deliver(t, m, incoming(7))
+
+	if got := rawSequences(t, cmd); len(got) != 1 || got[0] != "\a" {
+		t.Errorf("the renderer was handed %q, want one bell", got)
 	}
 }
 

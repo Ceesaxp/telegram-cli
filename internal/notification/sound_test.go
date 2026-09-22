@@ -1,0 +1,276 @@
+package notification
+
+import (
+	"errors"
+	"os/exec"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// soundPlayer builds an enabled player whose player process is p, on a clock
+// that only moves when the test moves it. play asks it for one message's
+// sound, with the bell on a limiter of its own on the same clock — what
+// Alert does with the notifier's.
+func soundPlayer(p *process) (s *SoundPlayer, clock *time.Time, play func() string) {
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	clock = &now
+	s = NewSoundPlayer(true)
+	s.play = p.play
+	s.now = func() time.Time { return *clock }
+	bells := newBellLimiter(s.now)
+	return s, clock, func() string { return s.playOrRing(bells) }
+}
+
+// A burst of messages used to start a player per message, all at once: the
+// same sound fifty times over itself. One plays now, and the rest are
+// dropped rather than queued — a sound late is a sound about nothing.
+func TestABurstPlaysOneSound(t *testing.T) {
+	p := newProcess()
+	s, _, play := soundPlayer(p)
+
+	for range 50 {
+		play()
+	}
+	p.awaitStart(t)
+	p.exit()
+	s.Close()
+
+	runs, peak := p.report()
+	if peak != 1 {
+		t.Errorf("%d players ran at once, want 1", peak)
+	}
+	if len(runs) != 1 {
+		t.Errorf("50 messages started %d players, want 1", len(runs))
+	}
+}
+
+// One at a time is not enough on its own: a player that returns at once — a
+// short sound, or one that failed — would let a burst through one sound
+// after another. So a sound that starts within minSoundInterval of the last
+// one is dropped too, whether or not that one is still playing.
+func TestASoundSoonAfterTheLastIsDropped(t *testing.T) {
+	p := newProcess()
+	p.exit()
+	s, clock, play := soundPlayer(p)
+
+	play()
+	s.wait()
+	*clock = clock.Add(minSoundInterval - time.Millisecond)
+	play()
+	s.Close()
+
+	if runs, _ := p.report(); len(runs) != 1 {
+		t.Errorf("two sounds %v apart started %d players, want 1",
+			minSoundInterval-time.Millisecond, len(runs))
+	}
+}
+
+// And the interval is not enough on its own either: a sound longer than it —
+// afplay's Ping runs a second and a half — would overlap the next one.
+func TestASoundStillPlayingDropsTheNext(t *testing.T) {
+	p := newProcess()
+	s, clock, play := soundPlayer(p)
+
+	play()
+	p.awaitStart(t)
+	*clock = clock.Add(10 * minSoundInterval)
+	play()
+	p.exit()
+	s.Close()
+
+	runs, peak := p.report()
+	if len(runs) != 1 || peak != 1 {
+		t.Errorf("a sound over a playing one started %d players, %d at once; want 1, 1", len(runs), peak)
+	}
+}
+
+// Close is for shutting down, and a player started after it would outlive
+// whatever asked for it.
+func TestAClosedPlayerStartsNothing(t *testing.T) {
+	p := newProcess()
+	p.exit()
+	s, _, play := soundPlayer(p)
+
+	s.Close()
+	play()
+	s.Close()
+
+	if runs, _ := p.report(); len(runs) != 0 {
+		t.Errorf("a closed player started %d players", len(runs))
+	}
+}
+
+// Where there is no player to run, the bell stands in for the sound, and it
+// goes back to the caller for tea.Raw. Printed from the background, it
+// landed wherever the renderer happened to be mid-frame.
+func TestAPlatformWithoutAPlayerHandsBackTheBell(t *testing.T) {
+	s := NewSoundPlayer(true)
+	s.play = platformPlayer("plan9", installed("paplay", "afplay"), helperTimeout)
+
+	if got := s.playOrRing(newBellLimiter(time.Now)); got != "\a" {
+		t.Errorf("the player handed back %q, want the bell", got)
+	}
+}
+
+// Whether there is a player is decided up front, by looking, for the reason
+// the notifier's is: found out by running it, the only fallback left is to
+// print.
+func TestThePlatformPlayerIsTheOneInstalled(t *testing.T) {
+	tests := []struct {
+		goos      string
+		installed []string
+		want      bool
+	}{
+		{"linux", []string{"paplay"}, true},
+		{"linux", []string{"canberra-gtk-play"}, true},
+		{"linux", nil, false},
+		{"darwin", []string{"afplay"}, true},
+		{"darwin", nil, false},
+		{"freebsd", []string{"canberra-gtk-play"}, true},
+		{"openbsd", []string{"canberra-gtk-play"}, true},
+		{"netbsd", []string{"canberra-gtk-play"}, true},
+		{"freebsd", nil, false},
+	}
+
+	for _, tt := range tests {
+		got := platformPlayer(tt.goos, installed(tt.installed...), helperTimeout) != nil
+		if got != tt.want {
+			t.Errorf("on %s with %q installed, a player: %v, want %v",
+				tt.goos, tt.installed, got, tt.want)
+		}
+	}
+}
+
+// Players that are installed but fail — no sound server — are found out in
+// the background, which has no business writing to the terminal. The last
+// of them used to ring the bell there, mid-frame.
+func TestFailingPlayersPrintNothing(t *testing.T) {
+	failingPrograms(t, "paplay", "canberra-gtk-play")
+	play := platformPlayer("linux", exec.LookPath, helperTimeout)
+	if play == nil {
+		t.Fatal("precondition: the stand-in players were not found")
+	}
+
+	if out := stdout(t, func() { _ = play() }); out != "" {
+		t.Errorf("failing players wrote %q to the terminal", out)
+	}
+}
+
+// Players that are installed but fail — no sound server — leave the reader
+// with no sound and, since the bell no longer rings from the background, no
+// bell either. So once a run has failed, the next message hands the bell
+// back to the caller, within the bell's limit.
+func TestAFailingPlayerFallsBackToTheBell(t *testing.T) {
+	failingPrograms(t, "paplay", "canberra-gtk-play")
+	s, _, play := soundPlayer(newProcess())
+	s.play = platformPlayer("linux", exec.LookPath, helperTimeout)
+	defer s.Close()
+
+	if got := play(); got != "" {
+		t.Fatalf("precondition: the first message was handed %q before any run had failed", got)
+	}
+	s.wait()
+
+	if got := play(); got != "\a" {
+		t.Errorf("after a failed run the next message was handed %q, want the bell", got)
+	}
+	if got := play(); got != "" {
+		t.Errorf("inside the bell's limit the one after was handed %q, want nothing", got)
+	}
+}
+
+// A player that never exits — paplay on a wedged sound server, afplay on a
+// Bluetooth output that went away — used to keep every later sound out for
+// the rest of the session, and Close waiting forever. It is killed after a
+// timeout now, the next sound is tried, and the timeout counts as a
+// failure, so the bell stands in.
+func TestAHungPlayerIsKilledNotWaitedFor(t *testing.T) {
+	hangingPrograms(t, "paplay")
+	s, clock, play := soundPlayer(newProcess())
+	player := platformPlayer("linux", exec.LookPath, 50*time.Millisecond)
+	var runs atomic.Int32
+	s.play = func() error {
+		runs.Add(1)
+		return player()
+	}
+
+	play()
+	within(t, "the player is still waiting on a hung paplay", s.wait)
+
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "\a" {
+		t.Errorf("after a run that timed out the next message was handed %q, want the bell", got)
+	}
+	within(t, "Close is still waiting on a hung paplay", s.Close)
+	if got := runs.Load(); got != 2 {
+		t.Errorf("two sounds an interval apart started %d player runs, want 2", got)
+	}
+}
+
+// And the fallback lasts as long as the failure does: the player is still
+// tried, and once it plays, the bell stops.
+func TestAPlayerThatWorksAgainStopsTheBell(t *testing.T) {
+	s, clock, play := soundPlayer(newProcess())
+	results := []error{errors.New("no sound server"), nil}
+	var runs int
+	s.play = func() error {
+		err := results[min(runs, len(results)-1)]
+		runs++
+		return err
+	}
+	defer s.Close()
+
+	play() // fails
+	s.wait()
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "\a" { // works
+		t.Fatalf("precondition: after a failed run the next message was handed %q", got)
+	}
+	s.wait()
+
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "" {
+		t.Errorf("after a run that worked the next message was handed %q, want nothing", got)
+	}
+}
+
+// The bell is the sound, degraded, and is limited the same way: a burst
+// rings once, and the interval after, it rings again.
+func TestTheBellIsLimitedLikeTheSound(t *testing.T) {
+	s, clock, play := soundPlayer(newProcess())
+	s.play = nil
+
+	var rang int
+	for range 50 {
+		if play() == "\a" {
+			rang++
+		}
+	}
+	if rang != 1 {
+		t.Errorf("a burst of 50 rang the bell %d times, want 1", rang)
+	}
+
+	*clock = clock.Add(minSoundInterval)
+	if got := play(); got != "\a" {
+		t.Errorf("a message the interval later got %q, want the bell", got)
+	}
+}
+
+// The limit is on bursts, not on conversation: a message the interval
+// after the last one sounds again.
+func TestASoundAfterTheIntervalPlays(t *testing.T) {
+	p := newProcess()
+	p.exit()
+	s, clock, play := soundPlayer(p)
+
+	play()
+	s.wait()
+	*clock = clock.Add(minSoundInterval)
+	play()
+	s.Close()
+
+	if runs, _ := p.report(); len(runs) != 2 {
+		t.Errorf("two sounds %v apart started %d players, want 2", minSoundInterval, len(runs))
+	}
+}

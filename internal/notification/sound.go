@@ -1,46 +1,178 @@
 package notification
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
+	"sync"
+	"time"
 )
 
 // SoundPlayer plays notification sounds.
 type SoundPlayer struct {
 	enabled bool
+
+	// play runs the platform's player once and returns when it has
+	// finished. A field so a test can count what reaches it: the real
+	// implementation is a process, gone before anything could ask. Nil
+	// where there is no player installed.
+	play func() error
+	// now is the clock the interval is measured on; a field so a test can
+	// hold it still instead of sleeping through a real second.
+	now func() time.Time
+
+	mu     sync.Mutex
+	busy   bool
+	closed bool
+	failed bool      // the last player run failed; one that works clears it
+	last   time.Time // when the last sound started
+	player sync.WaitGroup
 }
+
+// minSoundInterval is the shortest time between the starts of two sounds.
+//
+// A burst — a busy group, or the backlog replayed after a reconnect —
+// arrives within milliseconds, and a second is long enough for all of it to
+// sound once. It is also short enough that a reply to something you have
+// only just read still sounds. One-at-a-time already spaces afplay's Ping,
+// which runs a second and a half; this is for a sound shorter than that, or
+// a player that fails and returns at once.
+const minSoundInterval = time.Second
 
 // NewSoundPlayer creates a new sound player.
 func NewSoundPlayer(enabled bool) *SoundPlayer {
-	return &SoundPlayer{enabled: enabled}
+	return &SoundPlayer{
+		enabled: enabled,
+		play:    platformPlayer(runtime.GOOS, exec.LookPath, helperTimeout),
+		now:     time.Now,
+	}
 }
 
-// Play plays the notification sound.
-func (s *SoundPlayer) Play() {
+// playOrRing plays the notification sound, unless one is already playing or
+// the last started less than minSoundInterval ago. It never waits for the
+// player: the caller is the event loop. Alert is how the app reaches it.
+//
+// It returns what the caller must write to the terminal: the bell, rung
+// through bells, where there is no player to run or the last run failed,
+// and "" otherwise. Like Notify's sequence, the caller hands it to tea.Raw
+// rather than this writing it from a goroutine. The limiter is a parameter
+// because it is the notifier's: the terminal has one bell, whichever
+// fallback rings it.
+//
+// A burst of messages used to start a player for each, all at once. The
+// request that finds one playing is dropped rather than queued: the sound
+// is about something having arrived, and the one playing already says so.
+func (s *SoundPlayer) playOrRing(bells *bellLimiter) string {
 	if !s.enabled {
-		return
+		return ""
 	}
-	go s.playSound()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ""
+	}
+	if s.play == nil {
+		// Nothing to run, so the terminal is asked to ring instead — by
+		// the caller, like any other write to it.
+		return bells.ring()
+	}
+
+	now := s.now()
+	if !s.busy && now.Sub(s.last) >= minSoundInterval {
+		s.busy, s.last = true, now
+		s.player.Add(1)
+		go s.run()
+	}
+
+	if s.failed {
+		// The last player failed, and whatever made it fail is likely
+		// to fail this one too. The bell stands in, as it does for a
+		// player that is not there.
+		return bells.ring()
+	}
+	return ""
 }
 
-func (s *SoundPlayer) playSound() {
-	switch runtime.GOOS {
-	case "linux":
-		// Try paplay with system sound.
-		cmd := exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/message.oga")
-		if err := cmd.Run(); err != nil {
-			// Fallback: canberra-gtk-play.
-			cmd = exec.Command("canberra-gtk-play", "-i", "message-new-instant")
-			if err := cmd.Run(); err != nil {
-				// Last resort: terminal bell.
-				fmt.Print("\a")
-			}
+// run plays the sound once, in the background: the player is a process,
+// and waiting on it would stall the event loop for as long as it plays.
+func (s *SoundPlayer) run() {
+	defer s.player.Done()
+	err := s.play()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.busy = false
+	s.failed = err != nil
+}
+
+// Close stops the player from starting anything new, and waits for one
+// that is still running — at most about helperTimeout for each player it
+// tries, after which that player is killed.
+//
+// Nothing in the app calls it, and that is fine for the reason
+// Notifier.Close gives: the goroutine lives only as long as the player
+// does, and exiting leaves that player behind as it always has. The tests
+// call it, so that no player outlives the test that started it.
+func (s *SoundPlayer) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+
+	s.wait()
+}
+
+// wait returns once the player, if one is running, has finished.
+func (s *SoundPlayer) wait() {
+	s.player.Wait()
+}
+
+// soundPlayers are the commands that play the notification sound on each
+// platform, in the order they are tried.
+//
+// The BSDs get canberra-gtk-play alone. It finds the sound through the
+// desktop's sound theme, where paplay needs a path, and the freedesktop
+// sounds live under /usr/local or /usr/pkg there rather than /usr/share.
+var soundPlayers = map[string][][]string{
+	"linux": {
+		{"paplay", "/usr/share/sounds/freedesktop/stereo/message.oga"},
+		{"canberra-gtk-play", "-i", "message-new-instant"},
+	},
+	"darwin": {
+		{"afplay", "/System/Library/Sounds/Ping.aiff"},
+	},
+	"freebsd": {{"canberra-gtk-play", "-i", "message-new-instant"}},
+	"openbsd": {{"canberra-gtk-play", "-i", "message-new-instant"}},
+	"netbsd":  {{"canberra-gtk-play", "-i", "message-new-instant"}},
+}
+
+// platformPlayer is the platform's sound player on goos: a function that
+// plays the notification sound once, and nil where there is none to run.
+//
+// Whether there is one is looked up here, once, rather than found out by
+// running it: by then the process is in the background, where the only
+// fallback left is to print — to a terminal this process does not own.
+func platformPlayer(goos string, lookPath func(string) (string, error), timeout time.Duration) func() error {
+	var installed [][]string
+	for _, player := range soundPlayers[goos] {
+		if _, err := lookPath(player[0]); err == nil {
+			installed = append(installed, player)
 		}
-	case "darwin":
-		cmd := exec.Command("afplay", "/System/Library/Sounds/Ping.aiff")
-		cmd.Run()
-	default:
-		fmt.Print("\a")
 	}
+	if len(installed) == 0 {
+		return nil
+	}
+	return func() error { return playFirst(timeout, installed) }
+}
+
+// playFirst runs each player in turn until one succeeds, one at a time, and
+// returns the last one's error if none does — installed, but no sound server
+// to play through.
+func playFirst(timeout time.Duration, players [][]string) error {
+	var err error
+	for _, player := range players {
+		if err = runHelper(timeout, player[0], player[1:]...); err == nil {
+			return nil
+		}
+	}
+	return err
 }
