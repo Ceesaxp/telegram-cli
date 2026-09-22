@@ -102,16 +102,7 @@ type Model struct {
 // New creates a new chat list model.
 func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 	l := widgets.NewList()
-	// Only StyleEmpty. Every other List style feeds the widget's own row
-	// drawing, and this component supplies RenderRow — so the seven that
-	// used to be set here were read by nothing at all. StyleEmpty is
-	// different: the "No items" placeholder is drawn before RenderRow gets
-	// a look in, so it is the one style a caller with a bespoke row still
-	// owns.
-	l.StyleEmpty = theme.OverlayMuted(r)
-
 	sp := widgets.NewSpinner("Loading chats...")
-	sp.Style = lipgloss.NewStyle().Foreground(r.Cyan)
 
 	dirty := false
 	inFolder := 0
@@ -138,12 +129,33 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		inFolder:    &inFolder,
 		resolving:   make(map[int64]bool),
 	}
-	// The row renderer is installed here, not in SetRoles: a component
+	m.restyle()
+	return m
+}
+
+// restyle derives from the palette everything that is styled ahead of
+// drawing rather than while drawing. Whatever replaces the palette has to
+// call it too, or these keep the colours they were built with.
+func (m *Model) restyle() {
+	// Only StyleEmpty. Every other List style feeds the widget's own row
+	// drawing, and this component supplies RenderRow — so the seven that
+	// used to be set here were read by nothing at all. StyleEmpty is
+	// different: the "No items" placeholder is drawn before RenderRow gets
+	// a look in, so it is the one style a caller with a bespoke row still
+	// owns.
+	m.list.StyleEmpty = theme.OverlayMuted(m.roles)
+	m.spinner.Style = lipgloss.NewStyle().Foreground(m.roles.Cyan)
+
+	// The row renderer is installed here, not by the host: a component
 	// that renders two different ways depending on whether the caller
 	// remembered a setter is a component with two behaviours, and the
 	// tests construct this model directly.
+	//
+	// It is here rather than beside the constructor's other wiring because
+	// m.renderRow is a method VALUE: it binds a copy of the model, palette
+	// included, as the model stands at this line. Rows drawn later are
+	// drawn with that copy's roles, so a new palette means binding again.
 	m.list.RenderRow = m.renderRow
-	return m
 }
 
 // dialogSourceOf narrows a client to the paging seam, keeping a nil client
