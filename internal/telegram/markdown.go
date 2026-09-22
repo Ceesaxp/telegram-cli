@@ -57,6 +57,31 @@ func parseMarkdown(text string) (string, []tg.MessageEntityClass) {
 	}
 
 	p := &mdParser{src: []rune(text)}
+	return p.parse(text)
+}
+
+// parseMarkdownMapped is parseMarkdown that also reports where every source
+// rune went, which is what lets a range marked in the draft be found again
+// in the text that is sent.
+//
+// Entry i of the map is the UTF-16 offset in the output at which source
+// rune i starts; entry len(runes) is the output's total length. A rune
+// removed as markup maps to where the output stood when it was removed,
+// which is the start of whatever is emitted next. The map therefore never
+// decreases, and source runes [s, e) cover output units [at[s], at[e]).
+func parseMarkdownMapped(text string) (string, []tg.MessageEntityClass, []int) {
+	if !strings.ContainsAny(text, markdownMarkers) {
+		return text, nil, utf16Offsets(text)
+	}
+
+	src := []rune(text)
+	p := &mdParser{src: src, at: make([]int, len(src)+1)}
+	out, entities := p.parse(text)
+	return out, entities, p.at
+}
+
+// parse runs the parser over text, whose runes are already in p.src.
+func (p *mdParser) parse(text string) (string, []tg.MessageEntityClass) {
 	p.run()
 	if len(p.entities) == 0 {
 		// Markers were present but none of them formed a span, so the
@@ -75,6 +100,11 @@ type mdParser struct {
 	out      strings.Builder
 	utf16Len int32 // UTF-16 length of out so far: the next entity offset
 	entities []tg.MessageEntityClass
+
+	// at is the source-to-output offset map, filled only when asked for
+	// (parseMarkdownMapped); mapped is the first source index not yet in it.
+	at     []int
+	mapped int
 }
 
 func (p *mdParser) run() {
@@ -85,6 +115,7 @@ func (p *mdParser) run() {
 		p.emitRange(p.pos, p.pos+1)
 		p.pos++
 	}
+	p.mapUpTo(len(p.src) + 1)
 }
 
 // emitRange appends src[start:end] verbatim, advancing the UTF-16 cursor,
@@ -93,11 +124,26 @@ func (p *mdParser) run() {
 // known source index.
 func (p *mdParser) emitRange(start, end int) int32 {
 	before := p.utf16Len
-	for _, r := range p.src[start:end] {
+	for i := start; i < end; i++ {
+		p.mapUpTo(i + 1)
+		r := p.src[i]
 		p.out.WriteRune(r)
 		p.utf16Len += utf16RuneLen(r)
 	}
 	return p.utf16Len - before
+}
+
+// mapUpTo gives every source rune before end that has no entry in the
+// offset map yet the current output offset. Called just before a rune is
+// written, it records where that rune starts, and places any markup skipped
+// since the previous one at the same spot, where the removed markers stood.
+func (p *mdParser) mapUpTo(end int) {
+	if p.at == nil {
+		return
+	}
+	for ; p.mapped < end; p.mapped++ {
+		p.at[p.mapped] = int(p.utf16Len)
+	}
 }
 
 // emitLiteral copies src[p.pos:end] verbatim and consumes it. Used for
@@ -115,6 +161,20 @@ func utf16RuneLen(r rune) int32 {
 		return 2
 	}
 	return 1
+}
+
+// utf16Offsets maps text sent as typed from rune indices to UTF-16
+// offsets: entry i is where rune i starts on the wire, and the final entry,
+// at index len(runes), is the total length. It is the offset map of text
+// that no Markdown touched.
+func utf16Offsets(text string) []int {
+	at := make([]int, 0, len(text)+1)
+	n := 0
+	for _, r := range text {
+		at = append(at, n)
+		n += int(utf16RuneLen(r))
+	}
+	return append(at, n)
 }
 
 // tryMarker attempts to consume a formatted span at the cursor. It
