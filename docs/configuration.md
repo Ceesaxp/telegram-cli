@@ -88,9 +88,14 @@ either.
 
 `:theme` will not edit a `config.toml` that sets `ui` with dotted keys
 (`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
-one that is not valid TOML, one you have made read-only, or a symlink whose
-target is missing: the theme still switches, the notice says "not saved" and
-why, and the file is left for you to edit by hand.
+makes `ui` an array of `[[ui]]` tables, sets `ui.theme` as anything but a
+string on a line of `[ui]`, or writes one setting twice in spellings told
+apart only by case (`[ui]` and `[UI]`, or `theme` and `Theme`, which the
+loader reads as one); nor one that is not valid TOML, one you have made
+read-only, or a symlink whose target is missing. The theme still switches,
+the notice says "not saved" and why, and the file is left for you to edit by
+hand. Tables and keys in any case — `[UI]`, `Theme = …` — are otherwise
+edited like their lower-case spellings, as the loader reads them.
 
 A name that is not a usable theme — no such file, a file that does not
 parse — changes nothing: the theme on screen stays, rather than falling back

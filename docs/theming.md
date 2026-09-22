@@ -336,9 +336,14 @@ Decisions made in Phase 2:
   rename the file is read again, and a save that finds it changed since it
   was read stops without writing; a restore likewise happens only over the
   file that was written. That narrows the window an outside edit can be lost
-  in to the rename itself. It refuses,
-  and says to edit by hand, when `ui` is dotted keys or an inline table or
-  the file is not TOML: the theme still switches, and the notice says "not
+  in to the rename itself. It refuses, and says to edit by hand, when `ui`
+  is dotted keys, an inline table or anything else but a table; when it is
+  an array of `[[ui]]` tables (`[[ui.plugins]]` inside it is fine); when
+  `ui.theme` is a table, a dotted key or not a string; when one setting is
+  written twice in spellings told apart only by case — `[ui]` and `[UI]`,
+  `theme` and `Theme` — which TOML keeps apart and the loader does not;
+  when the file is not TOML; when it is read-only; and when it is a symlink
+  to a missing file. The theme still switches, and the notice says "not
   saved" and why.
 - **`:reload-config` applies the theme and lists the rest.** It re-reads
   the file `config.Load` read (`Config.Reload`) and applies its theme
