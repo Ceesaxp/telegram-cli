@@ -1,5 +1,18 @@
 # TODO
 
+## Performance and safety wave (2026-09-22) — branch fix/perf-wave, closes #33
+
+Four findings from an outside review, each confirmed against the code first.
+
+- [x] Send roots: REST and MCP open a file once through `os.Root` (`SendRoots.Open`, replacing `ResolveAllowedSendPath`) and upload from that descriptor, so a file swapped for a symlink after the check cannot redirect the upload. Narrower than before: an absolute link as the file itself is refused, even one pointing into the root (a linked directory is followed when it leads into a root), directories, fifos, sockets and devices fail at open, a link is sent under its own name
+- [x] Send roots are held open from start: `OpenSendRoots` opens each root once when the server starts and keeps the handle until shutdown, so swapping a nested root for a symlink, or creating a root that was missing at startup, is not honoured. Also narrower than before: a root missing at startup stays skipped until restart. A path inside a root that cannot be opened says why (missing, unreadable, not a regular file, not a directory, too many links, invalid path) instead of "outside"; a path named through a symlinked parent still matches a root written in resolved form. Open flags carry `O_NOCTTY`, so a device node in a root cannot become the controlling terminal
+- [x] Message store: shrinking mutations (delete, Prepend's cap) release what they drop; an ID index (`GetByID`) replaces the copy-and-scan the reply row, `hasMessage` and `loadedPending` did per call — reply rows at 5000 messages went from 8 ms / 22 MB to 3 ms / 2 MB per redraw
+- [x] File registry and file store (#33): LRU-bounded at 4096 entries each; entries mid-transfer are never evicted; a download whose entry was evicted refetches its message (`DownloadMessageFile`); an avatar key has no recovery until something downloads avatars, which nothing does yet (the TUI draws none, and REST and MCP take their keys from message media)
+- [ ] Follow-up: the app's per-action by-ID scans (reply preview, edit, `chosenReaction`, `isPinned` in app.go; forward.go) could use `GetByID`
+- [ ] Follow-up: REST and MCP downloads could use `DownloadMessageFile` instead of relying on `GetMessage` re-registering just before
+- [ ] Follow-up: the two LRUs are near-duplicates — a shared `internal/lru` would remove that; `FileState` has no failed/in-progress distinction, so a failure stored as incomplete would never be evicted
+- [ ] Known limit: `os.Root` does not stop a hard link inside a send root to a file elsewhere on the same filesystem (the old check did not either)
+
 ## Mention autocomplete wave (2026-09-22) — branch feat/mention-autocomplete, issue #41
 
 `@` in a group completes a member's name; a member without a username is mentioned by name through an entity carrying their ID. Waves 1A–1C and 2A built the telegram and composer halves; 2B wired the app.

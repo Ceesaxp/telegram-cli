@@ -249,6 +249,11 @@ func (m Model) senderFor(msg *telegram.Message) (string, lipgloss.Color) {
 // under it, and a quote that can grow taller than its own reply inverts
 // that. When the quoted message is not in loaded history the row says so
 // rather than showing an ID, which tells the reader nothing.
+//
+// The quoted message is looked up by ID, not found by walking the history:
+// this runs once per reply on every redraw, and a walk — over a copy of the
+// whole chat, at that — made redrawing a paged-back history cost messages
+// times replies.
 func (m Model) gridReplyRow(msg *telegram.Message, g gridGeometry) string {
 	if msg.ReplyToMessageID == 0 {
 		return ""
@@ -256,10 +261,7 @@ func (m Model) gridReplyRow(msg *telegram.Message, g gridGeometry) string {
 
 	r := m.roles
 	text := "earlier message"
-	for _, other := range m.store.Messages.Get(m.chatID) {
-		if other.ID != msg.ReplyToMessageID {
-			continue
-		}
+	if other, ok := m.store.Messages.GetByID(m.chatID, msg.ReplyToMessageID); ok {
 		who := "you"
 		if !isOwnMessage(other, m.myUserId) {
 			who = render.SenderName(other, m.store)
@@ -274,7 +276,6 @@ func (m Model) gridReplyRow(msg *telegram.Message, g gridGeometry) string {
 			body = strings.TrimSpace(stripSGR(lines[0]))
 		}
 		text = strings.TrimSpace(who + " " + body)
-		break
 	}
 
 	quote := "↳ " + text

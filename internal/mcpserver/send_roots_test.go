@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +14,10 @@ import (
 
 // sendRootsHandlers returns tool handlers bound to an unstarted Telegram
 // client whose send roots are the returned filesDir and outbox. Unstarted
-// is the point: path resolution happens before any RPC, so a rejection
-// can be driven through the real handler, while an accepted path would go
-// on to dial Telegram.
+// is the point: the file is opened and checked before any RPC, so a
+// rejection can be driven through the real handler. An accepted file
+// would go on to dial Telegram, so those tests put a fakeFileSender in its
+// place.
 func sendRootsHandlers(t *testing.T) (h *handlers, filesDir, outbox string) {
 	t.Helper()
 	home := t.TempDir()
@@ -34,7 +36,10 @@ func sendRootsHandlers(t *testing.T) (h *handlers, filesDir, outbox string) {
 		FilesDir:    filesDir,
 		SendDirs:    []string{outbox},
 	}}
-	return &handlers{tg: telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg))}, filesDir, outbox
+	roots, _ := telegram.OpenSendRoots(cfg.SendRoots()...)
+	t.Cleanup(func() { roots.Close() })
+	h = &handlers{tg: telegram.NewRPCClient(cfg, telegram.NewTUIAuthorizer(cfg)), roots: roots}
+	return h, filesDir, outbox
 }
 
 // This is the case issue #48 was really about: an MCP host started from a
@@ -62,8 +67,37 @@ func TestSendFileRejectsPathUnderWorkingDirectory(t *testing.T) {
 	}
 }
 
-// As in the REST test, the accepting half stops at the resolution layer:
-// the handler's next step is an upload and this client is unstarted.
+// fakeFileSender stands in for Telegram behind send_file. It runs swap
+// first — the moment between the handler's check and the upload — then
+// reads the file it was handed, the way the upload would.
+type fakeFileSender struct {
+	swap func()
+
+	calls   int
+	name    string
+	read    string
+	chatID  int64
+	caption string
+	replyTo int64
+}
+
+func (f *fakeFileSender) SendOpenedFileMessage(chatID int64, file *os.File, caption string, replyTo, _ int64) (*telegram.Message, error) {
+	defer file.Close()
+	f.calls++
+	if f.swap != nil {
+		f.swap()
+	}
+	b, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	f.name, f.read = file.Name(), string(b)
+	f.chatID, f.caption, f.replyTo = chatID, caption, replyTo
+	return &telegram.Message{ID: 100, ChatID: chatID}, nil
+}
+
+// A path under either root goes through the handler to the send, with the
+// call's chat, caption and reply.
 func TestSendFileAcceptsConfiguredRoot(t *testing.T) {
 	h, filesDir, outbox := sendRootsHandlers(t)
 
@@ -73,10 +107,68 @@ func TestSendFileAcceptsConfiguredRoot(t *testing.T) {
 			if err := os.WriteFile(path, []byte("pdf"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := telegram.ResolveAllowedSendPath(path, h.tg.SendRoots()...); err != nil {
+			sender := &fakeFileSender{}
+			h.files = sender
+
+			_, _, err := h.sendFile(context.Background(), nil, sendFileIn{ChatID: 7, Path: path, Caption: "hi", ReplyToMessageID: 3})
+			if err != nil {
 				t.Fatalf("path under %s rejected: %v", name, err)
 			}
+			if sender.read != "pdf" || filepath.Base(sender.name) != "doc.pdf" {
+				t.Errorf("sent %q named %q, want %q named doc.pdf", sender.read, sender.name, "pdf")
+			}
+			if sender.chatID != 7 || sender.caption != "hi" || sender.replyTo != 3 {
+				t.Errorf("sent to chat %d with caption %q replying to %d, want 7, %q, 3",
+					sender.chatID, sender.caption, sender.replyTo, "hi")
+			}
 		})
+	}
+}
+
+// The handler hands the send the file it checked, not a path to open
+// again: swapping the file for a link to a secret once the send has it
+// changes nothing about what is read. That the upload reads only this
+// descriptor is the telegram package's test of SendOpenedFileMessage.
+func TestSendFileSendsTheFileItChecked(t *testing.T) {
+	h, _, outbox := sendRootsHandlers(t)
+	path := filepath.Join(outbox, "doc.txt")
+	if err := os.WriteFile(path, []byte("the file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("the secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sender := &fakeFileSender{swap: func() {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(secret, path); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	h.files = sender
+
+	if _, _, err := h.sendFile(context.Background(), nil, sendFileIn{ChatID: 7, Path: path}); err != nil {
+		t.Fatalf("send_file: %v", err)
+	}
+	if sender.read != "the file" {
+		t.Fatalf("sent %q, want %q, the file that was checked", sender.read, "the file")
+	}
+}
+
+// A directory is refused where it is opened and never reaches the send.
+func TestSendFileRefusesADirectory(t *testing.T) {
+	h, _, outbox := sendRootsHandlers(t)
+	sender := &fakeFileSender{}
+	h.files = sender
+
+	_, _, err := h.sendFile(context.Background(), nil, sendFileIn{ChatID: 7, Path: outbox})
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("error = %v, want a not-a-regular-file refusal", err)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the send was reached %d times, want never", sender.calls)
 	}
 }
 

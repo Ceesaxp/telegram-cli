@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,10 +22,19 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/tgjson"
 )
 
+// fileSender is what POST /api/send-file needs of the Telegram client once
+// it has opened the file: a send from that descriptor, never from the
+// path again. An interface so a test can see which file it was handed.
+type fileSender interface {
+	SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyTo, placeholderID int64) (*telegram.Message, error)
+}
+
 // Server is the REST API handler set bound to a Telegram client.
 type Server struct {
-	tg  *telegram.Client
-	mux *http.ServeMux
+	tg    *telegram.Client
+	files fileSender
+	roots *telegram.SendRoots
+	mux   *http.ServeMux
 
 	// token is the bearer token required on every route except
 	// GET /api/health. An empty token disables authentication; callers
@@ -50,7 +60,7 @@ type Server struct {
 // bearer token required on every route except GET /api/health; pass ""
 // only when the caller explicitly wants authentication disabled.
 func New(client *telegram.Client, token string) *Server {
-	s := &Server{tg: client, token: token}
+	s := &Server{tg: client, files: client, token: token}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
@@ -72,6 +82,13 @@ func New(client *telegram.Client, token string) *Server {
 	})
 	s.mux = mux
 	return s
+}
+
+// SetSendRoots sets the directories POST /api/send-file may send a file
+// from. Call it before serving requests. Until it is called there are none
+// and every path is refused: an allowlist nobody set must fail closed.
+func (s *Server) SetSendRoots(roots *telegram.SendRoots) {
+	s.roots = roots
 }
 
 // SetListenHost records the host portion of the address the server will
@@ -469,15 +486,18 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := telegram.ResolveAllowedSendPath(in.Path, s.tg.SendRoots()...)
+	// Opened here, inside the roots, and sent from the descriptor: checking
+	// the path and sending it by name would let a file swapped in between
+	// be the one uploaded.
+	f, err := s.roots.Open(in.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// No placeholder to swap: this server has no thread of its own to
-	// echo into.
-	msg, err := s.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID, 0)
+	// echo into. The send closes f.
+	msg, err := s.files.SendOpenedFileMessage(in.ChatID, f, in.Caption, in.ReplyToMessageID, 0)
 	if err != nil {
 		writeTelegramError(w, err)
 		return

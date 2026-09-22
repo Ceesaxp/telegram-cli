@@ -4,6 +4,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -110,14 +111,15 @@ type downloadMediaOut struct {
 }
 
 // New creates an MCP server exposing the Telegram client as tools.
-func New(client *telegram.Client) *Server {
+// send_file sends only from roots; with nil roots it refuses every path.
+func New(client *telegram.Client, roots *telegram.SendRoots) *Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "telegram-mcp",
 		Title:   "Telegram MCP",
 		Version: "0.1.0",
 	}, nil)
 
-	h := &handlers{tg: client}
+	h := &handlers{tg: client, files: client, roots: roots}
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_me",
@@ -178,9 +180,18 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.mcp.Run(ctx, &mcp.StdioTransport{})
 }
 
+// fileSender is what send_file needs of the Telegram client once it has
+// opened the file: a send from that descriptor, never from the path
+// again. An interface so a test can see which file it was handed.
+type fileSender interface {
+	SendOpenedFileMessage(chatID int64, f *os.File, caption string, replyTo, placeholderID int64) (*telegram.Message, error)
+}
+
 // handlers holds the tool implementations.
 type handlers struct {
-	tg *telegram.Client
+	tg    *telegram.Client
+	files fileSender
+	roots *telegram.SendRoots
 }
 
 func (h *handlers) getMe(ctx context.Context, _ *mcp.CallToolRequest, _ getMeIn) (*mcp.CallToolResult, getMeOut, error) {
@@ -260,13 +271,16 @@ func (h *handlers) sendMessage(ctx context.Context, _ *mcp.CallToolRequest, in s
 }
 
 func (h *handlers) sendFile(ctx context.Context, _ *mcp.CallToolRequest, in sendFileIn) (*mcp.CallToolResult, messageOut, error) {
-	path, err := telegram.ResolveAllowedSendPath(in.Path, h.tg.SendRoots()...)
+	// Opened here, inside the roots, and sent from the descriptor: checking
+	// the path and sending it by name would let a file swapped in between
+	// be the one uploaded.
+	f, err := h.roots.Open(in.Path)
 	if err != nil {
 		return nil, messageOut{}, err
 	}
 	// No placeholder to swap: this server has no thread of its own to
-	// echo into.
-	msg, err := h.tg.SendFileMessage(in.ChatID, path, in.Caption, in.ReplyToMessageID, 0)
+	// echo into. The send closes f.
+	msg, err := h.files.SendOpenedFileMessage(in.ChatID, f, in.Caption, in.ReplyToMessageID, 0)
 	if err != nil {
 		return nil, messageOut{}, err
 	}

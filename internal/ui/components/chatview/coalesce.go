@@ -180,13 +180,9 @@ func (m *Model) loadedPending() []int64 {
 	if len(m.pendingRefetch) == 0 {
 		return nil
 	}
-	loaded := map[int64]bool{}
-	for _, msg := range m.store.Messages.Get(m.chatID) {
-		loaded[msg.ID] = true
-	}
 	ids := make([]int64, 0, len(m.pendingRefetch))
 	for id := range m.pendingRefetch {
-		if loaded[id] {
+		if _, loaded := m.store.Messages.GetByID(m.chatID, id); loaded {
 			ids = append(ids, id)
 		}
 	}

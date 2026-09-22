@@ -1401,7 +1401,9 @@ func (m Model) fetchPhotosCmd(gen int, chatID int64, msgs []*telegram.Message, w
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				file, err := tg.DownloadFileSync(fileID)
+				// Any message showing the file can bring its entry back;
+				// the first is as good as the rest.
+				file, err := tg.DownloadMessageFile(chatID, msgIDs[0], fileID)
 				if err != nil || file == nil {
 					return
 				}
@@ -1446,7 +1448,7 @@ func (m *Model) finishMeta() {
 // photoDownloadTargets returns the thumbnails a page still needs, keyed by
 // FILE rather than by message: the same photo can appear twice in one page
 // (e.g. a forward of a message already in the page). The file registry
-// coalesces concurrent DownloadFileSync calls for one key; grouping here
+// coalesces concurrent downloads of one key; grouping here
 // still avoids duplicate work on the UI side. Each file is downloaded once
 // and its result fanned out to every message that shows it. order preserves
 // page order so downloads start top-down.
@@ -1518,7 +1520,7 @@ func bestPhotoSize(photo *telegram.Photo) *telegram.PhotoSize {
 }
 
 // needsThumbnail reports whether a message is a photo whose thumbnail is
-// not on disk yet. The store is the authority: DownloadFileSync returns a
+// not on disk yet. The store is the authority: a download returns a
 // fresh File value rather than mutating the one hanging off the message,
 // so msg.…File.Downloaded stays false for the whole session and cannot be
 // used on its own to decide what still needs fetching.
@@ -1686,12 +1688,8 @@ func (m Model) invalidateByFile(fileID string) {
 
 // hasMessage reports whether a message is in the open chat's loaded set.
 func (m Model) hasMessage(id int64) bool {
-	for _, msg := range m.store.Messages.Get(m.chatID) {
-		if msg.ID == id {
-			return true
-		}
-	}
-	return false
+	_, ok := m.store.Messages.GetByID(m.chatID, id)
+	return ok
 }
 
 // scrollToMessage positions the target message inside the body, roughly
@@ -2608,42 +2606,42 @@ func (m Model) playMedia() tea.Cmd {
 	switch c := msg.Content.(type) {
 	case *telegram.MessageVoiceNote:
 		if c.VoiceNote != nil {
-			return m.downloadAndPlay(fileKey(c.VoiceNote.File), "voice", "🎤 Playing voice...")
+			return m.downloadAndPlay(msg, fileKey(c.VoiceNote.File), "voice", "🎤 Playing voice...")
 		}
 
 	case *telegram.MessageAudio:
 		if c.Audio != nil {
-			return m.downloadAndPlay(fileKey(c.Audio.File), "audio", fmt.Sprintf("🎵 Playing %s...", c.Audio.Title))
+			return m.downloadAndPlay(msg, fileKey(c.Audio.File), "audio", fmt.Sprintf("🎵 Playing %s...", c.Audio.Title))
 		}
 
 	case *telegram.MessageVideoNote:
 		if c.VideoNote != nil {
-			return m.downloadAndPlay(fileKey(c.VideoNote.File), "video", "📹 Playing video note...")
+			return m.downloadAndPlay(msg, fileKey(c.VideoNote.File), "video", "📹 Playing video note...")
 		}
 
 	case *telegram.MessageVideo:
 		if c.Video != nil {
-			return m.downloadAndPlay(fileKey(c.Video.File), "video", "🎥 Opening video...")
+			return m.downloadAndPlay(msg, fileKey(c.Video.File), "video", "🎥 Opening video...")
 		}
 
 	case *telegram.MessageAnimation:
 		if c.Animation != nil {
-			return m.downloadAndPlay(fileKey(c.Animation.File), "video", "🎬 Opening GIF...")
+			return m.downloadAndPlay(msg, fileKey(c.Animation.File), "video", "🎬 Opening GIF...")
 		}
 
 	case *telegram.MessageDocument:
 		if c.Document != nil {
-			return m.downloadAndOpen(fileKey(c.Document.File), fmt.Sprintf("📎 Opening %s...", c.Document.FileName))
+			return m.downloadAndOpen(msg, fileKey(c.Document.File), fmt.Sprintf("📎 Opening %s...", c.Document.FileName))
 		}
 
 	case *telegram.MessagePhoto:
 		// The largest size with a registered file — not blindly the last
 		// entry of Sizes, whose File may be nil.
-		return m.downloadAndOpen(fileKey(bestPhotoSizeFile(c.Photo)), "🖼 Opening photo...")
+		return m.downloadAndOpen(msg, fileKey(bestPhotoSizeFile(c.Photo)), "🖼 Opening photo...")
 
 	case *telegram.MessageSticker:
 		if c.Sticker != nil {
-			return m.downloadAndOpen(fileKey(c.Sticker.File), "Opening sticker...")
+			return m.downloadAndOpen(msg, fileKey(c.Sticker.File), "Opening sticker...")
 		}
 	}
 
@@ -2710,11 +2708,12 @@ func (m Model) downloadFile() tea.Cmd {
 	}
 
 	tg, dir := m.tg, m.downloadDir
+	chatID, msgID := msg.ChatID, msg.ID
 	return func() tea.Msg {
 		if tg == nil {
 			return MediaPlayMsg{Status: "error", Info: "not connected"}
 		}
-		file, err := tg.DownloadFileSync(key)
+		file, err := tg.DownloadMessageFile(chatID, msgID, key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("⚠ download failed: %v", err)}
 		}
@@ -2729,16 +2728,17 @@ func (m Model) downloadFile() tea.Cmd {
 	}
 }
 
-func (m Model) downloadAndPlay(key string, mediaType string, statusMsg string) tea.Cmd {
+func (m Model) downloadAndPlay(msg *telegram.Message, key string, mediaType string, statusMsg string) tea.Cmd {
 	if key == "" {
 		return nil
 	}
 	voice, video, tg := m.voice, m.video, m.tg
+	chatID, msgID := msg.ChatID, msg.ID
 	return func() tea.Msg {
 		if tg == nil {
 			return MediaPlayMsg{Status: "error", Info: "not connected"}
 		}
-		file, err := tg.DownloadFileSync(key)
+		file, err := tg.DownloadMessageFile(chatID, msgID, key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}
@@ -2793,16 +2793,17 @@ func playVideo(video *media.VideoPlayer, path string) error {
 	return startOpener(cmd)
 }
 
-func (m Model) downloadAndOpen(key string, statusMsg string) tea.Cmd {
+func (m Model) downloadAndOpen(msg *telegram.Message, key string, statusMsg string) tea.Cmd {
 	if key == "" {
 		return nil
 	}
 	tg := m.tg
+	chatID, msgID := msg.ChatID, msg.ID
 	return func() tea.Msg {
 		if tg == nil {
 			return MediaPlayMsg{Status: "error", Info: "not connected"}
 		}
-		file, err := tg.DownloadFileSync(key)
+		file, err := tg.DownloadMessageFile(chatID, msgID, key)
 		if err != nil {
 			return MediaPlayMsg{Status: "error", Info: fmt.Sprintf("Download error: %v", err)}
 		}

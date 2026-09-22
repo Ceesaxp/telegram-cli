@@ -63,10 +63,16 @@ Register the server in your MCP client, e.g.:
 
 ### Which files can be sent
 
-Both servers accept a `path` only if it resolves inside one of their **send
-roots**: the media cache (`files_dir`) plus `[storage] send_dirs`, which
-defaults to `~/.local/share/tele-tui/outbox`. The effective set is logged at
-startup, and anything else is rejected with an error naming the roots.
+Both servers accept a `path` only if the file can be **opened inside** one of
+their **send roots**: the media cache (`files_dir`) plus `[storage] send_dirs`,
+which defaults to `~/.local/share/tele-tui/outbox`. The effective set is logged
+at startup, and anything else is rejected with an error naming the roots.
+The roots themselves are opened once, when the server starts, and held open
+until it stops, so replacing a root's path later (with a symlink to somewhere
+else, say) changes nothing, and a root that did not exist at startup is not
+honoured until the next start. The file is opened once, inside the allowed
+directories, and the upload reads that open file, so swapping it afterwards
+cannot redirect what is sent either.
 
 This is deliberately narrow for MCP: the caller there is a model reading
 messages from strangers, and a message asking it to send a private key should
