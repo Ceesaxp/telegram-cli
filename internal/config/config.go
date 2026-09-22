@@ -647,9 +647,14 @@ func StartupWarnings(cfg *Config) []string {
 }
 
 func Load() (*Config, error) {
+	return loadFrom(findConfigPath())
+}
+
+// loadFrom is [Load] reading configPath, or nothing when it is "": the
+// defaults, as a first run gets them.
+func loadFrom(configPath string) (*Config, error) {
 	cfg := defaultConfig()
 
-	configPath := findConfigPath()
 	if configPath == "" {
 		return cfg, nil
 	}
