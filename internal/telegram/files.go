@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"os"
@@ -31,20 +32,111 @@ type avatarRef struct {
 	photoID int64
 }
 
-// fileRegistry maps string keys to downloadable tg file locations.
+// fileRegistryCapacity is how many files the registry remembers (#33).
+//
+// Conversion registers every downloadable size of every photo — three to
+// five of them — a document and its thumbnail, and the avatar of every chat
+// and user seen, so a few thousand entries are the files of several hundred
+// media messages: every chat a session keeps warm, with room to spare. An
+// entry is a location, a name and a key, a few hundred bytes, so the whole
+// of it is a megabyte or two.
+//
+// Falling out of it costs a refetch, not a failure: a file whose entry is
+// gone is registered again from its message (see [Client.DownloadMessageFile])
+// or, for an avatar, from its chat. So the number is a trade between memory
+// and round trips, and both ends of it are cheap.
+const fileRegistryCapacity = 4096
+
+// fileRegistry maps string keys to downloadable tg file locations, keeping
+// the fileRegistryCapacity most recently used.
+//
+// A key with a download running is never evicted, whatever its age: the
+// transfer ends by marking the entry done, and a mark on an entry that is
+// no longer there is a file on disk the next open does not know about. So
+// the registry can stand above its capacity, by the keys in flight and only
+// while they are.
 type fileRegistry struct {
-	mu      sync.RWMutex
-	entries map[string]*fileEntry
-	sf      singleflight.Group
+	mu       sync.Mutex
+	capacity int
+	entries  map[string]*list.Element // of *registered
+	recency  *list.List               // front is the most recently used
+	inflight map[string]int           // keys a download is running for
+	sf       singleflight.Group
+}
+
+// registered is one entry in the recency list, which has to know its key to
+// take it out of the map when it falls off the end.
+type registered struct {
+	key   string
+	entry *fileEntry
 }
 
 func newFileRegistry() *fileRegistry {
-	return &fileRegistry{entries: make(map[string]*fileEntry)}
+	return newFileRegistryOf(fileRegistryCapacity)
 }
 
+// newFileRegistryOf is a registry of another capacity, which is how a test
+// gets one small enough to fill.
+func newFileRegistryOf(capacity int) *fileRegistry {
+	return &fileRegistry{
+		capacity: capacity,
+		entries:  make(map[string]*list.Element),
+		recency:  list.New(),
+		inflight: make(map[string]int),
+	}
+}
+
+// lookup finds a key's entry and counts it as used. The caller holds mu.
+func (r *fileRegistry) lookup(key string) (*fileEntry, bool) {
+	el, ok := r.entries[key]
+	if !ok {
+		return nil, false
+	}
+	r.recency.MoveToFront(el)
+	return el.Value.(*registered).entry, true
+}
+
+// evict drops the least recently used entries until the registry fits its
+// capacity, passing over the keys in flight. The caller holds mu.
+func (r *fileRegistry) evict() {
+	for el := r.recency.Back(); el != nil && len(r.entries) > r.capacity; {
+		older := el
+		el = el.Prev()
+		key := older.Value.(*registered).key
+		if r.inflight[key] > 0 {
+			continue
+		}
+		r.recency.Remove(older)
+		delete(r.entries, key)
+	}
+}
+
+// do runs fn once for concurrent callers of one key, and holds the key
+// against eviction for as long as it runs — from the lookup, through any
+// refetch that registers it again, to the mark that the transfer is done.
 func (r *fileRegistry) do(key string, fn func() (any, error)) (any, error) {
-	v, err, _ := r.sf.Do(key, fn)
+	v, err, _ := r.sf.Do(key, func() (any, error) {
+		r.hold(key)
+		defer r.release(key)
+		return fn()
+	})
 	return v, err
+}
+
+func (r *fileRegistry) hold(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inflight[key]++
+}
+
+// release lets a key go, and evicts whatever it was holding above capacity.
+func (r *fileRegistry) release(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inflight[key]--; r.inflight[key] <= 0 {
+		delete(r.inflight, key)
+	}
+	r.evict()
 }
 
 // fileSnap is a copy of the fields DownloadFileSync needs so the registry
@@ -59,9 +151,9 @@ type fileSnap struct {
 }
 
 func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	e, ok := r.entries[key]
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.lookup(key)
 	if !ok {
 		return fileSnap{}, false
 	}
@@ -78,11 +170,18 @@ func (r *fileRegistry) snapshot(key string) (fileSnap, bool) {
 func (r *fileRegistry) put(key string, e *fileEntry) *File {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if previous, ok := r.entries[key]; ok && reusableLocalFile(previous, e) {
-		e.path = previous.path
-		e.done = true
+	if el, ok := r.entries[key]; ok {
+		item := el.Value.(*registered)
+		if reusableLocalFile(item.entry, e) {
+			e.path = item.entry.path
+			e.done = true
+		}
+		item.entry = e
+		r.recency.MoveToFront(el)
+	} else {
+		r.entries[key] = r.recency.PushFront(&registered{key: key, entry: e})
+		r.evict()
 	}
-	r.entries[key] = e
 	return fileFromEntry(key, e)
 }
 
@@ -139,7 +238,7 @@ func fileFromEntry(key string, e *fileEntry) *File {
 func (r *fileRegistry) markDone(key, path string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e, ok := r.entries[key]; ok {
+	if e, ok := r.lookup(key); ok {
 		e.path = path
 		e.done = true
 	}
