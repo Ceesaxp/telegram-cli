@@ -65,6 +65,7 @@ transcript — that is a Telegram premium call this client does not make; see
 - **Pinned Messages** — `p` pins the selected message or unpins it, reading which from the message itself so one key does both. Silent: no "X pinned a message" line goes into the chat. The context rail lists a chat's pins
 - **Mute** — Muted chats show 🔕 and render dimmed; desktop notifications, sound, and unread emphasis are suppressed for them
 - **Incoming Rich Text** — Bold, italic, underline, strikethrough, inline code, links, mentions and spoilers rendered from Telegram's own text entities in a semantic palette, so what you see is what was sent rather than a Markdown round-trip. Overlapping and nested spans are layered rather than replayed
+- **Mention Completion** — `@` in a group opens a picker of its members above the composer: the people who have been talking there at once, the server's matches a moment later. A member without a username is mentioned by name and still notified, the way Telegram's own clients do it. See [Mention completion](#mention-completion)
 - **Outgoing Markdown** — Opt-in Telegram-subset formatting (`**bold**`, `` `code` ``, links, …) applied on send/edit/captions; off by default, see [Outgoing Markdown](#outgoing-markdown)
 - **Image Rendering** — Kitty graphics protocol, Sixel, Unicode half-block fallback with CatmullRom scaling
 - **Voice/Audio Playback** — Play voice messages and audio inline via `mpv` / `ffplay`
@@ -160,6 +161,53 @@ the unmuted count, with the true total in parentheses when it differs, e.g.
   per-message line index rather than a rough per-message jump, so the target
   lands on the exact line even as photo art and sender-name lookups change
   bubble heights after the initial render.
+
+## Mention completion
+
+In a basic group or a supergroup, typing `@` opens a picker of the chat's
+members directly above the composer, drawn over the bottom of the thread so
+that nothing moves when it opens or closes. Private chats and broadcast
+channels have no picker: there is nobody to choose between, or nobody who
+can be mentioned.
+
+- **Where it opens.** Only where a mention can start: at the start of the
+  draft, after whitespace, or after an opening bracket, a quote or one of
+  `,;:!?`. An `@` inside a word does nothing, so `name@example.com` stays
+  an address. Only a *typed* `@` opens it — pasting text with an `@` in it
+  does not.
+- **What it offers.** Local results come first, the moment the `@` is
+  typed: the people who have been talking in the chat, most recent first,
+  and anyone an earlier search in the chat turned up. The server's member
+  search follows once typing pauses for a quarter of a second, and its
+  matches are merged in. A basic group's whole member list is fetched once
+  a session and filtered as you type. Matches are ranked exact username first, then
+  a username prefix, a prefix of a word of the name, anywhere in the name,
+  and the letters in order; ties go to whoever spoke last. You are never
+  offered yourself. If the search fails the picker says so under what it
+  already has, which stays usable.
+- **Choosing.** `↑`/`↓` move, `Enter` or `Tab` insert, `Esc` closes and
+  leaves the text exactly as typed. Typing a space, moving the cursor off
+  the `@word`, or deleting the `@` closes it too. While it is open `Enter`
+  inserts rather than sends, and `Tab` inserts rather than moving focus.
+  ● beside a name means online now; bots say so.
+- **Username or not.** A member with a username is inserted as
+  `@username`, which Telegram reads as a mention on its own. A member
+  without one is inserted by name, and the draft remembers who that name
+  means — which is what lets them be mentioned at all. The mention is sent
+  as a mention entity, notifies them, and survives the draft being parked
+  on a chat switch, a reply, a caption, and an edit: `e` on your own
+  message loads its existing mentions with its text. Edit inside the name
+  and the mention goes, the words stay.
+- **Sent as plain text.** If a mention cannot go out as one — the member
+  cannot be resolved, or the name sits where Telegram does not allow a
+  mention, such as inside code or a link — the message is still sent, with
+  the name as plain text, and the notice row says `⚠ 1 mention sent as
+  plain text`. Nobody is notified by that name.
+- **External editor.** `Ctrl+O` on a draft holding mentions by name keeps
+  them only if you leave the text unchanged. Change it and they are
+  dropped — the composer cannot tell which words went where — and it says
+  `⚠ mentions dropped: draft changed in $EDITOR`. Usernames are text, and
+  are unaffected.
 
 ## Outgoing Markdown
 

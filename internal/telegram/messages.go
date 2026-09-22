@@ -15,16 +15,26 @@ import (
 // is handed straight back on the success message so the thread knows which
 // row the confirmed message replaces.
 func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, placeholderID int64) (*Message, error) {
+	msg, _, err := c.SendTextMessageWithMentions(chatID, text, nil, replyToMessageID, placeholderID)
+	return msg, err
+}
+
+// SendTextMessageWithMentions is SendTextMessage for a draft that mentions
+// users without a username (see MentionSpan). It also reports how many of
+// the mentions were dropped and went out as plain text: the message itself
+// is sent either way, so a drop is not an error, only something the caller
+// may want to tell the user. The count is 0 whenever err is set.
+func (c *Client) SendTextMessageWithMentions(chatID int64, text string, mentions []MentionSpan, replyToMessageID, placeholderID int64) (*Message, int, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
-		return nil, fmt.Errorf("send message: %w", err)
+		return nil, 0, fmt.Errorf("send message: %w", err)
 	}
 
 	// Link previews are left to the server: NoWebpage stays unset so
 	// markdown changes formatting only, never preview behaviour.
-	body, entities := c.formatOutgoing(text)
+	body, entities, dropped := c.formatOutgoingWithMentions(ctx, text, mentions)
 	req := &tg.MessagesSendMessageRequest{
 		Peer:     peer,
 		Message:  body,
@@ -37,7 +47,7 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, pl
 
 	updates, err := c.api.MessagesSendMessage(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("send message: %w", err)
+		return nil, 0, fmt.Errorf("send message: %w", err)
 	}
 
 	msg := messageFromUpdates(c, updates)
@@ -52,7 +62,7 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, pl
 			ChatID:           chatID,
 			IsOutgoing:       true,
 			ReplyToMessageID: replyToMessageID,
-			Content:          &MessageText{Text: formattedTextFromTG(body, entities)},
+			Content:          &MessageText{Text: formattedTextFromTG(body, asReceived(entities))},
 		}
 		if s, ok := updates.(*tg.UpdateShortSentMessage); ok {
 			msg.ID = int64(s.ID)
@@ -60,19 +70,28 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, pl
 		}
 	}
 	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
-	return msg, nil
+	return msg, dropped, nil
 }
 
 // EditTextMessage edits a text message.
 func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*Message, error) {
+	msg, _, err := c.EditTextMessageWithMentions(chatID, messageID, text, nil)
+	return msg, err
+}
+
+// EditTextMessageWithMentions is EditTextMessage for text that mentions
+// users without a username (see MentionSpan). An edit replaces all of a
+// message's entities, so mentions kept through the edit must be passed
+// again. Dropped mentions are counted as in SendTextMessageWithMentions.
+func (c *Client) EditTextMessageWithMentions(chatID int64, messageID int64, text string, mentions []MentionSpan) (*Message, int, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
 	peer, err := c.inputPeer(ctx, chatID)
 	if err != nil {
-		return nil, fmt.Errorf("edit message: %w", err)
+		return nil, 0, fmt.Errorf("edit message: %w", err)
 	}
 
-	body, entities := c.formatOutgoing(text)
+	body, entities, dropped := c.formatOutgoingWithMentions(ctx, text, mentions)
 	updates, err := c.api.MessagesEditMessage(ctx, &tg.MessagesEditMessageRequest{
 		Peer:     peer,
 		ID:       int(messageID),
@@ -80,13 +99,17 @@ func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*M
 		Entities: entities,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("edit message: %w", err)
+		return nil, 0, fmt.Errorf("edit message: %w", err)
 	}
 
 	if msg := messageFromUpdates(c, updates); msg != nil {
-		return msg, nil
+		return msg, dropped, nil
 	}
-	return c.GetMessage(chatID, messageID)
+	msg, err := c.GetMessage(chatID, messageID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return msg, dropped, nil
 }
 
 // DeleteMessages deletes messages from a chat.

@@ -222,6 +222,37 @@ func (m Model) handleViNormal(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// viEditStart is where the normal-mode command msg is about to edit the
+// draft, read before it runs. adjustMentions places an edit of repeated text
+// by it, so it has to be where the text changes rather than where the cursor
+// happens to be:
+//
+//   - dd deletes from the start of the line — from the break before it, on
+//     the last line, which is where DeleteLine takes it from — wherever the
+//     cursor sits on the line. With the next line starting the same way the
+//     two texts read the same whichever line went, and the cursor would hand
+//     the deleted line's mention to the line taking its place.
+//   - o opens a line at this line's end, and O at its start.
+//   - x and D delete from the cursor, and nothing else edits, so for them the
+//     cursor is the answer.
+//
+// It has to agree with handleViNormal about what each key does.
+func (m Model) viEditStart(msg tea.KeyPressMsg) int {
+	start, end := m.textarea.LineBounds()
+	switch cmd := msg.String(); {
+	case m.viPending == 'd' && cmd == "d":
+		if end == m.textarea.Len() && start > 0 {
+			return start - 1
+		}
+		return start
+	case m.viPending == 0 && cmd == "o":
+		return end
+	case m.viPending == 0 && cmd == "O":
+		return start
+	}
+	return m.textarea.Cursor
+}
+
 // viIndicator returns the modal-state banner for the hint line, empty in
 // emacs mode.
 // expandedHint is the expanded composer's footer: the chords that do

@@ -84,7 +84,7 @@ the shipped defaults.
 | `Ctrl+Q` | Quit (`keys.quit`, and this is its default) |
 | `q` | Quit — chat list / chat view only (`keys.quit_browsing`); confirms first if the composer holds a draft or attachment |
 | `?` | Toggle the help overlay |
-| `Tab` / `Shift+Tab` | Cycle panel focus (works from the composer too) |
+| `Tab` / `Shift+Tab` | Cycle panel focus (works from the composer too — except `Tab` while the `@` picker is open, where it inserts the chosen member) |
 | `Esc` | Close overlay, else step back |
 | `J` / `K` | Open the next / previous chat outright — unlike the chat list's own `j`/`k`, which move the cursor and open nothing |
 | `u` | Open the next chat with unread messages: down from the cursor within the active folder, wrapping once. Says so rather than moving when nothing is unread |
@@ -174,13 +174,18 @@ messages, not one — so `Esc` is how you leave it.
 | `Ctrl+V` | Paste a clipboard image |
 | `Ctrl+O` | Edit the draft in `$VISUAL`/`$EDITOR` |
 | `Ctrl+P` | Expand the composer to the split source/preview form, and back |
+| `@` | In a group, complete a member's name: a picker of up to five members opens above the composer. Only where a mention can start — at the start of the draft, after whitespace, or after an opening bracket, a quote or one of `,;:!?` — so `name@example.com` stays an address. See [Mention completion](features.md#mention-completion) |
+| `↑` / `↓` | While completing: choose a member |
+| `Enter` / `Tab` | While completing: insert the chosen member — instead of sending, or cycling focus. With nobody to insert they close the picker and send nothing |
+| `Esc` | While completing: close the picker and nothing else — the text stays as typed, and the next `Esc` does what it always does |
 
 Almost nothing is claimed at app level while the composer has focus, so
 neither line-editing keymap below loses a chord. The complete exception
 list is now four keys: `Ctrl+Q` (quit, or whatever `keys.quit` is set to),
 `Ctrl+V`, `Esc` (only when there's nothing to cancel) and
-`Tab`/`Shift+Tab`. It used to be longer — the panel-focus keys, the
-chat/folder navigation and contacts were all on it, because `Alt+…` and the
+`Tab`/`Shift+Tab` — `Tab` only while the `@` picker is closed. It used to
+be longer — the panel-focus keys, the chat/folder navigation and contacts
+were all on it, because `Alt+…` and the
 function keys are not characters. They are plain letters now, so they are
 text here and nothing else. `keys.quit` is matched before every other check
 in `Update`, focus included, which is why a bare printable is refused there

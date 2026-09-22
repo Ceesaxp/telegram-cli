@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"reflect"
 	"testing"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -528,6 +529,52 @@ func FuzzParseMarkdown(f *testing.F) {
 					i, e.Offset, e.Length, len(runes), in)
 			}
 			_ = string(runes[e.Offset : e.Offset+e.Length]) // must not panic
+		}
+	})
+}
+
+// FuzzParseMarkdownMapped asserts what mention spans rely on in the offset
+// map: the mapped parse sends exactly what parseMarkdown sends; the map
+// covers every source rune plus the end, starts at 0, never decreases and
+// ends at the output's length; and each rune that advances it appears
+// verbatim at the place it maps to. Everything else, markup, advances it
+// by nothing.
+func FuzzParseMarkdownMapped(f *testing.F) {
+	for _, s := range []string{
+		"", "plain", "**b** @Nadia", "**hi Nadia**", "**Nad**ia", "`hi Nadia`",
+		"```\nhi\n```", "```go\nx\n```", "[\U0001F600](https://x.dev) tail",
+		"\U0001F600 **\U0001D4DD** x", "Zoe\U00000301 __Noe\U00000308l__",
+		"[a](javascript:x) **b**", "``````", "unclosed **bold", "\xff**b**",
+	} {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, in string) {
+		text, entities, at := parseMarkdownMapped(in)
+
+		wantText, wantEntities := parseMarkdown(in)
+		if text != wantText || !reflect.DeepEqual(entities, wantEntities) {
+			t.Fatalf("mapped parse of %q = (%q, %v), parseMarkdown = (%q, %v)",
+				in, text, entities, wantText, wantEntities)
+		}
+
+		src := []rune(in)
+		units := utf16.Encode([]rune(text))
+		if len(at) != len(src)+1 {
+			t.Fatalf("map of %q has %d entries, want %d", in, len(at), len(src)+1)
+		}
+		if at[0] != 0 || at[len(src)] != len(units) {
+			t.Fatalf("map of %q runs %d..%d, want 0..%d", in, at[0], at[len(src)], len(units))
+		}
+		for i, r := range src {
+			switch step := at[i+1] - at[i]; {
+			case step < 0:
+				t.Fatalf("map of %q decreases at rune %d", in, i)
+			case step > 0:
+				if got := string(utf16.Decode(units[at[i]:at[i+1]])); got != string(r) {
+					t.Fatalf("rune %d of %q is %q but maps onto %q", i, in, string(r), got)
+				}
+			}
 		}
 	})
 }

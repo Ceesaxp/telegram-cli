@@ -42,6 +42,7 @@ func (m Model) renderMainScreen() string {
 	if len(threadLines) > l.ThreadHeight {
 		threadLines = threadLines[:l.ThreadHeight]
 	}
+	threadLines = m.paintMentionPicker(threadLines)
 	threadLines = append(threadLines, frame.Lines(m.composer.View())...)
 
 	body := frame.Screen{

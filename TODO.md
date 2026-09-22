@@ -1,5 +1,25 @@
 # TODO
 
+## Mention autocomplete wave (2026-09-22) — branch feat/mention-autocomplete, issue #41
+
+`@` in a group completes a member's name; a member without a username is mentioned by name through an entity carrying their ID. Waves 1A–1C and 2A built the telegram and composer halves; 2B wired the app.
+
+- [x] Telegram: `MentionSpan` (runes of the typed text) and the `…WithMentions` send, edit, file and photo variants — spans followed through Markdown to UTF-16, dropped (and counted) when they cannot be sent; `SearchChatMembers` — a supergroup searched on the server, a basic group's whole list, nothing for a private chat or a broadcast channel — storing the access hashes so a send resolves the user with no RPC
+- [x] Composer: spans kept in step with every edit and carried through drafts, reply, edit mode, captions and the external editor; the picker — trigger (never inside an email), query tracking, Up/Down/Enter/Tab/Esc, ranking, insertion, `MentionPicker` rows
+- [x] App enabling: on for basic groups and supergroups after every `SetChatId`, off elsewhere; Tab reaches the composer while the picker is open
+- [x] App candidates: recent senders, newest first, then members earlier searches found; self, chats posting as senders and unnamed senders left out; refreshed on every query
+- [x] App search: 250 ms debounce, a superseded tick asks nothing, every live query answered (empty, failed, or with no client); found users go to `store.Users` and a per-chat cache (≤200); a basic group's list fetched once, answering later queries at once
+- [x] Overlay: painted over the thread's bottom rows directly above the composer, at the thread's width, at most 6 rows and never over the thread header; closed, the frame is byte-identical
+- [x] Sends: spans reach text, edit, file caption and photo caption; "⚠ N mention(s) sent as plain text" when some were dropped; edit mode loads the message's own mentions (`MentionsIn`)
+- [x] Docs: help card, `docs/keys.md`, `docs/features.md` ("Mention completion"); README has no features list, so it is unchanged
+- [ ] Next, queued by Andrei: `:theme <name>` with fuzzy completion, plus `:reload-config` — theming Phase 2, done full and proper. `docs/theming.md` "Runtime behaviour" lists the five components that bake styles, and the grid cache
+- [ ] Every send still resolves the chat peer with one `messages.getChats` or `users.getUsers`, because the peers manager keeps no objects; it could build the peer from the stored access hash, as mention resolution now does
+- [ ] A self-mention can echo as user 0 on the `updateShortSentMessage` path
+- [ ] The palette and the composer each have a `subsequence` helper (`palette/model.go`, `composer/mentionrank.go`)
+- [ ] Noticed: while the picker is open the hint bar still shows the composer's own hints (`enter` send); the picker has no surface of its own in the hint registry
+- [ ] Noticed: completion is judged from the store's chat type when the chat opens, so a group opened before the store has described it (an unresolved stub, e.g. from a `t.me` link) has no picker until it is reopened; a `ChatUpdateMsg` for the open chat does not re-enable it
+- [ ] Noticed: on a short terminal the picker may cover the chat view's status line (loading, or the find input) under its header; the chat view exposes no way to ask whether that line is showing
+
 ## Theming Phase 1 wave (2026-09-21) — branch feat/theme-files, issue #74
 
 A theme is a TOML file a reader writes, read once at startup; `dark` and `light` stay built in as the zero-config palette, the only bases, and the fallback. Spec: `docs/theming.md`; breakdown: `docs/theming-review.md`.

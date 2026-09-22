@@ -115,6 +115,27 @@ type Model struct {
 	// Nil when there is no client.
 	uploads uploadController
 
+	// sends is the slice of the Telegram client that delivers what the
+	// composer submits: a text, an edit, a file or a photo. An interface
+	// for the reason uploads is one — the tests have to see which call a
+	// submit made, and with what, and a live client cannot show them.
+	// Nil when there is no client.
+	sends messageSender
+
+	// members is the slice of the Telegram client the @ picker searches a
+	// chat's members with, an interface for the reason sends is one. Nil
+	// when there is no client. See mentionpicker.go.
+	members memberSearcher
+
+	// mentionQuery is the @ picker's latest question. A debounced search
+	// that fires for any other has been typed past, and asks nothing.
+	mentionQuery composer.MentionQueryMsg
+
+	// mentionMembers is what the member search has said about each chat's
+	// members this session: the users it turned up, offered again before
+	// the next search answers.
+	mentionMembers map[int64]chatMembers
+
 	// pasteInFlight is set while a clipboard paste command is running, so a
 	// second Ctrl+V cannot start a racing paste.
 	pasteInFlight bool
@@ -356,6 +377,8 @@ func New(cfg *config.Config, tg *telegram.Client, s *store.Store, authorizer *te
 	// Model without.
 	if tg != nil {
 		m.uploads = tg
+		m.sends = tg
+		m.members = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -678,8 +701,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// and a literal tab in a chat message is rare enough that
 			// cycling is the more useful meaning. (Shift+Tab already
 			// worked from the composer.) The search overlay keeps tab for
-			// its own use.
-			if key.Matches("tab") && m.focus != PanelSearch {
+			// its own use, and so does an open @ picker, where it is one
+			// of the two keys that insert the chosen member (issue #41).
+			if key.Matches("tab") && m.focus != PanelSearch && !m.mentionPickerOpen() {
 				switch m.focus {
 				case PanelChatList:
 					m.setFocus(PanelChatView)
@@ -1209,6 +1233,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// panel border plus the composer help line make the mode visible.
 		cmds = append(cmds, m.handleMessageSubmit(msg))
 
+	case composer.MentionQueryMsg:
+		// The @ picker asking who the query could mean. See
+		// mentionpicker.go. Nothing below has a use for the question.
+		return m, m.handleMentionQuery(msg)
+
+	case mentionSearchMsg:
+		return m, m.handleMentionSearch(msg)
+
+	case mentionMembersMsg:
+		return m, m.handleMentionMembers(msg)
+
 	case composer.PasteRequestedMsg:
 		if !m.pasteInFlight {
 			m.pasteInFlight = true
@@ -1287,6 +1322,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrorMsg:
 		m.notify(fmt.Sprintf("⚠ %v", msg.Err))
+
+	case mentionsSentPlainMsg:
+		m.notify(mentionsSentPlainNotice(msg))
 
 	// A file dropped on the terminal arrives as a PASTE of its path, not as
 	// keystrokes — the terminal is typing a command line for you, escaped
@@ -1758,6 +1796,16 @@ type uploadController interface {
 	CancelUpload(path string)
 }
 
+// messageSender is what the app needs of the Telegram client to deliver a
+// submitted draft. Each call also says how many of the draft's mentions went
+// out as plain text; see [telegram.Client.SendTextMessageWithMentions].
+type messageSender interface {
+	SendTextMessageWithMentions(chatID int64, text string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+	EditTextMessageWithMentions(chatID, messageID int64, text string, mentions []telegram.MentionSpan) (*telegram.Message, int, error)
+	SendFileMessageWithMentions(chatID int64, path, caption string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+	SendPhotoMessageWithMentions(chatID int64, path, caption string, mentions []telegram.MentionSpan, replyTo, placeholderID int64) (*telegram.Message, int, error)
+}
+
 // startUpload puts an attachment on its way to Telegram as soon as it is
 // staged, rather than at Enter. The user has already chosen the file and is
 // about to spend seconds typing a caption; spending them on the upload
@@ -1864,9 +1912,12 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	if msg.ChatId == 0 {
 		return func() tea.Msg { return ErrorMsg{Err: errNoChatOpen} }
 	}
-	// Bound to a local so the commands below close over the client rather
+	// Bound to locals so the commands below close over the client rather
 	// than over the model, which they now only borrow.
-	tg := m.tg
+	tg, sends := m.tg, m.sends
+	// The members the @ picker inserted by name, which every kind of send
+	// carries — a caption as much as a message. See mentionsend.go.
+	mentions := mentionSpans(msg.Mentions)
 	if msg.EditMessageId != 0 {
 		return func() tea.Msg {
 			// Edits carry text only. Nothing upstream should let an
@@ -1879,13 +1930,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 				}
 				clipboard.Remove(msg.Attachment)
 			}
-			if _, err := tg.EditTextMessage(msg.ChatId, msg.EditMessageId, msg.Text); err != nil {
+			_, plain, err := sends.EditTextMessageWithMentions(msg.ChatId, msg.EditMessageId, msg.Text, mentions)
+			if err != nil {
 				return ErrorMsg{Err: err}
 			}
 			if dropped {
 				return ErrorMsg{Err: errEditDroppedAttachment}
 			}
-			return nil
+			return sentPlain(plain)
 		}
 	}
 	if msg.Attachment != "" {
@@ -1895,11 +1947,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 		// thread showed nothing at all for the length of it.
 		echoID := m.echoAttachment(msg)
 		return func() tea.Msg {
-			var err error
+			var (
+				plain int
+				err   error
+			)
 			if msg.AsPhoto {
-				_, err = tg.SendPhotoMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
+				_, plain, err = sends.SendPhotoMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, mentions, msg.ReplyToId, echoID)
 			} else {
-				_, err = tg.SendFileMessage(msg.ChatId, msg.Attachment, msg.Text, msg.ReplyToId, echoID)
+				_, plain, err = sends.SendFileMessageWithMentions(msg.ChatId, msg.Attachment, msg.Text, mentions, msg.ReplyToId, echoID)
 			}
 			if err != nil {
 				// Keep the file: the composer is already reset, so the app
@@ -1916,7 +1971,7 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 			}
 			// Drop the spool file once it is on its way to Telegram.
 			clipboard.Remove(msg.Attachment)
-			return nil
+			return sentPlain(plain)
 		}
 	}
 
@@ -1947,13 +2002,14 @@ func (m *Model) handleMessageSubmit(msg composer.MessageSubmittedMsg) tea.Cmd {
 	})
 
 	return func() tea.Msg {
-		if _, err := tg.SendTextMessage(msg.ChatId, msg.Text, msg.ReplyToId, echoID); err != nil {
+		_, plain, err := sends.SendTextMessageWithMentions(msg.ChatId, msg.Text, mentions, msg.ReplyToId, echoID)
+		if err != nil {
 			// Not a bare ErrorMsg any more: the thread needs to know WHICH
 			// row never went out, and the notice row still gets the text
 			// via the handler for this message.
 			return telegram.MessageSendFailedMsg{ChatId: msg.ChatId, OldMessageId: echoID, Err: err}
 		}
-		return nil
+		return sentPlain(plain)
 	}
 }
 
@@ -2030,8 +2086,12 @@ func (m Model) handleMessageAction(msg chatview.MessageActionMsg) (tea.Model, te
 			if message.ID == msg.MessageId {
 				if text, ok := message.Content.(*telegram.MessageText); ok {
 					// An edit cannot carry media — the composer drops any
-					// pending attachment and hands back its path.
-					dropped := m.composer.EnterEditMode(msg.MessageId, text.Text.Text)
+					// pending attachment and hands back its path. The
+					// message's mentions by name come with its text: an
+					// edit replaces every entity, so one not loaded here
+					// would go back as the bare name (issue #41).
+					dropped := m.composer.EnterEditMode(msg.MessageId, text.Text.Text,
+						composer.MentionsIn(text.Text)...)
 					m.cancelUpload(dropped)
 					clipboard.Remove(dropped)
 					m.setFocus(PanelComposer)
@@ -2194,6 +2254,9 @@ func (m *Model) setFocus(panel FocusPanel) {
 // that grew a row.
 func (m *Model) switchComposerTo(chatID int64) {
 	clipboard.Remove(m.composer.SetChatId(chatID))
+	// SetChatId switches @-completion off: whether an @ offers members is
+	// the new chat's to say, and only the store knows what kind it is.
+	m.prepareMentions(chatID)
 	m.chatList.SetDraftChats(m.composer.DraftChats())
 	m.updateLayout()
 	// Warm the peer cache now, in the background, so a cache miss costs

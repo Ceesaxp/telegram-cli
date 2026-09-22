@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/widgets"
 	"github.com/charmbracelet/lipgloss"
@@ -26,6 +27,11 @@ const (
 	noticeEditDiscard = "⚠ attachment discarded — editing"
 	// noticeNoEditor is shown when ctrl+o has no editor to launch.
 	noticeNoEditor = "⚠ no $EDITOR set"
+	// noticeMentionsDropped is shown when the external editor changed a
+	// draft that held mentions, which cannot be followed through it. Short
+	// because it shares the one inline row with the badge and the count;
+	// "$EDITOR" is what the ctrl+o hint calls it.
+	noticeMentionsDropped = "⚠ mentions dropped: draft changed in $EDITOR"
 )
 
 // Model is the message composer component.
@@ -101,6 +107,27 @@ type Model struct {
 	// the edit loaded, instead of leaving it in the composer as a draft
 	// nobody wrote.
 	editParked map[int64]draft
+
+	// mentions are the draft's mention spans (issue #41), in rune offsets
+	// of textarea.Value and sorted by Start. They describe that text and no
+	// other: every edit carries them across with adjustMentions, and
+	// whatever replaces the text wholesale replaces them with it. See
+	// mentions.go.
+	mentions []MentionSpan
+
+	// mentionsEnabled is whether a typed @ may open completion, set by the
+	// host from the chat's type: a group has members to choose between,
+	// and a private chat has one. It is a property of the chat, so
+	// switching chats switches it off again. See mentionpicker.go.
+	mentionsEnabled bool
+
+	// mentionCandidates are the open chat's members the host already knows
+	// about, most recent first — the picker's offer before the member
+	// search answers. See SetMentionCandidates.
+	mentionCandidates []*telegram.User
+
+	// mention is the @-completion in progress, if any.
+	mention mentionState
 }
 
 // New creates a new composer model.
@@ -172,6 +199,10 @@ func (m *Model) SetFocused(focused bool) {
 	}
 	m.focused = focused
 	m.textarea.Focused = focused
+	// The keys that would drive the picker are going somewhere else.
+	if !focused {
+		m.closeMention()
+	}
 }
 
 // EnterReplyMode starts replying to a message.
@@ -189,7 +220,12 @@ func (m *Model) EnterReplyMode(messageID int64, previewText string) {
 // text over it used to destroy whatever was half-written, without a confirm
 // and without a way back. Cancelling the edit or sending it puts the draft
 // back — see unparkEdit.
-func (m *Model) EnterEditMode(messageID int64, currentText string) string {
+//
+// mentions are the message's own mentions by ID, as spans of currentText —
+// MentionsIn reads them off the message. They are checked against the text
+// like any other span, and without them an edit would send the names back
+// as plain words.
+func (m *Model) EnterEditMode(messageID int64, currentText string, mentions ...MentionSpan) string {
 	// Only the first e parks. A second one, pressed while already editing,
 	// would otherwise park the message text of the first edit as if it
 	// were the user's own draft.
@@ -201,8 +237,12 @@ func (m *Model) EnterEditMode(messageID int64, currentText string) string {
 	m.asPhoto = false
 	m.mode = ModeEdit
 	m.editMsgID = messageID
+	m.closeMention()
 	m.textarea.Value = currentText
 	m.textarea.Cursor = len([]rune(currentText))
+	// The draft's mentions were parked with it; the message loaded in its
+	// place brings its own.
+	m.mentions = validMentions(mentions, currentText)
 	if discarded != "" {
 		m.notice = noticeEditDiscard
 	}
@@ -210,7 +250,8 @@ func (m *Model) EnterEditMode(messageID int64, currentText string) string {
 }
 
 // parkEdit stores what an edit is about to displace: the text, where the
-// cursor was in it, and the reply target it was going to answer.
+// cursor was in it, the mentions in it, and the reply target it was going to
+// answer.
 //
 // Unconditionally, even when there is nothing to store, because presence is
 // what unparkEdit reads. The attachment is deliberately not carried: an edit
@@ -226,6 +267,7 @@ func (m *Model) parkEdit() {
 		mode:      m.mode,
 		replyToID: m.replyToID,
 		replyText: m.replyText,
+		mentions:  m.mentions,
 	}
 }
 
@@ -245,6 +287,7 @@ func (m *Model) unparkEdit() bool {
 	m.textarea.Reset()
 	m.textarea.Value = d.text
 	m.textarea.Cursor = min(max(d.cursor, 0), len([]rune(d.text)))
+	m.mentions = d.mentions
 	m.mode = d.mode
 	m.replyToID = d.replyToID
 	m.editMsgID = 0
@@ -279,6 +322,7 @@ func (m *Model) clearContext() {
 // Reset clears the composer state, text included.
 func (m *Model) Reset() {
 	m.textarea.Reset()
+	m.mentions = nil
 	m.clearContext()
 	// A cleared composer is ready to be typed into; vi's normal mode is
 	// restored explicitly by the Escape-cancel path, which is the only
@@ -304,6 +348,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.applyEditorResult(fin)
 		return m, nil
 	}
+	// An answer from the member search is judged by the completion alone,
+	// which losing focus has already closed.
+	if res, ok := msg.(MentionResultsMsg); ok {
+		m.applyMentionResults(res)
+		return m, nil
+	}
 
 	if !m.focused {
 		return m, nil
@@ -313,9 +363,70 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
-		m.textarea.Update(msg)
+		return m.editDraft(msg)
 	}
 
+	return m, nil
+}
+
+// editDraft applies input that edits the text: a paste, or a key none of the
+// composer's own chords claimed. It is the one door typed and pasted text
+// comes through, whichever keymap is speaking.
+//
+// Which is why the mention spans are kept in step here and nowhere else in
+// the key path. There are too many editing primitives — emacs chords, vi
+// operators, paste — to teach each one about spans, and the next one added
+// would be the one that forgot. Comparing the text before and after catches
+// all of them. See adjustMentions.
+func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
+	before, cursor := m.textarea.Value, m.textarea.Cursor
+	normal := m.IsViNormalMode()
+	// Where a vi command edits is read before it runs; see below.
+	at := cursor
+	if key, ok := msg.(tea.KeyPressMsg); ok && normal {
+		at = m.viEditStart(key)
+	}
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		m.textarea.Update(msg)
+	case tea.KeyPressMsg:
+		m, cmd = m.editKey(msg)
+	}
+
+	// The cursor either side is how an edit of repeated text is placed.
+	// Typing and the emacs chords leave it at the edit's start or just past
+	// the new text, so the lower of the two is where the edit was. vi's
+	// normal mode moves it on afterwards — x and D clamp it back onto a
+	// character, dd takes it to the start of a line, the line ABOVE when it
+	// deleted the last one — and not every command edits at the cursor it
+	// started from either: dd deletes from the line's start. There the
+	// command itself says where it edited.
+	from, to := cursor, m.textarea.Cursor
+	if normal {
+		from, to = at, at
+	}
+	m.mentions = adjustMentions(m.mentions, before, m.textarea.Value, from, to)
+	// The @-completion follows the same edits from the same door, for the
+	// same reason. See mentionpicker.go.
+	return m, tea.Batch(cmd, m.trackMention(msg, before, cursor))
+}
+
+// editKey runs one editing key: a newline chord, a vi normal-mode command, or
+// anything the textarea's emacs/insert handling takes.
+func (m Model) editKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.isNewlineChord(msg.Keystroke()) {
+		m.notice = ""
+		m.textarea.InsertNewline()
+		return m, nil
+	}
+
+	if m.editing == ModeVi && m.vi == viNormal {
+		return m.handleViNormal(msg)
+	}
+
+	m.notice = ""
+	m.textarea.Update(msg)
 	return m, nil
 }
 
@@ -324,6 +435,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // normal-mode handler or straight to the textarea's emacs/insert handling.
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	stroke := msg.Keystroke()
+
+	// An open picker comes first: the keys it owns mean something else to
+	// the composer, and it is the thing on screen asking for them.
+	if m.mention.active {
+		if next, ok := m.mentionKey(stroke); ok {
+			return next, nil
+		}
+	}
 
 	switch stroke {
 	case "esc":
@@ -352,19 +471,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.submit()
 	}
 
-	if m.isNewlineChord(stroke) {
-		m.notice = ""
-		m.textarea.InsertNewline()
-		return m, nil
-	}
-
-	if m.editing == ModeVi && m.vi == viNormal {
-		return m.handleViNormal(msg)
-	}
-
-	m.notice = ""
-	m.textarea.Update(msg)
-	return m, nil
+	return m.editDraft(msg)
 }
 
 // handleEsc implements the composer's Escape semantics.
@@ -437,6 +544,7 @@ func (m Model) submit() (Model, tea.Cmd) {
 		Text:       m.textarea.Value,
 		Attachment: m.attachment,
 		AsPhoto:    m.asPhoto,
+		Mentions:   validMentions(m.mentions, m.textarea.Value),
 	}
 	wasEdit := m.mode == ModeEdit
 	switch m.mode {
@@ -545,10 +653,15 @@ func (m Model) IsEditing() bool { return m.mode == ModeEdit }
 
 // IsComposing reports whether Escape belongs to the composer rather than to
 // app.go's focus-back handler: reply/edit mode or a pending attachment needs
-// clearing first, and in vi mode an Escape pressed in insert mode has to
-// reach the composer so it can switch to normal mode.
+// clearing first, in vi mode an Escape pressed in insert mode has to reach
+// the composer so it can switch to normal mode, and an open mention picker
+// has to be closed.
 func (m Model) IsComposing() bool {
 	if m.editing == ModeVi && m.vi == viInsert {
+		return true
+	}
+	// The first Esc closes an open picker, and only the composer can do that.
+	if m.mention.active {
 		return true
 	}
 	return m.mode != ModeNormal || m.attachment != ""

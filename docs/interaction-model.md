@@ -90,7 +90,7 @@ the table can be read on its own.
 | `` ` `` | Toggle the context rail | |
 | `ctrl+g` | Global search | |
 | `ctrl+v` | Paste a clipboard image | also from the composer |
-| `Tab` / `Shift+Tab` | Cycle panel focus, wrapping | the one cycle; `h`/`l` are edges — see I-9 |
+| `Tab` / `Shift+Tab` | Cycle panel focus, wrapping | the one cycle; `h`/`l` are edges — see I-9. While the composer's `@` picker is open, `Tab` belongs to it and inserts the selected member (issue #41) |
 | `Esc` | Step back | rule 3 |
 | `c` | Contacts overlay | *new*, replaces `alt+c`/`F4` |
 | `J` / `K` | Open the next / previous chat | *new*, replaces `alt+j`/`alt+k` |
