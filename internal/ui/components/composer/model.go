@@ -313,9 +313,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
-		m.textarea.Update(msg)
+		return m.editDraft(msg)
 	}
 
+	return m, nil
+}
+
+// editDraft applies input that edits the text: a paste, or a key none of the
+// composer's own chords claimed. It is the one door typed and pasted text
+// comes through, whichever keymap is speaking.
+func (m Model) editDraft(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		m.textarea.Update(msg)
+	case tea.KeyPressMsg:
+		m, cmd = m.editKey(msg)
+	}
+	return m, cmd
+}
+
+// editKey runs one editing key: a newline chord, a vi normal-mode command, or
+// anything the textarea's emacs/insert handling takes.
+func (m Model) editKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.isNewlineChord(msg.Keystroke()) {
+		m.notice = ""
+		m.textarea.InsertNewline()
+		return m, nil
+	}
+
+	if m.editing == ModeVi && m.vi == viNormal {
+		return m.handleViNormal(msg)
+	}
+
+	m.notice = ""
+	m.textarea.Update(msg)
 	return m, nil
 }
 
@@ -352,19 +384,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.submit()
 	}
 
-	if m.isNewlineChord(stroke) {
-		m.notice = ""
-		m.textarea.InsertNewline()
-		return m, nil
-	}
-
-	if m.editing == ModeVi && m.vi == viNormal {
-		return m.handleViNormal(msg)
-	}
-
-	m.notice = ""
-	m.textarea.Update(msg)
-	return m, nil
+	return m.editDraft(msg)
 }
 
 // handleEsc implements the composer's Escape semantics.
