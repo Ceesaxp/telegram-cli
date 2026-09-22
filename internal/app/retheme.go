@@ -44,9 +44,7 @@ func (m *Model) applyRoles(roles theme.Roles, senderRamp []lipgloss.Color) {
 	m.contacts.SetRoles(roles)
 	m.search.SetRoles(roles)
 	m.help.SetRoles(roles)
-	// The command palette is missing here only until its own SetRoles
-	// lands; its case in TestEveryComponentFollowsARetheme is skipped until
-	// then.
+	m.palette.SetRoles(roles)
 	m.attach.SetRoles(roles)
 	m.reactions.SetRoles(roles)
 	m.forward.SetRoles(roles)

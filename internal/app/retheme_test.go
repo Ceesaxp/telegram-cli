@@ -121,12 +121,8 @@ func TestEveryComponentFollowsARetheme(t *testing.T) {
 		{name: "help", shows: "Quit",
 			open: func(t *testing.T, m *Model) { m.help.SetVisible(true) },
 			view: func(m Model) string { return m.help.View() }},
-		{name: "the palette", shows: "theme",
-			open: func(t *testing.T, m *Model) {
-				t.Skip("palette.SetRoles lands with the palette's own packet: " +
-					"call it from applyRoles and drop this skip")
-				m.palette.Open()
-			},
+		{name: "the palette", shows: "mark-read",
+			open: func(t *testing.T, m *Model) { m.palette.Open() },
 			view: func(m Model) string { return m.palette.View() }},
 		{name: "the attach picker", shows: "notes.txt",
 			open: func(t *testing.T, m *Model) {
