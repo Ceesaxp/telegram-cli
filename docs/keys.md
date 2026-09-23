@@ -269,8 +269,8 @@ and it does not change anything that already worked.
 | Key | Action |
 |-----|--------|
 | `up` / `down` | Move the selection |
-| `tab` | Complete the highlighted command |
-| `enter` | Run the command |
+| `tab` | Complete the highlighted command, or the highlighted value of its argument |
+| `enter` | Run the command — with the highlighted value, when the palette is listing them |
 | `esc` | Cancel without running |
 | `ctrl+u` | Clear the query |
 
@@ -335,13 +335,15 @@ Commands available now:
 | `:read-mentions` | Clear every unread mention in the open group. It says "mentions cleared" once the server has finished, "could not clear mentions" if it did not, and "no mentions in this chat" in a DM or a broadcast channel, which have none |
 | `:search <query>` | Open the cross-chat search, pre-filled |
 | `:keymap` | Open the help overlay |
+| `:theme [name]` | Switch the colour theme on the spot and save it as `ui.theme`. With no name it says which theme is on. After `:theme ` the palette lists the themes — `dark` and `light` built in, then every `themes/*.toml` it can find, with its directory — opening on the one in use, marked "current", so `Enter` straight away changes nothing. A theme in use that the list cannot name, such as one set by its path, is listed first. The exception is a configured theme that failed to load: `dark` is drawn in its place, but nothing is marked current, so the list opens on its first row and `Enter` applies and saves that theme — `dark`, unless you move — over the name that did not work. Saving rewrites only the `theme` line of `config.toml` and keeps a backup; see [Configuration](configuration.md#themes). A name that is not a usable theme changes nothing and says why |
+| `:reload-config` | Read `config.toml` again and apply its theme — the theme file too, so one you are editing can be looked at without a restart. Nothing is written. Every other setting that changed is listed as "restart to apply: …" and keeps its running value until then |
 | `:quit` | Quit |
 
 An unknown command or a surplus argument reports on the composer's hint line
-rather than failing silently. More commands (`pin`, `mute`, `reload-config`,
-`theme`, `jump`) are designed but not yet registered — each needs a service
-this build doesn't have, and a palette entry that can't run would be worse
-than an absent one. See [TODO.md](../TODO.md).
+rather than failing silently. More commands (`pin`, `mute`, `jump`) are
+designed but not yet registered — each needs a service this build doesn't
+have, and a palette entry that can't run would be worse than an absent one.
+See [TODO.md](../TODO.md).
 
 ## Contacts (`c`)
 

@@ -498,25 +498,68 @@ func LoadRawFile(path string) (*RawFile, error) {
 // recognizes, read from the toml struct tags so it cannot drift from Config.
 func knownFields() map[string]map[string]bool {
 	out := map[string]map[string]bool{}
-	cfgType := reflect.TypeOf(Config{})
-	for i := range cfgType.NumField() {
-		section := cfgType.Field(i).Tag.Get("toml")
-		if section == "" {
-			continue
-		}
-		body := cfgType.Field(i).Type
-		if body.Kind() != reflect.Struct {
-			continue
-		}
+	for _, t := range settingTables(reflect.TypeOf(Config{})) {
 		fields := map[string]bool{}
-		for j := range body.NumField() {
-			if tag := body.Field(j).Tag.Get("toml"); tag != "" {
-				fields[tag] = true
-			}
+		for _, f := range t.fields {
+			fields[f.key] = true
 		}
-		out[section] = fields
+		out[t.name] = fields
 	}
 	return out
+}
+
+// settingTable is one table of config.toml as a struct declares it: its
+// name, where it is among the struct's fields, and its settings.
+type settingTable struct {
+	name   string
+	index  int
+	fields []settingField
+}
+
+// settingField is one setting in a table: its key, and where it is among
+// the table's fields.
+type settingField struct {
+	key   string
+	index int
+}
+
+// settingTables walks a config struct's toml tags, in declaration order: a
+// table is a struct field with a tag, and a setting is a field of one with
+// a tag. The one walk behind knownFields and ChangedSettings, so what
+// counts as a setting cannot differ between them.
+func settingTables(cfgType reflect.Type) []settingTable {
+	var tables []settingTable
+	for i := range cfgType.NumField() {
+		section := cfgType.Field(i)
+		name, ok := tomlKey(section)
+		if !ok || section.Type.Kind() != reflect.Struct {
+			continue
+		}
+		t := settingTable{name: name, index: i}
+		for j := range section.Type.NumField() {
+			if key, ok := tomlKey(section.Type.Field(j)); ok {
+				t.fields = append(t.fields, settingField{key: key, index: j})
+			}
+		}
+		tables = append(tables, t)
+	}
+	return tables
+}
+
+// tomlKey is the key a tagged field is in config.toml, as go-toml reads the
+// tag: the name before any options (`theme,omitempty` is theme), the field's
+// own name when the tag gives options only, and no key for `-` — nor, here,
+// for a field with no tag at all, which is not a setting.
+func tomlKey(f reflect.StructField) (string, bool) {
+	tag := f.Tag.Get("toml")
+	name, _, _ := strings.Cut(tag, ",")
+	switch {
+	case tag == "" || name == "-":
+		return "", false
+	case name == "":
+		return f.Name, true
+	}
+	return name, true
 }
 
 // rawKeyPresence reports which [keys] fields the file contained.
@@ -836,6 +879,19 @@ func SaveTo(path string, cfg *Config) error {
 // beside that resolved target so the rename stays within one filesystem —
 // across filesystems it fails outright.
 func writeFilePrivate(path string, data []byte) error {
+	return writeFileAtomic(path, data, 0o600)
+}
+
+// writeFileAtomic is [writeFilePrivate] at mode perm: a temp file beside the
+// resolved target, renamed over it.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return writeFileGuarded(path, data, perm, nil)
+}
+
+// writeFileGuarded is [writeFileAtomic] that asks guard, when it is not
+// nil, at the last moment before the rename — the new content written and
+// flushed — and writes nothing when guard says no.
+func writeFileGuarded(path string, data []byte, perm os.FileMode, guard func() error) error {
 	path = resolveTarget(path)
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
@@ -847,7 +903,7 @@ func writeFilePrivate(path string, data []byte) error {
 	// to remove, and the error from that case is not interesting.
 	defer os.Remove(tmpName)
 
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
 		tmp.Close()
 		return fmt.Errorf("setting permissions: %w", err)
 	}
@@ -863,6 +919,11 @@ func writeFilePrivate(path string, data []byte) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing config: %w", err)
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replacing config: %w", err)

@@ -88,6 +88,10 @@ func NewAlert(r theme.Roles, id, title, message string) Model {
 	})
 }
 
+// SetRoles replaces the palette of a dialog already open. Every style it
+// draws with is built while drawing, so there is nothing else to re-derive.
+func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+
 // IsVisible returns whether the dialog is visible.
 func (m Model) IsVisible() bool {
 	return m.visible

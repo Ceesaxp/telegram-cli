@@ -50,7 +50,11 @@ func decodeKey(t *testing.T, seq string) tea.KeyPressMsg {
 
 func mainModel(t *testing.T, focus FocusPanel) Model {
 	t.Helper()
-	m := newTestModel(t)
+	return onMainScreen(newTestModel(t), focus)
+}
+
+// onMainScreen is mainModel for a Model built some other way.
+func onMainScreen(m Model, focus FocusPanel) Model {
 	m.screen = ScreenMain
 	m.setFocus(focus)
 	// Pin the line-editing keymap: New() otherwise infers it from the

@@ -192,9 +192,15 @@ func sceneModel(t *testing.T, w, h int, rail bool) Model {
 
 func buildScene(t *testing.T, sc scene, w, h int, rail bool) Model {
 	t.Helper()
+	return dressScene(t, mainModel(t, PanelChatList), sc, w, h, rail)
+}
+
+// dressScene is buildScene for a Model built some other way: it fills m's
+// store with the scene's world, opens its chat and sizes it.
+func dressScene(t *testing.T, m Model, sc scene, w, h int, rail bool) Model {
+	t.Helper()
 	pinSceneClock(t)
 
-	m := mainModel(t, PanelChatList)
 	m.composer.SetEditingMode(composer.ModeEmacs)
 	s := m.store
 

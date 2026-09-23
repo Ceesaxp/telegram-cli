@@ -57,7 +57,58 @@ replaced by the default one. `[theme] name` is ignored. Either way the
 reason is printed as a `config:` line before the screen is taken, alongside
 any keybinding warnings — with control characters replaced, since a theme
 file is often somebody else's and must not be able to write escape
-sequences to your terminal. The theme is read once, at startup.
+sequences to your terminal.
+
+### Switching while running
+
+`:theme <name>` in the command palette switches the theme on the spot —
+`:theme ` lists what there is to choose, the builtins and every
+`themes/*.toml` in the two directories above — and saves the choice as
+`ui.theme`. Saving edits `config.toml` as text rather than rewriting it:
+only the value on the `theme` line under `[ui]` changes, and your comments,
+order, spacing, the key as you spelled it and line endings stay as they
+were. The value itself is written anew, as a literal string —
+`theme = 'gruvbox'` — whatever quotes it had before; a value containing a
+`'` is written as a basic string, `"…"`, with its escapes. A `[ui]` table
+without a `theme` line gets one under its header; a file without `[ui]` gets
+one at the end. Before the first edit the file is copied to
+`config.toml.bak` (beside the real file, if `config.toml` is a symlink), and
+that is the only backup `:theme` ever makes: it is the file as you had it
+before tele-tui touched it. With a `config.toml.bak` already there — from an
+earlier save, a session before, or `-migrate-config` — no other is made and
+that one is left alone, so trying theme after theme, today or next week,
+leaves one copy of your config, not one a switch. Delete it to have the next
+save take a fresh one. Every save is read back before `:theme` reports
+success; if the file does not load, or does not say the new theme, it is put
+back the way it was before that save, backup or not. If something else —
+your editor, a dotfiles sync — writes `config.toml` while a save is in
+progress, the save stops ("changed while saving; not saved") rather than
+replace the newer file, and a failed read-back does not restore over it
+either.
+
+`:theme` will not edit a `config.toml` that sets `ui` with dotted keys
+(`ui.theme = "gruvbox"`) or as an inline table (`ui = { theme = "gruvbox" }`),
+makes `ui` an array of `[[ui]]` tables, sets `ui.theme` as anything but a
+string on a line of `[ui]`, or writes one setting twice in spellings told
+apart only by case (`[ui]` and `[UI]`, or `theme` and `Theme`, which the
+loader reads as one); nor one that is not valid TOML, one you have made
+read-only, or a symlink whose target is missing. The theme still switches,
+the notice says "not saved" and why, and the file is left for you to edit by
+hand. Tables and keys in any case — `[UI]`, `Theme = …` — are otherwise
+edited like their lower-case spellings, as the loader reads them.
+
+A name that is not a usable theme — no such file, a file that does not
+parse — changes nothing: the theme on screen stays, rather than falling back
+to `dark` as startup does, and the notice gives the reason. A theme that
+loads with problems is applied, and the notice counts them and quotes the
+first.
+
+`:reload-config` reads `config.toml` again and applies its theme, re-reading
+the theme file as well — the way to see a theme you are editing without
+restarting. It writes nothing. Every other setting it finds changed is named
+in the notice ("restart to apply: ui.parse_markdown, keys.compose") and keeps
+its running value until the next start, so the client goes on behaving as
+one consistent config. A file that does not load changes nothing.
 
 ## Where files go
 

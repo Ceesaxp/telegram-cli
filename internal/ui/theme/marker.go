@@ -23,15 +23,28 @@ import (
 // is built by reflection deliberately — a hand-written table would need
 // updating whenever Roles gains a field, and the field it forgot would be the
 // one nobody was checking.
-func MarkerRoles() (Roles, map[string]string) {
+func MarkerRoles() (Roles, map[string]string) { return markerRoles(1) }
+
+// SecondMarkerRoles is another marker palette — #0200xx — sharing no colour
+// with [MarkerRoles].
+//
+// It answers the question a live theme switch raises: after a component is
+// handed a new palette, is ANY of the old one still on screen? Draw in the
+// first, switch to this, and every colour left over from before is one the
+// map returned here does not know.
+func SecondMarkerRoles() (Roles, map[string]string) { return markerRoles(2) }
+
+// markerRoles builds one marker palette: every role #SS00xx, where SS is set
+// and xx counts the fields in declaration order.
+func markerRoles(set int) (Roles, map[string]string) {
 	var r Roles
 	v := reflect.ValueOf(&r).Elem()
 	byColour := make(map[string]string, v.NumField())
 
 	for i := range v.NumField() {
-		hex := fmt.Sprintf("#0100%02x", i+1)
+		hex := fmt.Sprintf("#%02x00%02x", set, i+1)
 		v.Field(i).Set(reflect.ValueOf(lipgloss.Color(hex)))
-		byColour[fmt.Sprintf("1;0;%d", i+1)] = v.Type().Field(i).Name
+		byColour[fmt.Sprintf("%d;0;%d", set, i+1)] = v.Type().Field(i).Name
 	}
 	return r, byColour
 }

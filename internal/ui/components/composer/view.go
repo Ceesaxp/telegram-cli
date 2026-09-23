@@ -104,8 +104,13 @@ const (
 	expandedRows = 8
 )
 
-// SetRoles supplies the TUI 2.0 semantic palette.
-func (m *Model) SetRoles(r theme.Roles) { m.roles = r }
+// SetRoles supplies the TUI 2.0 semantic palette, and re-derives the
+// textarea's styles from it — New built those from the palette it was
+// given, and they would otherwise stay in that one.
+func (m *Model) SetRoles(r theme.Roles) {
+	m.roles = r
+	m.restyle()
+}
 
 // SetMode tells the composer which interaction mode to report for the states
 // it cannot see itself: COMMAND, and the NORMAL of another panel holding
