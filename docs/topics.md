@@ -1,0 +1,232 @@
+# Forum topics — spec
+
+Status: **proposal** (2026-09-23). Nothing here is built. The protocol
+facts in "What Telegram actually does" were researched against
+core.telegram.org/api/forum, TDLib and gotd v0.161 and are cited; the
+design decisions are this document's own and are open to revision until
+the first wave lands.
+
+A forum is a supergroup whose messages are filed under topics. tele-tui
+today sees only the flat stream: every message from every topic, in one
+thread, and a `t.me/<group>/<topic>/<id>` link is refused because there is
+nowhere to land (`internal/telegram/tme.go`). This document decides what
+topic support is, how it is modelled, and in what order it is built.
+
+## The three questions this answers
+
+1. **Where do topics appear?** In the chat list, one level down.
+2. **What is a topic, to the rest of the client?** A chat.
+3. **What is built first?** A bug fix that helps even if topics are never
+   built, then reading, then posting.
+
+## What Telegram actually does
+
+Each fact below is what the implementation must match. Sources are the
+forum API page unless stated.
+
+- **A forum is a supergroup with `channel.forum` set.** Not a field on
+  `channelFull`; gotd `tg.Channel.Forum`. A separate flag,
+  `channel.forum_tabs`, is only a hint about how official clients draw the
+  picker, and `channelFull.view_forum_as_messages` is a per-account
+  preference, synced between devices, for reading a forum flat.
+- **A topic is a message thread, and its ID is a message ID**: the
+  `messageActionTopicCreate` service message that created it. **General is
+  topic 1** and cannot be deleted; only General can be hidden.
+- **A message's topic comes from its reply header.** `messageReplyHeader`
+  carries `forum_topic` and `reply_to_top_id`. TDLib's rule
+  (`MessageReplyHeader.cpp`, `MessageTopic.cpp`): if the flag is set, the
+  topic is `reply_to_top_id`, with the special case that a message which is
+  not itself a reply reports the topic in `reply_to_msg_id`; if the flag is
+  absent in a forum, the message is in **General**. So in a forum, every
+  ordinary message carries a reply header that is *not* a reply.
+- **A topic's history is `messages.getReplies` with `msg_id` = the topic
+  ID** (TDLib `MessagesManager.cpp`), paged like any history.
+- **Listing topics is `messages.getForumTopics`**, which returns
+  `forumTopic` records — title, `icon_color`, `icon_emoji_id`,
+  `top_message`, `unread_count`, `unread_mentions_count`,
+  `unread_reactions_count`, `read_inbox_max_id`, the `closed`, `pinned`,
+  `hidden` and `my` flags, per-topic `notify_settings` and a per-topic
+  `draft` — plus the messages, users and chats needed to render them. It
+  pages by `offset_date` / `offset_id` / `offset_topic`, and
+  `order_by_create_date` in the response says which date to page by.
+  `messages.getForumTopicsByID` refreshes named topics and answers
+  `forumTopicDeleted` for the ones that are gone.
+- **Reading a topic is `messages.readDiscussion`** (peer, topic ID, max
+  ID), and the server echoes `updateReadChannelDiscussionInbox` /
+  `Outbox`, which carry `top_msg_id` and the read pointer.
+- **Per-topic unread counts never arrive in an update.** The read updates
+  carry no count — TDLib passes `-1` for it and keeps its own — so a count
+  is either derived locally from messages newer than the read pointer, or
+  re-fetched with `getForumTopics`.
+- **Topic creation, edit and deletion have no updates either.** They
+  arrive as ordinary new/edited service messages
+  (`messageActionTopicCreate` / `messageActionTopicEdit`), and a deletion
+  arrives as a message deletion that includes the topic's root message.
+  Pinning is the exception: `updatePinnedForumTopic(s)`.
+- **Posting into a topic** sets `inputReplyToMessage.reply_to_msg_id` to
+  the topic ID. Replying to a message inside a topic sets
+  `reply_to_msg_id` to that message and `top_msg_id` to the topic.
+  General takes neither: a plain send lands there.
+- **Whether the account may post in a closed topic is decidable locally**
+  (TDLib `ForumTopicManager::can_send_message_to_forum_topic`): a closed
+  topic refuses everyone except its creator (`my`) and anyone holding
+  `manage_topics`. The server's backstop is the `TOPIC_CLOSED` error;
+  gotd has `tg.IsTopicClosed`, `IsTopicDeleted`, `IsTopicIDInvalid`.
+- **Monoforums are not topics.** gotd v0.161 also carries
+  `channel.monoforum` and `updateReadMonoForumInbox/Outbox`, which are
+  direct messages to channels. Nothing here applies to them, and the code
+  must not conflate the two.
+
+Unverified, and therefore not relied on: whether General can be closed or
+renamed, and whether a topic-less send can ever be refused rather than
+landing in General.
+
+## The interaction
+
+**A forum opens like a directory.** `Enter` on a forum row replaces the
+chat list's contents with that forum's topics; a back key returns to the
+chats. It is the same panel, the same two-row cells, the same filter, one
+level down — a file manager, not a new column. The frame's width rules
+(`docs/tui-2.0.md`) give the thread the space that a third column would
+have taken, and at 72 columns there is no room for one at all.
+
+```
+ ‹ Go Serbia            3/12 │ Go Serbia › Jobs
+▌# General         14:02     │ …
+▌  ana: meetup Thursday?     │
+ # Jobs        •3  13:40     │
+   milos: remote Go role …   │
+```
+
+- **The header row** replaces the filter's count line with the forum's
+  name and a back hint, and the filter keeps working over topic titles.
+- **A topic row** is a chat row: title, time, last message, unread badge,
+  the `@` chip when it has unread mentions. Pinned topics sort first, as
+  pinned chats do. A closed topic is marked; a hidden General is not
+  listed.
+- **The topic's colour.** `icon_color` is one of six fixed values, which
+  is exactly what the sender-colour ramp already does with a hash — the
+  topic sigil takes its colour from `icon_color` rather than inventing
+  one. A custom `icon_emoji_id` is a premium emoji and is **not**
+  rendered in the first wave; the sigil stays `#`.
+- **Opening a topic** opens the thread scoped to it. The thread header
+  reads `Forum › Topic`, so the reader always knows which of the two they
+  are in.
+- **The back key** cannot be `h`: that is folder navigation in the chat
+  list. `Esc` and `Backspace` are both free there and both read as "up".
+  Decision: **`Esc`**, with `Backspace` accepted as a synonym, and `h`
+  left alone.
+- **`:topic <name>`** jumps within the open forum with the palette's
+  fuzzy completion, exactly as `:theme` now lists themes. It is an
+  accelerator, not the way in: it cannot show which topics have unread
+  messages, which is the whole reason the list exists.
+- **Reading a forum flat.** The account-level `view_forum_as_messages`
+  preference is honoured when it is set: `Enter` opens the flat stream and
+  the topic list is one keystroke away. tele-tui does not offer to change
+  the preference in the first wave.
+- **A closed topic** disables the composer and says why, from the local
+  rule above. `TOPIC_CLOSED` from the server is reported as a send
+  failure, not a crash.
+
+## The model: a topic is a chat with a synthetic ID
+
+Everything in this client is keyed by chat ID: the message store and its
+index, the chat store's unread counts, per-chat drafts, the jump stack,
+read receipts, notifications, `GetChatHistory`, `SendTextMessage`,
+`ViewMessages`. A topic needs every one of those, per topic.
+
+Two ways to get there:
+
+1. **Thread a topic ID through everything.** Honest, and it changes the
+   signature of nearly every store method, every client call and every
+   chat-view field, plus their tests.
+2. **Give each topic a synthetic chat ID**, and translate at the one
+   boundary where the app talks to Telegram.
+
+**Decision: (2).** A topic already behaves like a chat in every way the UI
+cares about — its own unread count, draft, read state, row and history —
+so the layers above the client need no new concept, and the change lands
+almost entirely in `internal/telegram`.
+
+The rules that make it safe:
+
+- **The band.** Synthetic IDs are allocated from a reserved range that no
+  TDLib peer ID can occupy, by a registry inside `internal/telegram` that
+  maps `synthetic ↔ (channelID, topicID)` both ways. Allocation is
+  session-scoped and sequential; nothing persists it, and nothing outside
+  the client interprets it.
+- **The chokepoint.** Every exported `Client` method that takes a chat ID
+  begins by splitting it: `real, topic := c.split(chatID)`. Methods that
+  need the topic use it (history, send, read); the rest carry on with
+  `real`.
+- **The guard.** `inputPeer` refuses a synthetic ID outright, so a peer
+  lookup for one can never reach the wire. A test asserts that every
+  exported method either splits or refuses, walking the package's AST the
+  way the palette guard walks components.
+- **What the layers above see** is a chat that happens not to be in the
+  dialog list: a title from the topic, `Type` supergroup, its own unread
+  count. `GetChat` on a synthetic ID answers from the topic registry
+  rather than the server.
+
+The cost of the decision, recorded honestly: two IDs now mean the same
+conversation to a human (`the forum`, `the forum's General`), and any
+future feature that persists a chat ID — a saved layout, a session
+restore — must resolve synthetic IDs first or refuse them.
+
+## Waves
+
+**Wave 0 — the reply bug (worth doing even if topics never are).**
+In a forum, every message carries a reply header pointing at the topic
+root, and `messageFromTG` copies it into `ReplyToMessageID`
+(`internal/telegram/types.go`). The thread therefore draws a reply quote
+under every message, almost always "earlier message" because the root is
+not loaded. Parse the header properly: record `TopicID` on the message,
+and set `ReplyToMessageID` only for a real reply. Small, self-contained,
+and it makes forums readable today.
+
+**Wave 1 — reading.** Forum detection, the topic registry and the split
+chokepoint, `ForumTopics(chatID)` over `getForumTopics` with paging, the
+drill-in list with its header and back key, per-topic history through
+`getReplies`, unread counts from the topic records and derived from
+arriving messages, routing an incoming message to its topic's store.
+
+**Wave 2 — posting and reading marks.** Sending with the right reply
+header (plain post, and reply inside a topic), `readDiscussion` on open
+and on arrival, handling `updateReadChannelDiscussionInbox/Outbox`, the
+closed-topic rule and the `TOPIC_CLOSED` error, drafts per topic.
+
+**Wave 3 — polish.** `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>`
+links (the refusal in `tme.go` goes away), pinned ordering and
+`updatePinnedForumTopic(s)`, topic create/edit/delete service messages
+refreshing the list via `getForumTopicsByID`, per-topic mention and
+reaction counts.
+
+**Out of scope, recorded.** Creating, renaming, closing, pinning or
+deleting topics from tele-tui; monoforums; toggling `view_forum_as_messages`;
+per-topic notification settings; custom emoji topic icons.
+
+## Risks
+
+- **A synthetic ID reaching the wire.** Mitigated by the `inputPeer`
+  refusal and the AST guard; a leak would produce a confusing server error
+  rather than a wrong-chat send, because no real peer has that ID.
+- **Unread counts drifting.** They are derived locally between refreshes,
+  the same trade-off the chat list already makes, with the same repair:
+  a re-fetch on reconnect (`getForumTopicsByID` for the open forum).
+- **A forum with hundreds of topics.** The list pages like the dialog
+  list does; the filter is the way to reach a topic by name, and `:topic`
+  is the accelerator.
+- **Message IDs are the channel's, not the topic's.** Two topics never
+  hold the same message, so a per-topic store keyed by message ID stays
+  consistent; the ID index added in the performance wave is unaffected.
+
+## Open questions for review
+
+1. **The back key.** `Esc` plus `Backspace`, as above — or `-`, which vim
+   users read as "up a directory"?
+2. **What the thread shows while the topic list is open.** The last topic
+   read in that forum, or the flat stream? This document assumes the last
+   topic, falling back to the flat stream on first entry.
+3. **Whether wave 1 ships without posting.** Reading a forum properly is
+   useful on its own, but a client that cannot reply in a topic may be
+   worse than one that posts to General.

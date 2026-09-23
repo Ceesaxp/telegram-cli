@@ -1,5 +1,17 @@
 # TODO
 
+## Next — forum topics (design 2026-09-23, not started)
+
+Spec: `docs/topics.md`, written from researched protocol facts (sources in the doc). A topic is a message thread whose ID is its creating service message; General is topic 1; per-topic unread counts never arrive by update; topic create/edit/delete arrive as service messages.
+
+Decision recorded there: **a topic is a chat with a synthetic ID**, allocated by a registry inside `internal/telegram` and split at every exported `Client` method, so the store, the chat list, drafts and the jump stack need no new concept. `inputPeer` refuses a synthetic ID, guarded by an AST test.
+
+- [ ] Wave 0 — the reply bug: in a forum every message carries a reply header pointing at the topic root, so the thread draws "earlier message" under almost every message. Parse the header: record `TopicID`, set `ReplyToMessageID` only for a real reply. Worth doing on its own
+- [ ] Wave 1 — reading: forum detection, the topic registry and split, `getForumTopics` with paging, the drill-in topic list, per-topic history via `getReplies`, unread from the topic records
+- [ ] Wave 2 — posting and read marks: the reply header for a plain post and a reply, `readDiscussion`, the discussion read updates, the closed-topic rule and `TOPIC_CLOSED`, per-topic drafts
+- [ ] Wave 3 — polish: `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>` links (the refusal in tme.go goes away), pinned ordering, topic service messages refreshing the list
+- [ ] Open with Andrei: the back key (Esc/Backspace vs `-`), what the thread shows while the topic list is open, and whether wave 1 ships without posting
+
 ## Performance and safety wave (2026-09-22) — branch fix/perf-wave, closes #33
 
 Four findings from an outside review, each confirmed against the code first.
