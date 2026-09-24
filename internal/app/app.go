@@ -152,6 +152,26 @@ type Model struct {
 	// when there is no client. See mentionpicker.go.
 	members memberSearcher
 
+	// forums is the slice of the Telegram client that lists a forum's
+	// topics, an interface for the reason members is one. Nil when there
+	// is no client. See topics.go.
+	forums forumLister
+
+	// lastTopic is the topic each forum was last read at, keyed by the
+	// forum's own chat ID and holding the topic's synthetic chat ID.
+	// Entering a forum again goes back there rather than to the flat
+	// stream (docs/topics.md, "Resolved" 2); a forum with no entry has
+	// never had a topic opened in it, and gets the flat stream.
+	lastTopic map[int64]int64
+
+	// topicHeaders is what the thread calls each open topic — "forum ›
+	// topic" — keyed by the topic's synthetic chat ID. The store cannot
+	// answer for one: no dialog names it. See [Model.chatTitle].
+	//
+	// Both maps are session-scoped and neither is persisted, because the
+	// IDs keying them are allocated per session.
+	topicHeaders map[int64]string
+
 	// mentionQuery is the @ picker's latest question. A debounced search
 	// that fires for any other has been typed past, and asks nothing.
 	mentionQuery composer.MentionQueryMsg
@@ -415,6 +435,7 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 		m.uploads = tg
 		m.sends = tg
 		m.members = tg
+		m.forums = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -1053,7 +1074,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// list and no open chat — would only show the
 					// composer's "open a chat first", so the key is
 					// better left inert.
-					if m.chatList.CursorChatId() == 0 && m.composer.ChatId() == 0 {
+					// cursorChatID rather than CursorChatId: a topic row is
+					// a row with a chat under it too, and the plain
+					// accessor withholds one (see topics.go).
+					if m.cursorChatID() == 0 && m.composer.ChatId() == 0 {
 						return m, nil
 					}
 					m.setFocus(PanelComposer)
@@ -1200,6 +1224,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case telegram.ChatLastMessageMsg:
+		// A message in a topic is published under the topic's synthetic
+		// chat ID, and only the app knows that such an ID names a topic —
+		// so the chat list is told here rather than working it out from a
+		// message it also handles for its own rows. See topics.go.
+		m.chatList.TopicMessage(msg.ChatId, msg.LastMessage)
+
 	case noticeGraceMsg:
 		cmds = append(cmds, m.releaseAllNotices())
 
@@ -1224,7 +1255,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing to undo: the row never touched the message.
 
 	case chatlist.ChatSelectedMsg:
-		cmds = append(cmds, m.openChatAt(msg.ChatId, 0))
+		// A forum is entered rather than opened; see topics.go.
+		cmds = append(cmds, m.openSelectedChat(msg.ChatId))
+
+	case chatlist.TopicSelectedMsg:
+		cmds = append(cmds, m.openTopic(msg.Topic))
+
+	case topicsLoadedMsg:
+		m.applyTopics(msg)
+
+	case forumThreadMsg:
+		cmds = append(cmds, m.openForumThread(msg.chatID))
 
 	case contacts.ContactSelectedMsg:
 		m.contacts.SetVisible(false)
@@ -1668,8 +1709,28 @@ func deleteRevokes(answer string) (revoke, ok bool) {
 // focus on the composer AFTER the open — and openChatAt, which the message
 // would reach eventually, focuses the chat view.
 func (m *Model) openCursoredChat() (tea.Cmd, bool) {
+	// A topic row first: while the list is drilled into a forum, OpenCursor
+	// withholds a chat ID rather than hand back a topic's message ID as
+	// though it were one, so every key that goes through here would do
+	// nothing on a topic without asking for the topic itself.
+	if topic := m.chatList.CursorTopic(); topic != nil {
+		if topic.TopicChatID == m.chatView.ChatId() {
+			return nil, false
+		}
+		return m.openTopic(topic), true
+	}
+
 	chatID, ok := m.chatList.OpenCursor()
-	if !ok || chatID == m.chatView.ChatId() {
+	if !ok {
+		return nil, false
+	}
+	// A forum is ENTERED, not opened, and the thread may already be showing
+	// its flat stream — so the "already open" test below would refuse the
+	// one press that has work to do. See topics.go.
+	if title, isForum := m.forumChat(chatID); isForum {
+		return m.enterForum(chatID, title), true
+	}
+	if chatID == m.chatView.ChatId() {
 		return nil, false
 	}
 	return m.openChatAt(chatID, 0), true
@@ -1910,16 +1971,28 @@ func pasteFromClipboard(chatID int64) tea.Cmd {
 func (m *Model) openChatAt(chatID int64, targetMsgID int64) tea.Cmd {
 	m.navGen++
 
-	title := ""
-	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
-		title = entry.Chat.Title
-	}
-
-	cmd := m.chatView.OpenChatAt(chatID, title, targetMsgID)
+	cmd := m.chatView.OpenChatAt(chatID, m.chatTitle(chatID), targetMsgID)
 	m.switchComposerTo(chatID)
 	m.setFocus(PanelChatView)
 
 	return tea.Batch(cmd, m.openRailFor(chatID))
+}
+
+// chatTitle is the name a chat's thread opens under.
+//
+// The store answers for every chat that came out of the dialog list. A
+// topic did not: it is a chat with a synthetic ID (docs/topics.md, "The
+// model"), nothing put one in the store, and its header is a pair rather
+// than a name — so the headers this session has composed are consulted
+// first. See [Model.rememberTopic].
+func (m Model) chatTitle(chatID int64) string {
+	if header, ok := m.topicHeaders[chatID]; ok {
+		return header
+	}
+	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
+		return entry.Chat.Title
+	}
+	return ""
 }
 
 // mentionJumpNotice is what g@ says on arrival: how many unread mentions

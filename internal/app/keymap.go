@@ -267,7 +267,7 @@ func (m Model) helpSections() []help.Section {
 		}},
 		{Title: "Chat list", Bindings: []help.Binding{
 			{Keys: "j / k", Desc: "Move the cursor — opens nothing"},
-			{Keys: "l", Desc: "Open the cursored chat and focus the chat view"},
+			{Keys: "l", Desc: "Open the cursored chat — a forum drills into its topics"},
 			{Keys: "left / right", Desc: "Previous / next folder tab"},
 			{Keys: "1-9", Desc: "Jump to folder N (1 = All)"},
 			// Split in two rather than "g / G / home / end": the Keys
@@ -280,6 +280,12 @@ func (m Model) helpSections() []help.Section {
 			{Keys: "enter", Desc: "Open the cursored chat — the same as l"},
 			{Keys: bound(k.compose), Desc: "Open the cursored chat and compose"},
 			{Keys: k.search, Desc: "Filter this chat list"},
+			// The drill-in's way back out (docs/topics.md, "Resolved" 1).
+			// Two rows because they are two rungs: esc stacks behind the
+			// filter, backspace is bound to nothing else here and always
+			// goes up.
+			{Keys: "esc", Desc: "Clear the filter, then leave a forum's topics"},
+			{Keys: "backspace", Desc: "Leave a forum's topics"},
 			{Keys: k.quitBrowsing, Desc: "Quit — asks first if a message is half-written"},
 			{Keys: "click", Desc: "Select a chat, or switch folder tab"},
 		}},

@@ -100,15 +100,17 @@ the shipped defaults.
 | Key | Action |
 |-----|--------|
 | `j` / `k` (or `↓` / `↑`) | Move the cursor — opens nothing, so holding one down costs no history fetches |
-| `l` | Open the cursored chat and focus the chat view (`h` here is a no-op) |
+| `l` | Open the cursored chat and focus the chat view (`h` here is a no-op). A **forum** drills in instead: the rows become its topics, and the thread shows the topic last read there — the forum's own flat stream until a topic in it has been opened |
 | `←` / `→` | Previous / next folder tab (`[` / `]` do the same, from either browsing panel) |
 | `1`–`9` | Jump to folder N (1 = All, always present) |
 | click a folder tab | Switch to it |
 | `g` / `Home` | First chat |
 | `G` / `End` | Last chat |
-| `Enter` | Open the cursored chat — the same thing `l` does |
-| `i` | Open the cursored chat and focus the composer |
-| `/` | Filter this list live (`Esc` clears, `Enter` keeps it applied) |
+| `Enter` | Open the cursored chat — the same thing `l` does, forums included. On a topic row it opens that topic, which the rest of the client treats as a chat of its own |
+| `i` | Open the cursored chat and focus the composer — on a topic row, that topic |
+| `/` | Filter this list live (`Esc` clears, `Enter` keeps it applied). Inside a forum it filters the topic titles |
+| `Esc` | Leave a forum's topics and come back to the chats, with the list as the drill-in found it. It stacks behind the filter: with one applied, the first press clears it and the second goes up |
+| `Backspace` | Leave a forum's topics — bound to nothing else here, so it always goes up |
 | `q` | Quit — confirms first if the composer holds a draft or attachment |
 | click a chat | Select it |
 | wheel | Scroll |

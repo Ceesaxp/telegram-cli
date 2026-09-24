@@ -117,6 +117,77 @@ func (m *Model) SetTopics(chatID int64, topics []*telegram.Topic) {
 	m.refreshList()
 }
 
+// TopicMessage lands an arriving message on the topic row it belongs to,
+// the way [telegram.ChatLastMessageMsg] lands one on a chat row.
+//
+// chatID is the topic's SYNTHETIC chat ID, which is what a message in a
+// topic is published under. It has to be matched here rather than through
+// this component's ordinary handling of that message, because that answers
+// off the store and a topic is not in it: while the list is drilled in its
+// rows come from [Model.SetTopics], so an arriving message would otherwise
+// leave the column exactly as the listing left it until the reader walked
+// out of the forum and back in.
+//
+// Called by the app, which is the only thing that knows a synthetic chat ID
+// names a topic at all.
+func (m *Model) TopicMessage(chatID int64, msg *telegram.Message) {
+	if !m.inForum() || msg == nil {
+		return
+	}
+	topic := m.topicByChat(chatID)
+	if topic == nil {
+		return
+	}
+
+	if topicCountsAsUnread(topic, msg) {
+		topic.UnreadCount++
+		// Under the same guard, so a replayed mention cannot count twice.
+		if msg.UnreadMention {
+			topic.UnreadMentionsCount++
+		}
+	}
+	if msg.ID > topic.TopMessageID {
+		topic.TopMessageID = msg.ID
+	}
+	topic.LastMessage = msg
+
+	// refreshList rather than markDirty: the preview, the time and the
+	// badge are all built in topicItems, so redrawing the rows the list
+	// already holds would show the message nowhere.
+	m.refreshList()
+}
+
+// topicByChat is the open forum's topic with the given synthetic chat ID.
+//
+// A linear scan, unlike [Model.topicFor]: this runs once per arriving
+// message rather than once per row per frame, and a second index keyed the
+// other way would be a second thing to keep in step with the listing.
+func (m Model) topicByChat(chatID int64) *telegram.Topic {
+	if !m.inForum() || chatID == 0 {
+		return nil
+	}
+	for _, t := range m.forum.topics {
+		if t != nil && t.TopicChatID == chatID {
+			return t
+		}
+	}
+	return nil
+}
+
+// topicCountsAsUnread says whether an arriving message adds one to a
+// topic's badge. It is the chat store's rule (see store.countsAsUnread),
+// applied to the topic's own read pointer: only a message from the other
+// side, with a server ID, past what the account has read and past what the
+// row already counts. The same message can arrive twice — a replay after a
+// reconnect — and counting it twice is how a badge comes to describe a
+// conversation nobody can find the unread messages in.
+func topicCountsAsUnread(topic *telegram.Topic, msg *telegram.Message) bool {
+	if msg.IsOutgoing || msg.ID <= 0 {
+		return false
+	}
+	return msg.ID > topic.ReadInboxMaxID && msg.ID > topic.TopMessageID
+}
+
 // LeaveForum comes back up to the chats, restoring the list exactly as the
 // drill-in found it: the same filter, and the same chat under the cursor.
 //
