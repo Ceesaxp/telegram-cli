@@ -16,6 +16,7 @@ import (
 func TestSurfaceModes(t *testing.T) {
 	want := map[Surface]InteractionMode{
 		SurfaceChatList:       ModeNormal,
+		SurfaceForumTopics:    ModeNormal,
 		SurfaceChatView:       ModeNormal,
 		SurfaceComposerInsert: ModeInsert,
 		SurfaceComposerVi:     ModeVi,

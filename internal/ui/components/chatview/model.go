@@ -298,6 +298,13 @@ type Model struct {
 	// value means focused, so behaviour is unchanged when the program
 	// never enables focus reporting.
 	blurred bool
+	// unattended says the chat in the thread was opened WITHOUT the reader
+	// being taken to it, which is what everything this panel does on their
+	// behalf — the read receipt, the reaction clear, the mention clear —
+	// assumes. See [Model.NoteOpenUnattended]. Opening another chat clears
+	// it, so it can only ever describe the open that set it, and so does
+	// taking the focus, because then the reader has come to it.
+	unattended bool
 	// pendingReadID is the newest message seen but not yet acknowledged —
 	// while blurred, and now also inside the focused path's coalescing
 	// window. pendingRefetch is the set of messages an edit, reaction or
@@ -494,8 +501,19 @@ func (m *Model) SetSize(w, h int) {
 	m.height = h
 }
 
-func (m *Model) SetFocused(focused bool) { m.focused = focused }
-func (m *Model) SetMyUserId(id int64)    { m.myUserId = id }
+// SetFocused tells the panel whether it is the one the reader is on.
+//
+// Taking the focus ends a withholding: a chat the reader was not taken to
+// becomes a chat they have come to, and from here on what they are shown
+// they have read. See [Model.NoteOpenUnattended].
+func (m *Model) SetFocused(focused bool) {
+	if focused {
+		m.unattended = false
+	}
+	m.focused = focused
+}
+
+func (m *Model) SetMyUserId(id int64) { m.myUserId = id }
 
 // SetBufferIndex tells the header which row of the chat list this thread
 // is. Zero clears it.
@@ -926,6 +944,25 @@ func (m *Model) catchUpRead() tea.Cmd {
 	}
 }
 
+// owedOnOpen is everything a first page owes on behalf of the reader who
+// opened the chat: the read receipt, the clear of its unread reactions and
+// the clear of its unread mentions.
+//
+// The three are gathered in one place because they answer one question —
+// has the reader opened this conversation to read it? — and each of them
+// tells Telegram, and therefore the reader's other devices, that the answer
+// is yes.
+//
+// An open the reader was not taken to owes none of them, because they did
+// not open it: it was put here beside a list they are still standing in.
+// See [Model.NoteOpenUnattended].
+func (m *Model) owedOnOpen(msg historyLoadedMsg) tea.Cmd {
+	if m.unattended {
+		return nil
+	}
+	return tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg), m.readMentionsOnOpen(msg))
+}
+
 // readOnOpen marks a chat read up to the newest message on its first page.
 // Opening a chat is always deliberate here, so a chat opened at its newest
 // messages has been read. Without this, a chat read in this client stayed
@@ -1065,6 +1102,38 @@ func (m *Model) OpenChat(chatID int64, title string) tea.Cmd {
 	return m.OpenChatAt(chatID, title, 0)
 }
 
+// NoteOpenUnattended records that the chat now in the thread was opened
+// without the reader being taken to it: the thread was pointed at it beside
+// a list they go on standing in. The forum drill-in is the one caller —
+// Enter on a forum row shows its topics and puts the forum's flat stream in
+// the thread (docs/topics.md, "Resolved" 2) — and the reader's next
+// keystroke is a move down that list, not a word of the conversation now on
+// the right.
+//
+// What it withholds is everything this panel does on the reader's behalf
+// because they are reading: the read receipt, the reaction clear, the
+// mention clear, on the open page and on each message that arrives after
+// it. All of that rests on "opening a chat is always deliberate here", and
+// this open was not the reader's — they asked to see a forum's topics. Read
+// that way, the flat stream is the whole forum, so one receipt reads every
+// topic at once: that is how the first Enter on a forum zeroed every badge
+// the topic list had just drawn, on the server and on the reader's phone,
+// without them reading a word.
+//
+// It lasts until the reader comes to the thread, which SetFocused is what
+// notices. Called AFTER the open, because the open clears it: it describes
+// one open, never the panel.
+func (m *Model) NoteOpenUnattended() { m.unattended = true }
+
+// UnattendedOpenForTest reports whether the open chat was opened without the
+// reader being taken to it.
+//
+// The reads this withholds are requests to a client a test in another
+// package cannot stand up, so the decision is the only part of them
+// observable from outside — and the app is where the wiring that makes the
+// decision lives. Same reason and same shape as MarkLoadedForTest.
+func (m Model) UnattendedOpenForTest() bool { return m.unattended }
+
 // OpenChatAt opens a chat and, once history has loaded, scrolls so that
 // targetMsgID is visible (roughly centred). targetMsgID 0 means "newest
 // message at the bottom", i.e. plain OpenChat behaviour. If the target is
@@ -1102,6 +1171,9 @@ func (m *Model) OpenChatAt(chatID int64, title string, targetMsgID int64) tea.Cm
 	m.notice = ""
 	m.targetMsgID = targetMsgID
 	m.targetPages = 0
+	// Every open is the reader's until [Model.NoteOpenUnattended] says
+	// otherwise, which the one caller that does say so calls after this.
+	m.unattended = false
 	m.pendingJumpID = 0
 	m.pendingMeta = nil
 	m.metaBusy = false
@@ -1817,7 +1889,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// What opening the chat owes. Worked out before the hunt below,
 		// which clears the target once it is found, and handed on by every
 		// return from here, the hunt's own included.
-		onOpen := tea.Batch(m.readOnOpen(msg), m.readReactionsOnOpen(msg), m.readMentionsOnOpen(msg))
+		onOpen := m.owedOnOpen(msg)
 
 		if m.targetMsgID != 0 {
 			switch {
@@ -1903,6 +1975,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.store.Messages.Append(m.chatID, msg.Message)
 			m.cache.invalidate(msg.Message.ID)
 
+			// Shown, but not read, in a chat the reader was not taken to.
+			// Reading requires somebody reading, and the reader is in the
+			// topic list — where the message they were just credited with
+			// having read is the badge they are looking at. Without this,
+			// the drill-in withheld only its first receipt and the next
+			// arrival marked the whole forum read after all. See
+			// NoteOpenUnattended.
+			if m.unattended {
+				return m, nil
+			}
 			// A mention arriving in the open chat has been seen, on the
 			// terms the message counts as read by noteSeen.
 			return m, tea.Batch(

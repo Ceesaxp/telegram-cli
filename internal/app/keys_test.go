@@ -1531,7 +1531,7 @@ func TestHintBarKeysComeFromResolvedKeys(t *testing.T) {
 // fails TestEverySurfaceIsReachable rather than being quietly untested.
 func allSurfaces() []Surface {
 	return []Surface{
-		SurfaceChatList, SurfaceChatView,
+		SurfaceChatList, SurfaceForumTopics, SurfaceChatView,
 		SurfaceComposerInsert, SurfaceComposerVi,
 		SurfaceReactions, SurfaceAttach, SurfacePalette, SurfaceMedia,
 		SurfaceHelp, SurfaceDialog, SurfaceSearch, SurfaceContacts,
@@ -1667,6 +1667,7 @@ func flattenCmd(cmd tea.Cmd) []tea.Msg {
 func TestEverySurfaceIsReachable(t *testing.T) {
 	reach := map[Surface]surfaceInputs{
 		SurfaceChatList:       {screen: ScreenMain, focus: PanelChatList},
+		SurfaceForumTopics:    {screen: ScreenMain, focus: PanelChatList, inForum: true},
 		SurfaceChatView:       {screen: ScreenMain, focus: PanelChatView},
 		SurfaceComposerInsert: {screen: ScreenMain, focus: PanelComposer},
 		SurfaceComposerVi: {screen: ScreenMain, focus: PanelComposer,

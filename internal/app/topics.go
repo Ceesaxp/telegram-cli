@@ -180,6 +180,15 @@ func (m Model) openConversation() int64 {
 // means the reader is going there and openChatAt takes them, but a drill-in
 // is a move INTO a list — the next thing they do is walk the topics — and
 // handing the thread the focus would cost an h before every one of them.
+//
+// And because the reader is not taken there, the thread is told so: an
+// unattended open reads nothing. A receipt for the flat stream is a receipt
+// for the whole forum, so the first Enter on one marked every topic in it
+// read — on the server and on the reader's phone — and every badge the
+// topic list had just drawn went to zero before a word of any of them had
+// been read. The same holds for the last topic read, which is no more the
+// reader's choice on the way in than the forum is; pressing Enter on a
+// topic opens it through openTopic, and that IS their choice, and reads it.
 func (m *Model) openForumThread(chatID int64) tea.Cmd {
 	target := chatID
 	if last, ok := m.lastTopic[chatID]; ok {
@@ -189,6 +198,12 @@ func (m *Model) openForumThread(chatID int64) tea.Cmd {
 	focus := m.focus
 	cmd := m.openChatAt(target, 0)
 	m.setFocus(focus)
+
+	// AFTER the focus is back where it was, because taking the focus is
+	// what ends the withholding — openChatAt hands it to the thread, and
+	// the line above takes it away again. The history page is still in
+	// flight, so the read this stops has not been decided yet.
+	m.chatView.NoteOpenUnattended()
 	return cmd
 }
 

@@ -883,6 +883,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// work. [ and ] are the whole binding now, at app level, and
 			// the chat list keeps only the arrows and the digits, which
 			// are its own.
+			//
+			// Not while the list is drilled into a forum. Folders are a
+			// property of the CHAT list and a forum's topics are in none
+			// of them, which is why the chat list already refuses its own
+			// left/right and 1-9 there; these keys live up here and so had
+			// to be told separately. Ungated, ] switched a tab nobody
+			// could see and only announced itself on the way back out, as
+			// a chat list on a folder the reader never chose.
+			//
+			// Still consumed, like h and l at their edges, so that no
+			// panel underneath can give an inert key a second meaning.
+			folderKey := key.Matches(m.keys.prevFolder) || key.Matches(m.keys.nextFolder)
+			if folderKey && browsing && m.chatList.ForumChatID() != 0 {
+				return m, nil
+			}
+
 			if key.Matches(m.keys.prevFolder) && browsing {
 				m.chatList.CycleFolder(-1)
 				return m, m.chatList.FolderLoadCmd()
@@ -1282,6 +1298,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// sitting in the chat list beside it, for good.
 			return m, nil
 		}
+
+	case telegram.ChatMarkedReadMsg:
+		// A topic's unread count is not in the chat store — it lives on the
+		// topic the drilled-in list draws its rows from — so the panel's own
+		// handling of this message, which moves the store, cannot clear it.
+		// The app is told instead, for TopicMessage's reason: a synthetic
+		// chat ID names a topic only here. See topics.go.
+		//
+		// The message goes on to the panel all the same, unlike an arriving
+		// one: MarkReadUpTo answers nothing for an ID the store has never
+		// seen, so a topic's mark cannot invent a chat there the way a
+		// topic's message could.
+		m.chatList.TopicRead(msg.ChatId, msg.MaxMessageId)
 
 	case noticeGraceMsg:
 		cmds = append(cmds, m.releaseAllNotices())

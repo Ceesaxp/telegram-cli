@@ -24,6 +24,13 @@ type Surface int
 const (
 	// The browsing panels.
 	SurfaceChatList Surface = iota
+	// SurfaceForumTopics is the chat list one level down, drilled into a
+	// forum (docs/topics.md, "The interaction"). Its own surface rather
+	// than a branch inside the chat list's, for the reason
+	// SurfaceChatViewLink is one: the keymap is different, not decorated.
+	// The folder keys and u are inert there, and esc and backspace mean
+	// something they mean nowhere else in this panel — they come back up.
+	SurfaceForumTopics
 	SurfaceChatView
 	// SurfaceChatViewLink is the chat view with a link armed by gx. Its own
 	// surface rather than a flag on the row, because every key on it means
@@ -57,6 +64,8 @@ const (
 
 func (s Surface) String() string {
 	switch s {
+	case SurfaceForumTopics:
+		return "forum topics"
 	case SurfaceChatView:
 		return "chat view"
 	case SurfaceChatViewLink:
@@ -130,6 +139,9 @@ type surfaceInputs struct {
 	reactionsOpen bool
 	attachOpen    bool
 	forwardOpen   bool
+	// inForum is chatlist.ForumChatID() != 0: the list is drilled into a
+	// forum and its rows are topics, not chats.
+	inForum bool
 	// linkArmed is chatview.HasArmedLink(): gx has marked a link and enter
 	// would follow it.
 	linkArmed    bool
@@ -193,6 +205,8 @@ func resolveSurface(in surfaceInputs) Surface {
 			return SurfaceChatViewLink
 		}
 		return SurfaceChatView
+	case in.focus == PanelChatList && in.inForum:
+		return SurfaceForumTopics
 	default:
 		return SurfaceChatList
 	}
@@ -214,6 +228,7 @@ func (m Model) surfaceInputs() surfaceInputs {
 		reactionsOpen: m.reactions.IsVisible(),
 		attachOpen:    m.attach.IsVisible(),
 		forwardOpen:   m.forward.IsVisible(),
+		inForum:       m.chatList.ForumChatID() != 0,
 		linkArmed:     m.chatView.HasArmedLink(),
 		paletteOpen:   m.palette.IsVisible(),
 		mediaOpen:     m.mediaView.IsVisible(),
@@ -273,6 +288,47 @@ func (m Model) hintsFor(s Surface) []hintbar.Hint {
 	}
 
 	switch s {
+	case SurfaceForumTopics:
+		// The chat list one level down. Two of the chat list's rows are
+		// gone from here because the keys are: the folder pair and u do
+		// nothing over a forum's topics — topics are in no folder, and
+		// walking a forum's unread ones is not built (docs/topics.md,
+		// "Still open") — and a row naming an inert key is the defect
+		// decision I-6 exists to remove.
+		//
+		// What takes their place is the way back out, which the chat
+		// list's own set never had to name because it had nowhere to go.
+		// Esc stacks behind the filter (docs/topics.md, "Resolved" 1), so
+		// with one up esc clears it and BACKSPACE is the key that leaves;
+		// the row says whichever of the two is true, rather than giving
+		// one key two rows that contradict each other.
+		var out []hintbar.Hint
+		switch {
+		case m.chatList.FilterActive():
+			out = join(
+				hint("esc", "clear"),
+				hint("enter", "keep"),
+				hint("backspace", "chats"),
+			)
+		case m.chatList.FilterQuery() != "":
+			out = join(
+				hint("esc", "clear filter"),
+				hint("backspace", "chats"),
+			)
+		default:
+			out = hint("esc", "chats")
+		}
+
+		return join(
+			out,
+			hint("j/k", "move"),
+			hint("l", "open"),
+			hint(k.search, "filter"),
+			hint(k.compose, "compose"),
+			hint(k.quitBrowsing, "quit"),
+			hint(k.help, "keymap"),
+		)
+
 	case SurfaceChatView:
 		// The way back leads while there is one, for the reason the
 		// contacts filter's "esc clear" does: a reader who has just been

@@ -483,6 +483,149 @@ func TestBackspaceLeavesTheForum(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// A topic's read state
+// ---------------------------------------------------------------------------
+
+// jobsChatID is the synthetic chat ID the client minted for the Jobs topic.
+// Any value from the reserved band will do here; what matters is that it is
+// the ID a read mark for that topic arrives under.
+const jobsChatID int64 = 1<<52 + 1
+
+// unreadJobs is the forum with one topic that has something waiting in it,
+// far enough along that a read mark has somewhere to move to.
+func unreadJobs(t *testing.T) Model {
+	t.Helper()
+	m := newLoadedModel(t, "Alice", "Go Serbia")
+	m.EnterForum(2, "Go Serbia")
+	m.SetTopics(2, []*telegram.Topic{{
+		ID: 7, ChatID: 2, Title: "Jobs", TopicChatID: jobsChatID,
+		UnreadCount: 3, TopMessageID: 40, ReadInboxMaxID: 37,
+	}})
+	return m
+}
+
+// Reading a topic clears its badge and moves its read pointer, the way
+// [telegram.ChatMarkedReadMsg] does both for a chat in the store. Nothing
+// used to take a topic's count down at all: a topic read to the end kept
+// every message that had ever arrived in it on the badge, and three more
+// arriving while the reader read them made it six.
+func TestReadingATopicClearsItsBadgeAndMovesItsPointer(t *testing.T) {
+	m := unreadJobs(t)
+
+	m.TopicRead(jobsChatID, 40)
+
+	if got := badgeOf(t, m, 7); got != "" {
+		t.Errorf("badge = %q after the topic was read to its newest message, want none", got)
+	}
+	if got := m.topicByChat(jobsChatID).ReadInboxMaxID; got != 40 {
+		t.Errorf("ReadInboxMaxID = %d after the read, want 40", got)
+	}
+}
+
+// Never backwards. Reads and receipts arrive out of order — a phone-side
+// read of three old messages lands after this session's read of the newest
+// — and an older mark that moved the pointer back would make messages the
+// reader has read count as unread again.
+func TestAnOlderReadDoesNotMoveATopicsPointerBack(t *testing.T) {
+	m := unreadJobs(t)
+	m.TopicRead(jobsChatID, 40)
+
+	m.TopicRead(jobsChatID, 20)
+
+	if got := m.topicByChat(jobsChatID).ReadInboxMaxID; got != 40 {
+		t.Errorf("ReadInboxMaxID = %d after an older read, want it left at 40", got)
+	}
+	if got := badgeOf(t, m, 7); got != "" {
+		t.Errorf("badge = %q after an older read, want it left cleared", got)
+	}
+}
+
+// A read that stops short of the newest message is a partial read: the
+// pointer moves, the count stays. It is the chat store's own rule
+// (store.MarkReadUpTo), applied to the topic's numbers.
+func TestAReadShortOfTheNewestMessageLeavesTheTopicsBadge(t *testing.T) {
+	m := unreadJobs(t)
+
+	m.TopicRead(jobsChatID, 38)
+
+	if got := badgeOf(t, m, 7); got != "[3]" {
+		t.Errorf("badge = %q after a partial read, want [3]", got)
+	}
+	if got := m.topicByChat(jobsChatID).ReadInboxMaxID; got != 38 {
+		t.Errorf("ReadInboxMaxID = %d after a partial read, want 38", got)
+	}
+}
+
+// A mark for a chat that is not one of the open forum's topics — an
+// ordinary chat being read while the reader stands in a forum — changes
+// nothing here.
+func TestAReadForAnotherChatLeavesTheTopicsAlone(t *testing.T) {
+	m := unreadJobs(t)
+
+	m.TopicRead(1, 40)
+
+	if got := badgeOf(t, m, 7); got != "[3]" {
+		t.Errorf("badge = %q after a read of another chat, want [3]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A topic's last word
+// ---------------------------------------------------------------------------
+
+// arrived is a message in a topic as the listener publishes it, under the
+// topic's synthetic chat ID.
+func arrived(id int64, text string) *telegram.Message {
+	return &telegram.Message{
+		ID: id, ChatID: jobsChatID, Date: int32(time.Now().Unix()),
+		SenderID: &telegram.MessageSenderUser{UserID: 43},
+		Content:  &telegram.MessageText{Text: &telegram.FormattedText{Text: text}},
+	}
+}
+
+// emptyJobs is the forum with one topic nothing has arrived in yet.
+func emptyJobs(t *testing.T) Model {
+	t.Helper()
+	m := newLoadedModel(t, "Alice", "Go Serbia")
+	m.EnterForum(2, "Go Serbia")
+	m.SetTopics(2, []*telegram.Topic{{
+		ID: 7, ChatID: 2, Title: "Jobs", TopicChatID: jobsChatID,
+	}})
+	m.store.Users.Set(&telegram.User{ID: 43, FirstName: "milos"})
+	return m
+}
+
+// The preview follows the row's pointer rather than the arrival. A
+// reconnect replays messages the client already has, and an older one
+// overwriting the preview said the topic's last word was something said
+// before the word the row was already showing — while TopMessageID, right
+// beside it, correctly refused to move.
+func TestAReplayedOlderMessageLeavesATopicsPreview(t *testing.T) {
+	m := emptyJobs(t)
+	m.TopicMessage(jobsChatID, arrived(40, "remote Go role"))
+
+	m.TopicMessage(jobsChatID, arrived(20, "last month's thread"))
+
+	if got := topicPreviewRowOf(t, m, 7); !strings.Contains(got, "remote Go role") {
+		t.Errorf("the Jobs preview = %q after an older message was replayed, "+
+			"want the newest message still", got)
+	}
+}
+
+// And a newer one still takes the row, or the guard above bought its
+// steadiness by freezing the preview at the first thing ever said.
+func TestANewerMessageTakesATopicsPreview(t *testing.T) {
+	m := emptyJobs(t)
+	m.TopicMessage(jobsChatID, arrived(40, "remote Go role"))
+
+	m.TopicMessage(jobsChatID, arrived(41, "still open?"))
+
+	if got := topicPreviewRowOf(t, m, 7); !strings.Contains(got, "still open?") {
+		t.Errorf("the Jobs preview = %q after a newer message, want that message", got)
+	}
+}
+
 // Folders are a property of the chat list. A forum's topics are in none of
 // them, so the keys that switch tabs do nothing rather than moving a
 // selection the reader cannot see.

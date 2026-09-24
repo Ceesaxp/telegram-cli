@@ -146,14 +146,55 @@ func (m *Model) TopicMessage(chatID int64, msg *telegram.Message) {
 			topic.UnreadMentionsCount++
 		}
 	}
+	// The preview moves with the pointer, never on its own. A reconnect
+	// replays messages this client already has, and an older one taking the
+	// row said the topic's last word was something said before the word the
+	// row was already showing — while the pointer, one line up, correctly
+	// refused to move.
 	if msg.ID > topic.TopMessageID {
 		topic.TopMessageID = msg.ID
+		topic.LastMessage = msg
 	}
-	topic.LastMessage = msg
 
 	// refreshList rather than markDirty: the preview, the time and the
 	// badge are all built in topicItems, so redrawing the rows the list
 	// already holds would show the message nowhere.
+	m.refreshList()
+}
+
+// TopicRead clears a topic's badge and moves its read pointer, the way
+// [telegram.ChatMarkedReadMsg] does both for a chat in the store.
+//
+// chatID is the topic's SYNTHETIC chat ID, for TopicMessage's reason: the
+// mark is published under the ID the reader's thread was keyed by, and only
+// the app knows that such an ID names a topic at all, so it calls this.
+//
+// The rule is the store's own (store.MarkReadUpTo), applied to the topic's
+// numbers: the pointer moves forward and never back, because reads arrive
+// out of order and an older one must not make read messages count again;
+// and the count goes to zero only when the mark has reached the newest
+// message the row knows of, because a partial read has left something
+// unread.
+//
+// Without it nothing anywhere took a topic's count DOWN. TopicMessage put
+// arrivals on it, a topic read to the end kept every one of them, and three
+// more arriving while the reader read them made it six.
+func (m *Model) TopicRead(chatID int64, maxID int64) {
+	topic := m.topicByChat(chatID)
+	if topic == nil {
+		return
+	}
+
+	if maxID > topic.ReadInboxMaxID {
+		topic.ReadInboxMaxID = maxID
+	}
+	if maxID >= topic.TopMessageID {
+		topic.UnreadCount = 0
+	}
+
+	// refreshList rather than markDirty, for TopicMessage's reason: the
+	// badge is built in topicItems, so redrawing the rows the list already
+	// holds would leave it on screen.
 	m.refreshList()
 }
 

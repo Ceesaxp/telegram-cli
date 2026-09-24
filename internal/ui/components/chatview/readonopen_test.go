@@ -100,6 +100,74 @@ func TestOpeningAChatWhileBlurredMarksItReadOnFocus(t *testing.T) {
 	}
 }
 
+// unattendedChat is unreadChat with the drill-in's open: the chat is in the
+// thread, and the reader is somewhere else.
+func unattendedChat(readUpTo int64, unread int32) Model {
+	m := unreadChat(readUpTo, unread)
+	m.OpenChat(testChatID, "Go Serbia")
+	m.NoteOpenUnattended()
+	return m
+}
+
+// A forum's drill-in points the thread at the forum's flat stream while the
+// reader goes on standing in the topic list (docs/topics.md, "Resolved" 2).
+// Nobody opened that conversation to read it, and reading it reads every
+// topic in the forum at once — every badge the topic list was drawn to
+// show, gone before a word of any of them had been read.
+func TestAnOpenTheReaderWasNotTakenToMarksNothingRead(t *testing.T) {
+	m := unattendedChat(3, 2)
+
+	m, cmd := m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if cmd != nil || m.readFlushPending || m.pendingReadID != 0 {
+		t.Fatalf("an open the reader was not taken to scheduled a receipt: cmd=%v, flush pending=%v, pendingReadID=%d",
+			cmd != nil, m.readFlushPending, m.pendingReadID)
+	}
+}
+
+// Nor does what arrives while it sits there. The drill-in that withheld
+// only its first receipt marked the whole forum read on the next message,
+// which is the same defect one keystroke later.
+func TestAMessageArrivingInAnUnattendedChatMarksNothingRead(t *testing.T) {
+	m := unattendedChat(3, 2)
+	m, _ = m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+
+	m, cmd := m.Update(telegram.NewMessageMsg{Message: textMessage(6, 200, "and another")})
+
+	if cmd != nil || m.readFlushPending || m.pendingReadID != 0 {
+		t.Fatalf("a message arriving in an unattended chat scheduled a receipt: cmd=%v, flush pending=%v, pendingReadID=%d",
+			cmd != nil, m.readFlushPending, m.pendingReadID)
+	}
+}
+
+// And the withholding ends when the reader comes to the thread: from then
+// on what they are shown they have read.
+func TestTakingTheFocusEndsTheWithholding(t *testing.T) {
+	m := unattendedChat(3, 2)
+	m, _ = m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+
+	m.SetFocused(true)
+	m, _ = m.Update(telegram.NewMessageMsg{Message: textMessage(6, 200, "and another")})
+
+	if !m.readFlushPending || m.pendingReadID != 6 {
+		t.Fatalf("a message arriving after the reader came to the thread scheduled no receipt: flush pending=%v, pendingReadID=%d",
+			m.readFlushPending, m.pendingReadID)
+	}
+}
+
+// The withholding describes one open, not the panel: the next chat the
+// reader is actually taken to — the topic they press Enter on — is read as
+// ever.
+func TestOpeningAChatAfterAnUnattendedOneMarksItRead(t *testing.T) {
+	m := unattendedChat(3, 2)
+	m.OpenChat(testChatID, "nadia")
+
+	m, _ = m.Update(historyPage(m, 0, 5, 4, 3, 2, 1))
+	if !m.readFlushPending || m.pendingReadID != 5 {
+		t.Fatalf("the open after an unattended one scheduled no receipt: flush pending=%v, pendingReadID=%d",
+			m.readFlushPending, m.pendingReadID)
+	}
+}
+
 // A search hit, a t.me link or a reply jump opens the chat at an older
 // message. The newest ones are below the fold and the reader has not seen
 // them, so nothing is marked read.

@@ -88,7 +88,7 @@ the shipped defaults.
 | `Esc` | Close overlay, else step back |
 | `J` / `K` | Open the next / previous chat outright — unlike the chat list's own `j`/`k`, which move the cursor and open nothing |
 | `u` | Open the next chat with unread messages: down from the cursor within the active folder, wrapping once. Says so rather than moving when nothing is unread |
-| `]` / `[` | Next / previous folder — from **both** browsing panels |
+| `]` / `[` | Next / previous folder — from **both** browsing panels. Inert while the chat list is drilled into a forum: a forum's topics are in no folder, and switching one there only announced itself on the way back out |
 | `c` | Toggle the contacts overlay |
 | `Ctrl+G` | Search all chats (not while composing) |
 | `:` | Command palette (not while composing) |

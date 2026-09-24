@@ -173,6 +173,50 @@ func TestEnteringAForumTheFirstTimeOpensTheForum(t *testing.T) {
 	}
 }
 
+// Entering a forum marks NOTHING read.
+//
+// The flat stream the drill-in puts in the thread is the whole forum, so a
+// read receipt for it is a receipt for every topic at once: the badges the
+// topic list was drawn to show all go to zero, on the server and on the
+// reader's phone, before a word of any of them has been read. The thread is
+// told this is an open the reader was not taken to, and withholds the read
+// (see [chatview.Model.OpenChatUnattended]); the chatview package's own
+// readonopen_test.go covers what that withholding is.
+func TestEnteringAForumMarksNothingRead(t *testing.T) {
+	m := enterForum(t, forumModel(t, &fakeForums{topics: goSerbiaTopics()}))
+
+	if got := m.chatView.ChatId(); got != testForumID {
+		t.Fatalf("the thread shows %d, want the forum %d", got, testForumID)
+	}
+	if !m.chatView.UnattendedOpenForTest() {
+		t.Error("the drill-in opened the forum as a chat the reader was taken to, " +
+			"which reads every topic in it at once")
+	}
+}
+
+// The counterpart, and the behaviour that must not move: a chat the reader
+// chose is a chat the reader is reading.
+func TestOpeningAnOrdinaryChatIsStillARead(t *testing.T) {
+	m := forumModel(t, &fakeForums{topics: goSerbiaTopics()})
+
+	m, _ = deliver(t, m, chatlist.ChatSelectedMsg{ChatId: testPlainChatID})
+
+	if m.chatView.UnattendedOpenForTest() {
+		t.Error("an ordinary chat opened by Enter withheld its read receipt")
+	}
+}
+
+// And a topic is a chat the reader chose, so opening one reads it.
+func TestOpeningATopicIsStillARead(t *testing.T) {
+	m := enterForum(t, forumModel(t, &fakeForums{topics: goSerbiaTopics()}))
+
+	m, _ = deliver(t, m, chatlist.TopicSelectedMsg{Topic: jobsTopic()})
+
+	if m.chatView.UnattendedOpenForTest() {
+		t.Error("a topic opened by Enter withheld its read receipt")
+	}
+}
+
 func TestReenteringAForumOpensTheLastTopicRead(t *testing.T) {
 	m := enterForum(t, forumModel(t, &fakeForums{topics: goSerbiaTopics()}))
 	m, _ = deliver(t, m, chatlist.TopicSelectedMsg{Topic: jobsTopic()})
