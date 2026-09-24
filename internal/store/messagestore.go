@@ -1,6 +1,7 @@
 package store
 
 import (
+	"log"
 	"slices"
 	"sort"
 	"sync"
@@ -69,6 +70,13 @@ func (s *MessageStore) Append(chatID int64, msg *telegram.Message) {
 
 // Prepend adds older messages to the beginning of the chat's message list and
 // returns the newly inserted messages that survived the cache policy.
+//
+// Its contract is that the page is entirely older than everything held:
+// that is what lets it place the page by which end it arrived at rather
+// than by ID. Repeats of what is already held are fine and expected — the
+// last page of a walk backwards is usually one — but anything genuinely
+// newer is refused, and [Merge] is the method for that shape. See
+// refusesLocked for why refusing rather than coping.
 func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegram.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,6 +95,9 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 			seen[m.ID] = struct{}{}
 		}
 	}
+	if s.refusesLocked(chatID, toAdd) {
+		return nil
+	}
 
 	combined := make([]*telegram.Message, 0, len(toAdd)+len(existing))
 	combined = append(combined, toAdd...)
@@ -102,6 +113,35 @@ func (s *MessageStore) Prepend(chatID int64, msgs []*telegram.Message) []*telegr
 		return nil
 	}
 	return append([]*telegram.Message(nil), toAdd[dropped:]...)
+}
+
+// refusesLocked reports whether toAdd breaks [Prepend]'s contract, and says
+// so in the log when it does.
+//
+// A message that is not older than the oldest one held has no business
+// being placed at the oldest end, and placing it there anyway is a bug
+// that reads as a missing message: it lands above the entire history,
+// where a reader sitting at the bottom never sees it, and it is the first
+// thing the background cap cuts off the front. The whole page goes rather
+// than the offending message alone — a page that straddles the cache is a
+// caller asking the wrong method, not a page with one bad row in it.
+//
+// Refusing loses the page, which is bad; silently reordering the thread
+// would be worse, because it looks like nothing happened. A page that is
+// newer, or that straddles, belongs in [Merge], which places by ID.
+func (s *MessageStore) refusesLocked(chatID int64, toAdd []*telegram.Message) bool {
+	oldest := s.oldestConfirmedLocked(chatID)
+	if oldest == 0 {
+		return false
+	}
+	for _, m := range toAdd {
+		if m.ID >= oldest {
+			log.Printf("store: chat %d refused a prepended page: message %d is not older than the oldest message cached (%d); a page of that shape belongs in Merge",
+				chatID, m.ID, oldest)
+			return true
+		}
+	}
+	return false
 }
 
 // Merge folds a freshly fetched page into whatever is cached, wherever each
@@ -451,13 +491,23 @@ func trimNewest(msgs []*telegram.Message, maxSize int) []*telegram.Message {
 func (s *MessageStore) OldestMessageId(chatID int64) int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.oldestConfirmedLocked(chatID)
+}
 
+// oldestConfirmedLocked is the lowest ID chatID's history holds among the
+// messages the server knows, or 0 for a chat holding none.
+//
+// It is the point every walk backwards starts from and the bound
+// [Prepend]'s contract is measured against, which is why the two read the
+// same value rather than each deciding for itself what "oldest" means.
+func (s *MessageStore) oldestConfirmedLocked(chatID int64) int64 {
+	var oldest int64
 	for _, m := range s.messages[chatID] {
-		if m.ID > 0 {
-			return m.ID
+		if m.ID > 0 && (oldest == 0 || m.ID < oldest) {
+			oldest = m.ID
 		}
 	}
-	return 0
+	return oldest
 }
 
 // Count returns the number of cached messages for a chat.

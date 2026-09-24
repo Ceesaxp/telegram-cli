@@ -1,6 +1,8 @@
 package store
 
 import (
+	"log"
+	"strings"
 	"testing"
 
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
@@ -66,6 +68,78 @@ func TestPrependReportsOnlyNewSurvivingMessages(t *testing.T) {
 	if got := messageIDs(s.Get(1)); len(got) != 3 || got[0] != 3 || got[2] != 5 {
 		t.Fatalf("background cache = %v, want [3 4 5]", got)
 	}
+}
+
+// Prepend's contract is that the page is entirely older than what is held.
+// Handed the newest page instead — which is what a reopen of a cached chat
+// fetches — it used to place the one message that arrived while the reader
+// was away at the OLDEST end, above the whole history, where a reader
+// sitting at the bottom never saw it. It refuses such a page now, so the
+// mistake is a page that visibly does not arrive rather than a thread
+// that silently reads in the wrong order.
+func TestPrependRefusesAPageThatIsNotOlderThanTheCache(t *testing.T) {
+	const chatID = int64(7)
+	s := NewMessageStore()
+	s.Activate(chatID)
+	s.Prepend(chatID, page(chatID, 1, 2, 3, 4, 5)) // a first visit
+
+	complaints := captureLog(t)
+
+	// Reopening refetches the newest page; 6 arrived while away.
+	inserted := s.Prepend(chatID, page(chatID, 1, 2, 3, 4, 5, 6))
+
+	if got, want := ids(s.Get(chatID)), []int64{1, 2, 3, 4, 5}; !equalIDs(got, want) {
+		t.Fatalf("history after a refused page = %v, want %v", got, want)
+	}
+	if len(inserted) != 0 {
+		t.Fatalf("inserted = %v, want none: 6 is newer than the cache and Prepend cannot place it", ids(inserted))
+	}
+	// Refusing must not be another kind of silence: the log names the
+	// message and the method that should have been called instead.
+	if got := complaints.String(); !strings.Contains(got, "message 6") || !strings.Contains(got, "Merge") {
+		t.Fatalf("refusal logged %q, want it to name message 6 and Merge", got)
+	}
+}
+
+// Paging backwards is what Prepend is for, and a page that repeats what is
+// already held — the same request issued twice at the end of the history —
+// is the normal way that walk finishes, not a contract violation.
+func TestPrependAcceptsAnOlderPageAndItsOverlap(t *testing.T) {
+	const chatID = int64(7)
+	s := NewMessageStore()
+	s.Activate(chatID)
+	s.Prepend(chatID, page(chatID, 51, 52, 53))
+
+	inserted := s.Prepend(chatID, page(chatID, 48, 49, 50, 51))
+	if got, want := ids(inserted), []int64{48, 49, 50}; !equalIDs(got, want) {
+		t.Fatalf("inserted = %v, want %v", got, want)
+	}
+	if got := ids(s.Prepend(chatID, page(chatID, 48, 49, 50, 51))); len(got) != 0 {
+		t.Fatalf("a page of pure repeats inserted %v, want nothing", got)
+	}
+	if got, want := ids(s.Get(chatID)), []int64{48, 49, 50, 51, 52, 53}; !equalIDs(got, want) {
+		t.Fatalf("history after paging backwards = %v, want %v", got, want)
+	}
+}
+
+// page is a chat's history oldest first, which is the order Prepend and
+// Merge are both handed.
+func page(chatID int64, msgIDs ...int64) []*telegram.Message {
+	msgs := make([]*telegram.Message, 0, len(msgIDs))
+	for _, id := range msgIDs {
+		msgs = append(msgs, storedMessage(chatID, id))
+	}
+	return msgs
+}
+
+// captureLog redirects the standard logger for the duration of a test.
+func captureLog(t *testing.T) *strings.Builder {
+	t.Helper()
+	var buf strings.Builder
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
 }
 
 func TestReplaceMessageIDAlwaysRepairsBackgroundCap(t *testing.T) {
