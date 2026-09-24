@@ -35,6 +35,37 @@ func commentsFromTG(r tg.MessageReplies) *Comments {
 	return comments
 }
 
+// replyTargetsFromTG reads a reply header for the two things it can name:
+// the message this one answers, and the forum topic it is filed under.
+//
+// The two share a field, which is why this cannot be a copy. In a forum
+// every ordinary message carries a reply header, and one that answers
+// nothing reports its topic in `reply_to_msg_id` — the same field a real
+// reply uses for the message it quotes. Taking that id at face value put a
+// reply quote under every message in a forum, pointing at a topic's root
+// message that the store has almost never seen.
+//
+// This is TDLib's rule (`MessageReplyHeader.cpp`, `MessageTopic.cpp`). The
+// `forum_topic` flag decides: without it the header is only ever a reply,
+// which is also what makes a channel-discussion comment read correctly —
+// those set `reply_to_top_id` without the flag, and their top id is a
+// thread, not a topic.
+func replyTargetsFromTG(h tg.MessageReplyHeaderClass) (replyToID, topicID int64) {
+	header, ok := h.(*tg.MessageReplyHeader)
+	if !ok || header == nil {
+		return 0, 0
+	}
+
+	msgID, _ := header.GetReplyToMsgID()
+	if !header.ForumTopic {
+		return int64(msgID), 0
+	}
+	if topID, ok := header.GetReplyToTopID(); ok {
+		return int64(msgID), int64(topID)
+	}
+	return 0, int64(msgID)
+}
+
 // DiscussionMessage finds where a channel post's comments live: the chat
 // and the message inside it that the comments hang off.
 //
