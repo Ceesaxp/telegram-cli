@@ -1,10 +1,10 @@
 # Forum topics — spec
 
-Status: **proposal** (2026-09-23). Nothing here is built. The protocol
-facts in "What Telegram actually does" were researched against
-core.telegram.org/api/forum, TDLib and gotd v0.161 and are cited; the
-design decisions are this document's own and are open to revision until
-the first wave lands.
+Status: **built** (waves 0–2, 2026-09-24). The protocol facts in "What
+Telegram actually does" were researched against core.telegram.org/api/forum,
+TDLib and gotd v0.161 and are cited. "As built" at the end records what the
+implementation decided where this document left room, and what is still
+open.
 
 A forum is a supergroup whose messages are filed under topics. tele-tui
 today sees only the flat stream: every message from every topic, in one
@@ -198,7 +198,7 @@ header (plain post, and reply inside a topic), `readDiscussion` on open
 and on arrival, handling `updateReadChannelDiscussionInbox/Outbox`, the
 closed-topic rule and the `TOPIC_CLOSED` error, drafts per topic.
 
-**Wave 3 — polish.** `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>`
+**Wave 3 — polish** (not built). `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>`
 links (the refusal in `tme.go` goes away), pinned ordering and
 `updatePinnedForumTopic(s)`, topic create/edit/delete service messages
 refreshing the list via `getForumTopicsByID`, per-topic mention and
@@ -234,3 +234,42 @@ per-topic notification settings; custom emoji topic icons.
 3. **Waves 1 and 2 ship together.** Reading a topic while replies land in
    General would be worse than today's flat view, so posting is not
    deferred to a later release.
+
+## As built
+
+The waves landed on `feat/forum-topics`; `git log --oneline` there is the
+record. What the implementation decided, beyond what is above:
+
+- **The band starts at `1<<48`.** Every `constant.TDLibPeerID` range is
+  either negative or ends at `MaxTDLibUserID` = `(1<<40)-1`, so a synthetic
+  ID answers false to `IsUser`, `IsChat`, `IsChannel` and `IsMonoforum`.
+  That matters because `ViewMessages`, `DeleteMessages`, `GetMessages` and
+  `ReadMentions` pick their RPC on `IsChannel`: an ID that answered yes
+  would be routed as a channel that does not exist, while one that answers
+  no takes the peer path, where `inputPeer` refuses it by name.
+- **Publish under the ID the caller used.** Anything this package announces
+  about a topic — a sent message's echo, an arriving copy, a read mark, a
+  reaction — carries the synthetic ID, because that is what the store, the
+  row and the open thread are keyed by. `publishSent` and
+  `messageFiledUnderItsTopic` are the two places that translate.
+- **An arriving message is announced twice**, once under the forum and once
+  under the topic, and only for a forum whose topics this session has
+  listed: the forum's own row and flat stream still want it, and a forum
+  nobody opened has nothing keyed by its topics.
+- **The guard keeps two lists.** A method that takes a chat ID must
+  translate it; refusing is allowed only as a listed, argued decision.
+  Accepting "it reaches `inputPeer`, which refuses" as handled is what hid
+  reactions, pinning, editing and forwarding being broken inside a topic
+  until late in the work.
+- **A read from another device is published as a mark, not a read-inbox.**
+  The discussion updates carry no count — TDLib passes -1 and keeps its own
+  — and a read-inbox carries one the store believes, so a phone-side read
+  of three old messages would have zeroed the badge.
+- **The topic sigil** takes Telegram's six icon colours through the
+  palette's roles; pink and red share the one warm red rather than
+  inventing a sixth. A closed topic is marked the way a muted chat is.
+
+Still open, recorded in `TODO.md`: per-topic notification settings (a topic
+silenced on the phone still rings here), `view_forum_as_messages`, custom
+emoji topic icons, `u` walking a forum's unread topics, draft marks on
+topic rows, and wave 3 in full.
