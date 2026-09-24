@@ -277,13 +277,18 @@ func (c *Client) EditTextMessageWithMentions(chatID int64, messageID int64, text
 // The split is [Client.GetMessages]'s, for the same reason and against the
 // same hole: a topic's messages belong to the forum's channel, and the
 // peerless call the unsplit branch would take deletes by the account's own
-// numbering.
+// numbering. An ID the split could not translate is refused outright rather
+// than carried on with — see unallocatedTopic for why the refusal cannot be
+// left to inputPeer here.
 func (c *Client) DeleteMessages(chatID int64, messageIDs []int64, revoke bool) error {
 	if len(messageIDs) == 0 {
 		return nil
 	}
 
 	real, _ := c.splitTopic(chatID)
+	if err := refuseTopic(real, unallocatedTopic); err != nil {
+		return fmt.Errorf("delete messages: %w", err)
+	}
 
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -325,9 +330,23 @@ func (c *Client) DeleteMessages(chatID int64, messageIDs []int64, revoke bool) e
 // Channel deletions name their chat; non-channel ones carry ChatId 0,
 // because the corresponding server update has no peer and the store
 // resolves them via DeleteFromAll.
+//
+// A forum topic names its chat too, and it has to be asked for separately:
+// a synthetic chat ID answers NO to IsChannel — deliberately, so that a
+// stray one takes the peer path and is refused there — so the kind test
+// alone left a deletion in a topic carrying no chat at all. Zero is not
+// "no chat" to the thread, it is EVERY chat, and message IDs collide
+// freely between chats: deleting message 4521 in a topic took message 4521
+// out of every other conversation loaded that happened to have one.
+//
+// The ID published is the caller's, which for a topic is the synthetic one
+// — the same rule publishSent and messageFiledUnderItsTopic follow, and for
+// the same reason: the thread, the row and the store are all keyed by it.
+// The forum's own copy of the message is left to the server's echo, which
+// announces the deletion for the forum and for its topics alike.
 func deletedMsgFor(chatID int64, messageIDs []int64) MessageDeletedMsg {
 	msg := MessageDeletedMsg{MessageIds: messageIDs}
-	if constant.TDLibPeerID(chatID).IsChannel() {
+	if isSyntheticChatID(chatID) || constant.TDLibPeerID(chatID).IsChannel() {
 		msg.ChatId = chatID
 	}
 	return msg
@@ -371,13 +390,18 @@ func (c *Client) GetMessage(chatID, messageID int64) (*Message, error) {
 // own numbering, so the split has to come before the branch below: a
 // synthetic chat ID is not a channel, and the peerless call it would
 // otherwise take names no chat at all and would answer with whatever the
-// account's own numbering has at those IDs.
+// account's own numbering has at those IDs. An ID the split could not
+// translate is refused for the same reason — that branch resolves no peer,
+// so nothing downstream would ever say no to it.
 func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, error) {
 	if len(messageIDs) == 0 {
 		return nil, nil
 	}
 
 	real, topicID := c.splitTopic(chatID)
+	if err := refuseTopic(real, unallocatedTopic); err != nil {
+		return nil, fmt.Errorf("get messages: %w", err)
+	}
 
 	ctx, cancel := opCtx()
 	defer cancel()

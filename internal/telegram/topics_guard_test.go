@@ -111,6 +111,132 @@ func TestEveryChatIDIsTranslatedOrRefusedOnPurpose(t *testing.T) {
 	}
 }
 
+// chatIDKindGuards are the calls that make it safe to ask what KIND of chat
+// an ID names: the split that turns a topic into its forum, and the two
+// refusals that say no to one.
+var chatIDKindGuards = map[string]bool{
+	"splitTopic":        true,
+	"isSyntheticChatID": true,
+	"refuseTopic":       true,
+}
+
+// Nothing asks what kind of chat the CALLER'S chat ID names.
+//
+// The guard above proves splitTopic is called. It does not prove the
+// untranslated ID stops being used afterwards, and that is exactly how a
+// deletion inside a topic stayed broken through a whole wave: DeleteMessages
+// split its ID for the request and then asked constant.TDLibPeerID(chatID)
+// — the ARGUMENT, not the split result — whether it was a channel, to
+// decide what to announce. A synthetic ID answers no to that, as it answers
+// no to everything, so the deletion went out naming no chat, and no chat
+// means every chat to the store.
+//
+// The question is only ever answerable about a peer, so it may only be
+// asked of a value the split produced, or in a function that has said what
+// a topic gets. Deliberately narrow: IsChannel is the test that picks
+// between an RPC that names a chat and one that does not, and between a
+// deletion that names a chat and one that does not, which is the whole of
+// the class. A conversion for any other purpose — resolving a peer,
+// narrowing to a plain ID — is left to the guard above and to inputPeer.
+func TestTheKindOfAChatIDIsNeverAskedOfTheCallersOwnID(t *testing.T) {
+	pkg := parsePackageForGuard(t)
+
+	var asked int
+	for name, fn := range pkg.funcs {
+		for _, param := range kindTestsOnParameters(fn.decl) {
+			asked++
+			if mentionsAny(fn.decl, chatIDKindGuards) {
+				continue
+			}
+			t.Errorf("%s asks whether its own %s is a channel, and a forum topic's "+
+				"chat ID answers no to that the way it answers no to everything. "+
+				"Ask the split result instead, or say in %s what a topic gets",
+				name, param, name)
+		}
+	}
+	if asked == 0 {
+		t.Error("no call asks the kind of a chat-ID parameter anywhere in the " +
+			"package, so this guard held nothing. Either the scan is looking at " +
+			"the wrong thing, or the question is gone and so should this test be")
+	}
+}
+
+// kindTestsOnParameters names the chat-ID parameters a function asks
+// constant.TDLibPeerID(...).IsChannel() about.
+func kindTestsOnParameters(fn *ast.FuncDecl) []string {
+	params := chatIDParameters(fn)
+	if len(params) == 0 {
+		return nil
+	}
+
+	var out []string
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "IsChannel" {
+			return true
+		}
+		if arg, ok := tdlibPeerIDArgument(sel.X); ok && params[arg] {
+			out = append(out, arg)
+		}
+		return true
+	})
+	return out
+}
+
+// tdlibPeerIDArgument is the identifier a constant.TDLibPeerID conversion
+// was applied to, and whether the expression is such a conversion at all.
+func tdlibPeerIDArgument(expr ast.Expr) (string, bool) {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return "", false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "TDLibPeerID" {
+		return "", false
+	}
+	id, ok := call.Args[0].(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	return id.Name, true
+}
+
+// chatIDParameters is the set of int64 parameters named for a chat ID.
+func chatIDParameters(fn *ast.FuncDecl) map[string]bool {
+	out := make(map[string]bool)
+	for _, field := range fn.Type.Params.List {
+		id, ok := field.Type.(*ast.Ident)
+		if !ok || id.Name != "int64" {
+			continue
+		}
+		for _, name := range field.Names {
+			if strings.Contains(strings.ToLower(name.Name), "chatid") {
+				out[name.Name] = true
+			}
+		}
+	}
+	return out
+}
+
+// mentionsAny reports whether a function names any of these calls anywhere
+// in its body — inside an if, a branch, anywhere. "Anywhere" is the right
+// strength here: the question is whether the function has DEALT with a
+// synthetic ID at all, not whether it deals with one on every path.
+func mentionsAny(fn *ast.FuncDecl, names map[string]bool) bool {
+	var found bool
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && names[id.Name] {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 // And a refuser still refuses, because everything above leans on it:
 // "reaches inputPeer" is only a safe answer while inputPeer says no to a
 // synthetic ID. Deleting that check would leave every method above passing

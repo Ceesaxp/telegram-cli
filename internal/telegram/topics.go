@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/gotd/td/tg"
@@ -201,23 +202,71 @@ func (r *topicRegistry) refFor(id int64) (topicRef, bool) {
 // — is what the server believes right now, and a listing is a complete
 // statement about the topic rather than a patch to one. Nothing here is
 // persisted, for the reason the type's own comment gives.
+//
+// A COPY is stored, not the caller's record. [Client.ForumTopics] hands its
+// topics to the UI, and the UI owns them from there — it writes an arriving
+// message and the unread count it implies onto the row's topic, from the
+// goroutine that update arrived on — while [Client.topicChat] reads the
+// record from whichever goroutine opened a chat, holding no lock by then.
+// One *Topic in both places is a data race between two ordinary things
+// happening at once, and there is no lock to take that would help: the two
+// sides are in different packages. A record that nothing mutates after it
+// is stored needs none.
+//
+// The copy is shallow, so both records point at the same LastMessage. A
+// message is read-only here once converted — the same sharing
+// [Client.messageFiledUnderItsTopic] relies on for the copy it files under
+// a topic — and what the UI overwrites is the FIELD, which is its own.
 func (r *topicRegistry) remember(id int64, t *Topic) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.records == nil {
 		r.records = make(map[int64]*Topic)
 	}
-	r.records[id] = t
+	stored := *t
+	r.records[id] = &stored
 }
 
 // recall returns the last listing's record for a synthetic chat ID, and
 // whether there is one. An allocated ID that was never listed answers
 // false: the ID exists, the topic behind it was never described.
+//
+// The record is the registry's own and must not be written to. Nothing
+// mutates one after it is stored, which is exactly what makes reading it
+// here without the lock safe — see [topicRegistry.remember].
 func (r *topicRegistry) recall(id int64) (*Topic, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	t, ok := r.records[id]
 	return t, ok
+}
+
+// topicChatIDsOf is every chat ID this session has allocated for a topic of
+// one forum, in allocation order.
+//
+// It is how an update that cannot say WHICH topic it is about reaches the
+// topics at all: a channel deletion carries message IDs and a channel, and
+// the schema has no field for a topic, so the only honest answer is every
+// topic there is a chat for. The IDs are the forum's own numbering and a
+// message is in exactly one topic, so such an announcement is right for the
+// topic that held the message and a no-op for the rest.
+//
+// Sorted, and the band is allocated sequentially, so the order is the order
+// the topics were first seen. A map's own order changes between runs, and
+// an announcement sequence that changed with it would be untestable and
+// unreadable in a log for no gain.
+func (r *topicRegistry) topicChatIDsOf(chatID int64) []int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []int64
+	for id, ref := range r.refs {
+		if ref.chatID == chatID {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // markListed records that this session has listed chatID's topics.
@@ -331,6 +380,25 @@ func refuseTopic(chatID int64, because string) error {
 	}
 	return fmt.Errorf("chat %d is a forum topic: %s", chatID, because)
 }
+
+// unallocatedTopic is why a call refuses a chat ID that came back from
+// [Client.splitTopic] STILL SYNTHETIC.
+//
+// That is the deliberate answer for an ID the registry never allocated, and
+// it rests entirely on the ID stopping at [Client.inputPeer]. Most calls
+// resolve a peer and so it does — but the two that pick their RPC on
+// IsChannel pick it BEFORE any peer is asked for, and a synthetic ID
+// answers no to IsChannel like it answers no to everything. The branch they
+// take is the peerless one: messages.deleteMessages and messages.getMessages
+// take bare message IDs in the ACCOUNT'S own numbering, resolve nothing, and
+// so are never refused. A delete meant for a topic became a delete of
+// whatever the account has at those IDs.
+//
+// So those two say no here instead, and the sentence says what happened
+// rather than what is forbidden: the ID is from a previous session or from a
+// translation bug, and it names nothing this session can act on.
+const unallocatedTopic = "this session never allocated it, and nothing persists the " +
+	"registry — an ID from an earlier run, or from a translation bug, names no topic at all"
 
 // forumTopicsPageSize is how many topics one messages.getForumTopics asks
 // for. The server is free to answer with fewer than it was asked for even

@@ -645,3 +645,42 @@ func TestARelistingReplacesWhatTheTopicWas(t *testing.T) {
 			chat.UnreadCount)
 	}
 }
+
+// What the registry keeps is not what the caller got.
+//
+// ForumTopics hands its topics to the UI, and the UI owns them from there:
+// it writes an arriving message and the unread count it implies onto the
+// row's topic, from the goroutine the update arrived on. topicChat reads
+// the registry's record from whichever goroutine called GetChat, under no
+// lock at all — so one *Topic in both places is a data race between two
+// perfectly ordinary things happening at once, and -race catches it on a
+// message arriving while a topic is being opened.
+//
+// Remembering a copy is the cheapest honest fix, and it is honest because
+// of what the record IS: the last thing the server said about the topic.
+// The UI's edits to its own copy are not that, and a listing replaces the
+// record wholesale anyway.
+func TestMutatingAListedTopicDoesNotChangeWhatGetChatAnswers(t *testing.T) {
+	c, _, topic := listedForum(t)
+
+	topic.Title = "renamed by the reader"
+	topic.UnreadCount = 99
+	topic.LastMessage = nil
+
+	chat, err := c.GetChat(topic.TopicChatID)
+	if err != nil {
+		t.Fatalf("GetChat on a topic: %v", err)
+	}
+
+	if chat.Title != "Jobs" {
+		t.Errorf("Title = %q, want the listing's %q — the registry is holding the "+
+			"caller's own record", chat.Title, "Jobs")
+	}
+	if chat.UnreadCount != 12 {
+		t.Errorf("UnreadCount = %d, want the listing's 12", chat.UnreadCount)
+	}
+	if chat.LastMessage == nil {
+		t.Error("the topic's last message is gone from the registry because the " +
+			"caller cleared its own copy")
+	}
+}

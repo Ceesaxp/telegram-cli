@@ -257,6 +257,60 @@ func TestDeleteMessagesInAnOrdinaryChatIsUnchanged(t *testing.T) {
 	})
 }
 
+// A synthetic ID this session never allocated comes back from splitTopic
+// STILL SYNTHETIC, on purpose, so that inputPeer refuses it by name. That
+// is the whole safety net under the two calls above — and it is a net they
+// both jump over: they choose their RPC on IsChannel before any peer is
+// asked for, an unallocated synthetic ID answers no like every other one,
+// and the peerless branch they then take never resolves a peer at all.
+//
+// So the refusal has to be made here as well. Nothing reaches this today —
+// nothing persists a chat ID and the registry never evicts — but the whole
+// argument for handing the ID back untranslated is that it stops at a
+// refusal, and until now these two were where it did not.
+func TestAnUnallocatedTopicIDNeverReachesAPeerlessCall(t *testing.T) {
+	// Far above anything topicChatID has handed out in these tests, so it
+	// is synthetic and names nothing — an ID from a previous session, or
+	// from a translation bug.
+	stray := syntheticChatIDBase + 9999
+
+	t.Run("deleting", func(t *testing.T) {
+		c, inv := topicFetchClient(t)
+		published := publishing(c)
+
+		err := c.DeleteMessages(stray, []int64{412}, true)
+
+		if err == nil {
+			t.Fatal("deleted messages for a topic this session never allocated — " +
+				"messages.deleteMessages names no chat, so those IDs were deleted " +
+				"in the account's own numbering")
+		}
+		if len(inv.plainDeletes) != 0 || len(inv.channelDeletes) != 0 {
+			t.Errorf("made %d peerless and %d channel deletions, want none of either",
+				len(inv.plainDeletes), len(inv.channelDeletes))
+		}
+		if len(*published) != 0 {
+			t.Errorf("published %#v for a deletion that never happened", *published)
+		}
+	})
+
+	t.Run("fetching", func(t *testing.T) {
+		c, inv := topicFetchClient(t)
+
+		_, err := c.GetMessages(stray, []int64{412})
+
+		if err == nil {
+			t.Fatal("fetched messages for a topic this session never allocated — " +
+				"messages.getMessages names no chat, so it answered with whatever " +
+				"the account's own numbering has at those IDs")
+		}
+		if len(inv.plainFetches) != 0 || len(inv.channelFetches) != 0 {
+			t.Errorf("made %d peerless and %d channel fetches, want none of either",
+				len(inv.plainFetches), len(inv.channelFetches))
+		}
+	})
+}
+
 // The media rail asks for a chat's files, photos and pinned messages, and
 // in a topic that means the topic's — the forum's peer, with the topic as
 // the thread to search inside. Unsplit, the rail's call stopped at
