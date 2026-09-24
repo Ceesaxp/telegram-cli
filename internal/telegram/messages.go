@@ -1,6 +1,8 @@
 package telegram
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -14,6 +16,10 @@ import (
 // thread, or 0 for callers that draw nothing (the REST and MCP servers). It
 // is handed straight back on the success message so the thread knows which
 // row the confirmed message replaces.
+//
+// chatID may name a forum topic, and then the message is filed under that
+// topic and comes back belonging to it rather than to the forum — see
+// [Client.sendTargetFor] and [replyHeaderFor] for what that takes.
 func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, placeholderID int64) (*Message, error) {
 	msg, _, err := c.SendTextMessageWithMentions(chatID, text, nil, replyToMessageID, placeholderID)
 	return msg, err
@@ -27,7 +33,7 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, pl
 func (c *Client) SendTextMessageWithMentions(chatID int64, text string, mentions []MentionSpan, replyToMessageID, placeholderID int64) (*Message, int, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	target, err := c.sendTargetFor(ctx, chatID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send message: %w", err)
 	}
@@ -36,18 +42,16 @@ func (c *Client) SendTextMessageWithMentions(chatID int64, text string, mentions
 	// markdown changes formatting only, never preview behaviour.
 	body, entities, dropped := c.formatOutgoingWithMentions(ctx, text, mentions)
 	req := &tg.MessagesSendMessageRequest{
-		Peer:     peer,
+		Peer:     target.peer,
 		Message:  body,
 		Entities: entities,
 		RandomID: rand.Int63(),
 	}
-	if replyToMessageID != 0 {
-		req.ReplyTo = &tg.InputReplyToMessage{ReplyToMsgID: int(replyToMessageID)}
-	}
+	req.ReplyTo = replyHeaderFor(target.topicID, replyToMessageID)
 
 	updates, err := c.api.MessagesSendMessage(ctx, req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, 0, fmt.Errorf("send message: %w", topicSendError(err))
 	}
 
 	msg := messageFromUpdates(c, updates)
@@ -69,8 +73,127 @@ func (c *Client) SendTextMessageWithMentions(chatID int64, text string, mentions
 			msg.Date = int32(s.Date)
 		}
 	}
-	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
+	c.publishSent(target, msg, placeholderID)
 	return msg, dropped, nil
+}
+
+// generalTopicID is the General topic, which every forum has and none can
+// delete. It is the one topic that is named by NOT naming it: a send with
+// no reply header lands there, so it is stripped from the rule below
+// rather than sent.
+const generalTopicID int64 = 1
+
+// replyHeaderFor is the reply header a send carries, which is the one place
+// this package decides both what a message replies to and which topic it is
+// filed under.
+//
+// The rule, from core.telegram.org/api/forum and gotd's own note on the
+// field — top_msg_id "must contain the topic ID only when replying to
+// messages in forum topics different from the General topic":
+//
+//   - Outside a forum, the header is the reply and nothing else.
+//   - A plain post into a topic is a reply to the topic's root message,
+//     with no top_msg_id: that is what files it under the topic.
+//   - A reply inside a topic names the message replied to, and the topic
+//     on top, so a deleted target still lands in the right topic.
+//   - General takes neither. A plain send lands there by having no header
+//     at all, and a reply inside it is an ordinary reply.
+//
+// Text sends and media sends both need this and had a copy each, which was
+// one copy too many for a rule with two dimensions.
+func replyHeaderFor(topicID, replyToMessageID int64) tg.InputReplyToClass {
+	if topicID == generalTopicID {
+		topicID = 0
+	}
+
+	// What the message replies to: the target if there is one, and
+	// otherwise the topic's root, which is the plain post into a topic.
+	target := replyToMessageID
+	if target == 0 {
+		target = topicID
+	}
+	if target == 0 {
+		// Returned as a nil interface rather than a nil pointer: the
+		// request encodes the field whenever the interface is non-nil, and
+		// a typed nil would put an empty header on the wire.
+		return nil
+	}
+
+	header := &tg.InputReplyToMessage{ReplyToMsgID: int(target)}
+	// Only when the two differ, per the rule above: replying to the topic's
+	// own root message is the plain post, and naming the topic twice is
+	// what gotd's note explicitly rules out.
+	if topicID != 0 && target != topicID {
+		header.SetTopMsgID(int(topicID))
+	}
+	return header
+}
+
+// sendTarget is where a send is going: the peer Telegram is asked to put
+// the message in, the topic inside it, and the chat ID the CALLER named,
+// which for a topic is its synthetic ID and for everything else is the peer
+// again.
+//
+// The caller's ID is carried because the send has to hand it back. The
+// server answers with a message belonging to the forum, and the local echo
+// it replaces lives in the topic's own chat, so publishing the server's
+// answer as it stands would leave the echo unresolved and the message in
+// the forum's flat stream. See [Client.publishSent].
+type sendTarget struct {
+	peer    tg.InputPeerClass
+	chatID  int64
+	topicID int64
+}
+
+// sendTargetFor resolves the chat a send names into what the wire needs: a
+// topic's synthetic chat ID becomes its forum's peer and the topic inside
+// it, and every other chat ID becomes itself with no topic.
+//
+// This is the split chokepoint for every send path, which is why they
+// resolve their peer through it rather than calling inputPeer themselves.
+func (c *Client) sendTargetFor(ctx context.Context, chatID int64) (sendTarget, error) {
+	real, topicID := c.splitTopic(chatID)
+	peer, err := c.inputPeer(ctx, real)
+	if err != nil {
+		return sendTarget{}, err
+	}
+	return sendTarget{peer: peer, chatID: chatID, topicID: topicID}, nil
+}
+
+// publishSent announces a message this client just sent, under the chat ID
+// the caller sent it to.
+//
+// The rewrite is the whole point. A message sent to a topic comes back from
+// the server belonging to the forum — that is the peer it was sent to — but
+// the placeholder it replaces sits in the topic's chat, and so does the
+// reader. Published as the server wrote it, the echo would never resolve
+// and the message would appear in the forum's flat stream instead of the
+// topic being read.
+func (c *Client) publishSent(target sendTarget, msg *Message, placeholderID int64) {
+	if msg != nil && target.topicID != 0 {
+		msg.ChatID = target.chatID
+		msg.TopicID = target.topicID
+	}
+	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
+}
+
+// topicSendError turns Telegram's refusal of a send into a topic into
+// something a person can read, and leaves every other error alone.
+//
+// The text goes straight to the reader as a send failure, and TOPIC_CLOSED
+// is not a sentence. The cause is dropped rather than wrapped for the same
+// reason: what would be appended is "rpc error code 400: TOPIC_CLOSED",
+// which is the noise this exists to replace.
+func topicSendError(err error) error {
+	switch {
+	case tg.IsTopicClosed(err):
+		return errors.New("that topic is closed — only its creator and the group's admins can post in it")
+	case tg.IsTopicDeleted(err):
+		return errors.New("that topic has been deleted")
+	case tg.IsTopicIDInvalid(err):
+		return errors.New("Telegram does not know that topic — the topic list is out of date")
+	}
+	return err
 }
 
 // EditTextMessage edits a text message.
