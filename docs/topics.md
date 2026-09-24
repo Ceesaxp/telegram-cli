@@ -127,9 +127,10 @@ have taken, and at 72 columns there is no room for one at all.
   preference is honoured when it is set: `Enter` opens the flat stream and
   the topic list is one keystroke away. tele-tui does not offer to change
   the preference in the first wave.
-- **A closed topic** disables the composer and says why, from the local
-  rule above. `TOPIC_CLOSED` from the server is reported as a send
-  failure, not a crash.
+- **A closed topic** is marked on its row, and `TOPIC_CLOSED` from the
+  server is reported as a readable send failure rather than a crash.
+  Gating the composer on the local rule above is **not built** — see the
+  follow-ups in `TODO.md`.
 
 ## The model: a topic is a chat with a synthetic ID
 
