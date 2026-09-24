@@ -250,12 +250,17 @@ record. What the implementation decided, beyond what is above:
 - **Publish under the ID the caller used.** Anything this package announces
   about a topic — a sent message's echo, an arriving copy, a read mark, a
   reaction — carries the synthetic ID, because that is what the store, the
-  row and the open thread are keyed by. `publishSent` and
-  `messageFiledUnderItsTopic` are the two places that translate.
+  row and the open thread are keyed by. `publishSent`, `messagesFiledIn`,
+  `messageFiledUnderItsTopic` and `chatsForUpdate` are where it happens.
 - **An arriving message is announced twice**, once under the forum and once
   under the topic, and only for a forum whose topics this session has
   listed: the forum's own row and flat stream still want it, and a forum
-  nobody opened has nothing keyed by its topics.
+  nobody opened has nothing keyed by its topics. An edit, a reaction, a
+  poll vote and a typing notice are announced the same way — only one of
+  the two chats can be the open one, so the other is a switch that does
+  not match. A remote deletion carries no topic in the schema, so it goes
+  to the forum and to every listed topic of it; a channel message ID names
+  one message in one topic, so it is a no-op everywhere else.
 - **The guard keeps two lists.** A method that takes a chat ID must
   translate it; refusing is allowed only as a listed, argued decision.
   Accepting "it reaches `inputPeer`, which refuses" as handled is what hid
