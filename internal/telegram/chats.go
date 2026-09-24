@@ -377,12 +377,22 @@ func inputPeerFromEntities(p tg.PeerClass, e tg.Entities) (tg.InputPeerClass, bo
 // to the peer. Without it a chat outside the loaded dialog page would look
 // unmuted to everything downstream, and the first message from it would ring
 // — which is the whole reason anybody looks at this function.
+//
+// A forum topic is answered from the topic registry instead, with no round
+// trip at all — see [Client.topicChat]. It is why the split below throws the
+// forum away: this is one of the few methods where the topic's chat is the
+// whole answer rather than something to translate on the way to a request.
 func (c *Client) GetChat(chatID int64) (*Chat, error) {
+	real, _ := c.splitTopic(chatID)
+	if isSyntheticChatID(chatID) {
+		return c.topicChat(chatID)
+	}
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
+	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(real))
 	if err != nil {
-		return nil, fmt.Errorf("get chat %d: %w", chatID, err)
+		return nil, fmt.Errorf("get chat %d: %w", real, err)
 	}
 	return c.resolvedChat(ctx, peer)
 }

@@ -563,7 +563,12 @@ func (c *Client) inputPeer(ctx context.Context, chatID int64) (tg.InputPeerClass
 // is paid when a chat is opened rather than when the first message in it is
 // sent. It is best-effort: the resolution is purely to populate the cache,
 // so any error is dropped rather than surfaced.
+//
+// A topic warms the forum behind it. A topic has no peer of its own — that
+// is the whole point of the synthetic ID — and the peer its messages are
+// sent to is the forum's.
 func (c *Client) WarmPeer(chatID int64) {
+	chatID, _ = c.splitTopic(chatID)
 	go func() {
 		ctx, cancel := opCtx()
 		defer cancel()

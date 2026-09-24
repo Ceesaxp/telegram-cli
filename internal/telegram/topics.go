@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/gotd/td/tg"
@@ -55,6 +56,15 @@ type Topic struct {
 	// has filled it in — listing topics returns the messages separately
 	// from the topics themselves.
 	LastMessage *Message
+
+	// TopicChatID is the chat ID the rest of the client knows this topic
+	// by, allocated by [Client.topicChatID]. It is what the caller acts
+	// on: ChatID above names the FORUM, and opening a topic, reading it
+	// or posting to it all take the topic's own ID.
+	//
+	// Zero until a listing allocates one, because [topicFromTG] converts a
+	// record without a client to allocate from. See [Client.ForumTopics].
+	TopicChatID int64
 }
 
 // topicFromTG converts a forum topic record into the domain type.
@@ -131,6 +141,19 @@ type topicRegistry struct {
 	ids  map[topicRef]int64
 	refs map[int64]topicRef
 
+	// records is the last thing the server said about each topic, by
+	// synthetic chat ID. GetChat answers from it: a topic is not a peer,
+	// so there is nothing to resolve and nowhere else the title and the
+	// counters could come from.
+	records map[int64]*Topic
+
+	// listed names the forums this session has listed the topics of. It is
+	// how an arriving message can be routed to a topic's store rather than
+	// the forum's: outside a listed forum there are no topic stores to
+	// route to, and guessing would file the message under an ID nothing
+	// has ever drawn.
+	listed map[int64]bool
+
 	// allocated is how many IDs have been handed out, and so the offset of
 	// the next one from the base. A counter rather than len(ids) because
 	// the two only agree while nothing is ever removed, and that is an
@@ -170,6 +193,89 @@ func (r *topicRegistry) refFor(id int64) (topicRef, bool) {
 	return ref, ok
 }
 
+// remember records what a listing said about one topic, replacing whatever
+// the previous listing said.
+//
+// Replacing rather than merging is the honest answer: every field on a
+// topic record — the counters, the read pointer, the title, the closed flag
+// — is what the server believes right now, and a listing is a complete
+// statement about the topic rather than a patch to one. Nothing here is
+// persisted, for the reason the type's own comment gives.
+func (r *topicRegistry) remember(id int64, t *Topic) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.records == nil {
+		r.records = make(map[int64]*Topic)
+	}
+	r.records[id] = t
+}
+
+// recall returns the last listing's record for a synthetic chat ID, and
+// whether there is one. An allocated ID that was never listed answers
+// false: the ID exists, the topic behind it was never described.
+func (r *topicRegistry) recall(id int64) (*Topic, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.records[id]
+	return t, ok
+}
+
+// markListed records that this session has listed chatID's topics.
+func (r *topicRegistry) markListed(chatID int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.listed == nil {
+		r.listed = make(map[int64]bool)
+	}
+	r.listed[chatID] = true
+}
+
+// hasListed reports whether this session has listed chatID's topics, and so
+// whether the topics of that forum are chats anything above knows about.
+func (r *topicRegistry) hasListed(chatID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listed[chatID]
+}
+
+// topicChat is the chat a forum topic IS, built from what the last listing
+// said about it.
+//
+// There is no round trip and there cannot be one: a topic names no peer, so
+// there is nothing to resolve and nowhere else a title or a counter could
+// come from. The listing is the source, the registry is where it is kept,
+// and this is the whole of the translation.
+//
+// The ID is the synthetic one it was asked about, not the forum's, because
+// the caller keys everything on it — the message store, the draft, the read
+// state, the jump stack. The title is the topic's alone: the thread header
+// composes "Forum › Topic" because a reader inside one wants both, and a
+// notification wants what the phone says, which is the topic.
+//
+// Muted is deliberately left alone. Per-topic notification settings exist
+// and this client does not read them yet, and of the two ways to be wrong,
+// a topic that rings when the reader silenced it is the one a messaging
+// client is allowed to pick — the same trade [peerMuted] makes.
+func (c *Client) topicChat(chatID int64) (*Chat, error) {
+	topic, ok := c.topics.recall(chatID)
+	if !ok {
+		return nil, fmt.Errorf("get chat %d: no forum topic is known by that ID — "+
+			"nothing persists the topic registry, so an ID from a previous session "+
+			"or from a topic nobody has listed names nothing", chatID)
+	}
+
+	return &Chat{
+		ID:                     chatID,
+		Type:                   ChatTypeSupergroup,
+		Title:                  topic.Title,
+		LastMessage:            topic.LastMessage,
+		UnreadCount:            topic.UnreadCount,
+		UnreadMentionsCount:    topic.UnreadMentionsCount,
+		UnreadReactionsCount:   topic.UnreadReactionsCount,
+		LastReadInboxMessageID: topic.ReadInboxMaxID,
+	}, nil
+}
+
 // topicChatID is the chat ID under which the rest of the client knows one
 // topic of one forum. Allocated on first ask and stable for the session.
 func (c *Client) topicChatID(chatID, topicID int64) int64 {
@@ -201,4 +307,167 @@ func (c *Client) splitTopic(chatID int64) (real, topic int64) {
 		return chatID, 0
 	}
 	return ref.chatID, ref.topicID
+}
+
+// forumTopicsPageSize is how many topics one messages.getForumTopics asks
+// for. The server is free to answer with fewer than it was asked for even
+// when more exist — the API page says so explicitly — which is why a short
+// page is NOT what ends the walk below.
+const forumTopicsPageSize = 100
+
+// maxForumTopicPages bounds the walk at 2000 topics, which is far more than
+// any forum a person reads has and small enough that hitting it costs a
+// couple of seconds rather than a wedged UI.
+//
+// It is the backstop, not the ordinary way to stop — the count and an empty
+// page are — and it is here because the other two are both things the
+// SERVER says. An offset it does not honour, or a count it never reaches,
+// turns a loop that trusts them into one that never ends, and a client that
+// hangs on a forum is worse than one that lists the first two thousand
+// topics of it.
+const maxForumTopicPages = 20
+
+// ForumTopics lists a forum's topics, walking the pages until it has them.
+//
+// chatID is split first, so asking a TOPIC for its forum's topics works:
+// that is the ordinary way back up out of one, and the topic's own ID
+// could never reach the wire anyway.
+//
+// Every topic comes back with a chat ID of its own, allocated here, and is
+// remembered in the registry — those two together are what let the caller
+// open a topic as a chat and what lets GetChat answer for it afterwards
+// without a round trip.
+//
+// One context covers the whole walk rather than one per page, so the
+// listing as a whole is bounded by opTimeout however many pages it takes.
+// That is the second wall around the same failure the page cap guards: the
+// cap bounds the requests, the deadline bounds the time.
+func (c *Client) ForumTopics(chatID int64) ([]*Topic, error) {
+	real, _ := c.splitTopic(chatID)
+
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	peer, err := c.inputPeer(ctx, real)
+	if err != nil {
+		return nil, fmt.Errorf("list topics: %w", err)
+	}
+
+	req := &tg.MessagesGetForumTopicsRequest{Peer: peer, Limit: forumTopicsPageSize}
+
+	var (
+		out []*Topic
+		// received counts the RECORDS the server sent, not the topics that
+		// survived conversion, because it is the count the server's own
+		// Count is comparable with. A page of deleted topics still moves
+		// the walk along even though it adds no rows.
+		received int
+	)
+	for range maxForumTopicPages {
+		resp, err := c.api.MessagesGetForumTopics(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("list topics: %w", err)
+		}
+		if len(resp.Topics) == 0 {
+			break
+		}
+		received += len(resp.Topics)
+		out = append(out, c.topicsFromPage(real, resp)...)
+
+		// A short page is deliberately NOT an end: this call is documented
+		// to return fewer topics than asked for whenever the server feels
+		// like it, so the usual "short page means done" rule would stop the
+		// walk in the middle of a large forum. Count is what says how many
+		// there are; a page with nothing on it is the backstop for a Count
+		// that overshoots.
+		if resp.Count > 0 && received >= resp.Count {
+			break
+		}
+		if !advanceForumTopics(req, resp) {
+			break
+		}
+	}
+
+	c.topics.markListed(real)
+	return out, nil
+}
+
+// advanceForumTopics moves the request on to the page after resp, and
+// reports whether there was anything to move it to.
+//
+// The cursor is the LAST topic of the page, all three offsets from that one
+// topic: its ID, its top message, and a date. Which date is the response's
+// to say — order_by_create_date means the list is ordered by when topics
+// were made, and the cursor is then in the topic's own date; otherwise the
+// order is by last message, and the date is that message's.
+//
+// The last topic that CONVERTED, rather than the last record, because a
+// forumTopicDeleted carries an ID and nothing else: there is no date and no
+// top message on one to build a cursor from. The deleted record is then
+// re-served on the next page and skipped again, which costs nothing.
+func advanceForumTopics(req *tg.MessagesGetForumTopicsRequest, resp *tg.MessagesForumTopics) bool {
+	var last *tg.ForumTopic
+	for _, record := range resp.Topics {
+		if raw, ok := record.(*tg.ForumTopic); ok {
+			last = raw
+		}
+	}
+	if last == nil {
+		return false
+	}
+
+	date := last.Date
+	if !resp.OrderByCreateDate {
+		// Falling back to the topic's own date when the message is not in
+		// the page: the messages beside a page are "related", so a deleted
+		// top message simply is not there. A zero date would ask for the
+		// newest topics again and walk the same page forever.
+		for _, m := range resp.Messages {
+			if m.GetID() != last.TopMessage {
+				continue
+			}
+			if full, ok := m.AsNotEmpty(); ok {
+				date = full.GetDate()
+			}
+			break
+		}
+	}
+
+	req.OffsetTopic = last.ID
+	req.OffsetID = last.TopMessage
+	req.OffsetDate = date
+	return true
+}
+
+// topicsFromPage converts one page of topic records, attaching each
+// topic's last message and allocating its chat ID.
+//
+// The server's order is kept as it stands. It already puts pinned topics
+// first, which is the order the topic list wants; sorting again here would
+// only risk disagreeing with what the phone shows.
+func (c *Client) topicsFromPage(forumID int64, page *tg.MessagesForumTopics) []*Topic {
+	messages := make(map[int64]tg.MessageClass, len(page.Messages))
+	for _, m := range page.Messages {
+		messages[int64(m.GetID())] = m
+	}
+
+	out := make([]*Topic, 0, len(page.Topics))
+	for _, record := range page.Topics {
+		// A forumTopicDeleted carries an ID and nothing else. It is there so
+		// a client holding a stale list can drop the topic; this client
+		// holds none between calls, so it is simply not a row.
+		raw, ok := record.(*tg.ForumTopic)
+		if !ok {
+			continue
+		}
+
+		topic := topicFromTG(forumID, raw)
+		if m, ok := messages[topic.TopMessageID]; ok {
+			topic.LastMessage = c.messageClassFromTG(m)
+		}
+		topic.TopicChatID = c.topicChatID(forumID, topic.ID)
+		c.topics.remember(topic.TopicChatID, topic)
+		out = append(out, topic)
+	}
+	return out
 }

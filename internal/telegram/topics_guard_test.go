@@ -31,12 +31,6 @@ var chatIDTranslators = map[string]bool{
 // no longer needs to be here, so a wave that lands cannot leave its name
 // behind.
 var topicUnawareMethods = map[string]string{
-	// Wave 1, reading: a topic's chat must answer from the topic
-	// registry rather than the server, which has never heard of it.
-	"GetChat":  "wave 1 — answers from the topic registry for a synthetic ID",
-	"OpenChat": "wave 1 — via GetChat",
-	// Wave 1: warming a peer for a topic should warm its forum.
-	"WarmPeer": "wave 1 — warms the forum behind the topic",
 	// Wave 1, history and message fetches. These three pick their RPC on
 	// IsChannel, and a synthetic ID answers no, so they take the
 	// peerless non-channel path: messages.getMessages /

@@ -204,3 +204,38 @@ func TestResolvingClearsTheFlag(t *testing.T) {
 		})
 	}
 }
+
+// Whether a supergroup is a forum is an identity fact — it is what the
+// channel record says about itself, exactly like the title — so a fetch
+// that reports it has to reach the store.
+//
+// It was not in the merged set, and the chats that suffer are precisely the
+// ones that matter: a chat first seen as a placeholder (an arriving message,
+// a folder's include list) is created without the flag, and the GetChat that
+// follows was the only chance to learn it. The forum then drew as an
+// ordinary supergroup and Enter opened the flat stream forever.
+func TestMergeCarriesTheForumFlagItFetched(t *testing.T) {
+	s := NewChatStore()
+	s.UpdateLastMessage(7, &telegram.Message{ID: 1, ChatID: 7})
+
+	fetched := peerChat()
+	fetched.Type = telegram.ChatTypeSupergroup
+	fetched.IsForum = true
+	s.Merge(fetched)
+
+	entry, _ := s.Get(7)
+	if !entry.Chat.IsForum {
+		t.Error("the fetched forum flag did not reach the store, so the chat " +
+			"has no topics to drill into")
+	}
+
+	// And the other way, for the same reason the mute flag is tested both
+	// ways: this is a real value the fetch reports, not a flag that may only
+	// ever be raised. Topics can be turned off on a supergroup.
+	plain := peerChat()
+	plain.Type = telegram.ChatTypeSupergroup
+	s.Merge(plain)
+	if entry, _ = s.Get(7); entry.Chat.IsForum {
+		t.Error("a fetch reporting an ordinary supergroup was ignored")
+	}
+}
