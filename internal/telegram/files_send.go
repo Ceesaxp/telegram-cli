@@ -284,6 +284,9 @@ func within(dir, path string) (string, bool) {
 //
 // placeholderID is the local echo the caller already drew for this send, so
 // the success message can name the row to swap; 0 when there is none.
+//
+// chatID may name a forum topic, as it may for [Client.SendTextMessage],
+// and every send below goes out through the same target and reply header.
 func (c *Client) SendFileMessage(chatID int64, path, caption string, replyToMessageID int64, placeholderID int64) (*Message, error) {
 	msg, _, err := c.SendFileMessageWithMentions(chatID, path, caption, nil, replyToMessageID, placeholderID)
 	return msg, err
@@ -296,12 +299,12 @@ func (c *Client) SendFileMessageWithMentions(chatID int64, path, caption string,
 	ctx, cancel := transferCtx()
 	defer cancel()
 
-	peer, inputFile, err := c.uploadForSend(ctx, chatID, path)
+	target, inputFile, err := c.uploadForSend(ctx, chatID, path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
 
-	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, path), caption, mentions, replyToMessageID, placeholderID)
+	msg, dropped, err := c.sendUploadedMedia(ctx, target, documentMedia(inputFile, path), caption, mentions, replyToMessageID, placeholderID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
@@ -329,7 +332,7 @@ func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, cap
 	ctx, cancel := transferCtx()
 	defer cancel()
 
-	peer, err := c.inputPeer(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
@@ -339,7 +342,7 @@ func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, cap
 		return nil, 0, fmt.Errorf("send file: upload %q: %w", name, err)
 	}
 
-	msg, dropped, err := c.sendUploadedMedia(ctx, peer, documentMedia(inputFile, name), caption, mentions, replyToMessageID, placeholderID)
+	msg, dropped, err := c.sendUploadedMedia(ctx, target, documentMedia(inputFile, name), caption, mentions, replyToMessageID, placeholderID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
@@ -411,33 +414,35 @@ func (c *Client) SendPhotoMessageWithMentions(chatID int64, path, caption string
 			float64(info.Size())/(1<<20))
 	}
 
-	peer, inputFile, err := c.uploadForSend(ctx, chatID, path)
+	target, inputFile, err := c.uploadForSend(ctx, chatID, path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send photo: %w", err)
 	}
 
 	media := &tg.InputMediaUploadedPhoto{File: inputFile}
 
-	msg, dropped, err := c.sendUploadedMedia(ctx, peer, media, caption, mentions, replyToMessageID, placeholderID)
+	msg, dropped, err := c.sendUploadedMedia(ctx, target, media, caption, mentions, replyToMessageID, placeholderID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send photo: %w", err)
 	}
 	return msg, dropped, nil
 }
 
-// uploadForSend resolves the target peer and uploads path to Telegram.
-func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (tg.InputPeerClass, tg.InputFileClass, error) {
+// uploadForSend resolves where the send is going and uploads path to
+// Telegram. The target carries the topic when the chat ID names one, which
+// the send itself needs and the upload does not.
+func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (chatTarget, tg.InputFileClass, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, nil, err
+		return chatTarget{}, nil, err
 	}
 	if info.IsDir() {
-		return nil, nil, fmt.Errorf("%q is a directory", path)
+		return chatTarget{}, nil, fmt.Errorf("%q is a directory", path)
 	}
 
-	peer, err := c.inputPeer(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
-		return nil, nil, err
+		return chatTarget{}, nil, err
 	}
 
 	// The file may already be up: StartUpload puts it on Telegram's
@@ -446,41 +451,39 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 	// retried here, synchronously, because the reason it failed (a dropped
 	// link, most often) is usually gone by now.
 	if file, cached, err := c.uploads.await(ctx, path); cached && err == nil {
-		return peer, file, nil
+		return target, file, nil
 	}
 
 	inputFile, err := c.uploadFile(ctx, path, c.uploads.nextGeneration())
 	if err != nil {
-		return nil, nil, fmt.Errorf("upload %q: %w", path, err)
+		return chatTarget{}, nil, fmt.Errorf("upload %q: %w", path, err)
 	}
-	return peer, inputFile, nil
+	return target, inputFile, nil
 }
 
-// sendUploadedMedia sends already-uploaded media to peer and publishes the
-// resulting message to the update stream. It also returns how many of the
-// caption's mentions were dropped.
-func (c *Client) sendUploadedMedia(ctx context.Context, peer tg.InputPeerClass, media tg.InputMediaClass, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
+// sendUploadedMedia sends already-uploaded media to the target and
+// publishes the resulting message to the update stream. It also returns how
+// many of the caption's mentions were dropped.
+func (c *Client) sendUploadedMedia(ctx context.Context, target chatTarget, media tg.InputMediaClass, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	body, entities, dropped := c.formatOutgoingWithMentions(ctx, caption, mentions)
 	req := &tg.MessagesSendMediaRequest{
-		Peer:     peer,
+		Peer:     target.peer,
 		Media:    media,
 		Message:  body,
 		Entities: entities,
 		RandomID: rand.Int63(),
 	}
-	if replyToMessageID != 0 {
-		req.ReplyTo = &tg.InputReplyToMessage{ReplyToMsgID: int(replyToMessageID)}
-	}
+	req.ReplyTo = replyHeaderFor(target.topicID, replyToMessageID)
 
 	updates, err := c.api.MessagesSendMedia(ctx, req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, topicSendError(err)
 	}
 
 	msg := messageFromUpdates(c, updates)
 	if msg == nil {
 		return nil, 0, fmt.Errorf("no message in response")
 	}
-	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
+	c.publishSent(target, msg, placeholderID)
 	return msg, dropped, nil
 }

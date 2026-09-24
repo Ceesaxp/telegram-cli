@@ -54,6 +54,16 @@ type Chat struct {
 	// Muted mirrors the peer's notification settings: an explicit
 	// silent flag or a mute-until date in the future.
 	Muted bool
+
+	// IsForum marks a supergroup whose messages are filed under topics
+	// rather than running in one stream. Only a supergroup can be one.
+	//
+	// It decides what opening the chat means: a forum drills into its
+	// topic list, and each topic is a chat of its own (see topics.go).
+	// It also decides what a message with no topic in its reply header
+	// means — in a forum that is the General topic, and outside one it
+	// means nothing at all. See Message.TopicID.
+	IsForum bool
 }
 
 // MessageSender identifies who sent a message.
@@ -99,6 +109,16 @@ type Message struct {
 	UnreadMention bool
 
 	ReplyToMessageID int64
+
+	// TopicID is the forum topic this message is filed under, as named by
+	// its reply header.
+	//
+	// Zero does not mean "no topic". In a forum it means General, which is
+	// topic 1 and which Telegram never names in a header; outside a forum
+	// it means nothing at all. Telling those two apart needs to know
+	// whether the chat is a forum, which nothing here does yet, so a
+	// reader of this field resolves it or leaves it alone.
+	TopicID int64
 
 	// SendFailed marks a locally echoed message whose send never reached
 	// the server. It is only ever set on a placeholder — a message this
@@ -834,11 +854,7 @@ func (c *Client) messageFromTG(m *tg.Message) *Message {
 	}
 
 	if rt, ok := m.GetReplyTo(); ok {
-		if h, ok := rt.(*tg.MessageReplyHeader); ok {
-			if id, ok := h.GetReplyToMsgID(); ok {
-				msg.ReplyToMessageID = int64(id)
-			}
-		}
+		msg.ReplyToMessageID, msg.TopicID = replyTargetsFromTG(rt)
 	}
 
 	if editDate, ok := m.GetEditDate(); ok {
@@ -898,6 +914,13 @@ func (c *Client) messageFromTGService(m *tg.MessageService) *Message {
 		msg.SenderID = senderFromPeer(from)
 	} else {
 		msg.SenderID = &MessageSenderChat{ChatID: msg.ChatID}
+	}
+
+	// The topic only: a service message has never drawn a reply quote, and
+	// a join or pin notice that suddenly did would be a new row under
+	// every one of them.
+	if rt, ok := m.GetReplyTo(); ok {
+		_, msg.TopicID = replyTargetsFromTG(rt)
 	}
 
 	switch a := m.Action.(type) {
@@ -1162,6 +1185,10 @@ func (c *Client) chatFromChannel(ch *tg.Channel) *Chat {
 		Type:     chatType,
 		Title:    sanitizeTerminal(ch.Title),
 		Username: sanitizeTerminal(username),
+		// Forum is on the channel itself, not on channelFull, so every
+		// path that converts a channel already has the answer and none of
+		// them has to fetch it.
+		IsForum: ch.Forum,
 	}
 	if p, ok := ch.GetPhoto().(*tg.ChatPhoto); ok {
 		chat.Photo = c.registerAvatar(chat.ID, p.PhotoID)

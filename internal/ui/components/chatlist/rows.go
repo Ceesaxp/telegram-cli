@@ -59,15 +59,15 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 		}
 	}
 
-	mark, markColour := sigil.For(telegram.ChatType(item.Kind), item.Saved, r)
+	mark, markColour := m.rowSigil(item)
 
 	title := item.Title
-	// A muted chat says so in words rather than only by being dimmer,
-	// because "dimmer" is not readable in isolation — you cannot tell a
-	// muted row from an ordinary one without another row to compare it to.
-	// The title gives way to the marker, never the other way round.
-	if item.Muted {
-		const marker = " muted"
+	// A row that has something to say about itself says it in words rather
+	// than only by being dimmer, because "dimmer" is not readable in
+	// isolation — you cannot tell a muted row from an ordinary one without
+	// another row to compare it to. The title gives way to the marker,
+	// never the other way round.
+	if marker := m.rowTitleMarker(item); marker != "" {
 		title = cell.Truncate(title, textW-cell.Width(marker)) + marker
 	} else {
 		title = cell.Truncate(title, textW)
@@ -125,6 +125,43 @@ func (m Model) renderRow(item widgets.ListItem, selected, focused bool, width in
 	return []string{cell.Fit(line1, width), cell.Fit(line2, width)}
 }
 
+// rowSigil is the mark in column one and the colour it carries — the whole
+// "what kind of thing is this" signal, since TUI 2.0 has no avatars.
+//
+// Split out of renderRow because the list draws rows from more than one
+// source and each source knows its own marks. It is the seam the topic sigil
+// hangs off; see [Model.topicSigil].
+func (m Model) rowSigil(item widgets.ListItem) (string, lipgloss.Color) {
+	if t := m.topicFor(item.ID); t != nil {
+		return m.topicSigil(t)
+	}
+	return sigil.For(telegram.ChatType(item.Kind), item.Saved, m.roles)
+}
+
+// rowTitleMarker is the word a row appends to its own title when the title
+// alone would not say what the row is: " muted" for a chat whose
+// notifications are off, " closed" for a topic that cannot be posted to.
+//
+// The same shape for both, deliberately. A closed topic is the chat list's
+// existing "this row is not quite an ordinary one" vocabulary, a quiet word
+// after the title that reads on a terminal with no colour at all, and one
+// more glyph in the sigil column would have been a second alphabet.
+//
+// Split out of renderRow for rowSigil's reason. The marker is applied by the
+// caller, which owns the width budget it has to fit inside.
+func (m Model) rowTitleMarker(item widgets.ListItem) string {
+	if t := m.topicFor(item.ID); t != nil {
+		if t.Closed {
+			return " closed"
+		}
+		return ""
+	}
+	if item.Muted {
+		return " muted"
+	}
+	return ""
+}
+
 // renderTrail is what sits right of the preview on row two: the chips that
 // say the chat is waiting for the reader, the @ first and then the unread
 // badge, a cell apart. The preview gives way to it.
@@ -172,6 +209,16 @@ func (m Model) badgeStyle(muted bool) lipgloss.Style {
 	return lipgloss.NewStyle().Background(m.roles.Cyan).Foreground(m.roles.Bg)
 }
 
+// renderHeader is the chat list's first row, whichever list it is showing:
+// the filter line over chats, the forum's name over topics. One row either
+// way — see [Model.headerHeight].
+func (m Model) renderHeader(width int) string {
+	if m.inForum() {
+		return m.renderForumHeader(width)
+	}
+	return m.renderFilterHeader(width)
+}
+
 // renderFilterHeader is the chat list's first row: an amber slash, the live
 // query or a placeholder, and the matching/total count at the right edge.
 func (m Model) renderFilterHeader(width int) string {
@@ -187,10 +234,8 @@ func (m Model) renderFilterHeader(width int) string {
 		query += "█"
 	}
 
-	count := itoa(len(m.list.Items)) + "/" + itoa(m.folderTotal())
-	countW := cell.Width(count)
-
-	queryW := width - rowTextCol - countW - rowTrailW
+	count := m.headerCount()
+	queryW := width - rowTextCol - cell.Width(count) - rowTrailW
 	if queryW < 0 {
 		queryW = 0
 	}
@@ -201,6 +246,89 @@ func (m Model) renderFilterHeader(width int) string {
 		lipgloss.NewStyle().Foreground(r.Ghost).Render(count)
 
 	return cell.Fit(line, width)
+}
+
+// backGlyph is the way out of a forum, in the place the filter's slash has
+// over the chats: whatever leads this row is what the row is about.
+const backGlyph = "‹"
+
+// renderForumHeader is the first row while the list is drilled into a
+// forum: the way back, the forum's name, the live query when there is one,
+// and the same shown/total count the chats get.
+//
+// Both the name and the query, on one row, because dropping either would
+// leave the row lying about the other. A query nobody can see is a field
+// being typed into blind; a query with no forum beside it has stopped
+// saying WHICH list it is narrowing, which is the whole reason this header
+// replaced the filter line. They are separated by the same amber slash the
+// chat list leads with, so the glyph means one thing in both states.
+//
+// Under pressure the NAME gives way and the query is kept whole: the reader
+// pressed enter on that forum a moment ago and can see its topics, while
+// the query is live text they are still editing.
+func (m Model) renderForumHeader(width int) string {
+	r := m.roles
+
+	count := m.headerCount()
+	textW := width - rowTextCol - cell.Width(count) - rowTrailW
+	if textW < 0 {
+		textW = 0
+	}
+
+	// The query takes room only once there is one. With no filter the row
+	// is the forum's name and nothing else, which is the mock in
+	// docs/topics.md.
+	query, filtering := m.headerQuery()
+	queryW := 0
+	if filtering {
+		queryW = cell.Width(query) + 3 // " / " and the query
+	}
+
+	nameW := textW - queryW
+	if nameW < 0 {
+		nameW = 0
+	}
+	name := cell.Truncate(m.ForumTitle(), nameW)
+
+	field := lipgloss.NewStyle().Foreground(r.Bright).Render(name)
+	used := cell.Width(name)
+	if filtering {
+		field += " " +
+			lipgloss.NewStyle().Foreground(r.Amber).Render("/") + " " +
+			lipgloss.NewStyle().Foreground(r.Fg).Render(query)
+		used += queryW
+	}
+	if pad := textW - used; pad > 0 {
+		field += strings.Repeat(" ", pad)
+	}
+
+	line := " " +
+		lipgloss.NewStyle().Foreground(r.Amber).Render(backGlyph) + " " +
+		field +
+		lipgloss.NewStyle().Foreground(r.Ghost).Render(count)
+
+	return cell.Fit(line, width)
+}
+
+// headerQuery is the filter as the header draws it — the applied query plus
+// a block cursor while the input is open — and whether there is one to draw
+// at all.
+func (m Model) headerQuery() (string, bool) {
+	if m.filter == "" && !m.filterInput.Focused {
+		return "", false
+	}
+	if m.filterInput.Focused {
+		return m.filter + "█", true
+	}
+	return m.filter, true
+}
+
+// headerCount is the "shown/total" at the right edge: how many rows the
+// list is drawing over how many it had before the query. The same pair
+// either side of the drill-in, because it describes the list rather than
+// what the list is made of.
+func (m Model) headerCount() string {
+	return itoa(len(m.list.Items)) + "/" + itoa(m.folderTotal())
 }
 
 func itoa(n int) string {

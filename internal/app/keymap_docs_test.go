@@ -441,7 +441,11 @@ var keyTokenAliases = map[string]string{
 // answers for it. The overlays share one section on the card, which has room
 // for the rule rather than for a row per overlay.
 var hintSurfaceSections = map[Surface]string{
-	SurfaceChatList:       "chatlist",
+	SurfaceChatList: "chatlist",
+	// The drill-in is the same panel one level down, so the card answers
+	// for it in the same section — esc and backspace are rows there
+	// already, put there when the drill-in was built.
+	SurfaceForumTopics:    "chatlist",
 	SurfaceChatView:       "chatview",
 	SurfaceComposerInsert: "composer",
 	SurfaceComposerVi:     "composer",

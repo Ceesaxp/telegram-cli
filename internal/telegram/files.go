@@ -337,8 +337,14 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 // thousands of files ago. The message is what registered it, so fetching
 // the message again — the same fetch an edit takes — registers it again,
 // and the download goes ahead instead of reporting an unknown file.
+//
+// The chat ID is split here rather than left to the refetch: the refetch
+// runs inside a closure, and a translation that happens only when the
+// closure is called is one the reader of this method cannot see. A topic
+// re-registers from its forum, because that is where its messages are.
 func (c *Client) DownloadMessageFile(chatID, messageID int64, key string) (*File, error) {
-	return c.download(key, func() error { return c.reregisterMessage(chatID, messageID) })
+	real, _ := c.splitTopic(chatID)
+	return c.download(key, func() error { return c.reregisterMessage(real, messageID) })
 }
 
 // download is the shared body of the two: look the key up, register it
@@ -538,7 +544,19 @@ func sanitizeDownloadFileName(name string) string {
 
 // inputPeer resolves a canonical chat ID to a tg InputPeer
 // via the peers manager (handles access hashes).
+//
+// A forum topic's synthetic chat ID is refused outright. This is the one
+// place every RPC in this package gets the peer it names, so refusing here
+// means a topic can never reach the wire: a chat ID that was not split
+// stops with a sentence saying so, rather than becoming a request against
+// an ID Telegram has never heard of. See splitTopic, and the guard in
+// topics_guard_test.go that holds every exported method to one or the
+// other.
 func (c *Client) inputPeer(ctx context.Context, chatID int64) (tg.InputPeerClass, error) {
+	if isSyntheticChatID(chatID) {
+		return nil, fmt.Errorf("resolve peer %d: that is a forum topic, not a chat — "+
+			"it should have been split before a peer was asked for", chatID)
+	}
 	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
 	if err != nil {
 		return nil, fmt.Errorf("resolve peer %d: %w", chatID, err)
@@ -551,7 +569,12 @@ func (c *Client) inputPeer(ctx context.Context, chatID int64) (tg.InputPeerClass
 // is paid when a chat is opened rather than when the first message in it is
 // sent. It is best-effort: the resolution is purely to populate the cache,
 // so any error is dropped rather than surfaced.
+//
+// A topic warms the forum behind it. A topic has no peer of its own — that
+// is the whole point of the synthetic ID — and the peer its messages are
+// sent to is the forum's.
 func (c *Client) WarmPeer(chatID int64) {
+	chatID, _ = c.splitTopic(chatID)
 	go func() {
 		ctx, cancel := opCtx()
 		defer cancel()

@@ -22,6 +22,14 @@ import (
 // stay unset). A caller that wants an unattributed copy is asking for a
 // different feature, and Telegram's own clients make it a separate choice
 // rather than a default.
+//
+// Both ends may be a forum topic, and each means something different. A
+// topic as the SOURCE is only the forum: the messages being forwarded are
+// the forum's channel messages, and the call names them by ID. A topic as
+// the DESTINATION is the forum plus top_msg_id, which is the only way a
+// forward can say which topic it lands in — it carries no reply header, so
+// without the field every forwarded message would land in General in front
+// of the whole forum.
 func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64) ([]*Message, error) {
 	if len(messageIDs) == 0 {
 		return nil, nil
@@ -30,11 +38,11 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	from, err := c.inputPeer(ctx, fromChatID)
+	from, err := c.targetFor(ctx, fromChatID)
 	if err != nil {
 		return nil, fmt.Errorf("forward messages: source chat: %w", err)
 	}
-	to, err := c.inputPeer(ctx, toChatID)
+	to, err := c.targetFor(ctx, toChatID)
 	if err != nil {
 		return nil, fmt.Errorf("forward messages: destination chat: %w", err)
 	}
@@ -46,12 +54,22 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 		randomIDs[i] = rand.Int63()
 	}
 
-	updates, err := c.api.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		FromPeer: from,
-		ToPeer:   to,
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: from.peer,
+		ToPeer:   to.peer,
 		ID:       int64sToInts(messageIDs),
 		RandomID: randomIDs,
-	})
+	}
+	// A flag field, so a destination that is not a topic leaves it unset
+	// rather than sending a zero, which is a topic nothing is in. General is
+	// named here like any other topic, as it is for a search or a read:
+	// top_msg_id is where the copies go, not a message they reply to, which
+	// is what makes naming General wrong in a send's reply header alone.
+	if to.topicID != 0 {
+		req.SetTopMsgID(int(to.topicID))
+	}
+
+	updates, err := c.api.MessagesForwardMessages(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("forward messages: %w", err)
 	}
@@ -67,7 +85,18 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 	// these updates ARE that copy. Without this, forwarding into the chat
 	// you are looking at reported success and changed nothing on screen
 	// until the chat was reloaded.
+	//
+	// The copies are announced as they came back — belonging to the forum,
+	// with the topic named on them — because that is what they are, and
+	// publishNewMessage below announces such a message under both the forum
+	// and the topic. The topic is set from where this call SENT them rather
+	// than read back off the server's copy: the destination is known here,
+	// and a copy whose reply header the server left off would otherwise be
+	// announced into the forum's flat stream alone.
 	for _, m := range forwarded {
+		if to.topicID != 0 {
+			m.TopicID = to.topicID
+		}
 		c.publishNewMessage(m)
 	}
 	return forwarded, nil
@@ -81,12 +110,59 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 // listener and the forward adapter both have to say exactly this, and a
 // forward that announced only half of it would land in the open thread
 // while the chat list went on showing the previous message.
+//
+// A message in a forum is announced TWICE, once under the forum and once
+// under the topic it belongs to. Both are chats to everything above this
+// package and both want it: the topic is what the reader has open and what
+// the topic list draws a row for, and the forum is still a chat with a row
+// in the chat list and a flat stream of its own.
 func (c *Client) publishNewMessage(m *Message) {
 	if m == nil {
 		return
 	}
 	c.send(NewMessageMsg{Message: m})
 	c.send(ChatLastMessageMsg{ChatId: m.ChatID, LastMessage: m})
+
+	if filed := c.messageFiledUnderItsTopic(m); filed != nil {
+		c.send(NewMessageMsg{Message: filed})
+		c.send(ChatLastMessageMsg{ChatId: filed.ChatID, LastMessage: filed})
+	}
+}
+
+// messageFiledUnderItsTopic is the same message under the chat ID its forum
+// topic is known by, or nil when it belongs to no topic anything is keyed
+// by.
+//
+// The registry is the gate, and it answers two questions at once: whether
+// the chat is a forum, and whether this session has listed its topics. A
+// forum nobody has opened has no topic list, so it has no topic rows and
+// nothing keyed by its topics — minting an ID for one on every arriving
+// message would be allocation with no reader — and an ordinary group is
+// never listed at all, so it never gets a topic invented for it.
+//
+// Topic 0 is not a topic. It is what a message outside a forum reports,
+// and inside one it means General, which is why a listed forum's message
+// with no topic is filed under topic 1 rather than skipped.
+//
+// The copy is a copy because the original is what the forum's own row and
+// flat stream hold: only ChatID and TopicID differ between the two, and
+// rewriting them in place would move the message out of the forum as a
+// side effect of announcing it to the topic. Everything else — the content
+// above all — is shared, because neither copy ever writes to it.
+func (c *Client) messageFiledUnderItsTopic(m *Message) *Message {
+	if !c.topics.hasListed(m.ChatID) {
+		return nil
+	}
+
+	topicID := m.TopicID
+	if topicID == 0 {
+		topicID = generalTopicID
+	}
+
+	filed := *m
+	filed.ChatID = c.topicChatID(m.ChatID, topicID)
+	filed.TopicID = topicID
+	return &filed
 }
 
 // messagesFromUpdates collects every new message in an update set, in

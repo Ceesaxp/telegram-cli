@@ -23,7 +23,12 @@ func sizedMainModel(t *testing.T, focus ...FocusPanel) Model {
 	if len(focus) > 0 {
 		panel = focus[0]
 	}
-	m := mainModel(t, panel)
+	return sized(mainModel(t, panel))
+}
+
+// sized is sizedMainModel's window, for a Model built some other way — a
+// test that needs an app configured differently still needs it to render.
+func sized(m Model) Model {
 	m.width, m.height = 100, 40
 	m.updateLayout()
 	return m

@@ -22,16 +22,23 @@ type BasicGroupFullInfo struct {
 }
 
 // GetSupergroupFullInfo returns full info for a supergroup/channel chat.
+//
+// A forum topic answers about its forum. A topic has no description and no
+// members of its own — both belong to the supergroup it is a topic of — and
+// the thread asks for this the moment a chat opens, so a topic that could
+// not answer errored where a group would not.
 func (c *Client) GetSupergroupFullInfo(chatID int64) (*SupergroupFullInfo, error) {
+	real, _ := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup full info: %w", err)
 	}
 	inputChannel, ok := peerAsInputChannel(peer)
 	if !ok {
-		return nil, fmt.Errorf("chat %d is not a channel", chatID)
+		return nil, fmt.Errorf("chat %d is not a channel", real)
 	}
 
 	res, err := c.api.ChannelsGetFullChannel(ctx, inputChannel)
@@ -53,16 +60,23 @@ func (c *Client) GetSupergroupFullInfo(chatID int64) (*SupergroupFullInfo, error
 }
 
 // GetSupergroupMembers returns members of a supergroup/channel.
+//
+// A forum topic answers with its forum's members, for the reason
+// [Client.GetSupergroupFullInfo] answers about the forum: nobody joins a
+// topic, they join the supergroup, and everyone in it can read every topic
+// they can see.
 func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*ChatMember, error) {
+	real, _ := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("get supergroup members: %w", err)
 	}
 	inputChannel, ok := peerAsInputChannel(peer)
 	if !ok {
-		return nil, fmt.Errorf("chat %d is not a channel", chatID)
+		return nil, fmt.Errorf("chat %d is not a channel", real)
 	}
 
 	res, err := c.api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
@@ -87,7 +101,22 @@ func (c *Client) GetSupergroupMembers(chatID int64, offset, limit int32) ([]*Cha
 }
 
 // GetBasicGroupFullInfo returns full info (incl. members) for a basic group.
+//
+// A forum topic is refused rather than translated, which is the rarer
+// answer and the one argued for here. Splitting would hand this call the
+// forum, and a forum is a supergroup: messages.getFullChat answers about
+// basic groups alone, so there is nothing about a topic or its forum for it
+// to return. [Client.GetSupergroupFullInfo] is the call that answers about
+// one, and it does split. The refusal is explicit because nothing else
+// would stop a topic here — this is one of the few calls that resolves no
+// peer, so inputPeer's own refusal is never reached.
 func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error) {
+	err := refuseTopic(chatID, "a basic group's members are its own, and a topic "+
+		"belongs to a supergroup — ask GetSupergroupFullInfo about its forum")
+	if err != nil {
+		return nil, fmt.Errorf("get basic group full info: %w", err)
+	}
+
 	ctx, cancel := opCtx()
 	defer cancel()
 	plain := plainChatID(chatID)
@@ -155,7 +184,15 @@ func (c *Client) GetBasicGroupFullInfo(chatID int64) (*BasicGroupFullInfo, error
 // A refusal from the server is wrapped and returned. A FLOOD_WAIT is not
 // waited out here: the caller is a picker being typed into, and it decides
 // whether a later query is worth asking.
+//
+// A forum topic is searched as its forum. Members belong to the supergroup
+// rather than to any topic of it, so the forum's list IS the topic's, and
+// without the split a synthetic chat ID was neither a basic group nor a
+// channel: the picker fell through to the branch for chats that have no
+// members and silently offered nobody while the reader typed.
 func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*User, error) {
+	real, _ := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
 
@@ -163,11 +200,11 @@ func (c *Client) SearchChatMembers(chatID int64, query string, limit int) ([]*Us
 		users []*User
 		err   error
 	)
-	switch id := constant.TDLibPeerID(chatID); {
+	switch id := constant.TDLibPeerID(real); {
 	case id.IsChat():
-		users, err = c.basicGroupMembers(ctx, chatID)
+		users, err = c.basicGroupMembers(ctx, real)
 	case id.IsChannel():
-		users, err = c.supergroupMembers(ctx, chatID, query, limit)
+		users, err = c.supergroupMembers(ctx, real, query, limit)
 	default:
 		return nil, nil
 	}

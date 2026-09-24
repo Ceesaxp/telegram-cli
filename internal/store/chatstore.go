@@ -145,6 +145,12 @@ func (s *ChatStore) Merge(chat *telegram.Chat) {
 	entry.Chat.Title = chat.Title
 	entry.Chat.Username = chat.Username
 	entry.Chat.Muted = chat.Muted
+	// IsForum belongs here for the same reason Type does: it is what the
+	// channel record says about itself, and a placeholder chat — one made
+	// from an arriving message or a folder's include list — is created
+	// without it. The fetch is the only chance to learn it, and without
+	// this line a forum stayed an ordinary supergroup for the session.
+	entry.Chat.IsForum = chat.IsForum
 	if chat.Photo != nil {
 		entry.Chat.Photo = chat.Photo
 	}

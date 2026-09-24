@@ -91,6 +91,11 @@ type Model struct {
 	// notifySettingsGetter in internal/telegram, and for the same reason.
 	dialogs dialogSource
 
+	// forum is the drill-in: which forum the list is showing the topics of,
+	// and what it has to put back when it comes up again. Nil, or holding
+	// chat 0, means the list is showing chats. See topics.go.
+	forum *forumState
+
 	// resolving is the set of chats a fetch has already been issued for,
 	// so a nameless row asks once rather than on every refresh. Shared by
 	// pointer for the same reason as list and dirty: refreshList runs on a
@@ -125,6 +130,7 @@ func New(s *store.Store, tg *telegram.Client, r theme.Roles) Model {
 		loading:     true,
 		spinner:     sp,
 		folders:     []*telegram.ChatFolder{defaultAllFolder()},
+		forum:       &forumState{},
 		dirty:       &dirty,
 		inFolder:    &inFolder,
 		resolving:   make(map[int64]bool),
@@ -247,6 +253,12 @@ func (m Model) shouldPageAhead() bool {
 	// already loaded, so reaching the end of three matches says nothing
 	// about how much dialog list is left.
 	if m.filter != "" {
+		return false
+	}
+	// Neither is the end of a forum's topics. Paging asks for more
+	// DIALOGS, and the answer would be a chat list growing silently under
+	// a header that says it is showing topics.
+	if m.inForum() {
 		return false
 	}
 	return len(m.list.Items)-m.list.Cursor <= pageAheadTrigger
@@ -401,6 +413,14 @@ func (m *Model) ClickAt(localY int) (chatID int64, ok bool) {
 	if item == nil {
 		return 0, false
 	}
+	// The cursor has moved by here, and stays moved: drilled into a forum
+	// the click lands on a TOPIC, which is not a chat this component can
+	// name (see [TopicSelectedMsg]). The highlight follows the mouse and
+	// the caller is told it selected no chat; [Model.CursorTopic] is the
+	// question that has an answer.
+	if m.inForum() {
+		return 0, false
+	}
 	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
 		return 0, false
 	}
@@ -472,6 +492,11 @@ func (m *Model) SelectDelta(delta int) (chatID int64, ok bool) {
 	m.list.ScrollBy(delta)
 	item := m.list.SelectedItem()
 	if item == nil {
+		return 0, false
+	}
+	// Drilled into a forum the cursor moves and the answer is withheld,
+	// for ClickAt's reason.
+	if m.inForum() {
 		return 0, false
 	}
 	if _, err := fmt.Sscanf(item.ID, "%d", &chatID); err != nil {
@@ -638,6 +663,13 @@ func (m *Model) ActiveChatId() int64 {
 // Enter, i) acts on the CURSOR, and reading the open chat there is what
 // made jjjl land in the wrong conversation (decision I-2).
 func (m Model) CursorChatId() int64 {
+	// A topic's row ID is a message ID in the forum, so topic 7 and chat 7
+	// are unrelated things that happen to be written the same way. Nothing
+	// is answered rather than something wrong; [Model.CursorTopic] is the
+	// question to ask while the list is drilled in.
+	if m.inForum() {
+		return 0
+	}
 	item := m.list.SelectedItem()
 	if item == nil {
 		return 0
@@ -682,6 +714,14 @@ func (m *Model) OpenCursor() (int64, bool) {
 // the snapshot in the dialog the chat was loaded from: u visits exactly the
 // chats that show a badge.
 func (m *Model) SelectNextUnread() (chatID int64, ok bool) {
+	// Not while drilled in. The rows are topics, whose unread counts the
+	// chat store has never heard of, and the ID this would hand back is a
+	// topic's — see [Model.CursorChatId]. Walking a forum's unread topics
+	// is worth having and is not this wave's; false is the honest answer
+	// meanwhile, and the caller already says so out loud.
+	if m.inForum() {
+		return 0, false
+	}
 	n := len(m.list.Items)
 	if n == 0 {
 		return 0, false
@@ -774,6 +814,12 @@ func (m Model) TotalCount() int { return m.folderTotal() }
 // number worth printing is the one the reader can act on, which is the row
 // they can see to the left of the header.
 func (m Model) BufferIndex(chatID int64) int {
+	// No chat has a row while the list is showing topics, and matching a
+	// topic's ID against a chat's would report a position for a chat that
+	// is not on screen — see [Model.CursorChatId].
+	if m.inForum() {
+		return 0
+	}
 	want := fmt.Sprintf("%d", chatID)
 	for i, item := range m.list.Items {
 		if item.ID == want {
@@ -845,6 +891,26 @@ func (m *Model) CycleFolder(delta int) {
 	}
 	m.activeFolder = ((m.activeFolder+delta)%n + n) % n
 	m.refreshList()
+}
+
+// folderKey applies one folder-switching press — an arrow, or a digit that
+// jumps straight to folder N — and returns the fetch the new tab implies.
+//
+// One function so the keys that switch folders are one list in one place.
+// They used to be three cases of Update's switch, each with its own copy of
+// the FolderLoadCmd that has to follow, which is three places to remember a
+// rule that applies to all of them (drilled into a forum, for one: see the
+// guard at the call site).
+func (m *Model) folderKey(press string) tea.Cmd {
+	switch press {
+	case "left":
+		m.CycleFolder(-1)
+	case "right":
+		m.CycleFolder(1)
+	default:
+		m.jumpToFolder(int(press[0] - '1'))
+	}
+	return m.FolderLoadCmd()
 }
 
 // jumpToFolder sets the active folder tab directly to index n, clamped to
@@ -1017,25 +1083,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// one the filter chip's "esc:clear" hint advertises. The
 				// app's own Esc ladder normally intercepts this key
 				// first; when it does, '/' then esc still clears.
+				//
+				// The two STACK, in the order they were entered: a filter
+				// applied over a forum's topics clears first, and only an
+				// esc with nothing left to clear comes back up to the
+				// chats (docs/topics.md, "Resolved"). Anything else would
+				// throw away the drill-in to undo a keystroke.
 				if m.filter != "" {
 					m.ClearFilter()
 					return m, nil
 				}
+				m.LeaveForum()
 				return m, nil
+			case "backspace":
+				// Bound to nothing in the chat list, so unlike esc it
+				// never has to wait its turn: backspace is always "up".
+				// Outside a forum there is nowhere to go, and the key
+				// falls through to the list, which ignores it too.
+				if m.inForum() {
+					m.LeaveForum()
+					return m, nil
+				}
 			// The arrows only. [ and ] moved to app level, where they
 			// work from the chat view too (decision I-1): one behaviour
 			// with one implementation, rather than an app-level pair of
 			// alt chords and a panel-local pair of brackets.
-			case "left":
-				m.CycleFolder(-1)
-				return m, m.FolderLoadCmd()
-			case "right":
-				m.CycleFolder(1)
-				return m, m.FolderLoadCmd()
-			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				n := int(msg.String()[0] - '1')
-				m.jumpToFolder(n)
-				return m, m.FolderLoadCmd()
+			case "left", "right", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				// Folders are a property of the CHAT list, and a forum's
+				// topics are in none of them. Inert while drilled in,
+				// rather than quietly switching a folder nobody can see:
+				// the keystroke would only announce itself on the way
+				// back up, as a chat list the reader never filtered.
+				if m.inForum() {
+					return m, nil
+				}
+				return m, m.folderKey(msg.String())
 			}
 
 			selected := m.list.Update(msg)
@@ -1056,7 +1138,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 			if selected {
 				item := m.list.SelectedItem()
-				if item != nil {
+				switch {
+				case item == nil:
+				case m.inForum():
+					// A topic row names a topic, not a chat. Nothing is
+					// marked open here either: which chat a topic IS is
+					// the app's answer to give (see [TopicSelectedMsg]),
+					// and recording the topic's own ID as the open chat
+					// would be this component inventing one.
+					if topic := m.topicFor(item.ID); topic != nil {
+						cmds = append(cmds, func() tea.Msg {
+							return TopicSelectedMsg{Topic: topic}
+						})
+					}
+				default:
 					var chatID int64
 					fmt.Sscanf(item.ID, "%d", &chatID)
 					m.setActiveChat(chatID)
@@ -1226,6 +1321,37 @@ func (m *Model) refreshList() {
 	// it survives the filter; when it doesn't, the clamped index stands.
 	prevID := m.list.SelectedID()
 
+	// One rebuild, two sources. Drilled into a forum the rows come from its
+	// topics; otherwise from the store. Everything around these lines — the
+	// cursor, the count, the filter — is the same either way, which is what
+	// makes the drill-in one level of one panel rather than a second list
+	// pretending to be this one.
+	var items []widgets.ListItem
+	var total int
+	if m.inForum() {
+		items, total = m.topicItems()
+	} else {
+		items, total = m.chatItems()
+	}
+
+	*m.inFolder = total
+	m.list.SetItems(items)
+
+	if prevID != "" && prevID != m.list.SelectedID() {
+		m.selectRow(prevID)
+	}
+}
+
+// chatItems builds the rows from the store: the active folder's chats,
+// narrowed by the text filter, in the order the folder puts them.
+//
+// It returns the rows AND how many chats the folder held before the query,
+// because the two are counted in one pass — see [Model.folderTotal] for why
+// the denominator is the folder rather than the account.
+//
+// Split out of refreshList so the list has one place that knows how to
+// rebuild itself and separate places that know what to put in it.
+func (m *Model) chatItems() ([]widgets.ListItem, int) {
 	var folder *telegram.ChatFolder
 	if m.activeFolder >= 0 && m.activeFolder < len(m.folders) {
 		folder = m.folders[m.activeFolder]
@@ -1301,17 +1427,7 @@ func (m *Model) refreshList() {
 		})
 	}
 
-	*m.inFolder = inFolder
-	m.list.SetItems(items)
-
-	if prevID != "" && prevID != m.list.SelectedID() {
-		for i := range items {
-			if items[i].ID == prevID {
-				m.list.SelectIndex(i)
-				break
-			}
-		}
-	}
+	return items, inFolder
 }
 
 // ageMeta recomputes each row's relative time.
@@ -1375,12 +1491,24 @@ const maxUnreadBadge = 999
 // name is already the row's title. Nor does a channel, where every post is
 // from the channel and the prefix would repeat the title back.
 func (m Model) previewWithSender(entry *store.ChatEntry) string {
-	text := messagePreview(entry.LastMessage)
+	crowded := entry.Chat.Type == telegram.ChatTypeBasicGroup ||
+		entry.Chat.Type == telegram.ChatTypeSupergroup
+	return m.previewOf(entry.LastMessage, crowded)
+}
+
+// previewOf is previewWithSender over a bare message, for the callers that
+// have one without a chat entry around it.
+//
+// crowded says the conversation has several speakers, which is the fact the
+// sender prefix turns on — a chat type is only how the chat list happens to
+// know it.
+func (m Model) previewOf(msg *telegram.Message, crowded bool) string {
+	text := messagePreview(msg)
 	if text == "" {
 		return ""
 	}
 
-	sender, ok := entry.LastMessage.SenderID.(*telegram.MessageSenderUser)
+	sender, ok := msg.SenderID.(*telegram.MessageSenderUser)
 	if !ok {
 		return text
 	}
@@ -1388,8 +1516,7 @@ func (m Model) previewWithSender(entry *store.ChatEntry) string {
 	switch {
 	case sender.UserID == m.myUserID && m.myUserID != 0:
 		return "you: " + text
-	case entry.Chat.Type == telegram.ChatTypeBasicGroup,
-		entry.Chat.Type == telegram.ChatTypeSupergroup:
+	case crowded:
 		if name := m.store.Users.DisplayName(sender.UserID); name != "" && name != "Unknown" {
 			return name + ": " + text
 		}
@@ -1655,7 +1782,7 @@ func (m Model) View() string {
 	}
 
 	return strings.Join(
-		append([]string{m.renderFilterHeader(m.width)}, rows...), "\n")
+		append([]string{m.renderHeader(m.width)}, rows...), "\n")
 }
 
 // Folder-tab rendering and its hit-test used to live here. They moved to

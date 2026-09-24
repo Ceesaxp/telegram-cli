@@ -152,6 +152,46 @@ type Model struct {
 	// when there is no client. See mentionpicker.go.
 	members memberSearcher
 
+	// forums is the slice of the Telegram client that lists a forum's
+	// topics, an interface for the reason members is one. Nil when there
+	// is no client. See topics.go.
+	forums forumLister
+
+	// lastTopic is the topic each forum was last read at, keyed by the
+	// forum's own chat ID and holding the topic's synthetic chat ID.
+	// Entering a forum again goes back there rather than to the flat
+	// stream (docs/topics.md, "Resolved" 2); a forum with no entry has
+	// never had a topic opened in it, and gets the flat stream.
+	lastTopic map[int64]int64
+
+	// topicHeaders is what the thread calls each open topic — "forum ›
+	// topic" — keyed by the topic's synthetic chat ID. The store cannot
+	// answer for one: no dialog names it. See [Model.chatTitle].
+	//
+	// Both maps are session-scoped and neither is persisted, because the
+	// IDs keying them are allocated per session.
+	topicHeaders map[int64]string
+
+	// topicChats maps each synthetic chat ID this session has seen named
+	// a topic to the forum it is a topic of. It is filled in as each
+	// forum's listing lands, and it is the app's whole answer to "does
+	// this chat ID name a topic rather than a chat" — a question nothing
+	// below this layer can answer. See [Model.noteTopicChats].
+	//
+	// Kept here rather than read off the open drill-in because the chat
+	// list forgets a forum's topics the moment the reader leaves it (see
+	// [chatlist.Model.LeaveForum]), while a message can arrive in one of
+	// them long afterwards — an hour later, in a forum walked out of at
+	// the time.
+	//
+	// It only ever grows, and that is what keeps it from going stale in
+	// the direction that matters. Synthetic IDs are allocated
+	// sequentially from a reserved band, per session, and never handed
+	// back (docs/topics.md, "The model"), so an ID that names a topic
+	// names that same topic until the process exits. Session-scoped for
+	// the two maps above's reason.
+	topicChats map[int64]int64
+
 	// mentionQuery is the @ picker's latest question. A debounced search
 	// that fires for any other has been typed past, and asks nothing.
 	mentionQuery composer.MentionQueryMsg
@@ -415,6 +455,7 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 		m.uploads = tg
 		m.sends = tg
 		m.members = tg
+		m.forums = tg
 	}
 	// Process-wide and set before the first render, like lipgloss's colour
 	// profile: it describes the terminal this process is attached to, and
@@ -842,6 +883,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// work. [ and ] are the whole binding now, at app level, and
 			// the chat list keeps only the arrows and the digits, which
 			// are its own.
+			//
+			// Not while the list is drilled into a forum. Folders are a
+			// property of the CHAT list and a forum's topics are in none
+			// of them, which is why the chat list already refuses its own
+			// left/right and 1-9 there; these keys live up here and so had
+			// to be told separately. Ungated, ] switched a tab nobody
+			// could see and only announced itself on the way back out, as
+			// a chat list on a folder the reader never chose.
+			//
+			// Still consumed, like h and l at their edges, so that no
+			// panel underneath can give an inert key a second meaning.
+			folderKey := key.Matches(m.keys.prevFolder) || key.Matches(m.keys.nextFolder)
+			if folderKey && browsing && m.chatList.ForumChatID() != 0 {
+				return m, nil
+			}
+
 			if key.Matches(m.keys.prevFolder) && browsing {
 				m.chatList.CycleFolder(-1)
 				return m, m.chatList.FolderLoadCmd()
@@ -1053,7 +1110,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// list and no open chat — would only show the
 					// composer's "open a chat first", so the key is
 					// better left inert.
-					if m.chatList.CursorChatId() == 0 && m.composer.ChatId() == 0 {
+					// cursorChatID rather than CursorChatId: a topic row is
+					// a row with a chat under it too, and the plain
+					// accessor withholds one (see topics.go).
+					if m.cursorChatID() == 0 && m.composer.ChatId() == 0 {
 						return m, nil
 					}
 					m.setFocus(PanelComposer)
@@ -1177,8 +1237,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case telegram.NewMessageMsg:
 		// Never notify for our own messages — they arrive as updates too
-		// when sent from another device.
-		if !msg.Message.IsOutgoing && msg.Message.ChatID != m.chatList.ActiveChatId() {
+		// when sent from another device — nor for a message the reader
+		// already has in front of them, nor twice about one message.
+		//
+		// A message in a forum topic is announced twice: once under the
+		// forum, once under the topic (see topics.go). The FORUM's copy is
+		// the one a notification is raised on, and the topic's is skipped
+		// outright — the forum is a chat this client can name, whereas a
+		// topic is an ID the chat store has never heard of, so a notice
+		// raised on the copy would be held for a resolution that never
+		// comes and go out titled "New Message".
+		//
+		// What that copy is measured against is [Model.openConversation],
+		// which is the thread's chat resolved to its forum. The chat
+		// list's active chat used to be the test, and it is set from chat
+		// ROWS: while a topic was open it still named the forum, so the
+		// topic's copy rang for the very conversation on screen.
+		if !msg.Message.IsOutgoing && !m.isTopicChat(msg.Message.ChatID) &&
+			msg.Message.ChatID != m.openConversation() {
 			body := "New message received"
 			if text, ok := msg.Message.Content.(*telegram.MessageText); ok {
 				body = text.Text.Text
@@ -1199,6 +1275,42 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.postNotice(entry.Chat.Title, body))
 			}
 		}
+
+	case telegram.ChatLastMessageMsg:
+		// A message in a topic is published under the topic's synthetic
+		// chat ID, and only the app knows that such an ID names a topic —
+		// so the chat list is told here rather than working it out from a
+		// message it also handles for its own rows. See topics.go.
+		m.chatList.TopicMessage(msg.ChatId, msg.LastMessage)
+		if m.isTopicChat(msg.ChatId) {
+			// And told only HERE: the message goes no further. A topic's
+			// message is not the chat list's business, because a topic is
+			// not one of the reader's chats. Its row is drawn from its
+			// forum's listing and lives one level down, in the drill-in.
+			//
+			// Left to reach the panel, it would go through that panel's
+			// own handling of this message, which answers off the chat
+			// store — and the store invents an entry for any ID it has
+			// not seen. Nothing ever puts a topic there, because no
+			// dialog names one, so the invented entry became a top-level
+			// row that the resolve behind it then named after the topic.
+			// The reader walked out of the forum and found its topic
+			// sitting in the chat list beside it, for good.
+			return m, nil
+		}
+
+	case telegram.ChatMarkedReadMsg:
+		// A topic's unread count is not in the chat store — it lives on the
+		// topic the drilled-in list draws its rows from — so the panel's own
+		// handling of this message, which moves the store, cannot clear it.
+		// The app is told instead, for TopicMessage's reason: a synthetic
+		// chat ID names a topic only here. See topics.go.
+		//
+		// The message goes on to the panel all the same, unlike an arriving
+		// one: MarkReadUpTo answers nothing for an ID the store has never
+		// seen, so a topic's mark cannot invent a chat there the way a
+		// topic's message could.
+		m.chatList.TopicRead(msg.ChatId, msg.MaxMessageId)
 
 	case noticeGraceMsg:
 		cmds = append(cmds, m.releaseAllNotices())
@@ -1224,7 +1336,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing to undo: the row never touched the message.
 
 	case chatlist.ChatSelectedMsg:
-		cmds = append(cmds, m.openChatAt(msg.ChatId, 0))
+		// A forum is entered rather than opened; see topics.go.
+		cmds = append(cmds, m.openSelectedChat(msg.ChatId))
+
+	case chatlist.TopicSelectedMsg:
+		cmds = append(cmds, m.openTopic(msg.Topic))
+
+	case topicsLoadedMsg:
+		m.applyTopics(msg)
+
+	case forumThreadMsg:
+		cmds = append(cmds, m.openForumThread(msg.chatID))
 
 	case contacts.ContactSelectedMsg:
 		m.contacts.SetVisible(false)
@@ -1668,8 +1790,28 @@ func deleteRevokes(answer string) (revoke, ok bool) {
 // focus on the composer AFTER the open — and openChatAt, which the message
 // would reach eventually, focuses the chat view.
 func (m *Model) openCursoredChat() (tea.Cmd, bool) {
+	// A topic row first: while the list is drilled into a forum, OpenCursor
+	// withholds a chat ID rather than hand back a topic's message ID as
+	// though it were one, so every key that goes through here would do
+	// nothing on a topic without asking for the topic itself.
+	if topic := m.chatList.CursorTopic(); topic != nil {
+		if topic.TopicChatID == m.chatView.ChatId() {
+			return nil, false
+		}
+		return m.openTopic(topic), true
+	}
+
 	chatID, ok := m.chatList.OpenCursor()
-	if !ok || chatID == m.chatView.ChatId() {
+	if !ok {
+		return nil, false
+	}
+	// A forum is ENTERED, not opened, and the thread may already be showing
+	// its flat stream — so the "already open" test below would refuse the
+	// one press that has work to do. See topics.go.
+	if title, isForum := m.forumChat(chatID); isForum {
+		return m.enterForum(chatID, title), true
+	}
+	if chatID == m.chatView.ChatId() {
 		return nil, false
 	}
 	return m.openChatAt(chatID, 0), true
@@ -1910,16 +2052,28 @@ func pasteFromClipboard(chatID int64) tea.Cmd {
 func (m *Model) openChatAt(chatID int64, targetMsgID int64) tea.Cmd {
 	m.navGen++
 
-	title := ""
-	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
-		title = entry.Chat.Title
-	}
-
-	cmd := m.chatView.OpenChatAt(chatID, title, targetMsgID)
+	cmd := m.chatView.OpenChatAt(chatID, m.chatTitle(chatID), targetMsgID)
 	m.switchComposerTo(chatID)
 	m.setFocus(PanelChatView)
 
 	return tea.Batch(cmd, m.openRailFor(chatID))
+}
+
+// chatTitle is the name a chat's thread opens under.
+//
+// The store answers for every chat that came out of the dialog list. A
+// topic did not: it is a chat with a synthetic ID (docs/topics.md, "The
+// model"), nothing put one in the store, and its header is a pair rather
+// than a name — so the headers this session has composed are consulted
+// first. See [Model.rememberTopic].
+func (m Model) chatTitle(chatID int64) string {
+	if header, ok := m.topicHeaders[chatID]; ok {
+		return header
+	}
+	if entry, ok := m.store.Chats.Get(chatID); ok && entry.Chat != nil {
+		return entry.Chat.Title
+	}
+	return ""
 }
 
 // mentionJumpNotice is what g@ says on arrival: how many unread mentions
