@@ -10,7 +10,7 @@ Decision recorded there: **a topic is a chat with a synthetic ID**, allocated by
 - [ ] Wave 1 — reading: forum detection, the topic registry and split, `getForumTopics` with paging, the drill-in topic list, per-topic history via `getReplies`, unread from the topic records
 - [ ] Wave 2 — posting and read marks: the reply header for a plain post and a reply, `readDiscussion`, the discussion read updates, the closed-topic rule and `TOPIC_CLOSED`, per-topic drafts
 - [ ] Wave 3 — polish: `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>` links (the refusal in tme.go goes away), pinned ordering, topic service messages refreshing the list
-- [ ] Open with Andrei: the back key (Esc/Backspace vs `-`), what the thread shows while the topic list is open, and whether wave 1 ships without posting
+- [x] Decided 2026-09-23: back key `Esc` (+ `Backspace`); the thread shows the last topic read in that forum, flat only on first entry; waves 1 and 2 ship together
 
 ## Performance and safety wave (2026-09-22) — branch fix/perf-wave, closes #33
 

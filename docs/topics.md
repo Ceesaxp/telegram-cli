@@ -190,7 +190,7 @@ drill-in list with its header and back key, per-topic history through
 `getReplies`, unread counts from the topic records and derived from
 arriving messages, routing an incoming message to its topic's store.
 
-**Wave 2 — posting and reading marks.** Sending with the right reply
+**Wave 2 — posting and reading marks** (ships with wave 1). Sending with the right reply
 header (plain post, and reply inside a topic), `readDiscussion` on open
 and on arrival, handling `updateReadChannelDiscussionInbox/Outbox`, the
 closed-topic rule and the `TOPIC_CLOSED` error, drafts per topic.
@@ -220,13 +220,12 @@ per-topic notification settings; custom emoji topic icons.
   hold the same message, so a per-topic store keyed by message ID stays
   consistent; the ID index added in the performance wave is unaffected.
 
-## Open questions for review
+## Resolved (2026-09-23)
 
-1. **The back key.** `Esc` plus `Backspace`, as above — or `-`, which vim
-   users read as "up a directory"?
-2. **What the thread shows while the topic list is open.** The last topic
-   read in that forum, or the flat stream? This document assumes the last
-   topic, falling back to the flat stream on first entry.
-3. **Whether wave 1 ships without posting.** Reading a forum properly is
-   useful on its own, but a client that cannot reply in a topic may be
-   worse than one that posts to General.
+1. **The back key is `Esc`, with `Backspace` as a synonym.** Both are free
+   in the chat list and both read as "up"; `h` stays folder navigation.
+2. **The thread shows the last topic read in that forum**, and the flat
+   stream only on first entry, before any topic in it has been opened.
+3. **Waves 1 and 2 ship together.** Reading a topic while replies land in
+   General would be worse than today's flat view, so posting is not
+   deferred to a later release.
