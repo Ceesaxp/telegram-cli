@@ -1291,18 +1291,7 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 		log.Printf("chatview: catch-up fetch for chat %d: %s", msg.chatID, msg.err)
 		return m, nil
 	}
-	// Oldest first, like the cache: Merge reports what was new in the
-	// order given, and the meta work below reads "newest" off the end.
-	page := make([]*telegram.Message, len(msg.messages))
-	for i, v := range msg.messages {
-		page[len(msg.messages)-1-i] = v
-	}
-	inserted := m.store.Messages.Merge(m.chatID, page)
-	for _, v := range page {
-		if v != nil {
-			m.cache.invalidate(v.ID) // the server's copy replaced ours
-		}
-	}
+	inserted := m.foldNewestPage(msg.messages)
 	if len(inserted) == 0 {
 		return m, nil
 	}
@@ -1328,6 +1317,34 @@ func (m Model) applyCatchUp(msg historyLoadedMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// foldNewestPage puts a freshly fetched newest page into the cache and
+// returns what was new about it, oldest first.
+//
+// Both callers fetch the same thing — the chat's newest page — for the
+// same reason: what the thread holds may be missing something newer than
+// all of it. Opening a chat whose cache survived the last visit and
+// catching up after a sync gap are the same shape, so they are placed the
+// same way, by ID rather than by which end the page arrived at.
+//
+// msgs is the server's order, newest first; the cache is oldest first, and
+// that is the order Merge is handed and reports back in. The rendered rows
+// of everything on the page go, because Merge REPLACES a cached message
+// with the server's copy: an edit or a reaction that landed while the
+// thread was not watching is on that copy, not on the one already drawn.
+func (m *Model) foldNewestPage(msgs []*telegram.Message) []*telegram.Message {
+	page := make([]*telegram.Message, len(msgs))
+	for i, v := range msgs {
+		page[len(msgs)-1-i] = v
+	}
+	inserted := m.store.Messages.Merge(m.chatID, page)
+	for _, v := range page {
+		if v != nil {
+			m.cache.invalidate(v.ID)
+		}
+	}
+	return inserted
 }
 
 // senderTargets splits the unknown senders of a page into the ones worth
@@ -1803,14 +1820,38 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		reversed := make([]*telegram.Message, len(msg.messages))
-		for i, v := range msg.messages {
-			reversed[len(msg.messages)-1-i] = v
-		}
-		inserted := m.store.Messages.Prepend(m.chatID, reversed)
-		if len(inserted) == 0 && msg.fromID != 0 {
-			m.finishHistory()
-			return m, nil
+		// Which end of the thread a page belongs at is not the same
+		// question as which end of the walk it came from, and conflating
+		// the two is what hid messages for days.
+		//
+		// Paging backwards (fromID != 0) asks for history older than the
+		// oldest message held, so Prepend's contract holds: the page goes
+		// on the front, and an overlap with the cache means there is
+		// nothing older left to fetch.
+		//
+		// The newest page (fromID == 0) is the one every open fetches, and
+		// the message store outlives the visit — it caches per chat and is
+		// emptied only when the process exits. So on a reopen that page is
+		// mostly already held, and whatever arrived while the reader was
+		// away is NEWER than everything in the cache. Prepended, it landed
+		// at the oldest end, above the entire history, where a reader
+		// sitting at the bottom never saw it; for a chat with a full cache
+		// the background trim then cut it off the front outright. Leaving
+		// and reopening only did it again, which is why only a restart,
+		// with an empty cache, ever put the page in the right order.
+		var inserted []*telegram.Message
+		if msg.fromID == 0 {
+			inserted = m.foldNewestPage(msg.messages)
+		} else {
+			page := make([]*telegram.Message, len(msg.messages))
+			for i, v := range msg.messages {
+				page[len(msg.messages)-1-i] = v
+			}
+			inserted = m.store.Messages.Prepend(m.chatID, page)
+			if len(inserted) == 0 {
+				m.finishHistory()
+				return m, nil
+			}
 		}
 		m.pendingMeta = append(m.pendingMeta, inserted...)
 		m.resolveUnreadDivider()
