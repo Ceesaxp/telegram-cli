@@ -110,7 +110,66 @@ func (m *Model) applyTopics(msg topicsLoadedMsg) {
 		m.notify(fmt.Sprintf("⚠ could not load topics: %v", msg.err))
 		return
 	}
+	m.noteTopicChats(msg.chatID, msg.topics)
 	m.chatList.SetTopics(msg.chatID, msg.topics)
+}
+
+// noteTopicChats records a listing's topics as the topics they are, so that
+// the rest of this session recognises their synthetic chat IDs for what
+// they are wherever one turns up.
+//
+// Recorded before the listing is handed on, and whether or not it is still
+// wanted on screen: SetTopics drops an answer for a forum the reader has
+// already left, but the IDs in that answer were minted by the client all
+// the same, and a message can arrive under one of them from here on.
+func (m *Model) noteTopicChats(forumID int64, topics []*telegram.Topic) {
+	if forumID == 0 {
+		return
+	}
+	for _, t := range topics {
+		if t == nil || t.TopicChatID == 0 {
+			continue
+		}
+		if m.topicChats == nil {
+			m.topicChats = map[int64]int64{}
+		}
+		m.topicChats[t.TopicChatID] = forumID
+	}
+}
+
+// forumOfTopic is the forum a chat ID is a topic of, and 0 when the ID is
+// an ordinary chat's. No forum has chat ID 0, so the zero answer is
+// unambiguous. See [Model.topicChats].
+func (m Model) forumOfTopic(chatID int64) int64 { return m.topicChats[chatID] }
+
+// isTopicChat reports whether a chat ID names one of a forum's topics
+// rather than a chat of the reader's own.
+func (m Model) isTopicChat(chatID int64) bool { return m.forumOfTopic(chatID) != 0 }
+
+// openConversation is the chat the reader is actually looking at, as a
+// notification has to measure a message against it.
+//
+// The THREAD is asked, not the chat list: the list's active chat is set
+// from chat rows, so it never names a topic, and it does not hear about a
+// chat opened by a jump, a search result or a t.me link either. The chat
+// view is the panel the conversation is in, so it is the panel that knows.
+//
+// An open topic answers with its FORUM, because that is the chat the
+// message that would raise the notification arrived in — a topic's own copy
+// is not what a notification is ever raised on. See the NewMessageMsg case
+// in app.go.
+//
+// The consequence, recorded: a message in a SIBLING topic of the open one
+// is silent too, because its copy arrived in the same forum. That is what
+// reading a forum flat has always done, the notification could only have
+// said the forum's name anyway, and the topic list one keystroke away
+// carries the badge that says which topic it was.
+func (m Model) openConversation() int64 {
+	open := m.chatView.ChatId()
+	if forum := m.forumOfTopic(open); forum != 0 {
+		return forum
+	}
+	return open
 }
 
 // openForumThread shows the thread that belongs beside a forum's topics:

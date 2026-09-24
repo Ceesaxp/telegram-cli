@@ -59,7 +59,17 @@ func jobsTopic() *telegram.Topic { return goSerbiaTopics()[1] }
 // ordinary chat, with the topic listing answered by a fake.
 func forumModel(t *testing.T, f *fakeForums) Model {
 	t.Helper()
-	m := sizedMainModel(t, PanelChatList)
+	return forumChats(t, sizedMainModel(t, PanelChatList), f)
+}
+
+// forumChats gives a model the two rows every drill-in test browses, and
+// the fake that answers for the forum's topics.
+//
+// Separate from forumModel so a test needing an app built some other way —
+// one that will actually notify, say — gets the same two rows rather than
+// restating them.
+func forumChats(t *testing.T, m Model, f *fakeForums) Model {
+	t.Helper()
 	m.forums = f
 	m.store.Chats.Set(&telegram.Chat{
 		ID: testForumID, Title: "Go Serbia",
