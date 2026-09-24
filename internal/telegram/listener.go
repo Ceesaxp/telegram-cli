@@ -122,6 +122,45 @@ func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 		})
 		return nil
 	})
+	// A forum topic's read marks arrive as the discussion updates: they are
+	// what the server echoes for messages.readDiscussion, whether the read
+	// was made here or on the reader's phone. Both are published under the
+	// topic's own chat ID, because the topic is the chat whose row carries
+	// the badge and whose thread draws the ticks — keyed by the forum they
+	// would clear the forum's badge and leave every topic's where it was.
+	//
+	// Neither carries a count, and none is invented: per-topic unread
+	// counts never arrive in an update at all (TDLib passes -1 for this one
+	// and keeps its own), so the read pointer is the whole of what the
+	// server said and the whole of what is published.
+	//
+	// Which is why the inbox half is published as a mark, not as a read
+	// inbox: ChatReadInboxMsg carries a count and the store believes it, so
+	// a phone-side read of the three oldest unread messages would have
+	// zeroed the badge outright. A mark only advances the pointer, and the
+	// count survives until the read reaches the newest message seen.
+	d.OnReadChannelDiscussionInbox(func(ctx context.Context, e tg.Entities, u *tg.UpdateReadChannelDiscussionInbox) error {
+		topic, ok := c.readTopicChatID(u.ChannelID, u.TopMsgID)
+		if !ok {
+			return nil
+		}
+		c.send(ChatMarkedReadMsg{
+			ChatId:       topic,
+			MaxMessageId: int64(u.ReadMaxID),
+		})
+		return nil
+	})
+	d.OnReadChannelDiscussionOutbox(func(ctx context.Context, e tg.Entities, u *tg.UpdateReadChannelDiscussionOutbox) error {
+		topic, ok := c.readTopicChatID(u.ChannelID, u.TopMsgID)
+		if !ok {
+			return nil
+		}
+		c.send(ChatReadOutboxMsg{
+			ChatId:                  topic,
+			LastReadOutboxMessageId: int64(u.ReadMaxID),
+		})
+		return nil
+	})
 	d.OnNotifySettings(func(ctx context.Context, e tg.Entities, u *tg.UpdateNotifySettings) error {
 		// Only per-peer settings map to a chat; the class-wide variants
 		// (notifyUsers/notifyChats/notifyBroadcasts/…) change defaults,
@@ -172,6 +211,22 @@ func (l *Listener) registerHandlers(d tg.UpdateDispatcher) {
 		})
 		return nil
 	})
+}
+
+// readTopicChatID is the chat ID a discussion read belongs to, and whether
+// it belongs to one this client knows at all.
+//
+// The two discussion updates carry a CHANNEL POST'S COMMENT THREAD as well
+// as a forum topic — the same structure, in a discussion group rather than
+// a forum — and a comment thread is not a chat here and has no row to
+// clear. The registry tells them apart: a forum whose topics this session
+// has listed has a chat per topic, and nothing else does.
+func (c *Client) readTopicChatID(channelID int64, topMsgID int) (int64, bool) {
+	forumID := channelChatID(channelID)
+	if !c.topics.hasListed(forumID) {
+		return 0, false
+	}
+	return c.topicChatID(forumID, int64(topMsgID)), true
 }
 
 // refreshFolders re-reads the folder list off the update goroutine.

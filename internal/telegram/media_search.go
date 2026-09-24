@@ -64,11 +64,19 @@ func (f MediaFilter) String() string {
 // limit is capped rather than rejected: the rail shows a handful of rows, and
 // a caller asking for more than a screenful of them has made an arithmetic
 // mistake, not a request worth failing.
+//
+// A forum topic is the forum's peer narrowed by the topic. messages.search
+// takes an optional thread to search inside, which is exactly what a topic
+// is on the wire, so the rail asks for a topic's files and photos with the
+// same request and one field more. Without the split it asked for a peer
+// that does not exist and the rail stayed empty.
 func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) ([]*Message, error) {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("search chat %s: %w", filter, err)
 	}
@@ -76,7 +84,7 @@ func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) 
 		limit = 100
 	}
 
-	res, err := c.api.MessagesSearch(ctx, &tg.MessagesSearchRequest{
+	req := &tg.MessagesSearchRequest{
 		Peer:   peer,
 		Q:      "",
 		Filter: filter.tg(),
@@ -92,7 +100,16 @@ func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) 
 		MaxID:     0,
 		MinID:     0,
 		Hash:      0,
-	})
+	}
+	// Only when there IS a topic: top_msg_id is a flagged field, and a zero
+	// set on it is not "no thread" but a thread nothing is in. General is
+	// named here like any other topic — unlike a reply header, where naming
+	// it is what a plain post into it must not do.
+	if topicID != 0 {
+		req.SetTopMsgID(int(topicID))
+	}
+
+	res, err := c.api.MessagesSearch(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("search chat %s: %w", filter, err)
 	}

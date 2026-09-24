@@ -246,24 +246,31 @@ func (c *Client) EditTextMessageWithMentions(chatID int64, messageID int64, text
 // wait for the server echo. The server sends its own update shortly
 // after; the message store deletes by filtering on an ID set, so
 // applying the same deletion twice is a no-op.
+//
+// The split is [Client.GetMessages]'s, for the same reason and against the
+// same hole: a topic's messages belong to the forum's channel, and the
+// peerless call the unsplit branch would take deletes by the account's own
+// numbering.
 func (c *Client) DeleteMessages(chatID int64, messageIDs []int64, revoke bool) error {
 	if len(messageIDs) == 0 {
 		return nil
 	}
+
+	real, _ := c.splitTopic(chatID)
 
 	ctx, cancel := opCtx()
 	defer cancel()
 
 	ids := int64sToInts(messageIDs)
 
-	if constant.TDLibPeerID(chatID).IsChannel() {
-		peer, err := c.inputPeer(ctx, chatID)
+	if constant.TDLibPeerID(real).IsChannel() {
+		peer, err := c.inputPeer(ctx, real)
 		if err != nil {
 			return fmt.Errorf("delete messages: %w", err)
 		}
 		inputChannel, ok := peerAsInputChannel(peer)
 		if !ok {
-			return fmt.Errorf("delete messages: peer %d is not a channel", chatID)
+			return fmt.Errorf("delete messages: peer %d is not a channel", real)
 		}
 		if _, err := c.api.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
 			Channel: inputChannel,
@@ -332,10 +339,18 @@ func (c *Client) GetMessage(chatID, messageID int64) (*Message, error) {
 // Messages the server did not return are simply absent from the result: a
 // message deleted between the update and the fetch is a normal race, not an
 // error the caller can do anything about.
+//
+// A topic's messages are the forum's channel messages, under the forum's
+// own numbering, so the split has to come before the branch below: a
+// synthetic chat ID is not a channel, and the peerless call it would
+// otherwise take names no chat at all and would answer with whatever the
+// account's own numbering has at those IDs.
 func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, error) {
 	if len(messageIDs) == 0 {
 		return nil, nil
 	}
+
+	real, _ := c.splitTopic(chatID)
 
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -346,14 +361,14 @@ func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, erro
 	}
 
 	var messages []tg.MessageClass
-	if constant.TDLibPeerID(chatID).IsChannel() {
-		peer, err := c.inputPeer(ctx, chatID)
+	if constant.TDLibPeerID(real).IsChannel() {
+		peer, err := c.inputPeer(ctx, real)
 		if err != nil {
 			return nil, fmt.Errorf("get messages: %w", err)
 		}
 		inputChannel, ok := peerAsInputChannel(peer)
 		if !ok {
-			return nil, fmt.Errorf("get messages: peer %d is not a channel", chatID)
+			return nil, fmt.Errorf("get messages: peer %d is not a channel", real)
 		}
 		res, err := c.api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
 			Channel: inputChannel,

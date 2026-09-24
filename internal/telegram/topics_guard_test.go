@@ -31,16 +31,6 @@ var chatIDTranslators = map[string]bool{
 // no longer needs to be here, so a wave that lands cannot leave its name
 // behind.
 var topicUnawareMethods = map[string]string{
-	// Wave 1, history and message fetches. These three pick their RPC on
-	// IsChannel, and a synthetic ID answers no, so they take the
-	// peerless non-channel path: messages.getMessages /
-	// messages.deleteMessages / messages.readMessageContents, which name
-	// no chat at all and would act on the account's own numbering.
-	"GetMessages":    "wave 1 — the non-channel branch never splits",
-	"GetMessage":     "wave 1 — via GetMessages",
-	"DeleteMessages": "wave 2 — the non-channel branch never splits",
-	// Wave 1: re-registering a file's message goes through GetMessages.
-	"DownloadMessageFile": "wave 1 — via GetMessages, to re-register the file",
 	// A topic is a supergroup's, so these two are about the forum and
 	// want the forum's ID. Wave 3, when a topic's chat is complete
 	// enough for the member picker and the group info panel to open on

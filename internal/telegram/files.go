@@ -337,8 +337,14 @@ func (c *Client) DownloadFileSync(key string) (*File, error) {
 // thousands of files ago. The message is what registered it, so fetching
 // the message again — the same fetch an edit takes — registers it again,
 // and the download goes ahead instead of reporting an unknown file.
+//
+// The chat ID is split here rather than left to the refetch: the refetch
+// runs inside a closure, and a translation that happens only when the
+// closure is called is one the reader of this method cannot see. A topic
+// re-registers from its forum, because that is where its messages are.
 func (c *Client) DownloadMessageFile(chatID, messageID int64, key string) (*File, error) {
-	return c.download(key, func() error { return c.reregisterMessage(chatID, messageID) })
+	real, _ := c.splitTopic(chatID)
+	return c.download(key, func() error { return c.reregisterMessage(real, messageID) })
 }
 
 // download is the shared body of the two: look the key up, register it

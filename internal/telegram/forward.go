@@ -81,12 +81,59 @@ func (c *Client) ForwardMessages(fromChatID, toChatID int64, messageIDs []int64)
 // listener and the forward adapter both have to say exactly this, and a
 // forward that announced only half of it would land in the open thread
 // while the chat list went on showing the previous message.
+//
+// A message in a forum is announced TWICE, once under the forum and once
+// under the topic it belongs to. Both are chats to everything above this
+// package and both want it: the topic is what the reader has open and what
+// the topic list draws a row for, and the forum is still a chat with a row
+// in the chat list and a flat stream of its own.
 func (c *Client) publishNewMessage(m *Message) {
 	if m == nil {
 		return
 	}
 	c.send(NewMessageMsg{Message: m})
 	c.send(ChatLastMessageMsg{ChatId: m.ChatID, LastMessage: m})
+
+	if filed := c.messageFiledUnderItsTopic(m); filed != nil {
+		c.send(NewMessageMsg{Message: filed})
+		c.send(ChatLastMessageMsg{ChatId: filed.ChatID, LastMessage: filed})
+	}
+}
+
+// messageFiledUnderItsTopic is the same message under the chat ID its forum
+// topic is known by, or nil when it belongs to no topic anything is keyed
+// by.
+//
+// The registry is the gate, and it answers two questions at once: whether
+// the chat is a forum, and whether this session has listed its topics. A
+// forum nobody has opened has no topic list, so it has no topic rows and
+// nothing keyed by its topics — minting an ID for one on every arriving
+// message would be allocation with no reader — and an ordinary group is
+// never listed at all, so it never gets a topic invented for it.
+//
+// Topic 0 is not a topic. It is what a message outside a forum reports,
+// and inside one it means General, which is why a listed forum's message
+// with no topic is filed under topic 1 rather than skipped.
+//
+// The copy is a copy because the original is what the forum's own row and
+// flat stream hold: only ChatID and TopicID differ between the two, and
+// rewriting them in place would move the message out of the forum as a
+// side effect of announcing it to the topic. Everything else — the content
+// above all — is shared, because neither copy ever writes to it.
+func (c *Client) messageFiledUnderItsTopic(m *Message) *Message {
+	if !c.topics.hasListed(m.ChatID) {
+		return nil
+	}
+
+	topicID := m.TopicID
+	if topicID == 0 {
+		topicID = generalTopicID
+	}
+
+	filed := *m
+	filed.ChatID = c.topicChatID(m.ChatID, topicID)
+	filed.TopicID = topicID
+	return &filed
 }
 
 // messagesFromUpdates collects every new message in an update set, in
