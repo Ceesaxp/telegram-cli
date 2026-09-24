@@ -112,10 +112,13 @@ have taken, and at 72 columns there is no room for one at all.
 - **Opening a topic** opens the thread scoped to it. The thread header
   reads `Forum › Topic`, so the reader always knows which of the two they
   are in.
-- **The back key** cannot be `h`: that is folder navigation in the chat
-  list. `Esc` and `Backspace` are both free there and both read as "up".
-  Decision: **`Esc`**, with `Backspace` accepted as a synonym, and `h`
-  left alone.
+- **The back key** cannot be `h`: the app claims it before any panel sees
+  it, for moving focus from the thread back to the chat list
+  (`internal/keys/reserved.go`, `app.go`'s browsing dispatch), and folders
+  cycle on `[`/`]`. Decision: **`Esc`**, with `Backspace` as a synonym.
+  `Esc` in the chat list already clears an applied filter, so it stacks:
+  with a filter up, the first `Esc` clears it and the second leaves the
+  forum. `Backspace` is bound to nothing there and always goes up.
 - **`:topic <name>`** jumps within the open forum with the palette's
   fuzzy completion, exactly as `:theme` now lists themes. It is an
   accelerator, not the way in: it cannot show which topics have unread
@@ -222,8 +225,10 @@ per-topic notification settings; custom emoji topic icons.
 
 ## Resolved (2026-09-23)
 
-1. **The back key is `Esc`, with `Backspace` as a synonym.** Both are free
-   in the chat list and both read as "up"; `h` stays folder navigation.
+1. **The back key is `Esc`, with `Backspace` as a synonym.** `Esc` clears
+   an applied filter first and leaves the forum on the next press;
+   `Backspace` is unbound in the chat list and always goes up. `h` stays
+   panel movement.
 2. **The thread shows the last topic read in that forum**, and the flat
    stream only on first entry, before any topic in it has been opened.
 3. **Waves 1 and 2 ship together.** Reading a topic while replies land in
