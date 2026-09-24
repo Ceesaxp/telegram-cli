@@ -54,6 +54,16 @@ type Chat struct {
 	// Muted mirrors the peer's notification settings: an explicit
 	// silent flag or a mute-until date in the future.
 	Muted bool
+
+	// IsForum marks a supergroup whose messages are filed under topics
+	// rather than running in one stream. Only a supergroup can be one.
+	//
+	// It decides what opening the chat means: a forum drills into its
+	// topic list, and each topic is a chat of its own (see topics.go).
+	// It also decides what a message with no topic in its reply header
+	// means — in a forum that is the General topic, and outside one it
+	// means nothing at all. See Message.TopicID.
+	IsForum bool
 }
 
 // MessageSender identifies who sent a message.
@@ -1175,6 +1185,10 @@ func (c *Client) chatFromChannel(ch *tg.Channel) *Chat {
 		Type:     chatType,
 		Title:    sanitizeTerminal(ch.Title),
 		Username: sanitizeTerminal(username),
+		// Forum is on the channel itself, not on channelFull, so every
+		// path that converts a channel already has the answer and none of
+		// them has to fetch it.
+		IsForum: ch.Forum,
 	}
 	if p, ok := ch.GetPhoto().(*tg.ChatPhoto); ok {
 		chat.Photo = c.registerAvatar(chat.ID, p.PhotoID)

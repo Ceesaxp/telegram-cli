@@ -538,7 +538,19 @@ func sanitizeDownloadFileName(name string) string {
 
 // inputPeer resolves a canonical chat ID to a tg InputPeer
 // via the peers manager (handles access hashes).
+//
+// A forum topic's synthetic chat ID is refused outright. This is the one
+// place every RPC in this package gets the peer it names, so refusing here
+// means a topic can never reach the wire: a chat ID that was not split
+// stops with a sentence saying so, rather than becoming a request against
+// an ID Telegram has never heard of. See splitTopic, and the guard in
+// topics_guard_test.go that holds every exported method to one or the
+// other.
 func (c *Client) inputPeer(ctx context.Context, chatID int64) (tg.InputPeerClass, error) {
+	if isSyntheticChatID(chatID) {
+		return nil, fmt.Errorf("resolve peer %d: that is a forum topic, not a chat — "+
+			"it should have been split before a peer was asked for", chatID)
+	}
 	peer, err := c.peers.ResolveTDLibID(ctx, constant.TDLibPeerID(chatID))
 	if err != nil {
 		return nil, fmt.Errorf("resolve peer %d: %w", chatID, err)

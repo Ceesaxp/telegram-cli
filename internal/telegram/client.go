@@ -44,6 +44,13 @@ type Client struct {
 	// to the UI as a gotd InputPeer.
 	dialogs dialogPager
 
+	// topics translates between a forum topic and the chat ID the rest of
+	// the client knows it by. Session-scoped, on the client rather than
+	// anywhere above it, because a synthetic chat ID means nothing outside
+	// the process that minted it. Its zero value works, so there is no
+	// constructor call for it. See topics.go.
+	topics topicRegistry
+
 	lifecycleMu sync.Mutex
 	started     bool
 	closed      bool
