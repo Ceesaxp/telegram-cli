@@ -39,7 +39,6 @@ var topicUnawareMethods = map[string]string{
 	"GetMessages":    "wave 1 — the non-channel branch never splits",
 	"GetMessage":     "wave 1 — via GetMessages",
 	"DeleteMessages": "wave 2 — the non-channel branch never splits",
-	"ReadMentions":   "wave 2 — the non-channel branch never splits",
 	// Wave 1: re-registering a file's message goes through GetMessages.
 	"DownloadMessageFile": "wave 1 — via GetMessages, to re-register the file",
 	// A topic is a supergroup's, so these two are about the forum and

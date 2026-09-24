@@ -489,10 +489,17 @@ func peerChatUpdate(chat *Chat) ChatUpdateMsg {
 
 // GetChatHistory returns messages of a chat, newest first.
 // fromMessageID paginates backwards (offsetID); offset skips messages.
+//
+// A forum topic is fetched as the thread it is — see [Client.historyPage] —
+// and comes back as the same messages from the same call, because everything
+// above this package reads a page of history and knows nothing about which
+// RPC fetched it.
 func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32) ([]*Message, error) {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)
 	}
@@ -500,13 +507,7 @@ func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32
 		limit = 100
 	}
 
-	res, err := c.api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-		Peer:       peer,
-		OffsetID:   int(fromMessageID),
-		OffsetDate: 0,
-		AddOffset:  int(offset),
-		Limit:      int(limit),
-	})
+	res, err := c.historyPage(ctx, peer, topicID, fromMessageID, offset, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)
 	}
@@ -530,6 +531,45 @@ func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32
 		}
 	}
 	return out, nil
+}
+
+// historyPage fetches one page of a chat's history, or of one topic's.
+//
+// A topic's messages are the forum's, so messages.getHistory would answer
+// with every topic's at once — the flat stream the reader opened a topic to
+// get out of. A topic IS the thread under its root message, so
+// messages.getReplies over that message is its history, and it takes the
+// same three offsets, so the two calls page identically and the caller above
+// need not know which one it got.
+//
+// General is passed like any other topic. Its root message is the forum's
+// own first one and it exists, which is all getReplies asks for — unlike the
+// reply header of a send, where naming General is what goes wrong.
+//
+// The remaining bounds are deliberately zero, as [Client.SearchChatMessages]
+// leaves its own: no date, no min/max ID clamp and no result hash, all plain
+// fields where zero reaches the wire as "unbounded" rather than "absent".
+func (c *Client) historyPage(ctx context.Context, peer tg.InputPeerClass, topicID, fromMessageID int64, offset, limit int32) (tg.MessagesMessagesClass, error) {
+	if topicID != 0 {
+		return c.api.MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{
+			Peer:       peer,
+			MsgID:      int(topicID),
+			OffsetID:   int(fromMessageID),
+			OffsetDate: 0,
+			AddOffset:  int(offset),
+			Limit:      int(limit),
+			MaxID:      0,
+			MinID:      0,
+			Hash:       0,
+		})
+	}
+	return c.api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+		Peer:       peer,
+		OffsetID:   int(fromMessageID),
+		OffsetDate: 0,
+		AddOffset:  int(offset),
+		Limit:      int(limit),
+	})
 }
 
 // SearchChats searches chat titles by query (server-side).
@@ -639,17 +679,22 @@ func (c *Client) SearchMessages(query string, limit int32) ([]*Message, error) {
 // users, basic groups, supergroups and channels all route through
 // c.inputPeer with no channel-specific variant.
 //
+// Inside a topic the search is scoped to that topic. The reader is looking
+// at one conversation, and a hit in a different topic of the same forum
+// would open onto a thread they are not in.
+//
 // An empty query returns an error rather than a guaranteed server-side
 // SEARCH_QUERY_EMPTY round trip.
 func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID int64, limit int32) ([]*Message, error) {
 	if query == "" {
 		return nil, fmt.Errorf("search chat messages: empty query")
 	}
+	real, topicID := c.splitTopic(chatID)
 
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("search chat messages: %w", err)
 	}
@@ -657,7 +702,7 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 		limit = 100
 	}
 
-	res, err := c.api.MessagesSearch(ctx, &tg.MessagesSearchRequest{
+	req := &tg.MessagesSearchRequest{
 		Peer:     peer,
 		Q:        query,
 		Filter:   &tg.InputMessagesFilterEmpty{},
@@ -673,7 +718,14 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 		MaxID:     0,
 		MinID:     0,
 		Hash:      0,
-	})
+	}
+	// top_msg_id is a flag field, so an unscoped search must leave it unset
+	// rather than send a zero: a zero thread ID is not "every thread".
+	if topicID != 0 {
+		req.SetTopMsgID(int(topicID))
+	}
+
+	res, err := c.api.MessagesSearch(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("search chat messages: %w", err)
 	}
@@ -707,10 +759,16 @@ func (c *Client) OpenChat(chatID int64) error {
 // every in-process caller gets it without having to remember. The REST and
 // MCP servers are separate binaries that register no message sink, so there
 // it goes nowhere.
+//
+// The announcement carries the chat ID the CALLER asked with, which for a
+// topic is its synthetic one: the chat list keys the row on it, so naming
+// the forum would clear a badge nobody was reading.
 func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return fmt.Errorf("view messages: %w", err)
 	}
@@ -725,10 +783,26 @@ func (c *Client) ViewMessages(chatID int64, messageIDs []int64) error {
 		return nil
 	}
 
-	if constant.TDLibPeerID(chatID).IsChannel() {
+	// A topic takes neither of the two reads below. Its read pointer is its
+	// own — the forum's says nothing about any one topic — and the call that
+	// moves it is the thread's, so channels.readHistory here would mark
+	// every topic in the forum read at once.
+	if topicID != 0 {
+		if _, err := c.api.MessagesReadDiscussion(ctx, &tg.MessagesReadDiscussionRequest{
+			Peer:      peer,
+			MsgID:     int(topicID),
+			ReadMaxID: int(maxID),
+		}); err != nil {
+			return fmt.Errorf("read discussion history: %w", err)
+		}
+		c.send(ChatMarkedReadMsg{ChatId: chatID, MaxMessageId: maxID})
+		return nil
+	}
+
+	if constant.TDLibPeerID(real).IsChannel() {
 		inputChannel, ok := peerAsInputChannel(peer)
 		if !ok {
-			return fmt.Errorf("view messages: peer %d is not a channel", chatID)
+			return fmt.Errorf("view messages: peer %d is not a channel", real)
 		}
 		if _, err := c.api.ChannelsReadHistory(ctx, &tg.ChannelsReadHistoryRequest{
 			Channel: inputChannel,
@@ -761,7 +835,9 @@ const maxReadReactionsCalls = 10
 
 // ReadReactions clears a chat's unread reactions, and on success announces
 // it with [ChatReactionsReadMsg], for the reason [ViewMessages] announces a
-// read. It is the whole chat, not a thread: no top message is given.
+// read. It is the whole chat unless the chat is a topic, and then it is that
+// topic: the counter the reader is clearing is the topic's row, and an
+// unscoped clear would take every other topic in the forum with it.
 //
 // A positive offset in the server's answer means the call has to be made
 // again, which is all the API documents about it. The call is repeated up
@@ -769,17 +845,23 @@ const maxReadReactionsCalls = 10
 // announced: stopping at the cap is not an error, but it is not a clear the
 // server confirmed either, so the count stays and the next open asks again.
 func (c *Client) ReadReactions(chatID int64) error {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return fmt.Errorf("read reactions: %w", err)
 	}
 
 	done, err := repeatUntilDone(maxReadReactionsCalls, func() (*tg.MessagesAffectedHistory, error) {
-		return c.api.MessagesReadReactions(ctx, &tg.MessagesReadReactionsRequest{
-			Peer: peer,
-		})
+		req := &tg.MessagesReadReactionsRequest{Peer: peer}
+		// A flag field, so a whole-chat clear leaves it unset rather than
+		// sending a zero: topic 0 is not "every topic".
+		if topicID != 0 {
+			req.SetTopMsgID(int(topicID))
+		}
+		return c.api.MessagesReadReactions(ctx, req)
 	})
 	if err != nil {
 		return fmt.Errorf("read reactions: %w", err)
@@ -810,10 +892,15 @@ func repeatUntilDone(calls int, call func() (*tg.MessagesAffectedHistory, error)
 
 // UnreadMentions lists the IDs of a chat's unread mentions, oldest first,
 // at most limit of them.
+//
+// Inside a topic it lists that topic's. The whole forum's would jump the
+// reader out of the conversation they are walking.
 func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return nil, fmt.Errorf("unread mentions: %w", err)
 	}
@@ -821,14 +908,20 @@ func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
 	// Telegram Desktop's recipe for the OLDEST page: from message 1, with
 	// the offset turned back by a whole page. With no offset the call
 	// answers the newest, and a walk would start in the middle of a chat
-	// with more than limit of them. No top message: the whole chat, forum
-	// topics included.
-	res, err := c.api.MessagesGetUnreadMentions(ctx, &tg.MessagesGetUnreadMentionsRequest{
+	// with more than limit of them.
+	req := &tg.MessagesGetUnreadMentionsRequest{
 		Peer:      peer,
 		OffsetID:  1,
 		AddOffset: -limit,
 		Limit:     limit,
-	})
+	}
+	// A flag field: unset means the whole chat, forum topics included, and
+	// a zero would be a thread nothing is in.
+	if topicID != 0 {
+		req.SetTopMsgID(int(topicID))
+	}
+
+	res, err := c.api.MessagesGetUnreadMentions(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("unread mentions: %w", err)
 	}
@@ -852,21 +945,33 @@ func (c *Client) UnreadMentions(chatID int64, limit int) ([]int64, error) {
 // A channel's message IDs are its own numbering, so a supergroup takes the
 // call that names the channel; every other chat takes the one with bare
 // IDs.
+//
+// Which branch a topic takes is decided AFTER the split, and that is the
+// whole of the fix here. A synthetic chat ID answers no to IsChannel, so a
+// topic used to take the peerless call — and a topic's messages are the
+// forum's channel messages, so those IDs are the channel's numbering and
+// clearing them by the account's own cleared whatever else held them.
+// Splitting first gives the forum's ID, which is a channel, so a topic now
+// takes the channel branch with the forum's peer. There is nothing more to
+// pass: channels.readMessageContents names no topic, and it needs none,
+// because a message ID already belongs to exactly one topic.
 func (c *Client) ReadMentions(chatID int64, messageIDs []int64) error {
 	if len(messageIDs) == 0 {
 		return nil
 	}
+	real, _ := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	if constant.TDLibPeerID(chatID).IsChannel() {
-		peer, err := c.inputPeer(ctx, chatID)
+	if constant.TDLibPeerID(real).IsChannel() {
+		peer, err := c.inputPeer(ctx, real)
 		if err != nil {
 			return fmt.Errorf("read mentions: %w", err)
 		}
 		inputChannel, ok := peerAsInputChannel(peer)
 		if !ok {
-			return fmt.Errorf("read mentions: peer %d is not a channel", chatID)
+			return fmt.Errorf("read mentions: peer %d is not a channel", real)
 		}
 		if _, err := c.api.ChannelsReadMessageContents(ctx, &tg.ChannelsReadMessageContentsRequest{
 			Channel: inputChannel,
@@ -894,7 +999,8 @@ const maxReadMentionsCalls = 10
 // ReadAllMentions clears every unread mention in a chat, and on success
 // announces it with [ChatMentionsReadMsg] with All set, for the reason
 // [ViewMessages] announces a read. It is the whole chat, forum topics
-// included: no top message is given.
+// included — unless the chat IS a topic, and then it is that topic alone,
+// because the @ the reader is clearing is the one on the topic's row.
 //
 // The call is repeated while the answer carries a positive offset, up to
 // maxReadMentionsCalls times, the way [ReadReactions] repeats its own. Only
@@ -906,17 +1012,23 @@ const maxReadMentionsCalls = 10
 // whether the mentions are gone reads done rather than inferring it from a
 // nil error.
 func (c *Client) ReadAllMentions(chatID int64) (done bool, err error) {
+	real, topicID := c.splitTopic(chatID)
+
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
 		return false, fmt.Errorf("read all mentions: %w", err)
 	}
 
 	done, err = repeatUntilDone(maxReadMentionsCalls, func() (*tg.MessagesAffectedHistory, error) {
-		return c.api.MessagesReadMentions(ctx, &tg.MessagesReadMentionsRequest{
-			Peer: peer,
-		})
+		req := &tg.MessagesReadMentionsRequest{Peer: peer}
+		// A flag field, as in [Client.ReadReactions]: unset is the whole
+		// chat, and a zero would be a thread nothing is in.
+		if topicID != 0 {
+			req.SetTopMsgID(int(topicID))
+		}
+		return c.api.MessagesReadMentions(ctx, req)
 	})
 	if err != nil {
 		return false, fmt.Errorf("read all mentions: %w", err)
