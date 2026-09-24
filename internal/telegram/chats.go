@@ -493,13 +493,12 @@ func peerChatUpdate(chat *Chat) ChatUpdateMsg {
 // A forum topic is fetched as the thread it is — see [Client.historyPage] —
 // and comes back as the same messages from the same call, because everything
 // above this package reads a page of history and knows nothing about which
-// RPC fetched it.
+// RPC fetched it. The page belongs to the chat it was asked for: a topic's
+// history is the topic's, not the forum's, however the server labels it.
 func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32) ([]*Message, error) {
-	real, topicID := c.splitTopic(chatID)
-
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, real)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)
 	}
@@ -507,7 +506,7 @@ func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32
 		limit = 100
 	}
 
-	res, err := c.historyPage(ctx, peer, topicID, fromMessageID, offset, limit)
+	res, err := c.historyPage(ctx, target.peer, target.topicID, fromMessageID, offset, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)
 	}
@@ -524,13 +523,7 @@ func (c *Client) GetChatHistory(chatID, fromMessageID int64, offset, limit int32
 		return nil, fmt.Errorf("unexpected history type %T", res)
 	}
 
-	out := make([]*Message, 0, len(messages))
-	for _, mc := range messages {
-		if m := c.messageClassFromTG(mc); m != nil {
-			out = append(out, m)
-		}
-	}
-	return out, nil
+	return c.messagesFiledIn(target, messages), nil
 }
 
 // historyPage fetches one page of a chat's history, or of one topic's.
@@ -658,13 +651,7 @@ func (c *Client) SearchMessages(query string, limit int32) ([]*Message, error) {
 		return nil, fmt.Errorf("unexpected search type %T", res)
 	}
 
-	out := make([]*Message, 0, len(messages))
-	for _, mc := range messages {
-		if m := c.messageClassFromTG(mc); m != nil {
-			out = append(out, m)
-		}
-	}
-	return out, nil
+	return c.convertedMessages(messages), nil
 }
 
 // SearchChatMessages searches messages within a single chat, newest
@@ -679,9 +666,10 @@ func (c *Client) SearchMessages(query string, limit int32) ([]*Message, error) {
 // users, basic groups, supergroups and channels all route through
 // c.inputPeer with no channel-specific variant.
 //
-// Inside a topic the search is scoped to that topic. The reader is looking
-// at one conversation, and a hit in a different topic of the same forum
-// would open onto a thread they are not in.
+// Inside a topic the search is scoped to that topic, and its hits belong to
+// that topic. The reader is looking at one conversation, and a hit in a
+// different topic of the same forum would open onto a thread they are not
+// in.
 //
 // An empty query returns an error rather than a guaranteed server-side
 // SEARCH_QUERY_EMPTY round trip.
@@ -689,12 +677,11 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 	if query == "" {
 		return nil, fmt.Errorf("search chat messages: empty query")
 	}
-	real, topicID := c.splitTopic(chatID)
 
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	peer, err := c.inputPeer(ctx, real)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("search chat messages: %w", err)
 	}
@@ -703,7 +690,7 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 	}
 
 	req := &tg.MessagesSearchRequest{
-		Peer:     peer,
+		Peer:     target.peer,
 		Q:        query,
 		Filter:   &tg.InputMessagesFilterEmpty{},
 		OffsetID: int(fromMessageID),
@@ -721,8 +708,8 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 	}
 	// top_msg_id is a flag field, so an unscoped search must leave it unset
 	// rather than send a zero: a zero thread ID is not "every thread".
-	if topicID != 0 {
-		req.SetTopMsgID(int(topicID))
+	if target.topicID != 0 {
+		req.SetTopMsgID(int(target.topicID))
 	}
 
 	res, err := c.api.MessagesSearch(ctx, req)
@@ -731,13 +718,7 @@ func (c *Client) SearchChatMessages(chatID int64, query string, fromMessageID in
 	}
 
 	messages := messagesFromMessagesClass(res)
-	out := make([]*Message, 0, len(messages))
-	for _, mc := range messages {
-		if m := c.messageClassFromTG(mc); m != nil {
-			out = append(out, m)
-		}
-	}
-	return out, nil
+	return c.messagesFiledIn(target, messages), nil
 }
 
 // OpenChat is a light-weight placeholder kept for API compatibility:

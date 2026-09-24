@@ -19,7 +19,7 @@ import (
 //
 // chatID may name a forum topic, and then the message is filed under that
 // topic and comes back belonging to it rather than to the forum — see
-// [Client.sendTargetFor] and [replyHeaderFor] for what that takes.
+// [Client.targetFor] and [replyHeaderFor] for what that takes.
 func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, placeholderID int64) (*Message, error) {
 	msg, _, err := c.SendTextMessageWithMentions(chatID, text, nil, replyToMessageID, placeholderID)
 	return msg, err
@@ -33,7 +33,7 @@ func (c *Client) SendTextMessage(chatID int64, text string, replyToMessageID, pl
 func (c *Client) SendTextMessageWithMentions(chatID int64, text string, mentions []MentionSpan, replyToMessageID, placeholderID int64) (*Message, int, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
-	target, err := c.sendTargetFor(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send message: %w", err)
 	}
@@ -129,35 +129,57 @@ func replyHeaderFor(topicID, replyToMessageID int64) tg.InputReplyToClass {
 	return header
 }
 
-// sendTarget is where a send is going: the peer Telegram is asked to put
-// the message in, the topic inside it, and the chat ID the CALLER named,
-// which for a topic is its synthetic ID and for everything else is the peer
-// again.
+// chatTarget is the chat a call is about: the peer Telegram is asked about,
+// the topic inside it, and the chat ID the CALLER named, which for a topic
+// is its synthetic ID and for everything else is the peer again.
 //
-// The caller's ID is carried because the send has to hand it back. The
-// server answers with a message belonging to the forum, and the local echo
-// it replaces lives in the topic's own chat, so publishing the server's
-// answer as it stands would leave the echo unresolved and the message in
-// the forum's flat stream. See [Client.publishSent].
-type sendTarget struct {
+// The caller's ID is carried because the answer has to be handed back under
+// it. The server talks about the forum — that is the peer it was asked
+// about — while the reader, the local echo and the thread all sit in the
+// topic's own chat, so an answer passed on as it came back would land in
+// the forum's flat stream instead of the topic being read. See
+// [chatTarget.filed] for the rewrite, and [Client.publishSent].
+type chatTarget struct {
 	peer    tg.InputPeerClass
 	chatID  int64
 	topicID int64
 }
 
-// sendTargetFor resolves the chat a send names into what the wire needs: a
+// targetFor resolves the chat a call names into what the wire needs: a
 // topic's synthetic chat ID becomes its forum's peer and the topic inside
 // it, and every other chat ID becomes itself with no topic.
 //
-// This is the split chokepoint for every send path, which is why they
-// resolve their peer through it rather than calling inputPeer themselves.
-func (c *Client) sendTargetFor(ctx context.Context, chatID int64) (sendTarget, error) {
+// This is the split chokepoint for every path that both names a peer and
+// hands a message back — sending, editing, reacting, pinning, forwarding,
+// fetching a page of history — which is why they resolve their peer through
+// it rather than calling inputPeer themselves.
+func (c *Client) targetFor(ctx context.Context, chatID int64) (chatTarget, error) {
 	real, topicID := c.splitTopic(chatID)
 	peer, err := c.inputPeer(ctx, real)
 	if err != nil {
-		return sendTarget{}, err
+		return chatTarget{}, err
 	}
-	return sendTarget{peer: peer, chatID: chatID, topicID: topicID}, nil
+	return chatTarget{peer: peer, chatID: chatID, topicID: topicID}, nil
+}
+
+// filed is msg as it belongs to the chat the caller named.
+//
+// Every message the server says anything about in a forum belongs to the
+// forum: that is the peer, and it is what [Client.messageClassFromTG] reads
+// the chat ID off. The caller asked about a topic, everything it keys is
+// keyed on the topic's own ID, and so this is where the two are reconciled
+// — once, rather than at each of the call sites that has an answer to hand
+// back.
+//
+// A chat that is not a topic is left exactly as the server wrote it, and so
+// is a nil message: an absent answer is not something to rewrite.
+func (t chatTarget) filed(msg *Message) *Message {
+	if msg == nil || t.topicID == 0 {
+		return msg
+	}
+	msg.ChatID = t.chatID
+	msg.TopicID = t.topicID
+	return msg
 }
 
 // publishSent announces a message this client just sent, under the chat ID
@@ -166,15 +188,11 @@ func (c *Client) sendTargetFor(ctx context.Context, chatID int64) (sendTarget, e
 // The rewrite is the whole point. A message sent to a topic comes back from
 // the server belonging to the forum — that is the peer it was sent to — but
 // the placeholder it replaces sits in the topic's chat, and so does the
-// reader. Published as the server wrote it, the echo would never resolve
-// and the message would appear in the forum's flat stream instead of the
-// topic being read.
-func (c *Client) publishSent(target sendTarget, msg *Message, placeholderID int64) {
-	if msg != nil && target.topicID != 0 {
-		msg.ChatID = target.chatID
-		msg.TopicID = target.topicID
-	}
-	c.send(MessageSendSucceededMsg{Message: msg, OldMessageId: placeholderID})
+// reader. Published as it came back, the echo would never resolve and the
+// message would appear in the forum's flat stream instead of the topic
+// being read.
+func (c *Client) publishSent(target chatTarget, msg *Message, placeholderID int64) {
+	c.send(MessageSendSucceededMsg{Message: target.filed(msg), OldMessageId: placeholderID})
 }
 
 // topicSendError turns Telegram's refusal of a send into a topic into
@@ -206,17 +224,26 @@ func (c *Client) EditTextMessage(chatID int64, messageID int64, text string) (*M
 // users without a username (see MentionSpan). An edit replaces all of a
 // message's entities, so mentions kept through the edit must be passed
 // again. Dropped mentions are counted as in SendTextMessageWithMentions.
+//
+// Editing a message inside a forum topic edits it where it lives, which is
+// the forum: a topic's messages are the forum's channel messages, and there
+// is no topic to name because the message names itself. What the topic DOES
+// decide is where the answer goes — the edited message comes back belonging
+// to the forum, and the thread waiting to redraw the row is the topic's, so
+// it is handed back filed under the chat the caller named. Both ways out
+// take that filing: the message the updates carry, and the refetch for the
+// answers that carry none.
 func (c *Client) EditTextMessageWithMentions(chatID int64, messageID int64, text string, mentions []MentionSpan) (*Message, int, error) {
 	ctx, cancel := opCtx()
 	defer cancel()
-	peer, err := c.inputPeer(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("edit message: %w", err)
 	}
 
 	body, entities, dropped := c.formatOutgoingWithMentions(ctx, text, mentions)
 	updates, err := c.api.MessagesEditMessage(ctx, &tg.MessagesEditMessageRequest{
-		Peer:     peer,
+		Peer:     target.peer,
 		ID:       int(messageID),
 		Message:  body,
 		Entities: entities,
@@ -226,13 +253,13 @@ func (c *Client) EditTextMessageWithMentions(chatID int64, messageID int64, text
 	}
 
 	if msg := messageFromUpdates(c, updates); msg != nil {
-		return msg, dropped, nil
+		return target.filed(msg), dropped, nil
 	}
 	msg, err := c.GetMessage(chatID, messageID)
 	if err != nil {
 		return nil, 0, err
 	}
-	return msg, dropped, nil
+	return target.filed(msg), dropped, nil
 }
 
 // DeleteMessages deletes messages from a chat.
@@ -350,7 +377,7 @@ func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, erro
 		return nil, nil
 	}
 
-	real, _ := c.splitTopic(chatID)
+	real, topicID := c.splitTopic(chatID)
 
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -386,13 +413,53 @@ func (c *Client) GetMessages(chatID int64, messageIDs []int64) ([]*Message, erro
 		messages = messagesFromMessagesClass(res)
 	}
 
+	// Filed under the chat the caller named, like a page of history and
+	// like a message that arrived live. This is the fetch the thread
+	// refetches through after an edit or a reaction, and it writes what it
+	// gets back into the store under the topic's key — so a message
+	// labelled with the forum would change chats the moment anyone touched
+	// it.
+	return c.messagesFiledIn(chatTarget{chatID: chatID, topicID: topicID}, messages), nil
+}
+
+// convertedMessages converts a page of fetched messages, dropping the ones
+// that convert to nothing — an empty message is a hole the server left
+// where a deleted one used to be, not a row.
+//
+// One loop rather than the copy every fetching call used to carry: history,
+// both searches, the media rail and the by-ID fetch all answer with a page
+// of tg messages and all want the same domain messages out of it.
+func (c *Client) convertedMessages(messages []tg.MessageClass) []*Message {
 	out := make([]*Message, 0, len(messages))
 	for _, mc := range messages {
 		if m := c.messageClassFromTG(mc); m != nil {
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	return out
+}
+
+// messagesFiledIn converts a page of fetched messages and files each one
+// under the chat the caller asked about.
+//
+// The filing is what makes a page fetched for a topic agree with the rest of
+// the client. A message in a forum names the forum as its peer whichever
+// topic it sits in, so a page of a topic's history, a search of one or its
+// media rail all came back labelled with the forum — while the same message
+// arriving live, or echoed back from a send, came back labelled with the
+// topic. One message cannot be in two chats depending on how it was
+// fetched.
+//
+// After conversion rather than during it, deliberately: a message with no
+// from_id takes its sender from its chat ID (see [Client.messageFromTG]), so
+// a topic's ID pushed in earlier would rename every anonymous admin and
+// channel post in the forum to a chat nothing has a title for.
+func (c *Client) messagesFiledIn(target chatTarget, messages []tg.MessageClass) []*Message {
+	out := c.convertedMessages(messages)
+	for _, m := range out {
+		target.filed(m)
+	}
+	return out
 }
 
 // messagesFromMessagesClass extracts the message list from a

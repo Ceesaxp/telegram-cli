@@ -414,6 +414,87 @@ func TestSearchingAnOrdinaryChatNamesNoTopic(t *testing.T) {
 	}
 }
 
+// topicFetches are the three calls that answer with a PAGE of a topic's
+// messages, as opposed to one message or none.
+var topicFetches = map[string]func(c *Client, chatID int64) ([]*Message, error){
+	"its history": func(c *Client, chatID int64) ([]*Message, error) {
+		return c.GetChatHistory(chatID, 0, 0, 50)
+	},
+	"a search of it": func(c *Client, chatID int64) ([]*Message, error) {
+		return c.SearchChatMessages(chatID, "go", 0, 50)
+	},
+	"a search of its media": func(c *Client, chatID int64) ([]*Message, error) {
+		return c.SearchChatMedia(chatID, MediaFilterFiles, 50)
+	},
+}
+
+// oneForumMessage is what all three fetches answer with: a message of the
+// forum's channel, which is what every message in a topic is.
+func oneForumMessage() tg.MessagesMessagesClass {
+	return &tg.MessagesChannelMessages{Messages: []tg.MessageClass{
+		&tg.Message{ID: 412, PeerID: &tg.PeerChannel{ChannelID: forumChannelID}, Message: "remote Go role"},
+	}}
+}
+
+// A message fetched for a topic belongs to that topic, the way a sent echo
+// and an arriving message already do.
+//
+// All three of these read the chat ID off the message's peer, which in a
+// forum is the forum — so the three paths disagreed with the other two about
+// which chat the very same message was in, and a page fetched for a topic
+// came back labelled with the forum's flat stream.
+func TestATopicsFetchedMessagesBelongToTheTopic(t *testing.T) {
+	for name, fetch := range topicFetches {
+		t.Run(name, func(t *testing.T) {
+			c, _ := topicReadClient(t, &topicReadInvoker{answer: oneForumMessage()})
+			topic := c.topicChatID(forumChatID(), jobsTopicID)
+
+			got, err := fetch(c, topic)
+			if err != nil {
+				t.Fatalf("fetch: %v", err)
+			}
+
+			if len(got) != 1 {
+				t.Fatalf("fetched %d messages, want 1", len(got))
+			}
+			if got[0].ChatID != topic {
+				t.Errorf("the message is in chat %d, want the topic's %d (the forum is %d)",
+					got[0].ChatID, topic, forumChatID())
+			}
+			if got[0].TopicID != jobsTopicID {
+				t.Errorf("the message names topic %d, want %d", got[0].TopicID, jobsTopicID)
+			}
+		})
+	}
+}
+
+// And a chat that is not a topic is left exactly as the server wrote it:
+// almost every fetch is one of these, and the sender of a message with no
+// from_id is derived from the chat ID, so a chat ID invented for a chat that
+// has a real one would rename whoever sent it.
+func TestAnOrdinaryChatsFetchedMessagesAreTheServersOwn(t *testing.T) {
+	for name, fetch := range topicFetches {
+		t.Run(name, func(t *testing.T) {
+			c, _ := topicReadClient(t, &topicReadInvoker{answer: oneForumMessage()})
+
+			got, err := fetch(c, forumChatID())
+			if err != nil {
+				t.Fatalf("fetch: %v", err)
+			}
+
+			if len(got) != 1 {
+				t.Fatalf("fetched %d messages, want 1", len(got))
+			}
+			if got[0].ChatID != forumChatID() {
+				t.Errorf("the message is in chat %d, want %d", got[0].ChatID, forumChatID())
+			}
+			if got[0].TopicID != 0 {
+				t.Errorf("the message names topic %d, want none", got[0].TopicID)
+			}
+		})
+	}
+}
+
 // topicReads are the reads a topic takes, each making exactly one request
 // and handing back what went out along with the topic's own chat ID.
 var topicReads = map[string]func(t *testing.T) (bin.Encoder, int64){

@@ -309,6 +309,29 @@ func (c *Client) splitTopic(chatID int64) (real, topic int64) {
 	return ref.chatID, ref.topicID
 }
 
+// refuseTopic is how a call says no to a forum topic, and nil for every
+// other chat ID.
+//
+// It is for the handful of questions a topic cannot be asked because they
+// are about something a topic is not — a basic group's membership, a
+// broadcast post's comments — as opposed to the many that are about the
+// forum and are answered by splitting. because completes the sentence "chat
+// N is a forum topic: ...", so it says what the call is about rather than
+// restating that the chat is a topic.
+//
+// [Client.inputPeer] refuses too, and that refusal is the net under every
+// peer this package resolves. This one is for the calls that resolve no
+// peer at all: messages.getFullChat takes a bare chat ID, so nothing would
+// have stopped a topic's synthetic ID from being narrowed into a plain one
+// and asked about. Both are listed as refusals by the guard in
+// topics_guard_test.go, which holds each of them to actually refusing.
+func refuseTopic(chatID int64, because string) error {
+	if !isSyntheticChatID(chatID) {
+		return nil
+	}
+	return fmt.Errorf("chat %d is a forum topic: %s", chatID, because)
+}
+
 // forumTopicsPageSize is how many topics one messages.getForumTopics asks
 // for. The server is free to answer with fewer than it was asked for even
 // when more exist — the API page says so explicitly — which is why a short

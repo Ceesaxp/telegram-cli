@@ -332,7 +332,7 @@ func (c *Client) SendOpenedFileMessageWithMentions(chatID int64, f *os.File, cap
 	ctx, cancel := transferCtx()
 	defer cancel()
 
-	target, err := c.sendTargetFor(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send file: %w", err)
 	}
@@ -431,18 +431,18 @@ func (c *Client) SendPhotoMessageWithMentions(chatID int64, path, caption string
 // uploadForSend resolves where the send is going and uploads path to
 // Telegram. The target carries the topic when the chat ID names one, which
 // the send itself needs and the upload does not.
-func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (sendTarget, tg.InputFileClass, error) {
+func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (chatTarget, tg.InputFileClass, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return sendTarget{}, nil, err
+		return chatTarget{}, nil, err
 	}
 	if info.IsDir() {
-		return sendTarget{}, nil, fmt.Errorf("%q is a directory", path)
+		return chatTarget{}, nil, fmt.Errorf("%q is a directory", path)
 	}
 
-	target, err := c.sendTargetFor(ctx, chatID)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
-		return sendTarget{}, nil, err
+		return chatTarget{}, nil, err
 	}
 
 	// The file may already be up: StartUpload puts it on Telegram's
@@ -456,7 +456,7 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 
 	inputFile, err := c.uploadFile(ctx, path, c.uploads.nextGeneration())
 	if err != nil {
-		return sendTarget{}, nil, fmt.Errorf("upload %q: %w", path, err)
+		return chatTarget{}, nil, fmt.Errorf("upload %q: %w", path, err)
 	}
 	return target, inputFile, nil
 }
@@ -464,7 +464,7 @@ func (c *Client) uploadForSend(ctx context.Context, chatID int64, path string) (
 // sendUploadedMedia sends already-uploaded media to the target and
 // publishes the resulting message to the update stream. It also returns how
 // many of the caption's mentions were dropped.
-func (c *Client) sendUploadedMedia(ctx context.Context, target sendTarget, media tg.InputMediaClass, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
+func (c *Client) sendUploadedMedia(ctx context.Context, target chatTarget, media tg.InputMediaClass, caption string, mentions []MentionSpan, replyToMessageID int64, placeholderID int64) (*Message, int, error) {
 	body, entities, dropped := c.formatOutgoingWithMentions(ctx, caption, mentions)
 	req := &tg.MessagesSendMediaRequest{
 		Peer:     target.peer,

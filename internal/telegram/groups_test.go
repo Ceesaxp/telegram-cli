@@ -24,11 +24,13 @@ var (
 
 // memberInvoker stands in for the server's member lists. It knows the
 // channels supergroup and broadcast, answers channels.getParticipants with
-// participants and messages.getFullChat with fullChat, or either with err,
-// and records every request. Anything else is refused.
+// participants, messages.getFullChat with fullChat and
+// channels.getFullChannel with fullChannel, or any of them with err, and
+// records every request. Anything else is refused.
 type memberInvoker struct {
 	participants tg.ChannelsChannelParticipantsClass
 	fullChat     *tg.MessagesChatFull
+	fullChannel  *tg.MessagesChatFull
 	err          error
 	asked        []bin.Encoder
 }
@@ -52,6 +54,12 @@ func (f *memberInvoker) Invoke(_ context.Context, input bin.Encoder, output bin.
 			return f.err
 		}
 		*output.(*tg.MessagesChatFull) = *f.fullChat
+		return nil
+	case *tg.ChannelsGetFullChannelRequest:
+		if f.err != nil {
+			return f.err
+		}
+		*output.(*tg.MessagesChatFull) = *f.fullChannel
 		return nil
 	default:
 		return errors.New("unexpected request")

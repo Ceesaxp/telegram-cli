@@ -71,12 +71,10 @@ func (f MediaFilter) String() string {
 // same request and one field more. Without the split it asked for a peer
 // that does not exist and the rail stayed empty.
 func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) ([]*Message, error) {
-	real, topicID := c.splitTopic(chatID)
-
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	peer, err := c.inputPeer(ctx, real)
+	target, err := c.targetFor(ctx, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("search chat %s: %w", filter, err)
 	}
@@ -85,7 +83,7 @@ func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) 
 	}
 
 	req := &tg.MessagesSearchRequest{
-		Peer:   peer,
+		Peer:   target.peer,
 		Q:      "",
 		Filter: filter.tg(),
 		Limit:  int(limit),
@@ -105,8 +103,8 @@ func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) 
 	// set on it is not "no thread" but a thread nothing is in. General is
 	// named here like any other topic — unlike a reply header, where naming
 	// it is what a plain post into it must not do.
-	if topicID != 0 {
-		req.SetTopMsgID(int(topicID))
+	if target.topicID != 0 {
+		req.SetTopMsgID(int(target.topicID))
 	}
 
 	res, err := c.api.MessagesSearch(ctx, req)
@@ -115,11 +113,5 @@ func (c *Client) SearchChatMedia(chatID int64, filter MediaFilter, limit int32) 
 	}
 
 	messages := messagesFromMessagesClass(res)
-	out := make([]*Message, 0, len(messages))
-	for _, mc := range messages {
-		if m := c.messageClassFromTG(mc); m != nil {
-			out = append(out, m)
-		}
-	}
-	return out, nil
+	return c.messagesFiledIn(target, messages), nil
 }

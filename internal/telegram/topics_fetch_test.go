@@ -24,13 +24,18 @@ type topicFetchInvoker struct {
 	channelDeletes []*tg.ChannelsDeleteMessagesRequest
 	plainDeletes   []*tg.MessagesDeleteMessagesRequest
 	searches       []*tg.MessagesSearchRequest
+
+	// answer is what a fetch comes back with. Empty for the tests that are
+	// only about which RPC was asked; set by the ones that care what the
+	// answer is labelled with.
+	answer []tg.MessageClass
 }
 
 func (f *topicFetchInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
 	switch req := input.(type) {
 	case *tg.ChannelsGetMessagesRequest:
 		f.channelFetches = append(f.channelFetches, req)
-		output.(*tg.MessagesMessagesBox).Messages = &tg.MessagesMessages{}
+		output.(*tg.MessagesMessagesBox).Messages = &tg.MessagesMessages{Messages: f.answer}
 		return nil
 	case *tg.MessagesGetMessagesRequest:
 		f.plainFetches = append(f.plainFetches, req)
@@ -106,6 +111,34 @@ func TestGetMessagesInATopicAsksTheForumsChannel(t *testing.T) {
 	assertNamesTheForum(t, got.Channel)
 	if len(got.ID) != 1 || got.ID[0].(*tg.InputMessageID).ID != 412 {
 		t.Errorf("asked for %#v, want message 412", got.ID)
+	}
+}
+
+// A message fetched for a topic belongs to the topic, like one fetched as
+// a page of its history and one that arrived live. The refetch after an
+// edit or a reaction goes through here and writes what it gets back into
+// the topic's store, so a message that disagreed would flip chats the
+// moment somebody reacted to it.
+func TestAMessageFetchedForATopicBelongsToTheTopic(t *testing.T) {
+	c, inv := topicFetchClient(t)
+	topic := c.topicChatID(forumChatID(), 5)
+	inv.answer = []tg.MessageClass{&tg.Message{
+		ID:      412,
+		PeerID:  &tg.PeerChannel{ChannelID: forumChannelID},
+		FromID:  &tg.PeerUser{UserID: 3},
+		Message: "remote Go role",
+	}}
+
+	msgs, err := c.GetMessages(topic, []int64{412})
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].ChatID != topic || msgs[0].TopicID != 5 {
+		t.Errorf("message is in chat %d topic %d, want chat %d topic 5",
+			msgs[0].ChatID, msgs[0].TopicID, topic)
 	}
 }
 
