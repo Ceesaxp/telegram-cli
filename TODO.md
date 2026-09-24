@@ -1,16 +1,30 @@
 # TODO
 
-## Next — forum topics (design 2026-09-23, not started)
+## Forum topics (design 2026-09-23, shipping) — branch feat/forum-topics
 
 Spec: `docs/topics.md`, written from researched protocol facts (sources in the doc). A topic is a message thread whose ID is its creating service message; General is topic 1; per-topic unread counts never arrive by update; topic create/edit/delete arrive as service messages.
 
-Decision recorded there: **a topic is a chat with a synthetic ID**, allocated by a registry inside `internal/telegram` and split at every exported `Client` method, so the store, the chat list, drafts and the jump stack need no new concept. `inputPeer` refuses a synthetic ID, guarded by an AST test.
+Decision recorded there: **a topic is a chat with a synthetic ID**, minted by a registry inside `internal/telegram` and split at every exported `Client` method. The band starts at `1<<48`, above every `constant.TDLibPeerID` range, so `inputPeer` refuses one by name and an AST guard holds every chat-ID-taking method to splitting or refusing — with a named allowlist that only ever shrinks.
 
-- [ ] Wave 0 — the reply bug: in a forum every message carries a reply header pointing at the topic root, so the thread draws "earlier message" under almost every message. Parse the header: record `TopicID`, set `ReplyToMessageID` only for a real reply. Worth doing on its own
-- [ ] Wave 1 — reading: forum detection, the topic registry and split, `getForumTopics` with paging, the drill-in topic list, per-topic history via `getReplies`, unread from the topic records
-- [ ] Wave 2 — posting and read marks: the reply header for a plain post and a reply, `readDiscussion`, the discussion read updates, the closed-topic rule and `TOPIC_CLOSED`, per-topic drafts
-- [ ] Wave 3 — polish: `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>` links (the refusal in tme.go goes away), pinned ordering, topic service messages refreshing the list
+- [x] Wave 0 — the reply bug: a forum message that is not a reply no longer quotes its topic's root. `Message.TopicID` records the topic; a channel-discussion comment is unaffected
+- [x] Wave 1 — listing: `ForumTopics` pages `getForumTopics` (offsets from the last converted topic, stopping on an empty page, the server's count, or a 20-page cap); `GetChat` answers a topic from the registry with no round trip; `ChatStore.Merge` keeps `IsForum`
+- [x] Wave 1 — the drill-in: Enter on a forum replaces the rows with its topics, `‹ Forum` header keeping the query beside it, Esc clears a filter then leaves, backspace always leaves, folder keys inert; the sigil takes Telegram's six icon colours through the palette's roles; a closed topic is marked as a muted chat is
+- [x] Wave 1 — reading: `getReplies` for history, `readDiscussion` for the read mark, `top_msg_id` on reactions, mentions and search. `ReadMentions` split first so a topic takes the channel branch instead of marking by the account's own numbering
+- [x] Wave 2 — posting: `replyHeaderFor` decides the reply header in one place (plain post replies to the topic root; a reply inside a topic names the message and the topic on top; General takes neither), and `publishSent` puts the server's answer back under the synthetic ID so the echo resolves
+- [ ] Wave 1 — routing: an arriving message published under its topic too, the discussion read updates, the message fetches split
+- [ ] Wave 1 — the app: Enter drills in, `Forum › Topic` in the thread header, the last topic read per forum, the keymap docs
+- [ ] Wave 3 — polish: `:topic` with fuzzy completion, `t.me/<group>/<topic>/<id>` links (the refusal in tme.go goes away), pinned ordering via `updatePinnedForumTopic`, topic service messages refreshing the list
 - [x] Decided 2026-09-23: back key `Esc` (+ `Backspace`); the thread shows the last topic read in that forum, flat only on first entry; waves 1 and 2 ship together
+
+Follow-ups found while building, none blocking the ship:
+
+- [ ] `EditTextMessage*` and `ForwardMessages` still refuse a topic's chat ID — they reach `inputPeer` without splitting, so the guard is satisfied but editing a message in a topic fails
+- [ ] A topic's `Chat.Muted` is always false: per-topic `notify_settings` arrive on the topic record and nothing reads them, so a topic silenced on the phone still rings here
+- [ ] `u` (next unread) does not walk a forum's unread topics; the counts are there
+- [ ] Draft marks are not drawn on topic rows — `draftChats` is keyed by chat ID and the app does not yet project the synthetic ones
+- [ ] `GetChatHistory` returns messages whose `ChatID` is the forum's, while a sent echo and an arriving copy carry the synthetic one. Decide which, and make the three agree
+- [ ] `view_forum_as_messages` (read a forum flat) is not honoured: it lives on `channelFull`, which nothing fetches
+- [ ] Custom `icon_emoji_id` topic icons are not drawn; the sigil stays `#`
 
 ## Performance and safety wave (2026-09-22) — branch fix/perf-wave, closes #33
 
