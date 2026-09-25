@@ -462,7 +462,7 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 	// every panel that measures a string has to agree about it. A
 	// declaration that only the top bar honoured would close the gap there
 	// and leave the chat titles sheared.
-	cell.SetEmojiMode(cell.ParseEmojiMode(config.ResolveEmojiWidth(cfg.UI.EmojiWidth)))
+	cell.SetEmojiMode(emojiMode(cfg.UI.EmojiWidth))
 
 	// The components were built in the palette already; this is the rest of
 	// it — the app's own copy and the sender ramp — through the path a live
@@ -506,6 +506,29 @@ func newModel(cfg *config.Config, tg *telegram.Client, s *store.Store, authorize
 	m.railOpen = cfg.UI.Rail
 	m.composer.SetParseMarkdown(cfg.UI.ParseMarkdown)
 	return m
+}
+
+// emojiMode maps the ui.emoji_width setting onto the mode the cell package
+// measures with, asking the terminal only where the user has not said.
+//
+// config owns the normalisation — it is a pure function over the string, and
+// config migration depends on it staying that way — and internal/ui/cell
+// reads no environment at all, because it is about measuring strings. The
+// one place that knows both which terminal this is and what was configured
+// is here, so the composition of the two lives here.
+//
+// "composed" and "separate" are declarations by somebody looking at their
+// own screen, and [theme.ComposesEmoji] is a table of terminals somebody
+// else checked. Only "auto" — which is also where an empty or misspelt
+// value lands — consults it, and only to trade a guess for a fact: a
+// terminal on the list has been seen to compose, so there is nothing left to
+// hedge against. Everything else keeps [cell.EmojiAuto] and its pessimism.
+func emojiMode(setting string) cell.EmojiMode {
+	resolved := config.ResolveEmojiWidth(setting)
+	if resolved == config.EmojiWidthAuto && theme.ComposesEmoji() {
+		return cell.EmojiComposed
+	}
+	return cell.ParseEmojiMode(resolved)
 }
 
 // composerEditingMode maps the resolved ui.compose_editing setting onto the

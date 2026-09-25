@@ -342,11 +342,24 @@ narrow text heart in 1 — and that gap closes with `"separate"`. So read the
 row rather than the gap: a family or a flag in a folder name and a heart in a
 chat title are telling you opposite things.
 
-It is a declaration because it cannot be detected: no environment variable
-reports it, and the runtime query that would ask was removed for leaking its
-response bytes into the composer. There's no harm in trying the value the
-other case asks for — set it, look at the top bar, keep whichever ends flush
-against the clock.
+Nothing reports composition directly: no environment variable answers it,
+and the runtime query that would ask was removed for leaking its response
+bytes into the composer. What the environment does report is the terminal's
+**identity**, and `"auto"` uses it — kitty, Ghostty and WezTerm have been
+checked by hand and compose, so on those three `"auto"` behaves as
+`"composed"` and there is nothing to set.
+
+Everything else keeps the pessimistic reservation until somebody checks it,
+because the two mistakes are not symmetric: assuming a terminal composes
+when it does not lets a row run past its budget and over what is beside it,
+while assuming it does not costs a gap. Inside **tmux or screen** the answer
+is always the pessimistic one, whatever the environment still claims — a
+multiplexer does its own cell accounting and redraws the pane through it, so
+the terminal outside it is not what the client is drawing into.
+
+An explicit `"composed"` or `"separate"` is never second-guessed. There's no
+harm in trying the value the other case asks for — set it, look at the top
+bar, keep whichever ends flush against the clock.
 
 The setting is process-wide and read once at startup, like the colour
 profile, so every panel that measures a string agrees about it.
