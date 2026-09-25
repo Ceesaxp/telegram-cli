@@ -22,6 +22,14 @@ Typing is always entered on purpose — `i`, `Tab`, a focus key, or a
 click on the composer — nothing is forwarded to the composer implicitly, so
 no binding below costs you the ability to type that character.
 
+The mouse is honoured and never needed: a click moves the cursor and chooses
+a row, the wheel scrolls, and that is the whole of it. Asking the terminal
+for those events is also what takes its own text selection away, since a
+drag arrives here instead — hold **Shift** and drag to select natively over
+the top of the app, in most terminals. [Mouse and selection](mouse.md) has
+both halves: what each click does, and how to get text out of a frame drawn
+in columns.
+
 There are no `Alt+…` and no function-key bindings (decision I-1). They only
 ever reached the app on a terminal configured to report Option as a
 modifier, which on macOS is the minority; the failure was silent and

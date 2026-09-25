@@ -59,6 +59,9 @@ Two ways round it:
   VTE family (GNOME Terminal, Tilix); iTerm2 uses Cmd for URLs. Which one is
   your terminal's decision, not this client's.
 
+The same modifier is how you select text, for the same reason — see
+[Mouse and selection](mouse.md).
+
 If a link is not underlined at all, the terminal is not on the OSC 8
 allowlist (`ui.hyperlinks = "auto"` only emits the sequence where it is known
 to be understood, because a terminal that prints it instead of acting on it

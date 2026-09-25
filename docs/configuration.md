@@ -305,7 +305,9 @@ in-memory state for that session, losing gap recovery but nothing else.
 ## Emoji width (`ui.emoji_width`)
 
 If there's a gap of a few cells between the folder tabs and the clock, this
-is the setting. Set `ui.emoji_width = "separate"` and it closes.
+is the setting. Which value closes it is the part that needs reading: a gap
+does not identify the value, and the two kinds of emoji that cause one want
+opposite answers.
 
 Emoji width is not a property of the string — the terminal decides it, and
 terminals disagree. Three kinds of sequence carry a *composition rule*, and a
@@ -328,10 +330,23 @@ whether it **composes**, which is what the values name:
 | `"composed"` | This terminal applies every rule. |
 | `"separate"` | This terminal applies none of them. |
 
+**Which value closes a gap depends on the emoji that caused it.** `auto`
+reserves the wider of the two renderings, so the gap is the difference between
+them — and the two cases differ in which rendering that was. A
+ZWJ family, a flag or a skin-toned emoji is wider drawn as its parts, so
+`auto` keeps room for the parts; a terminal that composes draws one glyph in
+two cells and the row ends short, and `"composed"` is what closes that. A
+`❤️`-style base plus U+FE0F is the other way about: the tables are the wider
+answer, `auto` reserves 2, a terminal that ignores the selector draws the
+narrow text heart in 1 — and that gap closes with `"separate"`. So read the
+row rather than the gap: a family or a flag in a folder name and a heart in a
+chat title are telling you opposite things.
+
 It is a declaration because it cannot be detected: no environment variable
 reports it, and the runtime query that would ask was removed for leaking its
-response bytes into the composer. There's no harm in trying the other value —
-set it, look at the top bar, keep whichever ends flush against the clock.
+response bytes into the composer. There's no harm in trying the value the
+other case asks for — set it, look at the top bar, keep whichever ends flush
+against the clock.
 
 The setting is process-wide and read once at startup, like the colour
 profile, so every panel that measures a string agrees about it.

@@ -69,6 +69,7 @@ cell**, so the picture cannot drift from the program.
 | [Features](docs/features.md) | what it does — folders, reactions, media, drafts, markdown, notifications |
 | [Keybindings](docs/keys.md) | every key, both editing modes, and how to rebind them |
 | [Interaction model](docs/interaction-model.md) | the rules the keyboard follows, and the decisions behind them — read this before changing a binding |
+| [Mouse and selection](docs/mouse.md) | what a click and the wheel do, and how to select and copy text while mouse reporting is on |
 | [Configuration](docs/configuration.md) | `config.toml`, where files go, send roots, running two accounts, migration |
 | [MCP & REST](docs/integrations.md) | driving the account from another program |
 | [Troubleshooting](docs/troubleshooting.md) | when something does not work |
