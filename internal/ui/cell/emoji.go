@@ -30,9 +30,21 @@ import (
 // So "does this terminal draw emoji narrow or wide" is the wrong question:
 // the same terminal is narrow on the first class and wide on the other two.
 // The right question is whether it COMPOSES, which is what the modes below
-// name. There is no environment variable that answers it, and the runtime
-// query that would was removed in wave 5 — its response bytes leaked into
-// the composer. So it is declared, or it is guessed at pessimistically.
+// name. Nothing answers that question directly: no environment variable
+// reports composition, and the runtime query that would ask was removed in
+// wave 5 because its response bytes leaked into the composer.
+//
+// What the environment does report is the terminal's IDENTITY, and for a
+// terminal somebody has looked at, the identity settles it — kitty, Ghostty
+// and WezTerm were all found to compose. theme.ComposesEmoji is that table,
+// and app.emojiMode consults it when the user configured "auto". It is an
+// allowlist and it says nothing about anything else, so a terminal nobody
+// has checked still gets [EmojiAuto] and still gets guessed at
+// pessimistically — for the reason set out on that mode, which has not
+// changed: a gap is visible and harmless, and a row that runs past its
+// budget overwrites what is beside it.
+//
+// So it is declared, or recognised, or guessed at pessimistically.
 type EmojiMode int32
 
 const (

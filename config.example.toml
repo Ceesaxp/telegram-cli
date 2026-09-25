@@ -94,9 +94,13 @@ hyperlinks = "auto"
 #   "separate" — it applies none: the selector is ignored and the base drawn
 #                as text, and joined or paired sequences are drawn as parts
 #
-# It is a declaration because it cannot be detected. The width is the
-# terminal's decision, no environment variable reports it, and the runtime
-# query that would ask was removed for leaking its answer into the composer.
+# Nothing reports composition directly, but the terminal's identity is
+# reported, and "auto" uses it: kitty, Ghostty and WezTerm have been checked
+# and compose, so on those three there is nothing to set. Every other
+# terminal keeps the pessimistic reservation until somebody checks it, and
+# inside tmux or screen the pessimistic answer is always used — the
+# multiplexer does its own cell accounting, so the terminal outside it is
+# not what this client is drawing into.
 #
 # A gap of a few cells between the folder tabs and the clock means "auto"
 # kept room for the wider rendering and the terminal drew the narrower one.
