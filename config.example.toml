@@ -98,10 +98,16 @@ hyperlinks = "auto"
 # terminal's decision, no environment variable reports it, and the runtime
 # query that would ask was removed for leaking its answer into the composer.
 #
-# Symptom of "composed" on a terminal that is actually "separate": a gap of
-# a few cells between the folder tabs and the clock, because the row was
-# laid out wider than it drew. There is no harm in trying the other value —
-# set it, look at the top bar, keep whichever ends flush.
+# A gap of a few cells between the folder tabs and the clock means "auto"
+# kept room for the wider rendering and the terminal drew the narrower one.
+# Which value closes it depends on the emoji: a family, a flag or a skin
+# tone is wider drawn as parts, so a composing terminal wants "composed";
+# a heart plus U+FE0F is wider by the tables, so a terminal that ignores
+# the selector wants "separate". Read the row, not the gap.
+#
+# Declaring the wrong one is not symmetric. Too narrow a reservation does
+# not leave a gap, it lets the row run over what is beside it — which is
+# the failure "auto" is pessimistic to avoid.
 emoji_width = "auto"
 
 # Line editing in the composer: "emacs" (readline chords), "vi" (modal),
