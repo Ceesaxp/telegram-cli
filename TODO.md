@@ -1,5 +1,24 @@
 # TODO
 
+## Next — text selection (design 2026-09-25, not started)
+
+Spec: `docs/selection.md`. Phase 0 (documenting the terminal's own Shift+drag, which works in kitty, Ghostty and WezTerm) is separate and lands with `docs/mouse.md`.
+
+Decision recorded there: **a selection is a range over source text, never over screen cells** — `(messageID, runeOffset)` at each end, the same identity anchoring `cursorID` uses over `scrollOffset`. Rendered lines carry code-block frames and line numbers, and a spoiler's text is painted invisible rather than substituted, so reading painted cells would copy box characters and reveal spoilers.
+
+- [ ] Wave 1 — the line map: an indexed `cell.WrapLines` reporting each line's source rune range, threaded through `renderBlocks`/`RenderBody` into `gridEntry` beside the lines it already caches. Structural, invisible, and the only part where being wrong is expensive
+- [ ] Wave 2 — point to position: `(row, col)` ↔ `(messageID, runeOffset)`, copying `ClickAt`'s row walk, plus the thread's local column origin
+- [ ] Wave 3 — the selection: anchored state, the three mouse events (no terminal mode change needed — `MouseModeCellMotion` is already set and drag events already arrive unhandled), highlight via a `SelectedLo/Hi` per-rune range exactly as `ArmedLinkLo/Hi` already works, copy on release
+- [ ] Wave 4 — double/triple click, `v` visual mode over the same state, auto-scroll at the pane edge, the cross-message `sender: ` form
+- [ ] Note: copying over plain ssh will not work, the same as `y` today — `internal/clipboard/copy.go` deliberately refuses OSC 52. Re-read that comment before wave 3
+
+## Emoji width defaults (found 2026-09-25)
+
+A composing terminal (kitty) in the default `emoji_width = "auto"` leaves a gap of 1-2 cells, because `auto` reserves the wider of the two renderings and a flag, a ZWJ family or a skin-toned emoji is wider un-composed. Declaring `"composed"` closes it.
+
+- [ ] `docs/configuration.md` told the reader to set `"separate"` for a gap, which is right only for a `❤️`-style sequence and wrong for the flag/family case — fixed with the mouse docs
+- [ ] The mode is a guess because "no environment variable reports it", but kitty, Ghostty and WezTerm all identify themselves (`TERM=xterm-kitty`, `KITTY_WINDOW_ID`, `TERM_PROGRAM`). A table of known-composing terminals would make `auto` right for most people instead of pessimistic for everyone
+
 ## Forum topics (design 2026-09-23, shipping) — branch feat/forum-topics
 
 Spec: `docs/topics.md`, written from researched protocol facts (sources in the doc). A topic is a message thread whose ID is its creating service message; General is topic 1; per-topic unread counts never arrive by update; topic create/edit/delete arrive as service messages.
