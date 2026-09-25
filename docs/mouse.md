@@ -26,10 +26,12 @@ selection with whatever copy gesture it normally has. Which modifier it uses
 is your terminal's decision rather than this client's, and its manual is the
 authority.
 
-Some terminals also offer a rectangular, or block, selection. Where it exists
-it is the better shape for this frame — see below — but it is a different
-modifier or a config flag in each one that has it, so this page can point you
-at your terminal's documentation and not at a keystroke.
+Many terminals also offer a rectangular, or block, selection, which is the
+better shape for a frame drawn in columns — it takes a column range instead
+of whole rows, so a drag down the thread can leave the chat list and the
+rail behind. On macOS, **Option** added to that Shift+drag does it in
+kitty, Ghostty and WezTerm alike. Elsewhere the modifier differs, and your
+terminal's manual is the authority.
 
 ## The selection takes whole rows
 
@@ -42,8 +44,9 @@ hint bar if the drag reaches the top or bottom row. Inside the thread, a
 message's first row carries its timestamp and sender, and each row after it
 carries the blank gutter where those were.
 
-Three things narrow it. A **block selection**, where your terminal has one,
-takes a column range instead of whole rows, which is the shape a panel is. A
+Three things narrow it. A **block selection** — `Opt`+`Shift`+drag on macOS
+in all three terminals above — takes a column range instead of whole rows,
+which is the shape a panel is. A
 **narrower terminal** has less to take: below 72 columns one panel owns the
 full width and `Tab` swaps which, the rail is only drawn at 118 columns and
 wider, and `` ` `` turns the rail off at any width. And `y` sidesteps the
