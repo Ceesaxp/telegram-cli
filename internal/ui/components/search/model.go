@@ -20,9 +20,14 @@ const hintText = "Enter: search · Tab: switch tab · ↑↓: select · Esc: clo
 
 // Overlay geometry. The box is a centered, capped-size dialog rather than a
 // box stretched to the full window: DialogBox contributes a 1-cell border
-// and (1,2) padding per side, SearchInput contributes its own 1-cell border,
-// and the bordered single-line input always renders as 3 rows (top border +
-// content + bottom border).
+// and (1,2) padding per side, and the input contributes nothing of its own —
+// it is a widgets.TextArea styled with theme.OverlayInput, which draws no
+// border and renders as exactly one row at the width it is handed.
+//
+// The input's two constants stay named at zero and one rather than being
+// folded away, because the budget is the thing they document: an input that
+// grows chrome again has one place to say so, and the rows it costs are
+// counted in fixedRows alongside the title, the tabs and the hint.
 const (
 	maxBoxWidth  = 72
 	maxBoxHeight = 24
@@ -36,8 +41,8 @@ const (
 
 	dialogChromeW = 6                     // DialogBox: (border 1 + padding 2) * 2 sides
 	dialogChromeH = 4                     // DialogBox: (border 1 + padding 1) * 2 sides
-	inputChromeW  = 2                     // SearchInput: border 1 * 2 sides
-	inputRows     = 3                     // bordered single-line input: top + content + bottom
+	inputChromeW  = 0                     // the input draws no border of its own
+	inputRows     = 1                     // and renders as exactly one row
 	fixedRows     = 1 + inputRows + 1 + 1 // title + input + tabs + hint
 
 	// minContentWidth is the smallest content column lipgloss's own
@@ -71,7 +76,7 @@ type geometry struct {
 	boxWidth   int
 	boxHeight  int
 	innerWidth int // content width for title/tabs/list/hint rows
-	inputWidth int // widgets.TextArea.Width (content+padding, pre-border)
+	inputWidth int // widgets.TextArea.Width, which is the full content width
 	listHeight int
 }
 

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -99,11 +100,11 @@ func TestComputeGeometryMidSize(t *testing.T) {
 	if g.boxHeight >= 40 {
 		t.Errorf("boxHeight = %d, want < window height 40", g.boxHeight)
 	}
-	// The input's own bordered rendering width must match the other rows'
-	// content width exactly, or the outer box's wrap forces a hard-wrap
-	// across border characters (the reported artifact).
+	// The input's own rendering width must match the other rows' content
+	// width exactly, or the outer box's wrap forces a hard-wrap across the
+	// row (the reported artifact).
 	if got, want := g.inputWidth+inputChromeW, g.innerWidth; got != want {
-		t.Errorf("bordered input width = %d, want %d (innerWidth)", got, want)
+		t.Errorf("input width = %d, want %d (innerWidth)", got, want)
 	}
 }
 
@@ -225,4 +226,34 @@ func TestViewRenderBounds(t *testing.T) {
 
 func escKeyMsg() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: tea.KeyEscape}
+}
+
+// TestTheInputRowIsAsWideAsTheBoxesOtherRows.
+//
+// inputChromeW budgeted for a 1-cell border on each side of a widget that
+// does not draw one: the input is a widgets.TextArea styled with
+// theme.OverlayInput, which has no border and renders exactly one row at its
+// Width. So the input's filled bar came out two cells narrower than every
+// other row in the box and stopped short of the right edge.
+func TestTheInputRowIsAsWideAsTheBoxesOtherRows(t *testing.T) {
+	trueColour(t)
+	m := newTestModel(120, 40)
+
+	if got, want := ansi.StringWidth(m.tabs.View()), m.geo.innerWidth; got != want {
+		t.Fatalf("precondition: the tab row is %d cells, not the %d this test takes "+
+			"for the box's content width", got, want)
+	}
+
+	input := m.input.View()
+	if got, want := ansi.StringWidth(input), m.geo.innerWidth; got != want {
+		t.Errorf("the input row is %d cells, want %d — the content width the box's "+
+			"other rows are drawn to", got, want)
+	}
+	// OverlayInput is a filled bar, so what the reader sees IS the fill:
+	// a budget two cells short shows up as a bar that stops short of the
+	// right edge rather than as empty space nobody notices.
+	if got, want := cell.PaintedWidth(input), m.geo.innerWidth; got != want {
+		t.Errorf("the input's filled bar covers %d of %d cells, dying at column %d",
+			got, want, got)
+	}
 }
