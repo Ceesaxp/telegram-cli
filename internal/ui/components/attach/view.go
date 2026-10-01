@@ -136,8 +136,17 @@ func (m Model) promptLine() string {
 }
 
 // entryLine renders one listing row.
+//
+// The row picks ONE surface and every span inside it carries ink only, so
+// cell.Fill paints it edge to edge. A span that sets a background of its own
+// KEEPS it — Fill re-opens the surface before each span's own sequences, by
+// design, which is what lets the chat list put a badge on cyan inside the
+// band. Spelling the panel colour on every span here therefore left the
+// cursored row's Sel fill reaching only the cells no span covered: the space
+// after the glyph, and the trailing pad.
 func (m Model) entryLine(e Entry, selected bool) string {
 	r := m.roles
+	fg := func(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
 	// A directory is structure rather than payload: its glyph is inert and
 	// its name is quieter than a file's, which is what makes the files —
@@ -147,9 +156,9 @@ func (m Model) entryLine(e Entry, selected bool) string {
 		glyphColour, nameColour = r.Ghost, r.Dim
 	}
 
-	mark := " "
+	surface, mark := r.Panel, " "
 	if selected {
-		mark = lipgloss.NewStyle().Foreground(r.Cyan).Background(r.Panel).Render("▌")
+		surface, mark = r.Sel, fg(r.Cyan).Render("▌")
 	}
 
 	name := e.Name
@@ -158,18 +167,12 @@ func (m Model) entryLine(e Entry, selected bool) string {
 	}
 
 	line := mark +
-		lipgloss.NewStyle().Foreground(glyphColour).Background(r.Panel).Render(glyphFor(e)) + " " +
-		lipgloss.NewStyle().Foreground(nameColour).Background(r.Panel).
-			Render(cell.Pad(cell.Truncate(name, nameW), nameW)) +
-		lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel).
-			Render(cell.PadLeft(cell.Clamp(formatSize(e), sizeW), sizeW)) +
-		lipgloss.NewStyle().Foreground(r.Ghost).Background(r.Panel).
-			Render(cell.PadLeft(cell.Clamp(formatTime(e.ModTime, render.Now()), timeW), timeW))
+		fg(glyphColour).Render(glyphFor(e)) + " " +
+		fg(nameColour).Render(cell.Pad(cell.Truncate(name, nameW), nameW)) +
+		fg(r.Faint).Render(cell.PadLeft(cell.Clamp(formatSize(e), sizeW), sizeW)) +
+		fg(r.Ghost).Render(cell.PadLeft(cell.Clamp(formatTime(e.ModTime, render.Now()), timeW), timeW))
 
-	if selected {
-		return cell.Fill(r.Sel, line, Width)
-	}
-	return cell.Fill(r.Panel, line, Width)
+	return cell.Fill(surface, line, Width)
 }
 
 // stateLine says what the cursored thing is and, for a file, how it would
