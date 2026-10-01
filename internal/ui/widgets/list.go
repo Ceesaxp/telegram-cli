@@ -267,7 +267,24 @@ func (l *List) View() string {
 		}
 
 		titleStyle := l.StyleTitle
+		subStyle := l.StyleSub
+		metaStyle := l.StyleMeta
 		badgeStyle := l.StyleBadge
+		if isActive {
+			// The row style paints the band, so the row style is what has
+			// to keep it solid. A caller styling its spans from the shared
+			// overlay vocabulary gets Background(r.Panel) on every one of
+			// them, and lipgloss renders an inner span's own SGR over the
+			// line style it is wrapped in — which left the band drawn as
+			// the row colour for the indent, panel behind the text, and
+			// the row colour again for the trailing pad.
+			//
+			// badgeStyle is deliberately not rebased: a badge keeping its
+			// own colour inside the band is the signal it exists for.
+			titleStyle = onSurface(titleStyle, style)
+			subStyle = onSurface(subStyle, style)
+			metaStyle = onSurface(metaStyle, style)
+		}
 		if item.Muted {
 			// Dim muted chats: faint title, faint (de-emphasized) badge
 			// instead of the loud unread style.
@@ -303,7 +320,7 @@ func (l *List) View() string {
 		if item.Meta != "" {
 			metaW := textW - cell.Width(plainTitle) - 2
 			if metaW > 0 {
-				meta := cell.FitLine(l.StyleMeta.Align(lipgloss.Right), cell.Truncate(item.Meta, metaW), metaW)
+				meta := cell.FitLine(metaStyle.Align(lipgloss.Right), cell.Truncate(item.Meta, metaW), metaW)
 				titleLine += meta
 			}
 		}
@@ -326,7 +343,7 @@ func (l *List) View() string {
 			subBudget = 0
 		}
 		plainSub := cell.Truncate(item.Subtitle, subBudget)
-		subLine := l.StyleSub.Render(plainSub)
+		subLine := subStyle.Render(plainSub)
 		if item.Badge != "" {
 			badge := badgeStyle.Render(cell.Truncate(item.Badge, 6))
 			gap := textW - cell.Width(subLine) - cell.Width(badge)
@@ -354,6 +371,22 @@ func (l *List) View() string {
 	}
 
 	return b.String()
+}
+
+// onSurface rebases a span style onto surface's own background, so a span
+// drawn inside a highlighted row cannot punch its own colour through the
+// band.
+//
+// A surface with no background of its own leaves the span exactly as it was:
+// lipgloss reports an unset background as NoColor rather than nil, and a
+// caller whose row style carries none is not painting a band for a span to
+// show through in the first place.
+func onSurface(span, surface lipgloss.Style) lipgloss.Style {
+	bg := surface.GetBackground()
+	if bg == (lipgloss.NoColor{}) {
+		return span
+	}
+	return span.Background(bg)
 }
 
 func min(a, b int) int {
