@@ -164,6 +164,109 @@ func TestBadgeReportsWhatTheNextKeyWillDo(t *testing.T) {
 	}
 }
 
+// TestEveryModeDrawsItsOwnGlyph. For a release the prompt was "›" in all
+// four modes and the mode was legible only in the badge's colour — and the
+// four colours are low-saturation neighbours in one palette, so NORMAL and
+// INSERT read as the same state at a glance. Losing track of which one you
+// are in is then a daily event, and the keystroke that finds out for you is
+// sometimes destructive.
+//
+// Shape is the second channel, and the only one that survives a monochrome
+// terminal, a screenshot, a colour-blind reader and a theme somebody wrote
+// themselves.
+//
+// Asserted PAIRWISE rather than against four expected literals: what has to
+// hold is that no two modes ever collide again, and a table of expected
+// strings stops checking that the moment somebody updates the table to match
+// a collision they just introduced.
+func TestEveryModeDrawsItsOwnGlyph(t *testing.T) {
+	modes := []AppMode{AppNormal, AppVi, AppInsert, AppCommand}
+	for i, a := range modes {
+		for _, b := range modes[i+1:] {
+			if a.PromptGlyph() == b.PromptGlyph() {
+				t.Errorf("%v and %v both draw %q in the prompt cell: "+
+					"in monochrome they are the same state",
+					a, b, a.PromptGlyph())
+			}
+		}
+	}
+}
+
+// TestEveryModeGlyphIsExactlyOneCell is the gate the shapes had to pass
+// before they could be chosen at all.
+//
+// promptRow budgets the content from a gutter it computes as
+// composerLead + badge + 1 + 1 + 1, where the middle 1 is the prompt cell.
+// A two-cell glyph does not overflow loudly: it silently spends a cell the
+// budget already promised to the draft, and the row comes out one cell wide,
+// which shears every row under it in the panel.
+//
+// Neither shape is obviously safe. U+25AA BLACK SMALL SQUARE is
+// East-Asian-Ambiguous and has an emoji presentation variant; U+276F is a
+// Dingbats ornament, a block where plenty of characters are drawn wide. So
+// they are measured, in every emoji mode, rather than taken on trust —
+// [cell.Width] answers differently per mode, and EmojiSeparate is a mode a
+// reader can actually be in.
+func TestEveryModeGlyphIsExactlyOneCell(t *testing.T) {
+	prev := cell.CurrentEmojiMode()
+	t.Cleanup(func() { cell.SetEmojiMode(prev) })
+
+	for _, mode := range []cell.EmojiMode{cell.EmojiAuto, cell.EmojiComposed, cell.EmojiSeparate} {
+		cell.SetEmojiMode(mode)
+		for _, a := range []AppMode{AppNormal, AppVi, AppInsert, AppCommand} {
+			if got := cell.Width(a.PromptGlyph()); got != 1 {
+				t.Errorf("emoji mode %v: %v draws %q in %d cells, want 1: "+
+					"the prompt cell is one cell of gutter and the row shears",
+					mode, a, a.PromptGlyph(), got)
+			}
+		}
+	}
+}
+
+// TestTheRestingModeIsTheQuietestThingOnTheRow.
+//
+// NORMAL wore r.Cyan, which the palette documents as the SOLE focus accent,
+// and wore it bold. So the state the reader is in most of the time was the
+// loudest thing on the row, competing with the one role that is supposed to
+// mean "the keyboard is here" — and spending the brightest colour on the
+// mode that changes nothing about what the keys do.
+//
+// Inverted: NORMAL is dim and unweighted, and the three modes that DO change
+// what the next key does are the ones that stand out. Each of those three
+// keeps the role the palette already assigned it, so this is a change of
+// which role the badge reaches for and not of what the roles mean.
+func TestTheRestingModeIsTheQuietestThingOnTheRow(t *testing.T) {
+	r := theme.DarkRoles(false)
+
+	if AppNormal.badgeStyle(r).GetBold() {
+		t.Error("NORMAL is bold: the state you are in most of the time " +
+			"is shouting")
+	}
+	if got := AppNormal.colour(r); got == r.Cyan {
+		t.Errorf("NORMAL is painted %q, the palette's sole focus accent", got)
+	}
+	if got, want := AppNormal.colour(r), r.Dim; got != want {
+		t.Errorf("NORMAL is painted %q, want the dim role %q", got, want)
+	}
+
+	for _, tc := range []struct {
+		mode AppMode
+		want lipgloss.Color
+	}{
+		{AppVi, r.Mauve},
+		{AppInsert, r.Green},
+		{AppCommand, r.Amber},
+	} {
+		if !tc.mode.badgeStyle(r).GetBold() {
+			t.Errorf("%v is not bold: it changes what the next key does "+
+				"and has to carry further than NORMAL", tc.mode)
+		}
+		if got := tc.mode.colour(r); got != tc.want {
+			t.Errorf("%v is painted %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+}
+
 // TestBadgeDoesNotDependOnTheHostForWhatItCanSee. A component whose output
 // depends on the host remembering a setter is a component with two
 // behaviours; this one derives everything it can.
@@ -192,6 +295,31 @@ func TestRightLabelSaysWhatWillHappenToTheDraft(t *testing.T) {
 	m.textarea.Value = "hello"
 	if got := m.rightLabel(); got != "5" {
 		t.Errorf("with a draft: %q, want 5", got)
+	}
+}
+
+// TestTheMultiLineMarkRidesOnTheRightHandLabel.
+//
+// The prompt cell used to carry both facts: which mode you are in, and
+// whether the draft has lines this row is not showing. It cannot carry two,
+// and the mode won it — the mode is what every keystroke depends on, and the
+// draft's shape is only ever read when there is a draft.
+//
+// So it moved to the label that already appears exactly when there IS one.
+// "42" is a one-line draft of 42 runes, "⌄42" the same length across more
+// than one line. promptRow measures the label into rightW dynamically, so the
+// extra cell comes out of the content budget on its own.
+func TestTheMultiLineMarkRidesOnTheRightHandLabel(t *testing.T) {
+	m := sized(t, 61)
+
+	m.textarea.Value = "one line"
+	if got := m.rightLabel(); got != "8" {
+		t.Errorf("a one-line draft is labelled %q, want %q", got, "8")
+	}
+
+	m.textarea.Value = "one\ntwo"
+	if got := m.rightLabel(); got != "⌄7" {
+		t.Errorf("a two-line draft is labelled %q, want %q", got, "⌄7")
 	}
 }
 
@@ -393,8 +521,13 @@ func TestThePromptSurvivesAShortBudget(t *testing.T) {
 				}
 				// The prompt is the last row, always: it is what the
 				// context rows are context FOR.
+				//
+				// Located by the glyph this mode actually draws rather than
+				// by a literal: the shapes differ per mode now, so a
+				// hardcoded one stops finding the prompt the moment the
+				// mode under test changes, and reports it as a missing row.
 				last := ansi.Strip(lines[len(lines)-1])
-				if !strings.Contains(last, "›") {
+				if !strings.Contains(last, m.promptGlyph()) {
 					t.Fatalf("budget %d: the last row is not the prompt: %q", budget, last)
 				}
 				for i, line := range lines {

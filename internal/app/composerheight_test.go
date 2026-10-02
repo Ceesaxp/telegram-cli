@@ -8,8 +8,18 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// insertPrompt is the row you type into as it appears in a stripped frame:
+// the INSERT badge and the glyph that mode draws beside it.
+//
+// Assembled from the mode rather than spelled out, because the glyph differs
+// per mode now. A literal here would stop matching the moment a shape
+// changed, and every one of these tests would report it as "there is nowhere
+// to type" — a layout failure, on a frame whose layout is fine.
+var insertPrompt = "INSERT " + composer.AppInsert.PromptGlyph()
 
 // replyModel is a sized client with one chat open and one message in it.
 func replyModel(t *testing.T) Model {
@@ -61,7 +71,7 @@ func TestReplyOpensARowToTypeInto(t *testing.T) {
 	if !strings.Contains(view, "reply ↳") {
 		t.Fatalf("no reply bar:\n%s", view)
 	}
-	if !strings.Contains(view, "INSERT ›") {
+	if !strings.Contains(view, insertPrompt) {
 		t.Fatalf("the reply bar is there and the row to type into is not:\n%s", view)
 	}
 }
@@ -73,7 +83,7 @@ func TestTypingIntoAReplyShows(t *testing.T) {
 	replied, _ := m.Update(chatview.MessageActionMsg{Action: "reply", ChatId: 1, MessageId: 5})
 	m = update(t, replied.(Model), "h")
 
-	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "INSERT › h") {
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, insertPrompt+" h") {
 		t.Fatalf("typed h and the frame does not show it:\n%s", view)
 	}
 }
@@ -133,7 +143,7 @@ func TestAReplyHasSomewhereToTypeOnAShortTerminal(t *testing.T) {
 		m = replied.(Model)
 
 		view := ansi.Strip(m.View().Content)
-		if !strings.Contains(view, "INSERT ›") {
+		if !strings.Contains(view, insertPrompt) {
 			t.Errorf("at %d rows there is nowhere to type:\n%s", height, view)
 		}
 		if !strings.Contains(view, "reply ↳") {
@@ -155,7 +165,7 @@ func TestThePromptOutlivesTheQuote(t *testing.T) {
 	replied, _ := m.Update(chatview.MessageActionMsg{Action: "reply", ChatId: 1, MessageId: 5})
 	m = replied.(Model)
 
-	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "INSERT ›") {
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, insertPrompt) {
 		t.Fatalf("the prompt gave way before the quote:\n%s", view)
 	}
 }
