@@ -11,6 +11,7 @@ import (
 	"github.com/Ceesaxp/telegram-cli/internal/keys"
 	"github.com/Ceesaxp/telegram-cli/internal/store"
 	"github.com/Ceesaxp/telegram-cli/internal/telegram"
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatlist"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/chatview"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/components/composer"
@@ -3083,20 +3084,31 @@ func TestTheBadgeColumnDoesNotMove(t *testing.T) {
 	m.composer.SetEditingMode(composer.ModeVi)
 	m.refreshChrome()
 
-	promptColumn := func(m Model) int {
+	// Located by the glyph the mode under test actually draws. The shapes
+	// differ per mode, so the two renderings being compared here do not
+	// contain the same character at all — a single hardcoded glyph finds one
+	// of them and misses the other, and a miss is a -1 that compares equal
+	// to nothing and reads as "the row is gone".
+	//
+	// The COLUMN, not the byte offset: the glyphs are multi-byte and the
+	// badges that precede them need not stay ASCII, so cell.Width is what
+	// answers the question this test is named for.
+	promptColumn := func(m Model, mode composer.AppMode) int {
 		t.Helper()
 		row := ansi.Strip(strings.Split(m.composer.View(), "\n")[0])
-		return strings.Index(row, "›")
+		at := strings.Index(row, mode.PromptGlyph())
+		if at < 0 {
+			t.Fatalf("no %v prompt glyph %q on the composer row: %q",
+				mode, mode.PromptGlyph(), row)
+		}
+		return cell.Width(row[:at])
 	}
 
-	insert := promptColumn(m)
-	if insert < 0 {
-		t.Fatal("no prompt glyph on the composer row")
-	}
+	insert := promptColumn(m, composer.AppInsert)
 
 	m = update(t, m, "\x1b")
 	m.refreshChrome()
-	if got := promptColumn(m); got != insert {
+	if got := promptColumn(m, composer.AppVi); got != insert {
 		t.Errorf("the prompt moved from column %d to %d when the badge "+
 			"changed to VI", insert, got)
 	}

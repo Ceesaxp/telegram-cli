@@ -78,6 +78,14 @@ func (a AppMode) badgeLabel() string {
 	return label
 }
 
+// colour is the role the badge is painted in.
+//
+// NORMAL is r.Dim, deliberately the quietest of the four. It wore r.Cyan for
+// a release — the palette's SOLE focus accent — which spent the brightest
+// colour in the theme on the one mode that changes nothing about what the
+// keys do, and left it competing with the role that means "the keyboard is
+// here". The three modes that DO change what the next key does keep the
+// roles the palette already assigned them.
 func (a AppMode) colour(r theme.Roles) lipgloss.Color {
 	switch a {
 	case AppInsert:
@@ -87,7 +95,60 @@ func (a AppMode) colour(r theme.Roles) lipgloss.Color {
 	case AppCommand:
 		return r.Amber
 	default:
-		return r.Cyan
+		return r.Dim
+	}
+}
+
+// badgeStyle is how the badge and its prompt glyph are painted.
+//
+// One method rather than a style built at each of the two call sites, so the
+// glyph cannot end up a different weight from the label it belongs to.
+//
+// Bold everywhere except NORMAL. Weight is the third channel after shape and
+// colour, and it is spent the same way they are: on the states where the next
+// keystroke does something other than navigate. A resting state in bold is a
+// row that shouts at the reader all day and has nothing left to say when the
+// mode actually changes.
+func (a AppMode) badgeStyle(r theme.Roles) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(a.colour(r)).Bold(a != AppNormal)
+}
+
+// PromptGlyph is the shape drawn in the prompt cell for this mode.
+//
+// A shape per mode, because colour was the only channel this badge had and
+// the four are neighbours in one low-saturation palette: NORMAL and INSERT
+// read as the same state at a glance. The shape is what survives a
+// monochrome terminal, a screenshot and a reader who cannot separate those
+// hues, and TestEveryModeDrawsItsOwnGlyph pins that no two ever collide.
+//
+// Every one of these must measure exactly one cell under [cell.Width], or
+// the gutter arithmetic in promptRow is wrong and the whole row shears.
+// U+25AA is East-Asian-Ambiguous and U+276F is a Dingbats ornament, so
+// neither is obviously safe; TestEveryModeGlyphIsExactlyOneCell measures
+// them rather than trusting the block they came from.
+//
+// Exported because the host's own tests locate the prompt column by it, and
+// a locator that hunts for a hardcoded glyph stops finding the column the
+// moment this changes — silently, since a missing glyph reads as column -1.
+func (a AppMode) PromptGlyph() string {
+	switch a {
+	case AppInsert:
+		// A heavier chevron: the keys type here, and this is the one mode
+		// where the prompt is pointing at a caret you are about to feed.
+		return "❯"
+	case AppVi:
+		// A block, not an arrow — nothing is being entered at the prompt;
+		// the next letter is a command that acts on the draft.
+		return "▪"
+	case AppCommand:
+		// The character you pressed to get here, which is also what the
+		// palette shows as its own prompt.
+		return ":"
+	default:
+		// NORMAL keeps the light chevron it always had. The resting state
+		// is the one the frame goldens were signed off against, and it is
+		// also the one that should draw the least attention.
+		return "›"
 	}
 }
 
@@ -225,7 +286,7 @@ func (m Model) promptRow(width int) string {
 
 	mode := m.badge()
 	badge := mode.badgeLabel()
-	badgeStyle := lipgloss.NewStyle().Foreground(mode.colour(r)).Bold(true)
+	badgeStyle := mode.badgeStyle(r)
 
 	right := m.rightLabel()
 	rightW := cell.Width(right)
@@ -244,7 +305,7 @@ func (m Model) promptRow(width int) string {
 
 	line := strings.Repeat(" ", composerLead) +
 		badgeStyle.Render(badge) + " " +
-		lipgloss.NewStyle().Foreground(mode.colour(r)).Render(m.promptGlyph()) + " " +
+		badgeStyle.Render(m.promptGlyph()) + " " +
 		style.Render(cell.Fit(content, contentW))
 
 	if right != "" {
@@ -253,14 +314,16 @@ func (m Model) promptRow(width int) string {
 	return cell.Fill(r.Panel, line, width)
 }
 
-// promptGlyph is the prompt mark. It becomes a downward chevron when the
-// draft has more rows than this one, so a multi-line draft cannot look like
-// a one-line one that has lost its tail.
+// promptGlyph is the prompt mark: the shape of the mode this row reports,
+// and nothing else.
+//
+// It carried a second fact for a release — a downward chevron when the draft
+// had rows this one is not showing — and one cell cannot hold two. The mode
+// won it, because every keystroke depends on the mode and the draft's shape
+// is only read when there is a draft. The multi-line mark moved to
+// rightLabel, which appears exactly then.
 func (m Model) promptGlyph() string {
-	if strings.Contains(m.textarea.Value, "\n") {
-		return "⌄"
-	}
-	return "›"
+	return m.badge().PromptGlyph()
 }
 
 // promptContent is what sits after the prompt: a notice if there is one,
@@ -391,9 +454,23 @@ func (m Model) draftLine(width int) string {
 
 // rightLabel is the right-hand cell of the composer row: how long the draft
 // is, or — while it is empty — whether markdown will be applied to it.
+//
+// A draft on more than one line is prefixed with a downward chevron, so "42"
+// is forty-two runes on the line you can see and "⌄42" is forty-two runes
+// with some of them on lines you cannot. The prompt cell used to say this and
+// now says which mode you are in instead; without the mark somewhere, a
+// two-line draft is indistinguishable from a one-line one whose tail was cut
+// off, which is a thing you would want to know before pressing enter.
+//
+// promptRow measures this into rightW dynamically, so the extra cell comes
+// out of the content budget with no geometry constant to keep in step.
 func (m Model) rightLabel() string {
 	if n := len([]rune(m.textarea.Value)); n > 0 {
-		return strconv.Itoa(n)
+		label := strconv.Itoa(n)
+		if strings.Contains(m.textarea.Value, "\n") {
+			label = "⌄" + label
+		}
+		return label
 	}
 	if m.parseMarkdown {
 		return "md"
