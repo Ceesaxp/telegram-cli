@@ -1,12 +1,15 @@
 package widgets
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
 	"github.com/Ceesaxp/telegram-cli/internal/ui/theme"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // newThemedList builds a List wired to the real shipped theme, mirroring
@@ -239,3 +242,99 @@ func TestBadgeSurvivesLongSubtitle(t *testing.T) {
 //
 // The row-composition tests above still exercise those helpers through
 // List.View(), which is what actually matters here.
+
+// trueColour pins a colour profile for the duration of one test.
+//
+// lipgloss resolves to Ascii under `go test`, which emits no colour at all,
+// so an assertion about which surface a row is drawn on would pass whatever
+// the row was drawn on. This package has no TestMain to pin it globally —
+// the width tests above are deliberately colour-agnostic — so the tests that
+// do care pin it for themselves.
+func trueColour(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
+// backgroundSeq matches the SGR parameters that open a true-colour
+// background, which is what "the row is one surface" is an assertion about.
+// cell.PaintedWidth is colour-agnostic by design, so it answers "does the
+// fill reach the edge" and not "is it all the same colour".
+var backgroundSeq = regexp.MustCompile(`48;2;\d+;\d+;\d+`)
+
+// openedBackground is what Background(c) looks like once lipgloss has
+// rendered it — an RGB triple, not the hex the palette is written in.
+// Comparing against the hex would pass on a string that never contained the
+// colour.
+func openedBackground(c lipgloss.Color) string {
+	rendered := lipgloss.NewStyle().Background(c).Render("Z")
+	return strings.TrimSuffix(
+		strings.TrimPrefix(strings.Split(rendered, "Z")[0], "\x1b["), "m")
+}
+
+// newOverlayList builds a List the way the search overlay builds one: the
+// SPAN styles come from the shared overlay vocabulary too, and every
+// theme.Overlay* helper carries Background(r.Panel) by design.
+//
+// That is the combination newThemedList above cannot see. Its span styles
+// are foreground-only, so nothing inside a row has a background of its own
+// to punch through the band.
+func newOverlayList() List {
+	r := theme.DarkRoles(true)
+
+	l := NewList()
+	l.StyleNormal = theme.OverlayBody(r)
+	l.StyleActive = theme.OverlaySelected(r)
+	l.StyleTitle = theme.OverlayBody(r)
+	l.StyleSub = lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
+	// search's restyle leaves Meta alone, its results carrying none. A
+	// timestamp is drawn inside the band like every other span, so it is
+	// wired here from the same vocabulary.
+	l.StyleMeta = theme.OverlayMuted(r)
+	l.StyleEmpty = theme.OverlayMuted(r)
+	return l
+}
+
+// TestTheActiveRowIsOneSurfaceEdgeToEdge.
+//
+// StyleActive paints the band and the spans inside it are drawn through
+// StyleTitle/StyleSub/StyleMeta. lipgloss wraps the whole line in the row
+// style and lets an inner span's own SGR override it, so a caller whose span
+// styles carry Background(r.Panel) — which every overlay's do — got a band
+// that was the row colour for the indent, panel behind the text, and the row
+// colour again for the trailing pad: a box of the wrong colour inside the
+// highlight, on both of the row's lines.
+func TestTheActiveRowIsOneSurfaceEdgeToEdge(t *testing.T) {
+	trueColour(t)
+	const width = 40
+	r := theme.DarkRoles(true)
+
+	l := newOverlayList()
+	l.Width = width
+	l.Height = 4
+	l.SetItems([]ListItem{
+		{ID: "1", Title: "infra-oncall", Subtitle: "nadia: rebased, CI green", Meta: "2m"},
+		{ID: "2", Title: "deploys", Subtitle: "channel"},
+	})
+	l.Cursor = 0
+
+	lines := strings.Split(l.View(), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("View() drew %d lines, want at least the active row's two", len(lines))
+	}
+
+	want := openedBackground(r.Sel)
+	for i, line := range lines[:2] {
+		if p := cell.PaintedWidth(line); p != width {
+			t.Errorf("active row line %d is painted for %d of %d cells, dying at column %d:\n%s",
+				i, p, width, p, strings.ReplaceAll(line, "\x1b", "ESC"))
+		}
+		for _, got := range backgroundSeq.FindAllString(line, -1) {
+			if got != want {
+				t.Errorf("active row line %d opens background %q inside the band, whose surface is %q:\n%s",
+					i, got, want, strings.ReplaceAll(line, "\x1b", "ESC"))
+			}
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package attach
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -346,6 +347,52 @@ func TestTheSizeAndTimeColumnsSayWhatTheyKnow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := formatSize(tc.entry); got != tc.want {
 				t.Errorf("formatSize = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// bgParams matches the SGR parameters that open a true-colour background.
+// cell.PaintedWidth answers "does the fill reach the edge" and is
+// deliberately colour-agnostic, so it cannot answer "is it all one surface".
+var bgParams = regexp.MustCompile(`48;2;\d+;\d+;\d+`)
+
+func esc(s string) string { return strings.ReplaceAll(s, "\x1b", "ESC") }
+
+// TestAnEntryRowIsOneSurfaceEdgeToEdge.
+//
+// Every span in the row used to set Background(r.Panel) of its own, and
+// cell.Fill re-opens the surface BEFORE a span's own sequences — so a span
+// that declares a background keeps it, deliberately. On the cursored row
+// that left the Sel fill reaching only the cells no span covered: the single
+// space after the type glyph, and the trailing pad. On screen, a one-cell
+// block of selection colour floating in an otherwise unhighlighted row.
+func TestAnEntryRowIsOneSurfaceEdgeToEdge(t *testing.T) {
+	m := open(t, tree(t, "a.txt", "patches/"))
+	r := roles()
+
+	for _, tc := range []struct {
+		name     string
+		selected bool
+		surface  lipgloss.Color
+	}{
+		{"cursored", true, r.Sel},
+		{"not cursored", false, r.Panel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, entry := range m.Matches() {
+				line := m.entryLine(entry, tc.selected)
+				if p := cell.PaintedWidth(line); p != Width {
+					t.Errorf("%s is painted for %d of %d cells, dying at column %d:\n%s",
+						entry.Name, p, Width, p, esc(line))
+				}
+				want := opensBg(tc.surface)
+				for _, got := range bgParams.FindAllString(line, -1) {
+					if got != want {
+						t.Errorf("%s opens background %q, but the row's surface is %q:\n%s",
+							entry.Name, got, want, esc(line))
+					}
+				}
 			}
 		})
 	}
