@@ -172,6 +172,64 @@ func SupportsHyperlinks() bool {
 	return false
 }
 
+// ComposesEmoji reports whether this terminal is KNOWN to apply the emoji
+// composition rules — U+FE0F honoured, a ZWJ sequence drawn as one glyph, a
+// regional-indicator pair drawn as a flag, a skin tone drawn as a tint.
+//
+// Environment only and an allowlist, the same rule as [SupportsHyperlinks]
+// and for the same reason: asking the terminal means writing a query and
+// reading the reply off stdin, which under Bubble Tea's raw-mode input loop
+// arrives as keystrokes in the composer.
+//
+// It answers a narrower question than the name might suggest. No variable
+// reports composition; what the environment reports is the terminal's
+// IDENTITY, and this is a table from identities that have been checked by
+// hand to the behaviour they were seen to have. False therefore means
+// "nobody has checked", not "this terminal composes nothing" — so the caller
+// must treat false as a reason to keep guessing pessimistically rather than
+// as a declaration of the opposite. Being wrong about a terminal that does
+// compose costs a gap; being wrong about one that does not lets a row run
+// over what is beside it, which is the failure the pessimism exists for.
+//
+// The multiplexer guards matter more here than they do for hyperlinks. tmux
+// and screen do their own cell accounting and redraw the pane through it, so
+// the identity of the terminal OUTSIDE the multiplexer does not describe
+// what this app is drawing into. Inside one the answer is no, whatever the
+// inherited environment still claims, and the user who knows better can say
+// so with ui.emoji_width.
+func ComposesEmoji() bool {
+	if os.Getenv("TMUX") != "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(os.Getenv("TERM")), "screen") {
+		return false
+	}
+	// kitty announces itself in TERM, and sets KITTY_WINDOW_ID for every
+	// process it starts — which still says kitty when the user has
+	// overridden TERM, as people do to get past software that does not know
+	// the terminfo entry.
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return true
+	}
+	if strings.EqualFold(os.Getenv("TERM"), "xterm-kitty") {
+		return true
+	}
+	// Ghostty's own terminfo name, and the entry that survives ssh: TERM is
+	// forwarded where TERM_PROGRAM is not, and over ssh the terminal doing
+	// the drawing is still the local one, so its identity is still the
+	// answer. Confirmed by reading TERM in a Ghostty window.
+	if strings.EqualFold(os.Getenv("TERM"), "xterm-ghostty") {
+		return true
+	}
+	// Ghostty and WezTerm both set TERM_PROGRAM, which is how
+	// internal/media/detect.go and [SupportsHyperlinks] already find them.
+	switch strings.ToLower(os.Getenv("TERM_PROGRAM")) {
+	case "ghostty", "wezterm", "kitty":
+		return true
+	}
+	return false
+}
+
 // RolesFor picks the palette for a theme name and colour depth. It is the
 // single entry point the app uses, so the two decisions are made together
 // and once.
