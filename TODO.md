@@ -20,12 +20,16 @@ Two defects stacked. `reload()` re-lists only when the cache key `(directory, do
 
 - [x] Structural: `list()` and `match()` extracted out of `reload()` and `refilter()`, proven with the suite unchanged on both sides
 - [x] The send mode survives Enter on the cursored row — `refilter()` cleared `flipped` on every reload, so `^t` "as document" was lost and an image the reader asked to keep intact was staged as a recompressed photo. Pre-existing, found while verifying the fix
-- [ ] The cache is dropped where it cannot be trusted: on every `Open`, and once per listing when the filter finds nothing
-- [ ] `enter()` on a path typed in full re-reads before answering, so `ActionAttach` always implies `Chosen().ok`
-- [ ] An exactly typed name takes the cursor byte-exact first and then case-insensitively, so a prefix sibling never outranks it — found in review: with `doc.pdf` and `doc.pdf_old/` present, typing `Doc.pdf` navigated into the *directory* and erased the typed path
+- [x] The cache is dropped where it cannot be trusted: on every `Open`, and once per listing when the filter finds nothing
+- [x] `enter()` on a path typed in full re-reads before answering, so `ActionAttach` always implies `Chosen().ok`
+- [x] An exactly typed name takes the cursor byte-exact first and then case-insensitively, so a prefix sibling never outranks it — found in review: with `doc.pdf` and `doc.pdf_old/` present, typing `Doc.pdf` navigated into the *directory* and erased the typed path
 - [ ] Noticed: the invariant is `ActionAttach ⇒ Chosen().ok`, never "⇒ the file that was typed". An NFD name on disk typed as NFC stats fine but matches no row, so a prefix sibling can still take the cursor. Normalising on both sides of `matches` is the fix; not attempted here
 - [ ] Noticed: `docs/AttachPicker.md` and `docs/handoff/attach-picker.md` are the pre-implementation design and still say `^p` for the toggle and `^h` for up, which shipped as `^t` and `←`. Neither documents the listing cache at all
 - [ ] Noticed: opening an empty directory costs two reads — the zero-match probe fires with nothing having changed. Bounded and harmless; skipping it costs one more condition
+- [ ] Noticed: `Window()` dereferences `m.entries[i]` over `m.filtered` with no bounds check, which is the trap `Selected()` was just guarded against. No production path reaches it — the view runs after `match()` has put the pair back in step — so no test can fail for it, which is why it was left alone rather than given untestable defensive code
+- [ ] Noticed: `match()` reuses `m.filtered[:0]`, so two copies of a `Model` share one backing array and typing into a branched copy rewrites the original's match list. Harmless in the app, where one copy is live and reassigned, but it bites any test that branches a model. Allocating in `match()` is a structural fix of its own
+- [ ] Noticed: reopening now costs one listing read plus one count per drawn directory row, where the stale cache made it free. That is the fix working, and `Ctrl+T` is a deliberate keypress — but on a network-mounted download directory it is paid every time. The honest lever if it ever hurts is a single mtime `stat` in `Open` only, never per keystroke
+- [ ] Noticed: `enter()`'s typed-path branch leaves the prompt row on the typed spelling — type `Doc.pdf`, attach `doc.pdf`, and the row still reads `Doc.pdf`. Invisible because the picker closes on the same keypress, but the cursor branch deliberately lands the path on the row it attaches and this branch does not
 
 ## Emoji width defaults (found 2026-09-25)
 
