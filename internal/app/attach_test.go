@@ -402,3 +402,41 @@ func TestADroppedHomeRelativePathIsStagedExpanded(t *testing.T) {
 		t.Errorf("the composer holds %q, want %q", staged, file.Name())
 	}
 }
+
+// TestAFileThatLandedSinceThePickerOpenedIsStagedByName.
+//
+// The reported defect, end to end through the app rather than the picker
+// alone. Two files downloaded into the configured directory could not be
+// attached at all: the listing is cached per (directory, dotfiles) and Open
+// restores the path to the directory that was already open, so every cache
+// key matched and the listing read on the first Ctrl+T was served for the
+// life of the process. Typing the name in full did not rescue it either —
+// enter answered ActionAttach out of os.Stat while Chosen read a cursor
+// pointing at nothing, and the case for it here stages nothing when Chosen
+// says no, so the keypress silently did nothing.
+//
+// Through Update and the composer because that is the half the picker's own
+// tests cannot see: the picker reporting a path is no use if the branch
+// reading it never fires.
+func TestAFileThatLandedSinceThePickerOpenedIsStagedByName(t *testing.T) {
+	m, dir := pickerModel(t, "old.txt")
+
+	// Downloaded while the picker is sitting open, which is the way this
+	// happens: Ctrl+T, then the download finishes, then its name is typed.
+	landed := filepath.Join(strings.TrimSuffix(dir, "/"), "MPN_Design.pdf")
+	if err := os.WriteFile(landed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range strings.Split("MPN_Design.pdf", "") {
+		m = update(t, m, key)
+	}
+	m = update(t, m, "\r")
+
+	if m.attach.IsVisible() {
+		t.Error("the picker stayed open, so nothing was staged")
+	}
+	if got := m.composer.Attachment(); got != landed {
+		t.Errorf("the composer holds %q, want the file that was named in full", got)
+	}
+}
