@@ -69,8 +69,9 @@ type Model struct {
 	top      int   // first filtered index drawn; the window's own scroll
 
 	// flipped inverts the send mode derived from the cursored entry. It is
-	// cleared whenever the cursor moves, so the toggle applies to the file
-	// it was pressed on and never silently to a later one.
+	// cleared whenever the cursor moves to another file, so the toggle
+	// applies to the file it was pressed on and never silently to a later
+	// one.
 	flipped bool
 }
 
@@ -122,6 +123,19 @@ func (m Model) Selected() (Entry, bool) {
 		return Entry{}, false
 	}
 	return m.entries[m.filtered[m.cursor]], true
+}
+
+// cursored identifies the cursored row by its path, which is what lets the
+// send-mode toggle outlive a reload that lands back on the same file. The
+// path and not the name: descending into a sub/ whose first row is another
+// shot.png lands on a different file that merely shares a name. Empty when
+// the filter matched nothing.
+func (m Model) cursored() string {
+	entry, ok := m.Selected()
+	if !ok {
+		return ""
+	}
+	return m.dir + entry.Name
 }
 
 // Window is the slice of the match list currently drawn, and where in the
@@ -414,10 +428,16 @@ func (m *Model) reload() {
 	dir, tail := splitPath(m.typed)
 	hidden := strings.HasPrefix(tail, ".")
 
+	// Read here and not in refilter: list swaps m.dir and m.entries together,
+	// and only before the swap do they and the cursor still describe one
+	// listing — afterwards m.dir is already the new directory and the cursor
+	// indexes a listing that is gone.
+	was := m.cursored()
+
 	if dir != m.dir || hidden != m.hidden || m.entries == nil {
 		m.list(dir, hidden)
 	}
-	m.refilter()
+	m.refilter(was)
 }
 
 // list reads one directory into the cache, under the key it was read with.
@@ -436,10 +456,19 @@ func (m *Model) list(dir string, hidden bool) {
 // edit: after another character the previously highlighted row is usually
 // gone, and a stale index would attach a file the reader is no longer
 // looking at.
-func (m *Model) refilter() {
+//
+// was is the row the cursor sat on before the edit; see reload.
+func (m *Model) refilter(was string) {
 	m.match()
 	m.scroll()
-	m.flipped = false
+	if m.cursored() != was {
+		// The send mode belongs to the file it was set on. Clearing it on
+		// every reload instead was too broad and lost it on reloads that do
+		// not move: Enter lands the path on the very row it attaches, so the
+		// toggle was gone by the time Chosen read it and an image the reader
+		// had asked to send whole was staged as a photo and recompressed.
+		m.flipped = false
+	}
 }
 
 // match fills the match list from the cached listing, and puts the cursor

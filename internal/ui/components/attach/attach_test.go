@@ -197,6 +197,95 @@ func TestTheSendModeBelongsToTheFileItWasSetOn(t *testing.T) {
 	}
 }
 
+// TestEnterAttachesTheFileTheWayTheToggleAskedFor. Enter lands the path on
+// the cursored row, and that reload used to take the send mode with it: the
+// state row said "document", the reader pressed Enter, and the image was
+// staged as a photo and recompressed.
+func TestEnterAttachesTheFileTheWayTheToggleAskedFor(t *testing.T) {
+	m := open(t, tree(t, "shot.png"))
+	if !m.AsPhoto() {
+		t.Fatal("precondition: the image does not default to a photo")
+	}
+
+	m, _ = press(t, m, keyCtrlT)
+	if m.AsPhoto() {
+		t.Fatal("precondition: ctrl+t did not ask for a document")
+	}
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter gave action %v, want ActionAttach", action)
+	}
+	path, asPhoto, ok := m.Chosen()
+	if !ok {
+		t.Fatal("enter attached nothing")
+	}
+	if !strings.HasSuffix(path, "shot.png") {
+		t.Fatalf("enter chose %q, want shot.png", path)
+	}
+	if asPhoto {
+		t.Error("enter staged the image as a photo although ctrl+t asked for the original bytes")
+	}
+}
+
+// TestCompletingTheNameKeepsTheSendMode. Tab extends the path onto the row
+// the cursor is already on, so it is not a move and must not clear the mode.
+func TestCompletingTheNameKeepsTheSendMode(t *testing.T) {
+	m := open(t, tree(t, "shot.png"))
+
+	m, _ = press(t, m, keyCtrlT)
+	m, _ = press(t, m, keyTab)
+	if _, tail := splitPath(m.Typed()); tail != "shot.png" {
+		t.Fatalf("precondition: tab completed the path to %q", m.Typed())
+	}
+	if m.AsPhoto() {
+		t.Error("tab completing the cursored name lost the document mode set on that very file")
+	}
+}
+
+// TestAnEditThatLandsOnAnotherFileLosesTheSendMode, even though the cursor
+// index never changed.
+func TestAnEditThatLandsOnAnotherFileLosesTheSendMode(t *testing.T) {
+	m := open(t, tree(t, "a.png", "b.png"))
+
+	m, _ = press(t, m, keyCtrlT)
+	if m.AsPhoto() {
+		t.Fatal("precondition: ctrl+t did not flip the first image")
+	}
+
+	m = typeText(t, m, "b")
+	if entry, _ := m.Selected(); entry.Name != "b.png" {
+		t.Fatalf("precondition: the cursor is on %q, want b.png", entry.Name)
+	}
+	if !m.AsPhoto() {
+		t.Error("the toggle carried onto another file that merely sits at the same cursor index")
+	}
+}
+
+// TestTheSendModeIsLostOnTheSameNameInAnotherDirectory. The toggle belongs
+// to a file, and two files sharing a name are still two files — which is why
+// the cursored row is identified as (directory, name) and not by name.
+func TestTheSendModeIsLostOnTheSameNameInAnotherDirectory(t *testing.T) {
+	root := tree(t, "shot.png", "sub/shot.png")
+	m := typeText(t, open(t, root), "shot")
+	if entry, _ := m.Selected(); entry.Name != "shot.png" {
+		t.Fatalf("precondition: the cursor is on %q, want shot.png", entry.Name)
+	}
+
+	m, _ = press(t, m, keyCtrlT)
+	if m.AsPhoto() {
+		t.Fatal("precondition: ctrl+t did not ask for a document")
+	}
+
+	m = m.Paste(root + "sub")
+	if entry, _ := m.Selected(); entry.Name != "shot.png" {
+		t.Fatalf("precondition: sub/ opens on %q, want its own shot.png", entry.Name)
+	}
+	if !m.AsPhoto() {
+		t.Error("the toggle followed into another directory onto a file that merely shares the name")
+	}
+}
+
 // TestBackspaceDeletesACharacterAndThenGoesUp.
 //
 // One key, two readings that never overlap — which is what removes the need

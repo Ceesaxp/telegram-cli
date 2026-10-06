@@ -12,6 +12,21 @@ Decision recorded there: **a selection is a range over source text, never over s
 - [ ] Wave 4 — double/triple click, `v` visual mode over the same state, auto-scroll at the pane edge, the cross-message `sender: ` form
 - [ ] Note: copying over plain ssh will not work, the same as `y` today — `internal/clipboard/copy.go` deliberately refuses OSC 52. Re-read that comment before wave 3
 
+## Attach picker — stale listing and send mode (found 2026-10-06) — branch fix/attach-stale-listing
+
+Reported: two files just downloaded into `~/Downloads` could not be attached at all — not by browsing, and not by typing the path in full, while the state row said `no match` about a file sitting right there.
+
+Two defects stacked. `reload()` re-lists only when the cache key `(directory, dotfiles)` changes, but `Open()` restores `typed = m.dir` — so reopening the same directory always hit the cache, and the listing read on the very first `Ctrl+T` survived for the life of the process. And `enter()`'s typed-path branch answered `ActionAttach` out of `os.Stat` while `Chosen()` read a cursor pointing at nothing; the app stages nothing when `Chosen()` says no, so the keypress silently did nothing.
+
+- [x] Structural: `list()` and `match()` extracted out of `reload()` and `refilter()`, proven with the suite unchanged on both sides
+- [x] The send mode survives Enter on the cursored row — `refilter()` cleared `flipped` on every reload, so `^t` "as document" was lost and an image the reader asked to keep intact was staged as a recompressed photo. Pre-existing, found while verifying the fix
+- [ ] The cache is dropped where it cannot be trusted: on every `Open`, and once per listing when the filter finds nothing
+- [ ] `enter()` on a path typed in full re-reads before answering, so `ActionAttach` always implies `Chosen().ok`
+- [ ] An exactly typed name takes the cursor byte-exact first and then case-insensitively, so a prefix sibling never outranks it — found in review: with `doc.pdf` and `doc.pdf_old/` present, typing `Doc.pdf` navigated into the *directory* and erased the typed path
+- [ ] Noticed: the invariant is `ActionAttach ⇒ Chosen().ok`, never "⇒ the file that was typed". An NFD name on disk typed as NFC stats fine but matches no row, so a prefix sibling can still take the cursor. Normalising on both sides of `matches` is the fix; not attempted here
+- [ ] Noticed: `docs/AttachPicker.md` and `docs/handoff/attach-picker.md` are the pre-implementation design and still say `^p` for the toggle and `^h` for up, which shipped as `^t` and `←`. Neither documents the listing cache at all
+- [ ] Noticed: opening an empty directory costs two reads — the zero-match probe fires with nothing having changed. Bounded and harmless; skipping it costs one more condition
+
 ## Emoji width defaults (found 2026-09-25)
 
 A composing terminal (kitty) in the default `emoji_width = "auto"` leaves a gap of 1-2 cells, because `auto` reserves the wider of the two renderings and a flag, a ZWJ family or a skin-toned emoji is wider un-composed. Declaring `"composed"` closes it.
