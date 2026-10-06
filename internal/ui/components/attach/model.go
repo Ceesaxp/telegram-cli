@@ -64,6 +64,10 @@ type Model struct {
 	hidden  bool
 	listErr bool
 
+	// probed records that this listing has already been looked at again
+	// after matching nothing. See refilter.
+	probed bool
+
 	filtered []int // indices into entries, in display order
 	cursor   int   // index into filtered
 	top      int   // first filtered index drawn; the window's own scroll
@@ -100,6 +104,14 @@ func (m *Model) Open(fallback string) {
 		m.dir = withSlash(display(fallback))
 	}
 	m.typed = m.dir
+	// The cached listing is dropped on the way in, because every key it is
+	// cached on matches: Open restores the path to the directory that was
+	// open, so reopening reused the listing read on the very first Ctrl+T
+	// and a file downloaded since was invisible for the life of the
+	// process. Dropped rather than checked against the directory's mtime:
+	// this surface is opened by hand, once, so the stat would save a single
+	// read and buy a second way of deciding whether the cache is good.
+	m.entries = nil
 	m.reload()
 }
 
@@ -118,11 +130,22 @@ func (m Model) IsVisible() bool { return m.visible }
 func (m Model) Typed() string { return m.typed }
 
 // Selected returns the cursored entry, if the filter matched anything.
+//
+// Both indices are checked, not just the cursor's: the match list and the
+// listing it points into are replaced at different moments, and a cursor in
+// range for the first and out of range for the second panicked here the
+// moment Open began dropping the listing. Checked at the dereference rather
+// than by having every caller reset the pair in the right order, which is a
+// rule that holds until one caller forgets and then crashes the client.
 func (m Model) Selected() (Entry, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
 		return Entry{}, false
 	}
-	return m.entries[m.filtered[m.cursor]], true
+	i := m.filtered[m.cursor]
+	if i < 0 || i >= len(m.entries) {
+		return Entry{}, false
+	}
+	return m.entries[i], true
 }
 
 // cursored identifies the cursored row by its path, which is what lets the
@@ -296,10 +319,17 @@ func (m Model) Paste(text string) Model {
 
 // enter descends into a directory or attaches a file.
 //
-// The typed path wins over the cursor when it names something exactly:
+// The typed path is consulted first when it names something exactly:
 // somebody who has pasted or typed a whole path has said which file they
-// mean, and attaching the highlighted row instead would attach a different
-// one.
+// mean, and acting on the highlighted row instead would act on a different
+// one. It does not DECIDE, though — it re-reads the directory and lets the
+// cursor land on the name, because everything downstream reads the cursor.
+// What holds is that ActionAttach implies Chosen reports ok: the cursor is
+// on a file. Not necessarily the file that was typed — a name stored
+// decomposed and typed composed stats fine, matches no row by bytes, and
+// leaves a prefix sibling under the cursor — which is why the fallback here
+// is to do nothing rather than to act on whatever that sibling is.
+// Normalising the comparison is a separate defect.
 //
 // Only when there is a TAIL, though. With none, the typed path is the
 // directory being browsed rather than a choice within it — it names a real
@@ -314,7 +344,22 @@ func (m Model) enter() (Model, Action) {
 				m.reload()
 				return m, ActionNone
 			}
-			return m, ActionAttach
+			// The stat says the file is there; the listing may predate it,
+			// and the look-again is no help when a mistyped name spent it
+			// before the file landed. Re-read so the cursor can reach the
+			// row — a bare ActionAttach here promised an attachment the
+			// cursor could not deliver, and Ctrl+T did nothing at all for a
+			// file the reader had named in full.
+			m.relist()
+			if _, _, ok := m.Chosen(); ok {
+				return m, ActionAttach
+			}
+			// Nothing resolved, so nothing happens. Falling through to the
+			// cursor was worse than the silence it replaced: the row under
+			// it is whatever sorted first among the prefix matches, and a
+			// directory sorting there navigated away and erased the path the
+			// reader had just typed.
+			return m, ActionNone
 		}
 	}
 
@@ -436,6 +481,11 @@ func (m *Model) reload() {
 
 	if dir != m.dir || hidden != m.hidden || m.entries == nil {
 		m.list(dir, hidden)
+		// A new listing has its own look-again: the budget refilter spends
+		// is against the listing it was spent on, and carrying it across a
+		// directory would lose the look-again everywhere the reader goes
+		// after one mistyped name.
+		m.probed = false
 	}
 	m.refilter(was)
 }
@@ -452,6 +502,25 @@ func (m *Model) list(dir string, hidden bool) {
 	}
 }
 
+// relist reads the directory again under the key it is already cached on,
+// for a caller that knows the listing may be out of date.
+//
+// It reads the cursored row BEFORE the swap, for refilter, exactly as reload
+// does and for a sharper version of reload's reason: dropping the listing
+// first leaves Selected with nothing to answer, so refilter would see the
+// cursor move and clear the send mode the reader set on the very file being
+// attached. That is also why this is not spelled as an entries-is-nil reload
+// at the call site.
+//
+// The look-again is marked spent: this IS the second look, and refilter
+// taking another one would read the same directory twice in one keypress.
+func (m *Model) relist() {
+	was := m.cursored()
+	m.list(m.dir, m.hidden)
+	m.probed = true
+	m.refilter(was)
+}
+
 // refilter recomputes the match list. The cursor resets to the top on every
 // edit: after another character the previously highlighted row is usually
 // gone, and a stale index would attach a file the reader is no longer
@@ -460,6 +529,23 @@ func (m *Model) list(dir string, hidden bool) {
 // was is the row the cursor sat on before the edit; see reload.
 func (m *Model) refilter(was string) {
 	m.match()
+	// Nothing matching is the one moment worth re-reading for. The listing
+	// is cached per (directory, dotfiles) so that a keystroke costs no disk,
+	// which leaves it any age at all — and a reader typing the name of a
+	// file that landed a moment ago was told "no match" about a file that
+	// was right there. Rejected alternative: an mtime stat per keystroke,
+	// which puts a syscall back on the typing path for every character,
+	// including the thousands that match something.
+	//
+	// Once per listing, because a listing can only be stale once: unbudgeted,
+	// every further character typed where nothing matches costs a whole
+	// directory read. A failed read is not a stale listing and is left alone
+	// — it caches nothing, so reload is already retrying it per keystroke.
+	if len(m.filtered) == 0 && !m.probed && !m.listErr {
+		m.probed = true
+		m.list(m.dir, m.hidden)
+		m.match()
+	}
 	m.scroll()
 	if m.cursored() != was {
 		// The send mode belongs to the file it was set on. Clearing it on
@@ -478,21 +564,38 @@ func (m *Model) match() {
 	m.filtered = m.filtered[:0]
 	m.cursor, m.top = 0, 0
 
+	// An EXACTLY typed name takes the cursor. The filter is
+	// case-insensitive on purpose, so on a case-sensitive filesystem
+	// holding both Foo and foo, typing "foo" matches both and Foo
+	// sorts first — and everything downstream reads the cursor, so
+	// the picker would show, describe and attach a different file
+	// from the one that was typed. One mechanism rather than a second
+	// rule inside Chosen: the row on screen is the row that acts. Failing a
+	// byte-exact name it is a name differing only in case, and failing that
+	// the first prefix match — the middle tier being the other direction of
+	// the same leniency, because on a case-insensitive filesystem a path
+	// typed in the wrong case is a real path, and without it a folder called
+	// doc.pdf_old took the cursor from the doc.pdf that had been named in
+	// full. Byte-exact stays ahead of it, or the pair Foo/foo above would
+	// resolve to whichever of them sorted first after all.
+	exact, folded := -1, -1
 	for i, entry := range m.entries {
 		if !matches(entry.Name, tail) {
 			continue
 		}
-		// An EXACTLY typed name takes the cursor. The filter is
-		// case-insensitive on purpose, so on a case-sensitive filesystem
-		// holding both Foo and foo, typing "foo" matches both and Foo
-		// sorts first — and everything downstream reads the cursor, so
-		// the picker would show, describe and attach a different file
-		// from the one that was typed. One mechanism rather than a second
-		// rule inside Chosen: the row on screen is the row that acts.
-		if entry.Name == tail {
-			m.cursor = len(m.filtered)
+		switch {
+		case entry.Name == tail:
+			exact = len(m.filtered)
+		case folded < 0 && strings.EqualFold(entry.Name, tail):
+			folded = len(m.filtered)
 		}
 		m.filtered = append(m.filtered, i)
+	}
+	switch {
+	case exact >= 0:
+		m.cursor = exact
+	case folded >= 0:
+		m.cursor = folded
 	}
 }
 

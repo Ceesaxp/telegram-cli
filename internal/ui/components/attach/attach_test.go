@@ -3,6 +3,7 @@ package attach
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -970,5 +971,374 @@ func TestACountIsTakenOnceAndKept(t *testing.T) {
 	if again.Items != 1 {
 		t.Errorf("the directory was counted again (now %d items); the memo is "+
 			"not holding and every move re-reads the disk", again.Items)
+	}
+}
+
+// TestAFileThatLandedWhileClosedIsThereOnReopen.
+//
+// The reported defect. The listing is cached on (directory, dotfiles) and
+// Open restores the path to that same directory, so every one of those
+// keys matched and the picker reused the listing it read on the very first
+// Ctrl+T — a file downloaded into ~/Downloads afterwards was invisible for
+// the life of the process, with the state row saying "no match" about a
+// file sitting right there.
+func TestAFileThatLandedWhileClosedIsThereOnReopen(t *testing.T) {
+	root := tree(t, "old.txt")
+	m := open(t, root)
+	if got := names(m.Matches()); len(got) != 1 {
+		t.Fatalf("precondition: the listing is %v", got)
+	}
+
+	m.Close()
+	land(t, root, "new.pdf")
+	m.Open(root)
+
+	if got := names(m.Matches()); !slices.Contains(got, "new.pdf") {
+		t.Errorf("reopened on %v; a file that landed while the picker was "+
+			"closed is not in the listing", got)
+	}
+}
+
+// land writes a file into an already-open directory, which is what a
+// download finishing looks like to the picker.
+func land(t *testing.T, dir, name string) {
+	t.Helper()
+	path := filepath.Join(strings.TrimSuffix(dir, "/"), name)
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReopeningAfterTheCursorMovedDoesNotPanic.
+//
+// Close keeps the match list and the cursor, and Open drops the listing they
+// index — so Selected held a cursor that was in range for the match list and
+// out of range for the entries it points into. Bounds-checked at the
+// dereference rather than by having Open reset the cursor too: the order
+// reload reads the cursored row in is then one more thing every caller has to
+// get right, and the caller that gets it wrong crashes the client.
+func TestReopeningAfterTheCursorMovedDoesNotPanic(t *testing.T) {
+	root := tree(t, "a.txt", "b.txt", "c.txt")
+	m := open(t, root)
+
+	m, _ = press(t, m, keyDown)
+	if m.cursor == 0 {
+		t.Fatal("precondition: the cursor did not move off the first row")
+	}
+
+	m.Close()
+	m.Open(root)
+
+	if m.cursor != 0 {
+		t.Errorf("reopened with the cursor at %d, want the top of the listing", m.cursor)
+	}
+	if entry, ok := m.Selected(); !ok || entry.Name != "a.txt" {
+		t.Errorf("reopened on %q, want the first row", entry.Name)
+	}
+}
+
+// TestAFileThatLandsWhileOpenMatchesAsItsNameIsTyped.
+//
+// The other half of the reported defect, and the one the reader meets as a
+// lie: the download finishes while the picker is open, they type the name,
+// and the state row says "no match" about a file that is right there. The
+// listing costs no disk per keystroke on purpose, so nothing about typing
+// would ever re-read it — which is right while something matches and wrong
+// the moment nothing does.
+func TestAFileThatLandsWhileOpenMatchesAsItsNameIsTyped(t *testing.T) {
+	root := tree(t, "old.txt")
+	m := open(t, root)
+
+	land(t, root, "new.pdf")
+	m = typeText(t, m, "new")
+
+	if got := names(m.Matches()); !slices.Contains(got, "new.pdf") {
+		t.Errorf("typing the name of a file that just landed matched %v", got)
+	}
+	if state := plain(m.stateLine()); strings.Contains(state, "no match") {
+		t.Errorf("the state row says %q about a file that is right there", strings.TrimSpace(state))
+	}
+}
+
+// TestZeroMatchesLooksAgainOnceAndThenStops.
+//
+// The look-again is for a listing that has gone stale, and a listing can only
+// be stale once — so it is budgeted per listing rather than taken per
+// keystroke. Unbudgeted, every further character typed into a directory where
+// nothing matches costs a whole directory read, which in a directory of
+// thousands of files is the cost the per-keystroke cache exists to avoid.
+//
+// Observable only as staleness, the way the item counts are: after the budget
+// is spent, a file that lands cannot be seen until something re-lists.
+func TestZeroMatchesLooksAgainOnceAndThenStops(t *testing.T) {
+	root := tree(t, "old.txt")
+	m := open(t, root)
+
+	m = typeText(t, m, "z")
+	if !m.probed {
+		t.Fatal("precondition: nothing matched and the listing was not looked at again")
+	}
+
+	land(t, root, "zz.pdf")
+	m = typeText(t, m, "z")
+
+	if got := names(m.Matches()); len(got) != 0 {
+		t.Errorf("a second zero-match keystroke re-read the directory and matched %v; "+
+			"the look-again is not budgeted, so typing in a large directory pays "+
+			"for a read per character", got)
+	}
+}
+
+// TestTheLookAgainBudgetBelongsToOneListing.
+//
+// The budget is spent on the listing it was taken against, so walking into
+// another directory gets its own. Carried over, a reader who mistyped a name
+// upstairs would silently lose the look-again everywhere they went next —
+// and the defect this exists for is back in the directory they are standing
+// in now.
+func TestTheLookAgainBudgetBelongsToOneListing(t *testing.T) {
+	root := tree(t, "old.txt", "sub/keep.txt")
+	m := open(t, root)
+
+	// Spend it here, where nothing matches.
+	m = typeText(t, m, "zz")
+	if !m.probed {
+		t.Fatal("precondition: the look-again was not spent in the first directory")
+	}
+
+	m, _ = press(t, m, keyBackspace, keyBackspace)
+	m = typeText(t, m, "sub/")
+	if got := names(m.Matches()); len(got) != 1 || got[0] != "keep.txt" {
+		t.Fatalf("precondition: sub/ lists %v", got)
+	}
+
+	land(t, root+"sub", "new.pdf")
+	m = typeText(t, m, "n")
+
+	if got := names(m.Matches()); !slices.Contains(got, "new.pdf") {
+		t.Errorf("typing in sub/ matched %v; the look-again was already spent "+
+			"upstairs, so the stale listing was never re-read", got)
+	}
+}
+
+// TestEnterOnAFullyTypedPathAttachesAFileTheListingNeverSaw.
+//
+// Enter stats the typed path, so it knows the file exists — but Chosen reads
+// the CURSOR, and a file missing from the listing has no row to put the
+// cursor on. The keypress reported ActionAttach, the app asked Chosen, Chosen
+// said no, and Ctrl+T did nothing at all for a file the reader had named in
+// full.
+//
+// The look-again cannot cover this on its own: a mistyped name spends it
+// before the file even lands, and backspacing over the typo re-reads nothing
+// — which is why the typo is cleared with backspace here and not with ctrl+u,
+// whose empty path changes the cache key and would re-list for free.
+func TestEnterOnAFullyTypedPathAttachesAFileTheListingNeverSaw(t *testing.T) {
+	root := tree(t, "old.txt")
+	m := open(t, root)
+
+	m = typeText(t, m, "nw")
+	if !m.probed {
+		t.Fatal("precondition: the typo did not spend the look-again")
+	}
+
+	land(t, root, "new.pdf")
+	m, _ = press(t, m, keyBackspace, keyBackspace)
+	m = typeText(t, m, "new.pdf")
+	if got := names(m.Matches()); len(got) != 0 {
+		t.Fatalf("precondition: the listing is no longer stale, it matched %v", got)
+	}
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter on a fully typed path gave %v, want ActionAttach", action)
+	}
+	path, _, ok := m.Chosen()
+	if !ok {
+		t.Fatal("enter promised an attachment and Chosen has nothing to give; " +
+			"the keypress silently did nothing")
+	}
+	if filepath.Base(path) != "new.pdf" {
+		t.Errorf("attached %q, want new.pdf", path)
+	}
+}
+
+// TestAnImageTypedInFullIsStillAPhotoAfterTheReRead.
+//
+// The defect this component was built for, guarded on the path that now
+// re-reads the directory before it answers: an image attached by typing its
+// name in full has to arrive as a photo, because Ctrl+V sends the same file
+// that way and two ways to attach one file must not disagree about what it
+// is.
+func TestAnImageTypedInFullIsStillAPhotoAfterTheReRead(t *testing.T) {
+	root := tree(t, "old.txt")
+	m := open(t, root)
+
+	m = typeText(t, m, "zz")
+	land(t, root, "shot.png")
+	m, _ = press(t, m, keyBackspace, keyBackspace)
+	m = typeText(t, m, "shot.png")
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter gave %v, want ActionAttach", action)
+	}
+	path, asPhoto, ok := m.Chosen()
+	if !ok || filepath.Base(path) != "shot.png" {
+		t.Fatalf("attached %q", path)
+	}
+	if !asPhoto {
+		t.Error("an image named in full was staged as a document; Ctrl+V would " +
+			"have sent the same file as a photo")
+	}
+}
+
+// TestEnterOnAFullyTypedPathKeepsTheSendMode.
+//
+// The toggle belongs to the file it was pressed on, and the file it was
+// pressed on is the one being attached. The re-read Enter now does swaps the
+// listing under the match list, so the cursored row has to be identified
+// BEFORE the swap — a file landing in the meantime shifts every index, and an
+// identity read afterwards names whatever row the stale index now points at.
+// The reader would have asked for the original bytes and been sent a
+// recompressed photo.
+func TestEnterOnAFullyTypedPathKeepsTheSendMode(t *testing.T) {
+	root := tree(t, "shot.png")
+	m := typeText(t, open(t, root), "shot.png")
+
+	m, _ = press(t, m, keyCtrlT)
+	if m.AsPhoto() {
+		t.Fatal("precondition: ctrl+t did not ask for the original bytes")
+	}
+
+	// Something lands ahead of it in the listing, so the index the match
+	// list holds now points at a different file.
+	land(t, root, "a.txt")
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter gave %v, want ActionAttach", action)
+	}
+	path, asPhoto, ok := m.Chosen()
+	if !ok || filepath.Base(path) != "shot.png" {
+		t.Fatalf("attached %q, want shot.png", path)
+	}
+	if asPhoto {
+		t.Error("the re-read lost the document mode set on the file being attached; " +
+			"the image is recompressed after the reader asked for the original bytes")
+	}
+}
+
+// TestAFullyTypedNameInTheWrongCaseLandsOnTheFileAndNotItsNeighbour.
+//
+// The filter is case-insensitive, so a name typed in the wrong case matches
+// everything the right case would — including a DIRECTORY whose name merely
+// starts with it, which sorts first and takes the cursor. The byte-exact rule
+// misses by a letter's case, so a reader on a case-insensitive filesystem who
+// typed a real path in full got a folder: Enter found nothing to attach and
+// navigated into it instead, erasing the path they had typed.
+//
+// A case-insensitive exact match therefore outranks the first prefix match,
+// and byte-exact outranks both — see match.
+func TestAFullyTypedNameInTheWrongCaseLandsOnTheFileAndNotItsNeighbour(t *testing.T) {
+	root := tree(t, "doc.pdf", "doc.pdf_old/")
+	m := typeText(t, open(t, root), "Doc.pdf")
+
+	if first := m.Matches()[0]; !first.Dir {
+		t.Fatalf("precondition: %q sorts first, so the cursor is not being moved", first.Name)
+	}
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionAttach {
+		t.Fatalf("enter gave %v, want ActionAttach", action)
+	}
+	path, _, ok := m.Chosen()
+	if !ok || filepath.Base(path) != "doc.pdf" {
+		t.Errorf("attached %q, want the doc.pdf that was typed", path)
+	}
+	if strings.HasSuffix(m.Typed(), "_old/") {
+		t.Errorf("the path was replaced with %q — enter navigated into an "+
+			"unrelated directory and erased what the reader typed", m.Typed())
+	}
+}
+
+// TestATypedPathThatResolvesToNoRowDoesNothing.
+//
+// The one case where the typed path stats fine and no row can be found for
+// it: a name stored decomposed and typed composed. The filesystem resolves
+// both spellings, the filter compares bytes, so the file the reader named is
+// not in the match list at all — while a neighbour whose name merely starts
+// with the composed spelling is.
+//
+// Doing nothing is the backstop. Acting on the cursor instead navigated into
+// that neighbour and erased the path the reader had typed, which is worse
+// than the silence it was replacing: the keypress did something, and the
+// something was wrong. Normalising the comparison is a separate defect; this
+// pins what happens until it is fixed.
+func TestATypedPathThatResolvesToNoRowDoesNothing(t *testing.T) {
+	const (
+		decomposed = "café.txt"     // what is on disk
+		composed   = "café.txt"      // what gets typed
+		neighbour  = "café.txt_old/" // a directory sorting ahead of it
+	)
+	root := tree(t, decomposed, neighbour)
+	if _, err := os.Stat(filepath.Join(strings.TrimSuffix(root, "/"), composed)); err != nil {
+		t.Skip("this filesystem is normalization-sensitive, so the typed path cannot stat")
+	}
+
+	m := typeText(t, open(t, root), composed)
+	if got := names(m.Matches()); len(got) != 1 || got[0] != strings.TrimSuffix(neighbour, "/") {
+		t.Fatalf("precondition: the match list is %v, want only the neighbour", got)
+	}
+
+	m, action := press(t, m, keyEnter)
+	if action != ActionNone {
+		t.Errorf("enter gave %v for a path no row resolves to", action)
+	}
+	if _, tail := splitPath(m.Typed()); tail != composed {
+		t.Errorf("the path is now %q, want the %q that was typed left alone",
+			m.Typed(), composed)
+	}
+}
+
+// TestTheCursorTiebreakIsByteExactThenCaseThenFirstRow.
+//
+// Built from a listing rather than a directory, because the pairs this turns
+// on cannot all exist on one filesystem: a case-insensitive volume will not
+// hold FOO.txt beside foo.txt, so on the machines most readers use the
+// ranking between the two is otherwise never exercised at all.
+func TestTheCursorTiebreakIsByteExactThenCaseThenFirstRow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []string
+		typed string
+		want  string
+	}{
+		{"an exactly typed name outranks one differing only in case",
+			[]string{"FOO.txt", "foo.txt"}, "foo.txt", "foo.txt"},
+		{"a name differing only in case outranks a mere prefix match",
+			[]string{"doc.pdf_old", "doc.pdf"}, "Doc.pdf", "doc.pdf"},
+		{"between two names differing only in case, the first row",
+			[]string{"FOO.txt", "FoO.txt"}, "foo.txt", "FOO.txt"},
+		{"with nothing typed exactly, the first prefix match",
+			[]string{"notes.txt", "notes.txt.bak"}, "notes", "notes.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(roles())
+			m.typed = tc.typed
+			for _, row := range tc.rows {
+				m.entries = append(m.entries, Entry{Name: row})
+			}
+			m.match()
+
+			entry, ok := m.Selected()
+			if !ok {
+				t.Fatalf("nothing in %v matched %q", tc.rows, tc.typed)
+			}
+			if entry.Name != tc.want {
+				t.Errorf("typing %q in %v put the cursor on %q, want %q",
+					tc.typed, tc.rows, entry.Name, tc.want)
+			}
+		})
 	}
 }

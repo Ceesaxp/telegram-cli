@@ -313,8 +313,9 @@ func countItems(path string) int {
 // Case-insensitively, which is not what a shell does and is deliberate: the
 // default macOS filesystem is itself case-insensitive, so a case-sensitive
 // filter would hide a file the reader can open by that exact name
-// everywhere else on their machine. Where that leniency and an exactly typed
-// path disagree, the typed path wins — see Model.Chosen.
+// everywhere else on their machine. Which of the rows this admits the cursor
+// lands on, when the typed name could be more than one of them, is
+// Model.match's tiebreak.
 func matches(name, tail string) bool {
 	return strings.HasPrefix(strings.ToLower(name), strings.ToLower(tail))
 }
