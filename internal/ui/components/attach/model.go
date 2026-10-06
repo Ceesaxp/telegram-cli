@@ -415,14 +415,21 @@ func (m *Model) reload() {
 	hidden := strings.HasPrefix(tail, ".")
 
 	if dir != m.dir || hidden != m.hidden || m.entries == nil {
-		entries, err := readDir(listable(dir), hidden)
-		m.dir, m.hidden = dir, hidden
-		m.entries, m.listErr = entries, err != nil
-		if err != nil {
-			m.entries = nil
-		}
+		m.list(dir, hidden)
 	}
 	m.refilter()
+}
+
+// list reads one directory into the cache, under the key it was read with.
+// A failed read caches nothing, so the next keystroke tries again rather
+// than showing an empty listing of a directory that is merely unreadable.
+func (m *Model) list(dir string, hidden bool) {
+	entries, err := readDir(listable(dir), hidden)
+	m.dir, m.hidden = dir, hidden
+	m.entries, m.listErr = entries, err != nil
+	if err != nil {
+		m.entries = nil
+	}
 }
 
 // refilter recomputes the match list. The cursor resets to the top on every
@@ -430,6 +437,14 @@ func (m *Model) reload() {
 // gone, and a stale index would attach a file the reader is no longer
 // looking at.
 func (m *Model) refilter() {
+	m.match()
+	m.scroll()
+	m.flipped = false
+}
+
+// match fills the match list from the cached listing, and puts the cursor
+// where the typed tail says it belongs.
+func (m *Model) match() {
 	_, tail := splitPath(m.typed)
 	m.filtered = m.filtered[:0]
 	m.cursor, m.top = 0, 0
@@ -450,9 +465,6 @@ func (m *Model) refilter() {
 		}
 		m.filtered = append(m.filtered, i)
 	}
-
-	m.scroll()
-	m.flipped = false
 }
 
 // listable is the directory to read for a typed path: an empty one means
