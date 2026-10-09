@@ -300,6 +300,13 @@ the query, or commands whose names contain those letters (`keymap`,
 It is the command palette's twin: same width, same anchor, same selection
 marker, no buttons — the palette collects a command and this collects a path.
 
+The listing is **newest first**, directories among the files rather than
+grouped above them, because the directory it opens on is where downloads land
+— so the file you just received is the first row, and `enter` attaches it.
+Folders keep their own glyph and a dimmer name. Only six rows are drawn at a
+time, so in a large directory typing part of a name is faster than scrolling
+to it.
+
 | Key | Action |
 |-----|--------|
 | `up` / `down` | Move the selection |

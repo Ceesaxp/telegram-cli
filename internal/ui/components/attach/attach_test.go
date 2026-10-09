@@ -743,9 +743,13 @@ func names(entries []Entry) []string {
 // TestAnExactlyTypedNameTakesTheCursor even when something else sorts above
 // it.
 //
-// Directories sort first, so typing "notes.txt" in a directory that also
-// holds a folder called "notes.txt.d" leaves the FOLDER highlighted: it
-// matches the prefix filter and it sorts above the file. Everything
+// Typing "notes.txt" in a directory that also holds a folder called
+// "notes.txt.d" leaves the FOLDER highlighted: it matches the prefix filter
+// and it sorts above the file. Above it because it is NEWER — tree stamps
+// its files back to a fixed mtime and leaves the directories it makes at
+// creation time, so a folder outranks them under the newest-first ordering.
+// The precondition below asserts it rather than trusting it, which is what
+// keeps this test honest if that fixture ever changes. Everything
 // downstream reads the cursor, so the state row would describe the folder
 // and Enter would descend into it — a reader who typed a filename in full
 // getting a directory instead.
@@ -1273,7 +1277,10 @@ func TestEnterOnAFullyTypedPathKeepsTheSendMode(t *testing.T) {
 //
 // The filter is case-insensitive, so a name typed in the wrong case matches
 // everything the right case would — including a DIRECTORY whose name merely
-// starts with it, which sorts first and takes the cursor. The byte-exact rule
+// starts with it, which sorts above it and takes the cursor. Above it
+// because tree leaves the directories it makes at creation time while
+// stamping its files into the past, so the folder is the newer entry; the
+// precondition below asserts that rather than trusting it. The byte-exact rule
 // misses by a letter's case, so a reader on a case-insensitive filesystem who
 // typed a real path in full got a folder: Enter found nothing to attach and
 // navigated into it instead, erasing the path they had typed.
@@ -1380,5 +1387,118 @@ func TestTheCursorTiebreakIsByteExactThenCaseThenFirstRow(t *testing.T) {
 					tc.typed, tc.rows, entry.Name, tc.want)
 			}
 		})
+	}
+}
+
+// stamped builds a directory whose entries have the mtimes given, so a test
+// can say what "newest" means instead of racing the clock.
+//
+// It stamps DIRECTORIES too, which tree deliberately does not: a directory
+// created by the test is minutes newer than the fixed stamp tree gives its
+// files, so under a listing ordered by time an unstamped directory sorts
+// first by accident — which is the old grouping reappearing as a test
+// artifact, and it is what let the ordering change here pass untested.
+func stamped(t *testing.T, entries map[string]time.Time) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, at := range entries {
+		path := filepath.Join(root, name)
+		if strings.HasSuffix(name, "/") {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root + "/"
+}
+
+// marked is the listing in display order, directories carrying the slash the
+// view draws, so an ordering assertion names the row shape it means.
+func marked(entries []Entry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Dir {
+			out = append(out, e.Name+"/")
+			continue
+		}
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+// TestTheNewestThingIsTheFirstRow.
+//
+// The reported defect. The picker opened on ~/Downloads — 1949 entries, 27
+// of them directories — sorted every directory ahead of every file and drew
+// six rows, so the whole visible listing was folders and the first file sat
+// 27 rows down. "It is not finding files at all, only directories", about a
+// listing that held 1917 of them.
+//
+// The default directory is where downloads land, so the newest entry is the
+// one being attached. Row one is now that entry and Enter attaches it.
+func TestTheNewestThingIsTheFirstRow(t *testing.T) {
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	dir := stamped(t, map[string]time.Time{
+		"just-downloaded.pdf": base,
+		"yesterday.xlsx":      base.Add(-24 * time.Hour),
+		"ancient/":            base.Add(-300 * 24 * time.Hour),
+	})
+
+	m := open(t, dir)
+	if got := marked(m.Matches()); got[0] != "just-downloaded.pdf" {
+		t.Errorf("the listing is %v — row one is not the newest entry", got)
+	}
+}
+
+// TestDirectoriesDoNotSortAheadOfFiles, which is the half that matters: six
+// folders at the top of the window is the same wall whether they are ordered
+// by name or by date, so the GROUPING is what had to go. A directory is
+// still obvious — it keeps its glyph and a quieter name — it just no longer
+// outranks a file the reader downloaded after it.
+func TestDirectoriesDoNotSortAheadOfFiles(t *testing.T) {
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	dir := stamped(t, map[string]time.Time{
+		"newest.pdf": base,
+		"middle/":    base.Add(-1 * time.Hour),
+		"oldest.txt": base.Add(-2 * time.Hour),
+	})
+
+	want := []string{"newest.pdf", "middle/", "oldest.txt"}
+	got := marked(open(t, dir).Matches())
+	if len(got) != len(want) {
+		t.Fatalf("the listing is %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("the listing is %v, want %v — the directory did not stay "+
+				"between the files it is older and newer than", got, want)
+		}
+	}
+}
+
+// TestEntriesSharingAnMtimeHoldStill. A directory written in one pass gives
+// every entry the same mtime; left to the sort those rows could come back in
+// any order, and a listing that reshuffles between reads moves the cursor
+// out from under the reader.
+func TestEntriesSharingAnMtimeHoldStill(t *testing.T) {
+	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	dir := stamped(t, map[string]time.Time{
+		"Beta.txt": at, "alpha.txt": at, "Gamma/": at, "delta/": at,
+	})
+
+	want := []string{"alpha.txt", "Beta.txt", "delta/", "Gamma/"}
+	for range 3 {
+		got := marked(open(t, dir).Matches())
+		for i := range want {
+			if i >= len(got) || got[i] != want[i] {
+				t.Fatalf("the listing is %v, want %v — equal mtimes are not "+
+					"broken by name", got, want)
+			}
+		}
 	}
 }
