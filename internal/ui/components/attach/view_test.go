@@ -1,8 +1,12 @@
 package attach
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Ceesaxp/telegram-cli/internal/ui/cell"
@@ -240,6 +244,70 @@ func TestTheEmptyStatesAreDistinguishable(t *testing.T) {
 	noDir := typeText(t, open(t, dir), "nope/")
 	if row := plain(noDir.stateLine()); !strings.Contains(row, "no such directory") {
 		t.Errorf("a missing directory says %q", row)
+	}
+}
+
+// TestADirectoryItCannotReadIsNotReportedAsMissing.
+//
+// The reported defect, at the row that reported it. ~/Downloads is a
+// TCC-protected folder on macOS: a terminal without the "Files and Folders"
+// grant gets EPERM from a directory that is right there, owned by the reader
+// and mode drwx------. The picker threw the error away and said "no such
+// directory" about it, so the reader was told to look for a directory they
+// were standing in and had no way to learn that the fix was a privacy grant
+// on their terminal.
+func TestADirectoryItCannotReadIsNotReportedAsMissing(t *testing.T) {
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Registered after t.TempDir's own cleanup and therefore run before it:
+	// the mode has to come back or RemoveAll cannot walk in.
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	// Root can read anything, and a test that passes because the thing it is
+	// about did not happen is worse than no test.
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("this user can read a mode-000 directory, so there is no unreadable one")
+	}
+
+	row := plain(open(t, locked+"/").stateLine())
+	if strings.Contains(row, "no such directory") {
+		t.Errorf("a directory that exists is reported as missing: %q", row)
+	}
+	if !strings.Contains(row, "permission denied") {
+		t.Errorf("an unreadable directory says %q, want it named as a permission problem", row)
+	}
+}
+
+// TestAReadFailureStaysOnItsRow.
+//
+// Every content line in this component is exactly Width cells: the overlay
+// is placed with lipgloss.Place, which paints a ragged block the moment its
+// lines disagree. The failure row is the one row whose text is not a
+// filename, so it is the one a new message can be added to without anyone
+// thinking about the budget — and the ellipsis is what tells the reader a
+// sentence was cut rather than simply ended.
+func TestAReadFailureStaysOnItsRow(t *testing.T) {
+	m := open(t, tree(t, "a.txt"))
+
+	for _, errno := range []syscall.Errno{
+		syscall.ENOENT, syscall.EACCES, syscall.EPERM, syscall.ENOTDIR, syscall.ELOOP,
+	} {
+		m.listErr = &fs.PathError{Op: "open", Path: "/somewhere", Err: errno}
+		row := m.stateLine()
+		if got := cell.Width(row); got != Width {
+			t.Errorf("the %v row is %d cells, want %d: %q", errno, got, Width, plain(row))
+		}
+	}
+
+	long := strings.Repeat("overlong ", 20)
+	row := m.errorLine(long)
+	if got := cell.Width(row); got != Width {
+		t.Errorf("a %d-cell message makes a %d-cell row, want %d",
+			cell.Width(long), got, Width)
+	}
+	if !strings.Contains(plain(row), "…") {
+		t.Errorf("a long message was cut without saying so: %q", plain(row))
 	}
 }
 

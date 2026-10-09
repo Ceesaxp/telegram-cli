@@ -1,10 +1,12 @@
 package attach
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -608,6 +610,44 @@ func TestADirectoryItCannotReadSaysNothingRatherThanZero(t *testing.T) {
 	}
 	if got := formatSize(entries[0]); got != "" {
 		t.Errorf("its size column reads %q, want nothing at all", got)
+	}
+}
+
+// TestEachKindOfReadFailureSaysWhatWentWrong.
+//
+// Every failure used to be drawn as "no such directory", which cost real
+// debugging time over a ~/Downloads that plainly exists: macOS withholds it
+// from a terminal with no "Files and Folders" grant, and os.ReadDir answers
+// EPERM. Both that and ordinary mode bits have to read as a permission
+// problem, which is what makes the EPERM row below the one worth having —
+// syscall.Errno.Is maps EACCES and EPERM alike onto fs.ErrPermission, and a
+// claim that load-bearing is not one to take on trust.
+func TestEachKindOfReadFailureSaysWhatWentWrong(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		errno syscall.Errno
+		want  string
+	}{
+		{"a directory that is not there", syscall.ENOENT, "no such directory"},
+		{"mode bits that forbid it", syscall.EACCES, "permission denied — your terminal may need access"},
+		{"a privacy grant the terminal lacks", syscall.EPERM, "permission denied — your terminal may need access"},
+		{"a file where a directory was typed", syscall.ENOTDIR, "not a directory"},
+		{"anything else", syscall.ELOOP, "cannot read this directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Wrapped the way os.ReadDir wraps it, so the classification is
+			// proven through the PathError the picker actually gets.
+			err := &fs.PathError{Op: "open", Path: "/somewhere", Err: tc.errno}
+			if got := whyUnreadable(err); got != tc.want {
+				t.Errorf("a %v read says %q, want %q", tc.errno, got, tc.want)
+			}
+		})
+	}
+
+	// Nothing went wrong is not a failure to describe. The state row asks
+	// only after testing the error, so this is a guard rather than a path.
+	if got := whyUnreadable(nil); got != "" {
+		t.Errorf("whyUnreadable(nil) = %q, want nothing at all", got)
 	}
 }
 
