@@ -1,12 +1,15 @@
 package attach
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Ceesaxp/telegram-cli/internal/clipboard"
@@ -265,6 +268,38 @@ func readDir(dir string, showHidden bool) ([]Entry, error) {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
 	return out, nil
+}
+
+// whyUnreadable is the one line the state row shows for a read that failed.
+//
+// The picker used to draw "no such directory" for every error readDir
+// returned, which cost real debugging time over a ~/Downloads that plainly
+// exists:
+// it is a TCC-protected folder, and a terminal without the "Files and
+// Folders" grant gets EPERM from a directory that is right there, owned by
+// the reader and mode drwx------. The reader had no way to learn that the
+// real problem was a privacy grant on their terminal.
+//
+// Classified with errors.Is and never by matching the error's text, which is
+// the platform's wording rather than Go's and would silently stop matching
+// the day it changed. fs.ErrPermission is one branch for two causes on
+// purpose: syscall.Errno.Is maps EACCES and EPERM both onto it, so the
+// privacy grant and the ordinary mode bits land on the same sentence — which
+// is right, because "you cannot read this" is the same news either way.
+func whyUnreadable(err error) string {
+	switch {
+	case err == nil:
+		// The state row asks only after testing the error, so this is a
+		// guard against a future caller rather than a path anything takes.
+		return ""
+	case errors.Is(err, fs.ErrNotExist):
+		return "no such directory"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission denied — your terminal may need access"
+	case errors.Is(err, syscall.ENOTDIR):
+		return "not a directory"
+	}
+	return "cannot read this directory"
 }
 
 // countInto fills in the item counts for the entries named by idx, which is

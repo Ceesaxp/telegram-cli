@@ -184,7 +184,7 @@ func (m Model) stateLine() string {
 	note := lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
 
 	if m.listErr != nil {
-		return m.errorLine("no such directory")
+		return m.errorLine(whyUnreadable(m.listErr))
 	}
 
 	entry, ok := m.Selected()
@@ -214,11 +214,15 @@ func (m Model) stateLine() string {
 
 // errorLine is the state row for a directory that could not be read: the
 // one row on this surface that reports a failure rather than a file.
+//
+// Truncated to the row's own budget, as the "no match in …" branch above is:
+// cell.Fill would fit the line either way, but it cuts without a mark, and a
+// sentence that was cut short reads as one that simply ended.
 func (m Model) errorLine(msg string) string {
 	r := m.roles
 	return cell.Fill(r.Panel, " "+
 		lipgloss.NewStyle().Foreground(r.Red).Background(r.Panel).
-			Render(msg), Width)
+			Render(cell.Truncate(msg, Width-2)), Width)
 }
 
 // hintLine names the keys this surface honours, and names them by what they
