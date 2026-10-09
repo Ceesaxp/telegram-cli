@@ -214,7 +214,29 @@ func parentOf(dir string) string {
 	return withSlash(collapseHome(up))
 }
 
-// readDir lists one directory, sorted directories-first and then by name.
+// readDir lists one directory, newest first.
+//
+// By mtime and NOT directories-first-then-alphabetically, which is what this
+// shipped with and what made the picker useless at the only directory it
+// opens on by default. ~/Downloads here holds 1949 entries, 27 of them
+// directories: all 27 sorted ahead of all 1917 files, the window draws six
+// rows, so every visible row was a folder and the first file sat 27 rows
+// down. The reader's report was "it is not finding files at all, only
+// directories" — and it was right, for a listing that in fact held
+// everything.
+//
+// Newest first because of what this surface is FOR: the default directory is
+// where downloads land, so the file being attached is almost always the one
+// that just arrived. Row one is now that file, which makes attaching it
+// Ctrl+T and Enter. Grouping directories is what has to go rather than
+// merely being reordered — six folders at the top is the same wall whether
+// they are sorted by name or by date. A directory still reads as one at a
+// glance: it keeps its own glyph and a quieter name.
+//
+// Ties break by name, which is what keeps a listing stable: a directory
+// written in one pass gives every entry the same mtime, and comparing those
+// by name rather than leaving them to the sort is the difference between a
+// listing that holds still and one that reshuffles on each read.
 //
 // Dotfiles are omitted, the way a shell omits them, unless the reader has
 // typed a leading dot — which is the only way anyone ever wants to see
@@ -262,8 +284,8 @@ func readDir(dir string, showHidden bool) ([]Entry, error) {
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Dir != out[j].Dir {
-			return out[i].Dir
+		if !out[i].ModTime.Equal(out[j].ModTime) {
+			return out[i].ModTime.After(out[j].ModTime)
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})

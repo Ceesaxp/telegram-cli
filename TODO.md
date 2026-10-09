@@ -12,6 +12,21 @@ Decision recorded there: **a selection is a range over source text, never over s
 - [ ] Wave 4 — double/triple click, `v` visual mode over the same state, auto-scroll at the pane edge, the cross-message `sender: ` form
 - [ ] Note: copying over plain ssh will not work, the same as `y` today — `internal/clipboard/copy.go` deliberately refuses OSC 52. Re-read that comment before wave 3
 
+## Attach picker — the listing's order, and an error row that lied (found 2026-10-09) — branch fix/attach-unreadable-directory
+
+Reported: `Ctrl+T` "is not finding files at all anymore. Only directories."
+
+It was finding them. `~/Downloads` here holds 1949 entries, 27 of them directories; `readDir` sorted every directory ahead of every file and the window draws six rows, so the whole visible listing was folders and the first file sat 27 rows down. Nothing was broken — a file that landed a second ago was reachable, 27 `down` presses or a typed Cyrillic prefix away. The ordering was simply the wrong shape for the one directory the picker opens on by default.
+
+- [x] Structural: `listErr` kept whole as an `error`, and the red state row extracted as `errorLine`, proven with the suite unchanged on both sides
+- [x] Each kind of read failure says which one it was — `whyUnreadable` classifies with `errors.Is`, never by matching the platform's wording. Every failure used to draw `no such directory`, which is what sent this investigation into the listing code for an hour
+- [x] Newest first, directories not grouped, ties broken by name so equal mtimes hold still across reads. Documented in `docs/keys.md`
+- [ ] Noticed: the old ordering had **no test at all** — changing the comparator left the suite green. Three now pin it, and all three were checked red against the old one. Worth asking what else here is unpinned
+- [ ] Noticed: `tree()` stamps its files to a fixed mtime but leaves the directories it makes at creation time, so under a time ordering an unstamped directory sorts first by accident. Two tests' preconditions ride on that; both assert it rather than trusting it, and `stamped()` exists for tests that need to say what "newest" means
+- [ ] Noticed: `maxRows = 6` is the deeper constraint. Newest-first fixes the common case, but six of 1949 rows are visible either way, so typing is the real navigation in a directory this size. A larger window costs the 24-row terminal the overlay is budgeted against
+- [ ] Noticed: on Windows `os.ReadDir` on a file answers `ERROR_DIRECTORY` rather than `ENOTDIR`, so that case lands on the generic fallback there. Not fixed — `windows_test.go` pins the path rules, not the errno ones
+- [ ] Noticed: the diagnosis hazard, for next time. Claude Code's own shell cannot read `~/Downloads` — EACCES sandboxed, EPERM with the sandbox off, which looks exactly like a TCC denial on the terminal. agterm reads it fine. A denial seen from the agent's shell is never evidence about what the app can reach
+
 ## Attach picker — stale listing and send mode (found 2026-10-06) — branch fix/attach-stale-listing
 
 Reported: two files just downloaded into `~/Downloads` could not be attached at all — not by browsing, and not by typing the path in full, while the state row said `no match` about a file sitting right there.
