@@ -62,7 +62,12 @@ type Model struct {
 	dir     string
 	entries []Entry
 	hidden  bool
-	listErr bool
+
+	// listErr is what the last read returned, kept whole rather than
+	// reduced to a boolean: a boolean cannot tell a directory that is not
+	// there from a ~/Downloads the terminal has no privacy grant for, and
+	// the state row has to.
+	listErr error
 
 	// probed records that this listing has already been looked at again
 	// after matching nothing. See refilter.
@@ -496,7 +501,7 @@ func (m *Model) reload() {
 func (m *Model) list(dir string, hidden bool) {
 	entries, err := readDir(listable(dir), hidden)
 	m.dir, m.hidden = dir, hidden
-	m.entries, m.listErr = entries, err != nil
+	m.entries, m.listErr = entries, err
 	if err != nil {
 		m.entries = nil
 	}
@@ -541,7 +546,7 @@ func (m *Model) refilter(was string) {
 	// every further character typed where nothing matches costs a whole
 	// directory read. A failed read is not a stale listing and is left alone
 	// — it caches nothing, so reload is already retrying it per keystroke.
-	if len(m.filtered) == 0 && !m.probed && !m.listErr {
+	if len(m.filtered) == 0 && !m.probed && m.listErr == nil {
 		m.probed = true
 		m.list(m.dir, m.hidden)
 		m.match()

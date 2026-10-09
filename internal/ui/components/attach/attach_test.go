@@ -636,8 +636,8 @@ func TestAnEmptyPathIsTheWorkingDirectory(t *testing.T) {
 	if m.Typed() != "" {
 		t.Fatalf("ctrl+u left %q", m.Typed())
 	}
-	if m.listErr {
-		t.Fatal("an empty path reports no such directory")
+	if m.listErr != nil {
+		t.Fatalf("an empty path reports %v", m.listErr)
 	}
 	if len(m.Matches()) == 0 {
 		t.Error("an empty path lists nothing; it should list the working directory")

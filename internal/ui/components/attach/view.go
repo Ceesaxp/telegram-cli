@@ -183,10 +183,8 @@ func (m Model) stateLine() string {
 	body := lipgloss.NewStyle().Foreground(r.Fg).Background(r.Panel)
 	note := lipgloss.NewStyle().Foreground(r.Faint).Background(r.Panel)
 
-	if m.listErr {
-		return cell.Fill(r.Panel, " "+
-			lipgloss.NewStyle().Foreground(r.Red).Background(r.Panel).
-				Render("no such directory"), Width)
+	if m.listErr != nil {
+		return m.errorLine("no such directory")
 	}
 
 	entry, ok := m.Selected()
@@ -212,6 +210,15 @@ func (m Model) stateLine() string {
 		line += strings.Repeat(" ", pad) + note.Render(right) + " "
 	}
 	return cell.Fill(r.Panel, line, Width)
+}
+
+// errorLine is the state row for a directory that could not be read: the
+// one row on this surface that reports a failure rather than a file.
+func (m Model) errorLine(msg string) string {
+	r := m.roles
+	return cell.Fill(r.Panel, " "+
+		lipgloss.NewStyle().Foreground(r.Red).Background(r.Panel).
+			Render(msg), Width)
 }
 
 // hintLine names the keys this surface honours, and names them by what they
