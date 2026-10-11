@@ -12,6 +12,19 @@ Decision recorded there: **a selection is a range over source text, never over s
 - [ ] Wave 4 — double/triple click, `v` visual mode over the same state, auto-scroll at the pane edge, the cross-message `sender: ` form
 - [ ] Note: copying over plain ssh will not work, the same as `y` today — `internal/clipboard/copy.go` deliberately refuses OSC 52. Re-read that comment before wave 3
 
+## `@` mentions in forum topics (found 2026-10-11) — branch fix/mentions-in-forum-topics
+
+Reported: typing `@` inside a forum topic does nothing at all — the character goes in, no picker ever opens, and nothing on screen says why.
+
+The Telegram half was already right: `SearchChatMembers` splits a topic into its forum and searches the supergroup, and its doc comment describes this exact symptom. Only the gate in front of it was missed. `mentionsAllowed` asked `store.Chats` what kind of chat the reader was in, and a topic is a chat with a **synthetic** ID (`syntheticChatIDBase = 1<<48`) that nothing ever puts in the store — `chatTitle` already works around the same gap through `topicHeaders`. The store's silence read as "not a group", so `SetMentionsEnabled(false)` and the composer's trigger could never fire. A working search, unreachable from the only key that would have used it.
+
+- [x] `mentionsAllowed` resolves a topic to its forum before asking the store, reusing `forumOfTopic`'s zero answer rather than adding a second mechanism. Members belong to the supergroup rather than to any topic of it, which is the same split the search already makes
+- [x] Ordering checked rather than assumed, because the fix would be inert if the mapping landed late: `topicChats` has one writer, `noteTopicChats`, called one line before `SetTopics` in `applyTopics` — so it is in place strictly before any topic row exists to be selected. `openForumThread`'s target is a topic only when `lastTopic` holds one, which implies an earlier `openTopic` and therefore an earlier listing; otherwise it is the forum itself, an ordinary store chat. Live on every path, no re-arming needed
+- [x] Three tests driven through the app `Model`: the defect end to end, a topic of a channel-typed forum staying off, and a chat absent from the store staying off. All three were checked red — the first against the old gate, the second against a gate that waved any topic through, the third against one that read the store's silence as permission. Under that last mutation the existing table test stayed green, which is what "uncovered arm" meant
+- [ ] Noticed: that arm cannot be isolated by a test at all. `ChatTypePrivate` is `iota` 0, so an absent chat's zero `ChatType` is already a non-mentionable kind and deleting the `ok &&` conjunct alone leaves every test green. The new test pins the behaviour, not the conjunct; a named `ChatTypeUnknown` at 0 is what would make it load-bearing
+- [ ] Noticed: `handleMentionSearch` asks `chatType(q.ChatID)` the same unresolved question, to decide whether a chat is a basic group whose whole member list can be fetched once. A topic answers "not a basic group" there, which is right today only because a forum is always a supergroup. Left alone rather than resolved twice
+- [ ] Noticed: a topic's members are cached under the topic's own synthetic ID (`mentionMembers`), so two topics of one forum search the supergroup separately and keep separate windows onto one member list. Correct, merely unshared — the forum is the better key if it ever costs a request that matters
+
 ## Attach picker — the listing's order, and an error row that lied (found 2026-10-09) — branch fix/attach-unreadable-directory
 
 Reported: `Ctrl+T` "is not finding files at all anymore. Only directories."

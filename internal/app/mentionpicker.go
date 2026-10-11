@@ -40,7 +40,19 @@ func (m *Model) prepareMentions(chatID int64) {
 // basic group or a supergroup. A private chat has one person to mention,
 // who is already reading; a broadcast channel's members cannot be named at
 // all. A chat the store has not described yet is neither, until it is.
+//
+// A topic is asked about as its forum, because members belong to the
+// supergroup rather than to any topic of it — the same split
+// [telegram.Client.SearchChatMembers] behind the picker already makes. A
+// topic's synthetic chat ID is never in the store (docs/topics.md, "The
+// model"), so without this the store said nothing about it, the gate read
+// that as "not a group", and an @ inside a topic inserted the character and
+// opened nothing, with no line to say why. The forum's own flat stream was
+// never affected.
 func (m Model) mentionsAllowed(chatID int64) bool {
+	if forum := m.forumOfTopic(chatID); forum != 0 {
+		chatID = forum
+	}
 	kind, ok := m.chatType(chatID)
 	return ok && (kind == telegram.ChatTypeBasicGroup || kind == telegram.ChatTypeSupergroup)
 }
