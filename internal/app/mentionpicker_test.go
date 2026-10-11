@@ -26,6 +26,10 @@ const (
 	supergroupID int64 = -1001234567890
 	channelID    int64 = -1009876543210
 	privateID    int64 = 4102
+
+	// undescribedID is a supergroup nothing has put in the store, which is
+	// what a chat looks like before its dialog page lands.
+	undescribedID int64 = -1002000000001
 )
 
 // openedChat opens chat the way the chat list does — through the real
@@ -709,5 +713,69 @@ func TestTheHelpCardDescribesMentionCompletion(t *testing.T) {
 				t.Errorf("mode %v: no composer row for %q about completion (have %q)", mode, keys, rows[keys])
 			}
 		}
+	}
+}
+
+// openedTopic opens a topic of a forum of kind, the way the reader reaches
+// one: select the forum, let its topic listing land, select a topic. The
+// listing matters — it is what records the topic's synthetic chat ID as a
+// topic's (noteTopicChats), and a test that skipped it would be asking about
+// a mapping the running app always has by this point.
+func openedTopic(t *testing.T, kind telegram.ChatType) Model {
+	t.Helper()
+	m := forumModel(t, &fakeForums{topics: goSerbiaTopics()})
+	m.store.Chats.Set(&telegram.Chat{
+		ID: testForumID, Title: "Go Serbia", Type: kind, IsForum: true, Order: 2,
+	})
+	m = enterForum(t, m)
+	m, _ = deliver(t, m, chatlist.TopicSelectedMsg{Topic: jobsTopic()})
+	m.setFocus(PanelComposer)
+	return m
+}
+
+// A topic is a chat with a synthetic ID and nothing ever puts one in the
+// store (docs/topics.md, "The model"), so the gate asked the store what kind
+// of chat it was, heard nothing back, and switched completion off: an @ in a
+// topic inserted the character and no picker ever opened, with nothing on
+// screen to say why. The members were there to be found all along — the
+// search behind the picker splits a topic into its forum and asks about that.
+func TestMentionsWorkInAForumTopic(t *testing.T) {
+	m := openedTopic(t, telegram.ChatTypeSupergroup)
+	if got := m.composer.ChatId(); got != testJobsChatID {
+		t.Fatalf("setup: the composer sends to %d, want the topic %d", got, testJobsChatID)
+	}
+
+	if m = typeText(t, m, "@"); !m.composer.MentionActive() {
+		t.Fatal("@ in a forum topic did not open the picker")
+	}
+}
+
+// The gate widens by exactly one case — a topic is asked about as its forum —
+// and the forum is then judged by the same rule as any other chat. A forum
+// that is not a group to mention into is still not one when reached through
+// one of its topics. (A broadcast channel cannot really be a forum; this
+// stands in for any forum whose type the rule excludes, and it is the type
+// the rule would wave through if the resolution forgot to ask.)
+func TestMentionsStayOffInATopicOfAChannel(t *testing.T) {
+	m := openedTopic(t, telegram.ChatTypeChannel)
+	if m = typeText(t, m, "@"); m.composer.MentionActive() {
+		t.Fatal("@ in a topic of a channel opened the picker")
+	}
+}
+
+// A chat the store cannot describe is not a group yet, whatever it turns out
+// to be: there is nobody to offer and no way to know there would be. The
+// store answers for every chat out of the dialog list, but a chat reached
+// before its page has landed is not in it.
+func TestMentionsStayOffInAChatTheStoreHasNotDescribed(t *testing.T) {
+	m := sizedMainModel(t)
+	m = send(t, m, chatlist.ChatSelectedMsg{ChatId: undescribedID})
+	m.setFocus(PanelComposer)
+	if got := m.composer.ChatId(); got != undescribedID {
+		t.Fatalf("setup: the composer sends to %d, want %d", got, undescribedID)
+	}
+
+	if m = typeText(t, m, "@"); m.composer.MentionActive() {
+		t.Fatal("@ in a chat the store knows nothing about opened the picker")
 	}
 }
